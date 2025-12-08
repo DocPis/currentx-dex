@@ -1,8 +1,22 @@
+// src/App.jsx
 import { useEffect, useState } from "react";
-import { BrowserProvider, formatEther } from "ethers";
+import {
+  BrowserProvider,
+  formatEther,
+  Contract,
+  formatUnits,
+} from "ethers";
+
+import {
+  SEPOLIA_CHAIN_ID_HEX,
+  USDC_ADDRESS,
+  ERC20_ABI,
+  loadTokenRegistry,
+} from "./config/uniswapSepolia";
 
 import SwapSection from "./components/SwapSection";
-import { SEPOLIA_CHAIN_ID_HEX } from "./config/uniswapSepolia";
+import DashboardSection from "./components/DashboardSection";
+import LiquiditySection from "./components/LiquiditySection";
 
 /* ---------- HEADER + TABS ---------- */
 
@@ -101,75 +115,6 @@ function Tabs({ active, onChange }) {
   );
 }
 
-/* ---------- SMALL COMPONENTS (come prima) ---------- */
-
-function StatCard({ label, value, delta, caption }) {
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="text-[11px] text-slate-400">{label}</div>
-        {delta && (
-          <div
-            className={`text-[11px] ${
-              delta.startsWith("-") ? "text-rose-400" : "text-emerald-400"
-            }`}
-          >
-            {delta}
-          </div>
-        )}
-      </div>
-      <div className="mt-1 text-lg font-semibold text-slate-50">{value}</div>
-      {caption && (
-        <div className="mt-1 text-[11px] text-slate-500">{caption}</div>
-      )}
-    </div>
-  );
-}
-
-function TopPoolRow({ pair, tvl, volume, apr, fees }) {
-  return (
-    <tr className="border-b border-slate-900/70 text-xs">
-      <td className="py-2 pr-3 text-slate-100">{pair}</td>
-      <td className="py-2 pr-3 text-slate-300">{tvl}</td>
-      <td className="py-2 pr-3 text-slate-300">{volume}</td>
-      <td className="py-2 pr-3 text-slate-300">{fees}</td>
-      <td className="py-2">
-        <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-[2px] text-[10px] font-medium text-emerald-300">
-          {apr}
-        </span>
-      </td>
-    </tr>
-  );
-}
-
-/* ---------- DASHBOARD (come prima, omesso per brevità ma identico) ---------- */
-
-function DashboardSection() {
-  const [range, setRange] = useState("24h");
-  const ranges = ["24h", "7d", "30d", "1y"];
-
-  return (
-    <div className="space-y-4">
-      {/* ... QUI puoi incollare esattamente la tua DashboardSection precedente ... */}
-      {/* per brevità non la ripeto, è identica a quella che avevi prima */}
-    </div>
-  );
-}
-
-/* ---------- LIQUIDITY (placeholder, come prima) ---------- */
-
-function LiquiditySection() {
-  return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-950/80 p-4 shadow-2xl shadow-black/60">
-      <h2 className="text-sm font-semibold text-slate-50">Liquidity</h2>
-      <p className="mt-1 text-xs text-slate-400">
-        Provide liquidity to earn swap fees and incentives.
-      </p>
-      {/* ... resto del placeholder come avevi prima ... */}
-    </div>
-  );
-}
-
 /* ---------- APP ROOT ---------- */
 
 export default function App() {
@@ -177,16 +122,45 @@ export default function App() {
   const [address, setAddress] = useState(null);
   const [chainId, setChainId] = useState(null);
   const [ethBalance, setEthBalance] = useState(null);
+  const [usdcBalance, setUsdcBalance] = useState(null);
+  const [tokenRegistry, setTokenRegistry] = useState(null);
   const [connecting, setConnecting] = useState(false);
 
-  async function refreshBalance(currentAddress) {
+  async function refreshBalances(
+    currentAddress,
+    currentRegistry,
+    existingProvider
+  ) {
     if (!window.ethereum || !currentAddress) return;
+
+    const provider = existingProvider || new BrowserProvider(window.ethereum);
+
+    // assicuriamoci di avere il registry
+    let registryToUse = currentRegistry || tokenRegistry;
+    if (!registryToUse) {
+      registryToUse = await loadTokenRegistry(provider);
+      setTokenRegistry(registryToUse);
+    }
+
     try {
-      const provider = new BrowserProvider(window.ethereum);
+      // ETH
       const balance = await provider.getBalance(currentAddress);
       setEthBalance(parseFloat(formatEther(balance)));
+
+      // USDC (se presente nel registry)
+      const usdcToken = registryToUse.USDC;
+      if (usdcToken && usdcToken.address) {
+        const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, provider);
+        const usdcRaw = await usdc.balanceOf(currentAddress);
+        const usdcNum = parseFloat(
+          formatUnits(usdcRaw, usdcToken.decimals || 18)
+        );
+        setUsdcBalance(usdcNum);
+      } else {
+        setUsdcBalance(null);
+      }
     } catch (e) {
-      console.error("Error refreshing balance:", e);
+      console.error("Error refreshing balances:", e);
     }
   }
 
@@ -222,7 +196,11 @@ export default function App() {
         }
       }
 
-      await refreshBalance(addr);
+      // carica token registry una volta sola qui
+      const registry = await loadTokenRegistry(provider);
+      setTokenRegistry(registry);
+
+      await refreshBalances(addr, registry, provider);
     } catch (err) {
       console.error(err);
     } finally {
@@ -238,10 +216,11 @@ export default function App() {
       if (accounts.length === 0) {
         setAddress(null);
         setEthBalance(null);
+        setUsdcBalance(null);
       } else {
         const addr = accounts[0];
         setAddress(addr);
-        await refreshBalance(addr);
+        await refreshBalances(addr);
       }
     };
 
@@ -267,8 +246,10 @@ export default function App() {
         address={address}
         chainId={chainId}
         ethBalance={ethBalance}
+        usdcBalance={usdcBalance}
+        tokenRegistry={tokenRegistry}
         onConnect={handleConnect}
-        onRefreshBalance={() => refreshBalance(address)}
+        onRefreshBalances={() => refreshBalances(address)}
       />
     );
   if (tab === "liquidity") content = <LiquiditySection />;

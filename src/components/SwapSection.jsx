@@ -15,20 +15,22 @@ import {
   UNISWAP_V2_FACTORY,
   WETH_ADDRESS,
   USDC_ADDRESS,
-  WETH_DECIMALS,
-  USDC_DECIMALS,
   UNISWAP_V2_ROUTER_ABI,
   UNISWAP_V2_FACTORY_ABI,
   UNISWAP_V2_PAIR_ABI,
   ERC20_ABI,
+  WETH_DECIMALS,
+  USDC_DECIMALS,
 } from "../config/uniswapSepolia";
 
 export default function SwapSection({
   address,
   chainId,
   ethBalance,
+  usdcBalance,
+  tokenRegistry,
   onConnect,
-  onRefreshBalance,
+  onRefreshBalances,
 }) {
   const [amountIn, setAmountIn] = useState("");
   const [expectedOut, setExpectedOut] = useState(null);
@@ -39,7 +41,8 @@ export default function SwapSection({
   const [minReceived, setMinReceived] = useState(null);
   const [priceImpact, setPriceImpact] = useState(null);
 
-  const [direction, setDirection] = useState("ETH_TO_USDC"); // or "USDC_TO_ETH"
+  const [sellTokenSymbol, setSellTokenSymbol] = useState("ETH"); // "ETH" | "USDC"
+  const [openSelector, setOpenSelector] = useState(null); // 'sell' | 'buy' | null
 
   const [swapState, setSwapState] = useState({
     status: "idle", // idle | pending | done | error
@@ -51,17 +54,30 @@ export default function SwapSection({
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
   const canSwap = isConnected && isOnSepolia;
 
-  // --- derive tokens by direction ---
-  const isEthToUsdc = direction === "ETH_TO_USDC";
+  // fallback token map se il registry non è ancora caricato
+  const fallbackTokens = {
+    ETH: {
+      symbol: "ETH",
+      address: WETH_ADDRESS,
+      decimals: WETH_DECIMALS,
+      isNative: true,
+    },
+    USDC: {
+      symbol: "USDC",
+      address: USDC_ADDRESS,
+      decimals: USDC_DECIMALS,
+      isNative: false,
+    },
+  };
 
-  const tokenInSymbol = isEthToUsdc ? "ETH" : "USDC";
-  const tokenOutSymbol = isEthToUsdc ? "USDC" : "ETH";
+  const TOKENS = tokenRegistry || fallbackTokens;
 
-  const tokenInAddress = isEthToUsdc ? WETH_ADDRESS : USDC_ADDRESS;
-  const tokenOutAddress = isEthToUsdc ? USDC_ADDRESS : WETH_ADDRESS;
+  const sellToken = TOKENS[sellTokenSymbol];
+  const buyTokenSymbol = sellTokenSymbol === "ETH" ? "USDC" : "ETH";
+  const buyToken = TOKENS[buyTokenSymbol];
 
-  const tokenInDecimals = isEthToUsdc ? WETH_DECIMALS : USDC_DECIMALS;
-  const tokenOutDecimals = isEthToUsdc ? USDC_DECIMALS : WETH_DECIMALS;
+  const tokenIn = sellToken;
+  const tokenOut = buyToken;
 
   /* ---------- QUOTE + PRICE IMPACT ---------- */
 
@@ -94,8 +110,11 @@ export default function SwapSection({
           provider
         );
 
-        const amountInUnits = parseUnits(amountIn, tokenInDecimals);
-        const path = [tokenInAddress, tokenOutAddress];
+        const amountInUnits = parseUnits(
+          amountIn,
+          tokenIn.decimals || 18
+        );
+        const path = [tokenIn.address, tokenOut.address];
 
         const amounts = await router.getAmountsOut(amountInUnits, path);
 
@@ -111,7 +130,7 @@ export default function SwapSection({
         const out = amounts[1];
         setExpectedOut(out);
 
-        // price impact via reserves
+        // price impact via WETH/USDC pool reserves
         try {
           const factory = new Contract(
             UNISWAP_V2_FACTORY,
@@ -141,8 +160,8 @@ export default function SwapSection({
           const token1 = (await pair.token1()).toLowerCase();
           const [reserve0, reserve1] = await pair.getReserves();
 
-          const tokenInLower = tokenInAddress.toLowerCase();
-          const tokenOutLower = tokenOutAddress.toLowerCase();
+          const tokenInLower = tokenIn.address.toLowerCase();
+          const tokenOutLower = tokenOut.address.toLowerCase();
 
           let reserveInRaw;
           let reserveOutRaw;
@@ -164,9 +183,9 @@ export default function SwapSection({
           }
 
           const reserveInNum =
-            Number(reserveInRaw) / Math.pow(10, tokenInDecimals);
+            Number(reserveInRaw) / Math.pow(10, tokenIn.decimals || 18);
           const reserveOutNum =
-            Number(reserveOutRaw) / Math.pow(10, tokenOutDecimals);
+            Number(reserveOutRaw) / Math.pow(10, tokenOut.decimals || 18);
 
           if (reserveInNum <= 0 || reserveOutNum <= 0) {
             setPriceImpact(null);
@@ -176,8 +195,8 @@ export default function SwapSection({
           const midPriceNum = reserveOutNum / reserveInNum;
 
           const execPriceNum =
-            Number(out) / Math.pow(10, tokenOutDecimals) /
-            (Number(amountInUnits) / Math.pow(10, tokenInDecimals));
+            Number(out) / Math.pow(10, tokenOut.decimals || 18) /
+            (Number(amountInUnits) / Math.pow(10, tokenIn.decimals || 18));
 
           if (midPriceNum <= 0 || execPriceNum <= 0) {
             setPriceImpact(null);
@@ -213,7 +232,13 @@ export default function SwapSection({
     return () => {
       cancelled = true;
     };
-  }, [amountIn, tokenInAddress, tokenOutAddress, tokenInDecimals, tokenOutDecimals]);
+  }, [
+    amountIn,
+    tokenIn.address,
+    tokenOut.address,
+    tokenIn.decimals,
+    tokenOut.decimals,
+  ]);
 
   /* ---------- MINIMUM RECEIVED ---------- */
 
@@ -234,8 +259,8 @@ export default function SwapSection({
     const minOut =
       (expectedOut * BigInt(10000 - slippageBps)) / bpsDenominator;
 
-    setMinReceived(formatUnits(minOut, tokenOutDecimals));
-  }, [expectedOut, slippage, tokenOutDecimals]);
+    setMinReceived(formatUnits(minOut, tokenOut.decimals || 18));
+  }, [expectedOut, slippage, tokenOut.decimals]);
 
   /* ---------- HANDLERS ---------- */
 
@@ -277,7 +302,26 @@ export default function SwapSection({
     await handleSwap(amountIn, minAmountOut.toString());
   };
 
-  // core swap logic (ETH->USDC & USDC->ETH)
+  // quick % buttons (ETH o USDC)
+  const handleQuickAmount = (fraction) => {
+    let balance = null;
+    let decimals = 4;
+
+    if (tokenIn.symbol === "ETH") {
+      balance = ethBalance;
+      decimals = 4;
+    } else if (tokenIn.symbol === "USDC") {
+      balance = usdcBalance;
+      decimals = 2;
+    }
+
+    if (balance != null) {
+      const value = balance * fraction;
+      setAmountIn(value.toFixed(decimals));
+    }
+  };
+
+  // core swap logic
   async function handleSwap(amountInStr, minAmountOutStr) {
     if (!window.ethereum) {
       alert("No wallet detected");
@@ -309,7 +353,8 @@ export default function SwapSection({
 
       let tx;
 
-      if (direction === "ETH_TO_USDC") {
+      // ETH -> USDC
+      if (tokenIn.symbol === "ETH" && tokenOut.symbol === "USDC") {
         const value = parseEther(amountInStr);
         const path = [WETH_ADDRESS, USDC_ADDRESS];
 
@@ -320,9 +365,11 @@ export default function SwapSection({
           deadline,
           { value }
         );
-      } else {
-        // USDC -> ETH
-        const amountInUnits = parseUnits(amountInStr, USDC_DECIMALS);
+      }
+      // USDC -> ETH
+      else if (tokenIn.symbol === "USDC" && tokenOut.symbol === "ETH") {
+        const usdcDecimals = TOKENS.USDC.decimals || 18;
+        const amountInUnits = parseUnits(amountInStr, usdcDecimals);
         const path = [USDC_ADDRESS, WETH_ADDRESS];
 
         const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, signer);
@@ -343,6 +390,8 @@ export default function SwapSection({
           address,
           deadline
         );
+      } else {
+        throw new Error("Unsupported pair (only ETH/USDC on Sepolia).");
       }
 
       setSwapState((prev) => ({
@@ -357,9 +406,8 @@ export default function SwapSection({
         status: "done",
       }));
 
-      // refresh ETH balance in header
-      if (onRefreshBalance) {
-        await onRefreshBalance();
+      if (onRefreshBalances) {
+        await onRefreshBalances();
       }
     } catch (err) {
       console.error("Swap error:", err);
@@ -418,18 +466,75 @@ export default function SwapSection({
     }
   }
 
-  // balances per box
-  const sellBalanceLabel = isEthToUsdc
-    ? ethBalance != null
-      ? `${ethBalance.toFixed(4)} ETH`
-      : "—"
-    : "— USDC";
+  /* ---------- BALANCES LABEL ---------- */
 
-  const buyBalanceLabel = !isEthToUsdc
-    ? ethBalance != null
-      ? `${ethBalance.toFixed(4)} ETH`
-      : "—"
-    : "— USDC";
+  const getBalanceLabel = (token) => {
+    if (token.symbol === "ETH") {
+      return ethBalance != null ? `${ethBalance.toFixed(4)} ETH` : "—";
+    }
+    if (token.symbol === "USDC") {
+      return usdcBalance != null ? `${usdcBalance.toFixed(2)} USDC` : "—";
+    }
+    return "—";
+  };
+
+  /* ---------- TOKEN SELECTOR UI ---------- */
+
+  const renderTokenSelector = (side) => {
+    const isSell = side === "sell";
+    return (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() =>
+            setOpenSelector(openSelector === side ? null : side)
+          }
+          className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700"
+        >
+          <div className="h-5 w-5 rounded-full bg-slate-700" />
+          <span>{isSell ? tokenIn.symbol : tokenOut.symbol}</span>
+          <span className="text-[10px] text-slate-400">▼</span>
+        </button>
+
+        {openSelector === side && (
+          <div className="absolute left-0 mt-2 w-32 rounded-xl border border-slate-700 bg-slate-900 shadow-lg z-20">
+            {Object.values(TOKENS).map((t) => {
+              const selectedSymbol = isSell ? tokenIn.symbol : tokenOut.symbol;
+              const isSelected = t.symbol === selectedSymbol;
+
+              return (
+                <button
+                  key={t.symbol}
+                  type="button"
+                  disabled={isSelected}
+                  onClick={() => {
+                    if (isSell) {
+                      setSellTokenSymbol(t.symbol);
+                    } else {
+                      const other = t.symbol === "ETH" ? "USDC" : "ETH";
+                      setSellTokenSymbol(other);
+                    }
+                    setOpenSelector(null);
+                    setAmountIn("");
+                    setExpectedOut(null);
+                    setPriceImpact(null);
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] ${
+                    isSelected
+                      ? "bg-slate-800 text-slate-100"
+                      : "text-slate-200 hover:bg-slate-800"
+                  }`}
+                >
+                  <div className="h-5 w-5 rounded-full bg-slate-700" />
+                  <span>{t.symbol}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   /* ---------- UI STILE AERODROME ---------- */
 
@@ -470,33 +575,57 @@ export default function SwapSection({
             <span>Sell</span>
             <span>
               Balance:{" "}
-              <span className="text-slate-200">{sellBalanceLabel}</span>
+              <span className="text-slate-200">
+                {getBalanceLabel(tokenIn)}
+              </span>
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <button className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700">
-              <div className="h-5 w-5 rounded-full bg-slate-700" />
-              <span>{tokenInSymbol}</span>
-              <span className="text-[10px] text-slate-400">▼</span>
-            </button>
-            <input
-              type="number"
-              min="0"
-              step={isEthToUsdc ? "0.0001" : "0.01"}
-              value={amountIn}
-              onChange={(e) => setAmountIn(e.target.value)}
-              placeholder="0.00"
-              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
-            />
+            {renderTokenSelector("sell")}
+            <div className="flex items-center gap-3 flex-1 justify-end">
+              <input
+                type="number"
+                min="0"
+                step={tokenIn.symbol === "ETH" ? "0.0001" : "0.01"}
+                value={amountIn}
+                onChange={(e) => setAmountIn(e.target.value)}
+                placeholder="0.00"
+                className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
+              />
+              <div className="flex flex-col items-end text-[11px] text-slate-400">
+                <button
+                  type="button"
+                  className="mb-1 rounded-full border border-slate-700 px-2 py-[1px] text-[10px] hover:border-slate-500"
+                  onClick={() => handleQuickAmount(0.25)}
+                >
+                  25%
+                </button>
+                <button
+                  type="button"
+                  className="mb-1 rounded-full border border-slate-700 px-2 py-[1px] text-[10px] hover:border-slate-500"
+                  onClick={() => handleQuickAmount(0.5)}
+                >
+                  50%
+                </button>
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-700 px-2 py-[1px] text-[10px] hover:border-slate-500"
+                  onClick={() => handleQuickAmount(0.95)}
+                >
+                  Max
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* arrow to flip direction */}
+        {/* arrow to flip tokens */}
         <div className="my-3 flex justify-center">
           <button
             type="button"
             onClick={() => {
-              setDirection(isEthToUsdc ? "USDC_TO_ETH" : "ETH_TO_USDC");
+              const other = sellTokenSymbol === "ETH" ? "USDC" : "ETH";
+              setSellTokenSymbol(other);
               setAmountIn("");
               setExpectedOut(null);
               setPriceImpact(null);
@@ -513,19 +642,17 @@ export default function SwapSection({
             <span>Buy</span>
             <span>
               Balance:{" "}
-              <span className="text-slate-200">{buyBalanceLabel}</span>
+              <span className="text-slate-200">
+                {getBalanceLabel(tokenOut)}
+              </span>
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <button className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700">
-              <div className="h-5 w-5 rounded-full bg-slate-700" />
-              <span>{tokenOutSymbol}</span>
-              <span className="text-[10px] text-slate-400">▼</span>
-            </button>
+            {renderTokenSelector("buy")}
             <div className="flex flex-col items-end">
               <span className="text-2xl font-semibold text-slate-50">
                 {expectedOut
-                  ? formatUnits(expectedOut, tokenOutDecimals)
+                  ? formatUnits(expectedOut, tokenOut.decimals || 18)
                   : "0.00"}
               </span>
               <span className="text-[11px] text-slate-500">
@@ -534,7 +661,7 @@ export default function SwapSection({
                   : quoteError
                   ? quoteError
                   : expectedOut
-                  ? `Estimated ${tokenOutSymbol} you will receive`
+                  ? `Estimated ${tokenOut.symbol} you will receive`
                   : "Enter an amount to see preview"}
               </span>
             </div>
@@ -602,7 +729,7 @@ export default function SwapSection({
           <div className="flex justify-between">
             <span>Minimum received</span>
             <span className="text-slate-100">
-              {minReceived ? `${minReceived} ${tokenOutSymbol}` : "—"}
+              {minReceived ? `${minReceived} ${tokenOut.symbol}` : "—"}
             </span>
           </div>
           <div className="flex items-center justify-between">
