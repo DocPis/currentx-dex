@@ -45,6 +45,12 @@ export const ERC20_ABI = [
   "function decimals() view returns (uint8)",
 ];
 
+export const WETH_ABI = [
+  "function deposit() external payable",
+  "function withdraw(uint256 wad) external",
+];
+
+
 // Base token list: qui aggiungi altri token in futuro
 const BASE_TOKENS = [
   {

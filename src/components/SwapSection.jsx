@@ -19,6 +19,7 @@ import {
   WETH_ADDRESS,
   USDC_ADDRESS,
   ERC20_ABI,
+  WETH_ABI,
 } from "../config/uniswapSepolia";
 
 import { TOKENS, AVAILABLE_TOKENS } from "../config/tokenRegistry";
@@ -73,7 +74,7 @@ function buildPath(tokenIn, tokenOut) {
 export default function SwapSection({
   address,
   chainId,
-  balances,        // { ETH: 0.1, WETH: 1.2, USDC: 14075, WBTC: 0.01, ... }
+  balances,        // { ETH, WETH, USDC, WBTC, ... }
   tokenRegistry,   // per estensioni future
   onConnect,
   onRefreshBalances,
@@ -104,6 +105,10 @@ export default function SwapSection({
   const tokenIn = TOKENS[sellToken];
   const tokenOut = TOKENS[buyToken];
 
+  // wrap / unwrap flags
+  const isWrap = sellToken === "ETH" && buyToken === "WETH";
+  const isUnwrap = sellToken === "WETH" && buyToken === "ETH";
+
   /* ---------- BALANCE HELPERS ---------- */
 
   const getBalanceFor = (symbol) => {
@@ -128,6 +133,7 @@ export default function SwapSection({
     let cancelled = false;
 
     async function fetchQuote() {
+      // Nessun amount → reset
       if (!amountIn || parseFloat(amountIn) <= 0) {
         setExpectedOut(null);
         setQuoteError(null);
@@ -135,6 +141,26 @@ export default function SwapSection({
         return;
       }
 
+      // Caso speciale: WRAP / UNWRAP 1:1, niente Uniswap
+      if (isWrap || isUnwrap) {
+        try {
+          const units = parseUnits(amountIn, 18); // ETH/WETH sempre 18
+          if (!cancelled) {
+            setExpectedOut(units);
+            setQuoteError(null);
+            setPriceImpact(null); // no price impact
+          }
+        } catch (e) {
+          if (!cancelled) {
+            setExpectedOut(null);
+            setQuoteError("Invalid amount.");
+            setPriceImpact(null);
+          }
+        }
+        return;
+      }
+
+      // Normale swap via Uniswap
       if (!window.ethereum) {
         setExpectedOut(null);
         setQuoteError("No provider available.");
@@ -175,7 +201,6 @@ export default function SwapSection({
         // Price impact solo per path dirette (2 token)
         if (path.length === 2) {
           try {
-            const provider = new BrowserProvider(window.ethereum);
             const factory = new Contract(
               UNISWAP_V2_FACTORY,
               UNISWAP_V2_FACTORY_ABI,
@@ -274,7 +299,15 @@ export default function SwapSection({
     return () => {
       cancelled = true;
     };
-  }, [amountIn, sellToken, buyToken, tokenIn.decimals, tokenOut.decimals]);
+  }, [
+    amountIn,
+    sellToken,
+    buyToken,
+    tokenIn.decimals,
+    tokenOut.decimals,
+    isWrap,
+    isUnwrap,
+  ]);
 
   /* ---------- MINIMUM RECEIVED ---------- */
 
@@ -283,6 +316,13 @@ export default function SwapSection({
       setMinReceived(null);
       return;
     }
+
+    // per wrap/unwrap, è 1:1 → minimo = importo
+    if (isWrap || isUnwrap) {
+      setMinReceived(formatUnits(expectedOut, 18));
+      return;
+    }
+
     const s = parseFloat(slippage || "0");
     if (Number.isNaN(s) || s < 0 || s > 50) {
       setMinReceived(null);
@@ -296,7 +336,7 @@ export default function SwapSection({
       (expectedOut * BigInt(10000 - slippageBps)) / bpsDenominator;
 
     setMinReceived(formatUnits(minOut, tokenOut.decimals || 18));
-  }, [expectedOut, slippage, tokenOut.decimals]);
+  }, [expectedOut, slippage, tokenOut.decimals, isWrap, isUnwrap]);
 
   /* ---------- HANDLERS ---------- */
 
@@ -324,11 +364,23 @@ export default function SwapSection({
       onConnect();
       return;
     }
+
     const value = parseFloat(amountIn || "0");
     if (!value || value <= 0) {
       alert("Enter a valid amount to swap.");
       return;
     }
+
+    // WRAP / UNWRAP: non serve slippage né router
+    if (isWrap) {
+      await doWrap(amountIn);
+      return;
+    }
+    if (isUnwrap) {
+      await doUnwrap(amountIn);
+      return;
+    }
+
     if (!expectedOut) {
       alert("Enter an amount and wait for the quote first.");
       return;
@@ -347,6 +399,109 @@ export default function SwapSection({
 
     await handleSwap(amountIn, minAmountOut.toString());
   };
+
+  /* ---------- WRAP / UNWRAP IMPLEMENTATION ---------- */
+
+  async function doWrap(amountInStr) {
+    if (!window.ethereum) {
+      alert("No wallet detected");
+      return;
+    }
+    if (!address || chainId !== SEPOLIA_CHAIN_ID_HEX) {
+      alert("Connect wallet on Sepolia first.");
+      return;
+    }
+
+    try {
+      const amountNum = parseFloat(amountInStr);
+      if (!amountNum || amountNum <= 0) {
+        alert("Invalid amount.");
+        return;
+      }
+
+      setSwapState({ status: "pending", txHash: null, error: null });
+
+      const provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+
+      const value = parseEther(amountInStr);
+      const tx = await weth.deposit({ value });
+
+      setSwapState((prev) => ({ ...prev, txHash: tx.hash }));
+      await tx.wait();
+      setSwapState((prev) => ({ ...prev, status: "done" }));
+
+      if (onRefreshBalances) await onRefreshBalances();
+    } catch (err) {
+      console.error("Wrap error:", err);
+      let msg = "Wrap failed.";
+      if (err?.info?.error?.message) msg = err.info.error.message;
+      else if (err?.message) msg = err.message;
+      setSwapState({ status: "error", txHash: null, error: msg });
+    } finally {
+      setTimeout(() => {
+        setSwapState((prev) =>
+          prev.status === "pending" ? { ...prev, status: "idle" } : prev
+        );
+      }, 3000);
+    }
+  }
+
+  async function doUnwrap(amountInStr) {
+    if (!window.ethereum) {
+      alert("No wallet detected");
+      return;
+    }
+    if (!address || chainId !== SEPOLIA_CHAIN_ID_HEX) {
+      alert("Connect wallet on Sepolia first.");
+      return;
+    }
+
+    try {
+      const amountNum = parseFloat(amountInStr);
+      if (!amountNum || amountNum <= 0) {
+        alert("Invalid amount.");
+        return;
+      }
+
+      // controllo veloce sul balance WETH
+      const wethBal = getBalanceFor("WETH");
+      if (wethBal != null && amountNum > wethBal + 1e-12) {
+        alert("Insufficient WETH balance to unwrap.");
+        return;
+      }
+
+      setSwapState({ status: "pending", txHash: null, error: null });
+
+      const provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+
+      const amountUnits = parseEther(amountInStr);
+      const tx = await weth.withdraw(amountUnits);
+
+      setSwapState((prev) => ({ ...prev, txHash: tx.hash }));
+      await tx.wait();
+      setSwapState((prev) => ({ ...prev, status: "done" }));
+
+      if (onRefreshBalances) await onRefreshBalances();
+    } catch (err) {
+      console.error("Unwrap error:", err);
+      let msg = "Unwrap failed.";
+      if (err?.info?.error?.message) msg = err.info.error.message;
+      else if (err?.message) msg = err.message;
+      setSwapState({ status: "error", txHash: null, error: msg });
+    } finally {
+      setTimeout(() => {
+        setSwapState((prev) =>
+          prev.status === "pending" ? { ...prev, status: "idle" } : prev
+        );
+      }, 3000);
+    }
+  }
+
+  /* ---------- NORMAL SWAP VIA UNISWAP ---------- */
 
   async function handleSwap(amountInStr, minAmountOutStr) {
     if (!window.ethereum) {
@@ -493,7 +648,7 @@ export default function SwapSection({
   let impactBadgeClass = "";
   let impactTooltip = "";
 
-  if (parsedImpact != null && !Number.isNaN(parsedImpact)) {
+  if (!isWrap && !isUnwrap && parsedImpact != null && !Number.isNaN(parsedImpact)) {
     if (parsedImpact < 1) {
       impactValueClass = "text-emerald-300";
       impactBadgeLabel = "Low";
@@ -615,17 +770,34 @@ export default function SwapSection({
 
       {/* swap card */}
       <div className="rounded-3xl border border-slate-800 bg-slate-950/95 px-5 py-6 shadow-2xl shadow-black/70">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-2 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-slate-50">Swap</h2>
             <p className="text-[11px] text-slate-500">
-              Swap between tokens on Sepolia using Uniswap V2.
+              {isWrap
+                ? "Wrap native ETH into WETH 1:1 on Sepolia."
+                : isUnwrap
+                ? "Unwrap WETH into native ETH 1:1 on Sepolia."
+                : "Swap between tokens on Sepolia using Uniswap V2."}
             </p>
           </div>
           <div className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-300">
             Network: <span className="font-medium">Sepolia</span>
           </div>
         </div>
+
+        {isWrap && (
+          <div className="mb-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
+            This operation wraps ETH into WETH at a 1:1 rate. No slippage or
+            price impact.
+          </div>
+        )}
+
+        {isUnwrap && (
+          <div className="mb-3 rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[11px] text-sky-100">
+            This operation unwraps WETH back to ETH at a 1:1 rate.
+          </div>
+        )}
 
         {/* SELL */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3">
@@ -712,7 +884,10 @@ export default function SwapSection({
             <div className="flex flex-col items-end">
               <span className="text-2xl font-semibold text-slate-50">
                 {expectedOut
-                  ? formatUnits(expectedOut, tokenOut.decimals || 18)
+                  ? formatUnits(
+                      expectedOut,
+                      isWrap || isUnwrap ? 18 : tokenOut.decimals || 18
+                    )
                   : "0.00"}
               </span>
               <span className="text-[11px] text-slate-500">
@@ -721,7 +896,9 @@ export default function SwapSection({
                   : quoteError
                   ? quoteError
                   : expectedOut
-                  ? `Estimated ${tokenOut.symbol} you will receive`
+                  ? isWrap || isUnwrap
+                    ? `Amount of ${buyToken} you will receive (1:1)`
+                    : `Estimated ${tokenOut.symbol} you will receive`
                   : "Enter an amount to see preview"}
               </span>
             </div>
@@ -743,7 +920,13 @@ export default function SwapSection({
             : !isOnSepolia
             ? "Switch to Sepolia"
             : swapState.status === "pending"
-            ? "Confirm in wallet..."
+            ? isWrap || isUnwrap
+              ? "Confirm wrap/unwrap..."
+              : "Confirm in wallet..."
+            : isWrap
+            ? "Wrap ETH to WETH"
+            : isUnwrap
+            ? "Unwrap WETH to ETH"
             : "Swap"}
         </button>
       </div>
@@ -764,8 +947,11 @@ export default function SwapSection({
                 key={v}
                 type="button"
                 onClick={() => handleSlippagePreset(v)}
+                disabled={isWrap || isUnwrap}
                 className={`flex-1 rounded-full border px-2 py-1 text-[11px] ${
-                  slippage === v
+                  isWrap || isUnwrap
+                    ? "border-slate-800 bg-slate-900 text-slate-500 cursor-not-allowed"
+                    : slippage === v
                     ? "border-emerald-400 bg-emerald-500/15 text-emerald-200"
                     : "border-slate-700 bg-slate-900 text-slate-200"
                 }`}
@@ -777,8 +963,9 @@ export default function SwapSection({
               <input
                 type="text"
                 value={slippage}
+                disabled={isWrap || isUnwrap}
                 onChange={(e) => handleSlippageInput(e.target.value)}
-                className="w-full bg-transparent text-right text-[11px] text-slate-100 outline-none"
+                className="w-full bg-transparent text-right text-[11px] text-slate-100 outline-none disabled:text-slate-500"
                 placeholder="Custom %"
               />
             </div>
@@ -789,20 +976,31 @@ export default function SwapSection({
           <div className="flex justify-between">
             <span>Minimum received</span>
             <span className="text-slate-100">
-              {minReceived ? `${minReceived} ${tokenOut.symbol}` : "—"}
+              {minReceived
+                ? `${minReceived} ${tokenOut.symbol}`
+                : "—"}
             </span>
           </div>
           <div className="flex items-center justify-between">
             <span>Price impact</span>
             <span className="flex items-center gap-2">
               <span className={impactValueClass}>
-                {priceImpact ? `${priceImpact}%` : "—"}
+                {isWrap || isUnwrap
+                  ? "0.00%"
+                  : priceImpact
+                  ? `${priceImpact}%`
+                  : "—"}
               </span>
-              {impactBadgeLabel && (
-                <span className={impactBadgeClass} title={impactTooltip}>
-                  {impactBadgeLabel}
-                </span>
-              )}
+              {!isWrap &&
+                !isUnwrap &&
+                impactBadgeLabel && (
+                  <span
+                    className={impactBadgeClass}
+                    title={impactTooltip}
+                  >
+                    {impactBadgeLabel}
+                  </span>
+                )}
             </span>
           </div>
         </div>
@@ -811,7 +1009,7 @@ export default function SwapSection({
       {/* STATUS */}
       {swapState.txHash && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
-          Swap broadcasted. Tx hash:{" "}
+          Tx broadcasted. Hash:{" "}
           <a
             href={`https://sepolia.etherscan.io/tx/${swapState.txHash}`}
             target="_blank"
