@@ -19,16 +19,15 @@ import {
   UNISWAP_V2_FACTORY_ABI,
   UNISWAP_V2_PAIR_ABI,
   ERC20_ABI,
-  WETH_DECIMALS,
-  USDC_DECIMALS,
 } from "../config/uniswapSepolia";
+
+import { TOKENS } from "../config/tokenRegistry";
 
 export default function SwapSection({
   address,
   chainId,
   ethBalance,
   usdcBalance,
-  tokenRegistry,
   onConnect,
   onRefreshBalances,
 }) {
@@ -54,30 +53,9 @@ export default function SwapSection({
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
   const canSwap = isConnected && isOnSepolia;
 
-  // fallback token map se il registry non è ancora caricato
-  const fallbackTokens = {
-    ETH: {
-      symbol: "ETH",
-      address: WETH_ADDRESS,
-      decimals: WETH_DECIMALS,
-      isNative: true,
-    },
-    USDC: {
-      symbol: "USDC",
-      address: USDC_ADDRESS,
-      decimals: USDC_DECIMALS,
-      isNative: false,
-    },
-  };
-
-  const TOKENS = tokenRegistry || fallbackTokens;
-
-  const sellToken = TOKENS[sellTokenSymbol];
-  const buyTokenSymbol = sellTokenSymbol === "ETH" ? "USDC" : "ETH";
-  const buyToken = TOKENS[buyTokenSymbol];
-
-  const tokenIn = sellToken;
-  const tokenOut = buyToken;
+  // token in/out (con logo, address, decimals)
+  const tokenIn = TOKENS[sellTokenSymbol];
+  const tokenOut = sellTokenSymbol === "ETH" ? TOKENS.USDC : TOKENS.ETH;
 
   /* ---------- QUOTE + PRICE IMPACT ---------- */
 
@@ -130,7 +108,7 @@ export default function SwapSection({
         const out = amounts[1];
         setExpectedOut(out);
 
-        // price impact via WETH/USDC pool reserves
+        // Price impact: usiamo i reserves della pool WETH/USDC
         try {
           const factory = new Contract(
             UNISWAP_V2_FACTORY,
@@ -196,7 +174,8 @@ export default function SwapSection({
 
           const execPriceNum =
             Number(out) / Math.pow(10, tokenOut.decimals || 18) /
-            (Number(amountInUnits) / Math.pow(10, tokenIn.decimals || 18));
+            (Number(amountInUnits) /
+              Math.pow(10, tokenIn.decimals || 18));
 
           if (midPriceNum <= 0 || execPriceNum <= 0) {
             setPriceImpact(null);
@@ -478,10 +457,12 @@ export default function SwapSection({
     return "—";
   };
 
-  /* ---------- TOKEN SELECTOR UI ---------- */
+  /* ---------- TOKEN SELECTOR (con logo) ---------- */
 
   const renderTokenSelector = (side) => {
     const isSell = side === "sell";
+    const token = isSell ? tokenIn : tokenOut;
+
     return (
       <div className="relative">
         <button
@@ -491,17 +472,19 @@ export default function SwapSection({
           }
           className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700"
         >
-          <div className="h-5 w-5 rounded-full bg-slate-700" />
-          <span>{isSell ? tokenIn.symbol : tokenOut.symbol}</span>
+          <img
+            src={token.logo}
+            alt={token.symbol}
+            className="h-5 w-5 rounded-full"
+          />
+          <span>{token.symbol}</span>
           <span className="text-[10px] text-slate-400">▼</span>
         </button>
 
         {openSelector === side && (
-          <div className="absolute left-0 mt-2 w-32 rounded-xl border border-slate-700 bg-slate-900 shadow-lg z-20">
+          <div className="absolute left-0 mt-1 w-36 rounded-xl border border-slate-700 bg-slate-900 shadow-xl z-20">
             {Object.values(TOKENS).map((t) => {
-              const selectedSymbol = isSell ? tokenIn.symbol : tokenOut.symbol;
-              const isSelected = t.symbol === selectedSymbol;
-
+              const isSelected = t.symbol === token.symbol;
               return (
                 <button
                   key={t.symbol}
@@ -511,8 +494,9 @@ export default function SwapSection({
                     if (isSell) {
                       setSellTokenSymbol(t.symbol);
                     } else {
-                      const other = t.symbol === "ETH" ? "USDC" : "ETH";
-                      setSellTokenSymbol(other);
+                      setSellTokenSymbol(
+                        t.symbol === "ETH" ? "USDC" : "ETH"
+                      );
                     }
                     setOpenSelector(null);
                     setAmountIn("");
@@ -525,7 +509,11 @@ export default function SwapSection({
                       : "text-slate-200 hover:bg-slate-800"
                   }`}
                 >
-                  <div className="h-5 w-5 rounded-full bg-slate-700" />
+                  <img
+                    src={t.logo}
+                    alt={t.symbol}
+                    className="h-5 w-5 rounded-full"
+                  />
                   <span>{t.symbol}</span>
                 </button>
               );
