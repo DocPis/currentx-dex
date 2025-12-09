@@ -4,33 +4,82 @@ import { useEffect, useState } from "react";
 import {
   BrowserProvider,
   Contract,
-  parseUnits,
   parseEther,
+  parseUnits,
   formatUnits,
 } from "ethers";
 
 import {
   SEPOLIA_CHAIN_ID_HEX,
   UNISWAP_V2_ROUTER,
-  UNISWAP_V2_FACTORY,
-  WETH_ADDRESS,
-  USDC_ADDRESS,
   UNISWAP_V2_ROUTER_ABI,
+  UNISWAP_V2_FACTORY,
   UNISWAP_V2_FACTORY_ABI,
   UNISWAP_V2_PAIR_ABI,
+  WETH_ADDRESS,
+  USDC_ADDRESS,
   ERC20_ABI,
 } from "../config/uniswapSepolia";
 
-import { TOKENS } from "../config/tokenRegistry";
+import { TOKENS, AVAILABLE_TOKENS } from "../config/tokenRegistry";
+
+/* ---------- HELPERS PATH UNISWAP ---------- */
+
+function addrForPath(symbol) {
+  // ETH usa sempre WETH come wrapped
+  if (symbol === "ETH" || symbol === "WETH") return WETH_ADDRESS;
+  if (symbol === "USDC") return USDC_ADDRESS;
+  if (symbol === "WBTC") return TOKENS.WBTC.address;
+  throw new Error(`Unsupported token symbol in path: ${symbol}`);
+}
+
+function buildPath(tokenIn, tokenOut) {
+  if (tokenIn === tokenOut) {
+    throw new Error("Cannot swap the same token.");
+  }
+
+  const inIsEthish = tokenIn === "ETH" || tokenIn === "WETH";
+  const outIsEthish = tokenOut === "ETH" || tokenOut === "WETH";
+
+  // Pairs dirette
+  if (inIsEthish && tokenOut === "USDC") {
+    return [addrForPath("ETH"), addrForPath("USDC")];
+  }
+  if (tokenIn === "USDC" && outIsEthish) {
+    return [addrForPath("USDC"), addrForPath("ETH")];
+  }
+
+  if (inIsEthish && tokenOut === "WBTC") {
+    return [addrForPath("ETH"), addrForPath("WBTC")];
+  }
+  if (tokenIn === "WBTC" && outIsEthish) {
+    return [addrForPath("WBTC"), addrForPath("ETH")];
+  }
+
+  // USDC <-> WBTC via WETH
+  if (tokenIn === "USDC" && tokenOut === "WBTC") {
+    return [addrForPath("USDC"), addrForPath("ETH"), addrForPath("WBTC")];
+  }
+  if (tokenIn === "WBTC" && tokenOut === "USDC") {
+    return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("USDC")];
+  }
+
+  // fallback generico 2-hop via WETH
+  return [addrForPath(tokenIn), addrForPath("ETH"), addrForPath(tokenOut)];
+}
+
+/* ---------- COMPONENTE PRINCIPALE ---------- */
 
 export default function SwapSection({
   address,
   chainId,
-  ethBalance,
-  usdcBalance,
+  balances,        // { ETH: 0.1, WETH: 1.2, USDC: 14075, WBTC: 0.01, ... }
+  tokenRegistry,   // per estensioni future
   onConnect,
   onRefreshBalances,
 }) {
+  const [sellToken, setSellToken] = useState("ETH");
+  const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
   const [expectedOut, setExpectedOut] = useState(null);
   const [isFetchingQuote, setIsFetchingQuote] = useState(false);
@@ -40,11 +89,10 @@ export default function SwapSection({
   const [minReceived, setMinReceived] = useState(null);
   const [priceImpact, setPriceImpact] = useState(null);
 
-  const [sellTokenSymbol, setSellTokenSymbol] = useState("ETH"); // "ETH" | "USDC"
-  const [openSelector, setOpenSelector] = useState(null); // 'sell' | 'buy' | null
+  const [showTokenModal, setShowTokenModal] = useState(null); // "sell" | "buy" | null
 
   const [swapState, setSwapState] = useState({
-    status: "idle", // idle | pending | done | error
+    status: "idle",
     txHash: null,
     error: null,
   });
@@ -53,9 +101,26 @@ export default function SwapSection({
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
   const canSwap = isConnected && isOnSepolia;
 
-  // token in/out (con logo, address, decimals)
-  const tokenIn = TOKENS[sellTokenSymbol];
-  const tokenOut = sellTokenSymbol === "ETH" ? TOKENS.USDC : TOKENS.ETH;
+  const tokenIn = TOKENS[sellToken];
+  const tokenOut = TOKENS[buyToken];
+
+  /* ---------- BALANCE HELPERS ---------- */
+
+  const getBalanceFor = (symbol) => {
+    if (!balances) return null;
+    const v = balances[symbol];
+    if (typeof v !== "number" || Number.isNaN(v)) return null;
+    return v;
+  };
+
+  const getBalanceLabel = (symbol) => {
+    const bal = getBalanceFor(symbol);
+    if (bal == null) return "—";
+
+    const decimals = TOKENS[symbol]?.decimals ?? 4;
+    const precision = decimals > 6 ? 6 : decimals;
+    return `${bal.toFixed(precision)} ${symbol}`;
+  };
 
   /* ---------- QUOTE + PRICE IMPACT ---------- */
 
@@ -70,7 +135,7 @@ export default function SwapSection({
         return;
       }
 
-      if (typeof window === "undefined" || !window.ethereum) {
+      if (!window.ethereum) {
         setExpectedOut(null);
         setQuoteError("No provider available.");
         setPriceImpact(null);
@@ -92,10 +157,9 @@ export default function SwapSection({
           amountIn,
           tokenIn.decimals || 18
         );
-        const path = [tokenIn.address, tokenOut.address];
+        const path = buildPath(sellToken, buyToken);
 
         const amounts = await router.getAmountsOut(amountInUnits, path);
-
         if (cancelled) return;
 
         if (!amounts || amounts.length < 2) {
@@ -105,93 +169,93 @@ export default function SwapSection({
           return;
         }
 
-        const out = amounts[1];
+        const out = amounts[amounts.length - 1];
         setExpectedOut(out);
 
-        // Price impact: usiamo i reserves della pool WETH/USDC
-        try {
-          const factory = new Contract(
-            UNISWAP_V2_FACTORY,
-            UNISWAP_V2_FACTORY_ABI,
-            provider
-          );
-          const pairAddress = await factory.getPair(
-            WETH_ADDRESS,
-            USDC_ADDRESS
-          );
+        // Price impact solo per path dirette (2 token)
+        if (path.length === 2) {
+          try {
+            const provider = new BrowserProvider(window.ethereum);
+            const factory = new Contract(
+              UNISWAP_V2_FACTORY,
+              UNISWAP_V2_FACTORY_ABI,
+              provider
+            );
 
-          if (
-            !pairAddress ||
-            pairAddress === "0x0000000000000000000000000000000000000000"
-          ) {
+            const pairAddress = await factory.getPair(path[0], path[1]);
+            if (
+              !pairAddress ||
+              pairAddress === "0x0000000000000000000000000000000000000000"
+            ) {
+              setPriceImpact(null);
+            } else {
+              const pair = new Contract(
+                pairAddress,
+                UNISWAP_V2_PAIR_ABI,
+                provider
+              );
+              const token0 = (await pair.token0()).toLowerCase();
+              const token1 = (await pair.token1()).toLowerCase();
+              const [reserve0, reserve1] = await pair.getReserves();
+
+              const addrInLower = path[0].toLowerCase();
+              const addrOutLower = path[1].toLowerCase();
+
+              let reserveInRaw;
+              let reserveOutRaw;
+
+              if (token0 === addrInLower && token1 === addrOutLower) {
+                reserveInRaw = reserve0;
+                reserveOutRaw = reserve1;
+              } else if (
+                token0 === addrOutLower &&
+                token1 === addrInLower
+              ) {
+                reserveInRaw = reserve1;
+                reserveOutRaw = reserve0;
+              } else {
+                setPriceImpact(null);
+                return;
+              }
+
+              const reserveInNum =
+                Number(reserveInRaw) /
+                Math.pow(10, tokenIn.decimals || 18);
+              const reserveOutNum =
+                Number(reserveOutRaw) /
+                Math.pow(10, tokenOut.decimals || 18);
+
+              if (reserveInNum <= 0 || reserveOutNum <= 0) {
+                setPriceImpact(null);
+                return;
+              }
+
+              const midPrice = reserveOutNum / reserveInNum;
+              const execPrice =
+                (Number(out) /
+                  Math.pow(10, tokenOut.decimals || 18)) /
+                (Number(amountInUnits) /
+                  Math.pow(10, tokenIn.decimals || 18));
+
+              if (midPrice <= 0 || execPrice <= 0) {
+                setPriceImpact(null);
+                return;
+              }
+
+              let impact = ((midPrice - execPrice) / midPrice) * 100;
+              if (!Number.isFinite(impact)) {
+                setPriceImpact(null);
+                return;
+              }
+              if (impact < 0) impact = 0;
+
+              setPriceImpact(impact.toFixed(2));
+            }
+          } catch (e) {
+            console.warn("Price impact calc error:", e);
             setPriceImpact(null);
-            return;
           }
-
-          const pair = new Contract(
-            pairAddress,
-            UNISWAP_V2_PAIR_ABI,
-            provider
-          );
-
-          const token0 = (await pair.token0()).toLowerCase();
-          const token1 = (await pair.token1()).toLowerCase();
-          const [reserve0, reserve1] = await pair.getReserves();
-
-          const tokenInLower = tokenIn.address.toLowerCase();
-          const tokenOutLower = tokenOut.address.toLowerCase();
-
-          let reserveInRaw;
-          let reserveOutRaw;
-
-          if (token0 === tokenInLower && token1 === tokenOutLower) {
-            reserveInRaw = reserve0;
-            reserveOutRaw = reserve1;
-          } else if (token0 === tokenOutLower && token1 === tokenInLower) {
-            reserveInRaw = reserve1;
-            reserveOutRaw = reserve0;
-          } else {
-            setPriceImpact(null);
-            return;
-          }
-
-          if (!reserveInRaw || !reserveOutRaw) {
-            setPriceImpact(null);
-            return;
-          }
-
-          const reserveInNum =
-            Number(reserveInRaw) / Math.pow(10, tokenIn.decimals || 18);
-          const reserveOutNum =
-            Number(reserveOutRaw) / Math.pow(10, tokenOut.decimals || 18);
-
-          if (reserveInNum <= 0 || reserveOutNum <= 0) {
-            setPriceImpact(null);
-            return;
-          }
-
-          const midPriceNum = reserveOutNum / reserveInNum;
-
-          const execPriceNum =
-            Number(out) / Math.pow(10, tokenOut.decimals || 18) /
-            (Number(amountInUnits) /
-              Math.pow(10, tokenIn.decimals || 18));
-
-          if (midPriceNum <= 0 || execPriceNum <= 0) {
-            setPriceImpact(null);
-            return;
-          }
-
-          let impact = ((midPriceNum - execPriceNum) / midPriceNum) * 100;
-          if (!Number.isFinite(impact)) {
-            setPriceImpact(null);
-            return;
-          }
-          if (impact < 0) impact = 0;
-
-          setPriceImpact(impact.toFixed(2));
-        } catch (e) {
-          console.warn("Price impact calculation error:", e);
+        } else {
           setPriceImpact(null);
         }
       } catch (err) {
@@ -207,17 +271,10 @@ export default function SwapSection({
     }
 
     fetchQuote();
-
     return () => {
       cancelled = true;
     };
-  }, [
-    amountIn,
-    tokenIn.address,
-    tokenOut.address,
-    tokenIn.decimals,
-    tokenOut.decimals,
-  ]);
+  }, [amountIn, sellToken, buyToken, tokenIn.decimals, tokenOut.decimals]);
 
   /* ---------- MINIMUM RECEIVED ---------- */
 
@@ -251,6 +308,17 @@ export default function SwapSection({
     }
   };
 
+  const handleQuickAmount = (fraction) => {
+    const bal = getBalanceFor(sellToken);
+    if (bal == null) return;
+
+    const decimals = TOKENS[sellToken]?.decimals ?? 4;
+    const precision = decimals > 6 ? 6 : decimals;
+
+    const value = bal * fraction;
+    setAmountIn(value.toFixed(precision));
+  };
+
   const handleSwapClick = async () => {
     if (!isConnected || !isOnSepolia) {
       onConnect();
@@ -274,33 +342,12 @@ export default function SwapSection({
 
     const slippageBps = Math.round(s * 100);
     const bpsDenominator = 10000n;
-
     const minAmountOut =
       (expectedOut * BigInt(10000 - slippageBps)) / bpsDenominator;
 
     await handleSwap(amountIn, minAmountOut.toString());
   };
 
-  // quick % buttons (ETH o USDC)
-  const handleQuickAmount = (fraction) => {
-    let balance = null;
-    let decimals = 4;
-
-    if (tokenIn.symbol === "ETH") {
-      balance = ethBalance;
-      decimals = 4;
-    } else if (tokenIn.symbol === "USDC") {
-      balance = usdcBalance;
-      decimals = 2;
-    }
-
-    if (balance != null) {
-      const value = balance * fraction;
-      setAmountIn(value.toFixed(decimals));
-    }
-  };
-
-  // core swap logic
   async function handleSwap(amountInStr, minAmountOutStr) {
     if (!window.ethereum) {
       alert("No wallet detected");
@@ -328,15 +375,25 @@ export default function SwapSection({
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 10; // 10 min
 
+      const tokenIn = TOKENS[sellToken];
+      const tokenOut = TOKENS[buyToken];
+
+      const isNativeIn = sellToken === "ETH";
+      const isNativeOut = buyToken === "ETH";
+
+      if (isNativeIn && isNativeOut) {
+        throw new Error("Cannot swap ETH to ETH.");
+      }
+
       setSwapState({ status: "pending", txHash: null, error: null });
+
+      const path = buildPath(sellToken, buyToken);
 
       let tx;
 
-      // ETH -> USDC
-      if (tokenIn.symbol === "ETH" && tokenOut.symbol === "USDC") {
+      if (isNativeIn) {
+        // ETH -> ERC20
         const value = parseEther(amountInStr);
-        const path = [WETH_ADDRESS, USDC_ADDRESS];
-
         tx = await router.swapExactETHForTokens(
           minAmountOutStr || 0,
           path,
@@ -344,33 +401,49 @@ export default function SwapSection({
           deadline,
           { value }
         );
-      }
-      // USDC -> ETH
-      else if (tokenIn.symbol === "USDC" && tokenOut.symbol === "ETH") {
-        const usdcDecimals = TOKENS.USDC.decimals || 18;
-        const amountInUnits = parseUnits(amountInStr, usdcDecimals);
-        const path = [USDC_ADDRESS, WETH_ADDRESS];
+      } else {
+        // ERC20 -> ...
+        const amountInUnits = parseUnits(
+          amountInStr,
+          tokenIn.decimals || 18
+        );
 
-        const usdc = new Contract(USDC_ADDRESS, ERC20_ABI, signer);
-        const allowance = await usdc.allowance(address, UNISWAP_V2_ROUTER);
-
+        const tokenContract = new Contract(
+          tokenIn.address,
+          ERC20_ABI,
+          signer
+        );
+        const allowance = await tokenContract.allowance(
+          address,
+          UNISWAP_V2_ROUTER
+        );
         if (allowance < amountInUnits) {
-          const approveTx = await usdc.approve(
+          const approveTx = await tokenContract.approve(
             UNISWAP_V2_ROUTER,
             amountInUnits
           );
           await approveTx.wait();
         }
 
-        tx = await router.swapExactTokensForETH(
-          amountInUnits,
-          minAmountOutStr || 0,
-          path,
-          address,
-          deadline
-        );
-      } else {
-        throw new Error("Unsupported pair (only ETH/USDC on Sepolia).");
+        if (isNativeOut) {
+          // ERC20 -> ETH
+          tx = await router.swapExactTokensForETH(
+            amountInUnits,
+            minAmountOutStr || 0,
+            path,
+            address,
+            deadline
+          );
+        } else {
+          // ERC20 -> ERC20
+          tx = await router.swapExactTokensForTokens(
+            amountInUnits,
+            minAmountOutStr || 0,
+            path,
+            address,
+            deadline
+          );
+        }
       }
 
       setSwapState((prev) => ({
@@ -445,60 +518,55 @@ export default function SwapSection({
     }
   }
 
-  /* ---------- BALANCES LABEL ---------- */
-
-  const getBalanceLabel = (token) => {
-    if (token.symbol === "ETH") {
-      return ethBalance != null ? `${ethBalance.toFixed(4)} ETH` : "—";
-    }
-    if (token.symbol === "USDC") {
-      return usdcBalance != null ? `${usdcBalance.toFixed(2)} USDC` : "—";
-    }
-    return "—";
-  };
-
-  /* ---------- TOKEN SELECTOR (con logo) ---------- */
+  /* ---------- TOKEN SELECTOR (dropdown) ---------- */
 
   const renderTokenSelector = (side) => {
-    const isSell = side === "sell";
-    const token = isSell ? tokenIn : tokenOut;
+    const currentSymbol = side === "sell" ? sellToken : buyToken;
+    const token = TOKENS[currentSymbol];
 
     return (
       <div className="relative">
         <button
           type="button"
           onClick={() =>
-            setOpenSelector(openSelector === side ? null : side)
+            setShowTokenModal(showTokenModal === side ? null : side)
           }
           className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700"
         >
-          <img
-            src={token.logo}
-            alt={token.symbol}
-            className="h-5 w-5 rounded-full"
-          />
+          {token.logo && (
+            <img
+              src={token.logo}
+              alt={token.symbol}
+              className="h-5 w-5 rounded-full"
+            />
+          )}
           <span>{token.symbol}</span>
           <span className="text-[10px] text-slate-400">▼</span>
         </button>
 
-        {openSelector === side && (
-          <div className="absolute left-0 mt-1 w-36 rounded-xl border border-slate-700 bg-slate-900 shadow-xl z-20">
-            {Object.values(TOKENS).map((t) => {
-              const isSelected = t.symbol === token.symbol;
+        {showTokenModal === side && (
+          <div className="absolute left-0 mt-1 w-40 rounded-xl border border-slate-700 bg-slate-900 shadow-xl z-20">
+            {AVAILABLE_TOKENS.map((sym) => {
+              const t = TOKENS[sym];
+              const isSelected = sym === currentSymbol;
               return (
                 <button
-                  key={t.symbol}
+                  key={sym}
                   type="button"
                   disabled={isSelected}
                   onClick={() => {
-                    if (isSell) {
-                      setSellTokenSymbol(t.symbol);
+                    if (side === "sell") {
+                      setSellToken(sym);
+                      if (sym === buyToken) {
+                        setBuyToken(sellToken);
+                      }
                     } else {
-                      setSellTokenSymbol(
-                        t.symbol === "ETH" ? "USDC" : "ETH"
-                      );
+                      setBuyToken(sym);
+                      if (sym === sellToken) {
+                        setSellToken(buyToken);
+                      }
                     }
-                    setOpenSelector(null);
+                    setShowTokenModal(null);
                     setAmountIn("");
                     setExpectedOut(null);
                     setPriceImpact(null);
@@ -509,12 +577,14 @@ export default function SwapSection({
                       : "text-slate-200 hover:bg-slate-800"
                   }`}
                 >
-                  <img
-                    src={t.logo}
-                    alt={t.symbol}
-                    className="h-5 w-5 rounded-full"
-                  />
-                  <span>{t.symbol}</span>
+                  {t.logo && (
+                    <img
+                      src={t.logo}
+                      alt={sym}
+                      className="h-5 w-5 rounded-full"
+                    />
+                  )}
+                  <span>{sym}</span>
                 </button>
               );
             })}
@@ -524,7 +594,7 @@ export default function SwapSection({
     );
   };
 
-  /* ---------- UI STILE AERODROME ---------- */
+  /* ---------- UI ---------- */
 
   return (
     <div className="max-w-xl mx-auto space-y-4">
@@ -543,13 +613,13 @@ export default function SwapSection({
         </div>
       )}
 
-      {/* main swap card */}
+      {/* swap card */}
       <div className="rounded-3xl border border-slate-800 bg-slate-950/95 px-5 py-6 shadow-2xl shadow-black/70">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-slate-50">Swap</h2>
             <p className="text-[11px] text-slate-500">
-              Swap between ETH and USDC on Sepolia.
+              Swap between tokens on Sepolia using Uniswap V2.
             </p>
           </div>
           <div className="rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-300">
@@ -557,14 +627,14 @@ export default function SwapSection({
           </div>
         </div>
 
-        {/* SELL box */}
+        {/* SELL */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
             <span>Sell</span>
             <span>
               Balance:{" "}
               <span className="text-slate-200">
-                {getBalanceLabel(tokenIn)}
+                {getBalanceLabel(sellToken)}
               </span>
             </span>
           </div>
@@ -574,7 +644,7 @@ export default function SwapSection({
               <input
                 type="number"
                 min="0"
-                step={tokenIn.symbol === "ETH" ? "0.0001" : "0.01"}
+                step={sellToken === "ETH" ? "0.0001" : "0.01"}
                 value={amountIn}
                 onChange={(e) => setAmountIn(e.target.value)}
                 placeholder="0.00"
@@ -607,31 +677,33 @@ export default function SwapSection({
           </div>
         </div>
 
-        {/* arrow to flip tokens */}
+        {/* FLIP */}
         <div className="my-3 flex justify-center">
           <button
             type="button"
             onClick={() => {
-              const other = sellTokenSymbol === "ETH" ? "USDC" : "ETH";
-              setSellTokenSymbol(other);
+              const prevSell = sellToken;
+              const prevBuy = buyToken;
+              setSellToken(prevBuy);
+              setBuyToken(prevSell);
               setAmountIn("");
               setExpectedOut(null);
               setPriceImpact(null);
             }}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-slate-300 shadow-lg shadow-black/40 hover:bg-slate-850"
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-slate-300 shadow-lg shadow-black/40 hover:bg-slate-800"
           >
             ↓
           </button>
         </div>
 
-        {/* BUY box */}
+        {/* BUY */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
             <span>Buy</span>
             <span>
               Balance:{" "}
               <span className="text-slate-200">
-                {getBalanceLabel(tokenOut)}
+                {getBalanceLabel(buyToken)}
               </span>
             </span>
           </div>
@@ -656,7 +728,7 @@ export default function SwapSection({
           </div>
         </div>
 
-        {/* big swap button */}
+        {/* BUTTON */}
         <button
           onClick={handleSwapClick}
           disabled={swapState.status === "pending"}
@@ -676,7 +748,7 @@ export default function SwapSection({
         </button>
       </div>
 
-      {/* trade details */}
+      {/* TRADE DETAILS */}
       <div className="rounded-2xl border border-slate-800 bg-slate-950/90 px-4 py-3 text-[11px] text-slate-400">
         <div className="mb-2 flex items-center justify-between">
           <span className="text-slate-200">Trade details</span>
@@ -736,7 +808,7 @@ export default function SwapSection({
         </div>
       </div>
 
-      {/* tx status */}
+      {/* STATUS */}
       {swapState.txHash && (
         <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-100">
           Swap broadcasted. Tx hash:{" "}

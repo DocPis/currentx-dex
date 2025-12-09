@@ -13,17 +13,19 @@ export default function Header({ address, chainId, onConnect, connecting }) {
     <header className="flex items-center justify-between gap-4 pb-4 border-b border-slate-800/60">
       {/* BRAND */}
       <div className="flex items-center gap-3">
-        <img
-          src={currentXLogo}
-          alt="CurrentX Logo"
-          className="h-12 w-12 object-contain"
-        />
+        <div className="flex items-center justify-center">
+          <img
+            src={currentXLogo}
+            alt="CurrentX Logo"
+            className="h-12 w-12 -translate-y-[1px] object-contain"
+          />
+        </div>
 
-        <div className="flex flex-col justify-center">
-          <div className="text-xl font-semibold text-slate-50">
+        <div className="flex flex-col justify-center translate-y-[1px]">
+          <div className="text-2xl font-semibold text-slate-50 leading-none">
             CurrentX
           </div>
-          <div className="text-[11px] text-slate-400">
+          <div className="mt-1 text-[11px] text-slate-400 leading-none">
             The new current of decentralized trading.
           </div>
         </div>
