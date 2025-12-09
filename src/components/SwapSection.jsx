@@ -30,6 +30,7 @@ function addrForPath(symbol) {
   // ETH usa sempre WETH come wrapped
   if (symbol === "ETH" || symbol === "WETH") return WETH_ADDRESS;
   if (symbol === "USDC") return USDC_ADDRESS;
+  if (symbol === "DAI") return TOKENS.DAI.address;
   if (symbol === "WBTC") return TOKENS.WBTC.address;
   throw new Error(`Unsupported token symbol in path: ${symbol}`);
 }
@@ -42,7 +43,7 @@ function buildPath(tokenIn, tokenOut) {
   const inIsEthish = tokenIn === "ETH" || tokenIn === "WETH";
   const outIsEthish = tokenOut === "ETH" || tokenOut === "WETH";
 
-  // Pairs dirette
+  // ETH/WETH <-> USDC
   if (inIsEthish && tokenOut === "USDC") {
     return [addrForPath("ETH"), addrForPath("USDC")];
   }
@@ -50,6 +51,15 @@ function buildPath(tokenIn, tokenOut) {
     return [addrForPath("USDC"), addrForPath("ETH")];
   }
 
+  // ETH/WETH <-> DAI
+  if (inIsEthish && tokenOut === "DAI") {
+    return [addrForPath("ETH"), addrForPath("DAI")];
+  }
+  if (tokenIn === "DAI" && outIsEthish) {
+    return [addrForPath("DAI"), addrForPath("ETH")];
+  }
+
+  // ETH/WETH <-> WBTC
   if (inIsEthish && tokenOut === "WBTC") {
     return [addrForPath("ETH"), addrForPath("WBTC")];
   }
@@ -65,6 +75,22 @@ function buildPath(tokenIn, tokenOut) {
     return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("USDC")];
   }
 
+  // DAI <-> USDC via WETH
+  if (tokenIn === "DAI" && tokenOut === "USDC") {
+    return [addrForPath("DAI"), addrForPath("ETH"), addrForPath("USDC")];
+  }
+  if (tokenIn === "USDC" && tokenOut === "DAI") {
+    return [addrForPath("USDC"), addrForPath("ETH"), addrForPath("DAI")];
+  }
+
+  // DAI <-> WBTC via WETH
+  if (tokenIn === "DAI" && tokenOut === "WBTC") {
+    return [addrForPath("DAI"), addrForPath("ETH"), addrForPath("WBTC")];
+  }
+  if (tokenIn === "WBTC" && tokenOut === "DAI") {
+    return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("DAI")];
+  }
+
   // fallback generico 2-hop via WETH
   return [addrForPath(tokenIn), addrForPath("ETH"), addrForPath(tokenOut)];
 }
@@ -74,7 +100,7 @@ function buildPath(tokenIn, tokenOut) {
 export default function SwapSection({
   address,
   chainId,
-  balances,        // { ETH, WETH, USDC, WBTC, ... }
+  balances,        // { ETH, WETH, USDC, DAI, WBTC, ... }
   tokenRegistry,   // per estensioni future
   onConnect,
   onRefreshBalances,
@@ -382,7 +408,13 @@ export default function SwapSection({
     }
 
     if (!expectedOut) {
-      alert("Enter an amount and wait for the quote first.");
+      if (quoteError) {
+        alert(
+          "This pair has no available route on Sepolia (no liquidity/pool)."
+        );
+      } else {
+        alert("Enter an amount and wait for the quote first.");
+      }
       return;
     }
 
