@@ -1,11 +1,28 @@
 // src/sections/LiquiditySection.jsx
 import React from "react";
 
+// 🔹 Usa gli stessi file che già usi nello swap (cambia estensione/nome se serve)
+import ethLogo from "../assets/tokens/eth.png";
+import wethLogo from "../assets/tokens/weth.png";
+import usdcLogo from "../assets/tokens/usdc.png";
+import daiLogo from "../assets/tokens/dai.png";
+import wbtcLogo from "../assets/tokens/wbtc.png";
+
+// Mappa symbol -> logo (tutto MAIUSCOLO)
+const TOKEN_ICONS = {
+  ETH: ethLogo,
+  WETH: wethLogo,
+  USDC: usdcLogo,
+  DAI: daiLogo,
+  WBTC: wbtcLogo,
+  // CXT lo lasciamo senza logo per ora
+};
+
 const POOLS = [
   {
     id: 1,
     pair: "CXT / WETH",
-    tokens: ["CXT", "WETH"],   // CXT non avrà il logo, è ok
+    tokens: ["CXT", "WETH"],
     type: "Volatile 0.3%",
     tags: ["Core", "Listed"],
     volume: "$26.5K",
@@ -39,37 +56,7 @@ const POOLS = [
 
 const FILTERS = ["All", "Core", "Bluechip", "Experimental"];
 
-/**
- * Prova a recuperare il logo di un token in modo robusto,
- * indipendentemente da come è strutturato il registry.
- */
-function getTokenLogo(tokenRegistry, symbol) {
-  if (!tokenRegistry || !symbol) return null;
-
-  // 1) tokenRegistry["USDC"]?.logo
-  if (tokenRegistry[symbol]?.logo) return tokenRegistry[symbol].logo;
-
-  // 2) tokenRegistry.bySymbol["USDC"]?.logo
-  if (tokenRegistry.bySymbol?.[symbol]?.logo)
-    return tokenRegistry.bySymbol[symbol].logo;
-
-  // 3) tokenRegistry.tokens array – usato da molte config Uniswap
-  if (Array.isArray(tokenRegistry.tokens)) {
-    const t = tokenRegistry.tokens.find(
-      (tok) =>
-        tok.symbol === symbol ||
-        tok.symbol === symbol.toUpperCase() ||
-        tok.symbol === symbol.toLowerCase()
-    );
-
-    if (t?.logoURI) return t.logoURI;
-    if (t?.logo) return t.logo;
-  }
-
-  return null;
-}
-
-export default function LiquiditySection({ tokenRegistry }) {
+export default function LiquiditySection() {
   const [activeFilter, setActiveFilter] = React.useState("All");
   const [search, setSearch] = React.useState("");
 
@@ -124,7 +111,7 @@ export default function LiquiditySection({ tokenRegistry }) {
             </div>
           </div>
 
-          {/* Right: hero image / banner */}
+          {/* Right: hero banner */}
           <div className="relative overflow-hidden rounded-2xl lg:rounded-3xl border border-white/5 bg-gradient-to-br from-sky-500/20 via-purple-500/10 to-slate-900 shadow-[0_18px_60px_rgba(0,0,0,0.55)]">
             <div className="absolute inset-0">
               <div className="absolute -inset-20 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.35),_transparent_60%),_radial-gradient(circle_at_bottom,_rgba(129,140,248,0.45),_transparent_55%)] opacity-80" />
@@ -221,12 +208,7 @@ export default function LiquiditySection({ tokenRegistry }) {
           )}
 
           {filteredPools.map((pool, idx) => (
-            <PoolRow
-              key={pool.id}
-              pool={pool}
-              isOdd={idx % 2 === 1}
-              tokenRegistry={tokenRegistry}
-            />
+            <PoolRow key={pool.id} pool={pool} isOdd={idx % 2 === 1} />
           ))}
         </div>
       </div>
@@ -250,7 +232,7 @@ function StatCard({ label, value, hint }) {
   );
 }
 
-function PoolRow({ pool, isOdd, tokenRegistry }) {
+function PoolRow({ pool, isOdd }) {
   const tokens = pool.tokens || [];
 
   return (
@@ -264,7 +246,7 @@ function PoolRow({ pool, isOdd, tokenRegistry }) {
           {/* Token icons */}
           <div className="flex -space-x-1.5">
             {tokens.slice(0, 2).map((symbol) => {
-              const logo = getTokenLogo(tokenRegistry, symbol);
+              const logo = TOKEN_ICONS[symbol.toUpperCase()];
 
               if (logo) {
                 return (
@@ -277,7 +259,7 @@ function PoolRow({ pool, isOdd, tokenRegistry }) {
                 );
               }
 
-              // fallback se non troviamo il logo (es. CXT per ora)
+              // fallback (es. CXT per ora)
               return (
                 <span
                   key={symbol}
