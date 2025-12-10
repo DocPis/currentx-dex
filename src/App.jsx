@@ -146,7 +146,9 @@ export default function App() {
         onRefreshBalances={() => refreshBalances(address)}
       />
     );
-  if (tab === "liquidity") content = <LiquiditySection />;
+  if (tab === "liquidity")
+  content = <LiquiditySection tokenRegistry={tokenRegistry} />;
+
 
   /* ----------------------------------------------------
      RENDER
