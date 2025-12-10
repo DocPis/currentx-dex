@@ -4,7 +4,7 @@ import TokenPairIcons from "./TokenPairIcons.jsx";
 import PoolStats from "./PoolStats.jsx";
 import PoolActions from "./PoolActions.jsx";
 
-export default function PoolRow({ pool, isOdd }) {
+export default function PoolRow({ pool, isOdd, onDepositPool }) {
   const icons = pool.tokens?.slice(0, 2) || [];
 
   const volumeText =
@@ -20,6 +20,11 @@ export default function PoolRow({ pool, isOdd }) {
   const detailsUrl = pool.pairAddress
     ? `https://sepolia.etherscan.io/address/${pool.pairAddress}`
     : null;
+
+  // callback che aprirà il modal
+  const handleDepositClick = () => {
+    if (onDepositPool) onDepositPool(pool);
+  };
 
   return (
     <div
@@ -68,7 +73,7 @@ export default function PoolRow({ pool, isOdd }) {
         )}
       </div>
 
-      {/* MIDDLE: stats (volume, fees, tvl, apr) */}
+      {/* MIDDLE: stats */}
       <PoolStats
         volumeText={volumeText}
         feesText={feesText}
@@ -80,6 +85,7 @@ export default function PoolRow({ pool, isOdd }) {
       <PoolActions
         hasOnChainPool={pool.hasOnChainPool}
         detailsUrl={detailsUrl}
+        onDeposit={handleDepositClick}
       />
     </div>
   );

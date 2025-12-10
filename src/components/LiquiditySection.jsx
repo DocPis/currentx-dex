@@ -1,14 +1,17 @@
 // src/components/LiquiditySection.jsx
 
+import { useState } from "react";
+
 import LiquidityHeaderCard from "./liquidity/LiquidityHeaderCard";
 import LiquidityHeroBanner from "./liquidity/LiquidityHeroBanner";
 import LiquidityFilters from "./liquidity/LiquidityFilters";
 import PoolsTable from "./liquidity/PoolsTable";
+import AddLiquidityModal from "./liquidity/AddLiquidityModal";
 
 import { usePoolsFilter } from "../hooks/usePoolsFilter";
 import { usePoolsOnChain } from "../hooks/usePoolsOnChain";
 
-// Definizione base delle pool (UI + info statiche tipo APR, tags)
+// Config “base” delle pool: nomi, tag, APR “di marketing”
 const BASE_POOLS = [
   {
     id: 1,
@@ -37,12 +40,14 @@ const BASE_POOLS = [
 ];
 
 export default function LiquiditySection({ address, chainId }) {
+  // Dati on-chain (TVL, volume 24h, fees 24h, posizione LP, ecc.)
   const { pools: onChainPools, loading, error } = usePoolsOnChain(
     BASE_POOLS,
     address,
     chainId
   );
 
+  // Filtri / search / sort lato UI
   const {
     activeFilter,
     setActiveFilter,
@@ -53,16 +58,31 @@ export default function LiquiditySection({ address, chainId }) {
     filtered,
   } = usePoolsFilter(onChainPools);
 
+  // Stato per il modal “Add liquidity”
+  const [selectedPool, setSelectedPool] = useState(null);
+  const [showDeposit, setShowDeposit] = useState(false);
+
+  const handleOpenDeposit = (pool) => {
+    if (!pool) return;
+    setSelectedPool(pool);
+    setShowDeposit(true);
+  };
+
+  const handleCloseDeposit = () => {
+    setShowDeposit(false);
+    setSelectedPool(null);
+  };
+
   return (
     <section className="w-full px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
       <div className="max-w-6xl mx-auto space-y-6 lg:space-y-8">
-        {/* Header + banner */}
+        {/* Header + banner tipo Aerodrome */}
         <div className="grid gap-4 lg:gap-6 lg:grid-cols-[2fr,1.3fr] items-stretch">
           <LiquidityHeaderCard />
           <LiquidityHeroBanner />
         </div>
 
-        {/* Filters */}
+        {/* Filtri + search + sort */}
         <LiquidityFilters
           activeFilter={activeFilter}
           setActiveFilter={setActiveFilter}
@@ -72,16 +92,31 @@ export default function LiquiditySection({ address, chainId }) {
           setSort={setSort}
         />
 
-        {/* Error banner se qualcosa va storto */}
+        {/* Eventuale errore nel fetch on-chain */}
         {error && (
           <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-[11px] text-amber-100">
             Failed to load on-chain pool data: {error}
           </div>
         )}
 
-        {/* Pools table con TVL + volume/fees + "My position" */}
-        <PoolsTable pools={filtered} loading={loading} />
+        {/* Tabella pools con TVL/fees/volume e pulsante Deposit */}
+        <PoolsTable
+          pools={filtered}
+          loading={loading}
+          onDepositPool={handleOpenDeposit}
+        />
       </div>
+
+      {/* Modal Add liquidity */}
+      {showDeposit && selectedPool && (
+        <AddLiquidityModal
+          isOpen={showDeposit}
+          onClose={handleCloseDeposit}
+          pool={selectedPool}
+          address={address}
+          chainId={chainId}
+        />
+      )}
     </section>
   );
 }
