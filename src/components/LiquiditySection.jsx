@@ -5,7 +5,7 @@ const POOLS = [
   {
     id: 1,
     pair: "CXT / WETH",
-    tokens: ["CXT", "WETH"],
+    tokens: ["CXT", "WETH"],   // CXT non avrà il logo, è ok
     type: "Volatile 0.3%",
     tags: ["Core", "Listed"],
     volume: "$26.5K",
@@ -38,6 +38,36 @@ const POOLS = [
 ];
 
 const FILTERS = ["All", "Core", "Bluechip", "Experimental"];
+
+/**
+ * Prova a recuperare il logo di un token in modo robusto,
+ * indipendentemente da come è strutturato il registry.
+ */
+function getTokenLogo(tokenRegistry, symbol) {
+  if (!tokenRegistry || !symbol) return null;
+
+  // 1) tokenRegistry["USDC"]?.logo
+  if (tokenRegistry[symbol]?.logo) return tokenRegistry[symbol].logo;
+
+  // 2) tokenRegistry.bySymbol["USDC"]?.logo
+  if (tokenRegistry.bySymbol?.[symbol]?.logo)
+    return tokenRegistry.bySymbol[symbol].logo;
+
+  // 3) tokenRegistry.tokens array – usato da molte config Uniswap
+  if (Array.isArray(tokenRegistry.tokens)) {
+    const t = tokenRegistry.tokens.find(
+      (tok) =>
+        tok.symbol === symbol ||
+        tok.symbol === symbol.toUpperCase() ||
+        tok.symbol === symbol.toLowerCase()
+    );
+
+    if (t?.logoURI) return t.logoURI;
+    if (t?.logo) return t.logo;
+  }
+
+  return null;
+}
 
 export default function LiquiditySection({ tokenRegistry }) {
   const [activeFilter, setActiveFilter] = React.useState("All");
@@ -234,7 +264,8 @@ function PoolRow({ pool, isOdd, tokenRegistry }) {
           {/* Token icons */}
           <div className="flex -space-x-1.5">
             {tokens.slice(0, 2).map((symbol) => {
-              const logo = tokenRegistry?.[symbol]?.logo;
+              const logo = getTokenLogo(tokenRegistry, symbol);
+
               if (logo) {
                 return (
                   <img
@@ -245,7 +276,8 @@ function PoolRow({ pool, isOdd, tokenRegistry }) {
                   />
                 );
               }
-              // fallback gradient circle se manca il logo
+
+              // fallback se non troviamo il logo (es. CXT per ora)
               return (
                 <span
                   key={symbol}
