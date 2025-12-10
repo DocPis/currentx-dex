@@ -6,22 +6,17 @@ import LiquidityFilters from "./liquidity/LiquidityFilters";
 import PoolsTable from "./liquidity/PoolsTable";
 
 import { usePoolsFilter } from "../hooks/usePoolsFilter";
+import { usePoolsOnChain } from "../hooks/usePoolsOnChain";
 
-// Mock pools (per ora statiche)
-const POOLS = [
+// Definizione base delle pool (UI + info statiche tipo APR, tags)
+const BASE_POOLS = [
   {
     id: 1,
     pair: "CXT / WETH",
     tokens: ["CXT", "WETH"],
     type: "Volatile 0.3%",
     tags: ["Core", "Listed"],
-    volume: "$26.5K",
-    fees: "$790.12",
-    tvl: "$39.2K",
     apr: "23.4%",
-    volumeNum: 26500,
-    tvlNum: 39200,
-    aprNum: 23.4,
   },
   {
     id: 2,
@@ -29,13 +24,7 @@ const POOLS = [
     tokens: ["WETH", "USDC"],
     type: "Stable 0.01%",
     tags: ["Bluechip"],
-    volume: "$519.1K",
-    fees: "$1.2K",
-    tvl: "$30.6K",
     apr: "18.7%",
-    volumeNum: 519100,
-    tvlNum: 30600,
-    aprNum: 18.7,
   },
   {
     id: 3,
@@ -43,17 +32,17 @@ const POOLS = [
     tokens: ["CXT", "USDC"],
     type: "Volatile 1%",
     tags: ["Experimental"],
-    volume: "$79.2K",
-    fees: "$274.8",
-    tvl: "$22.6K",
     apr: "32.1%",
-    volumeNum: 79200,
-    tvlNum: 22600,
-    aprNum: 32.1,
   },
 ];
 
-export default function LiquiditySection() {
+export default function LiquiditySection({ address, chainId }) {
+  const { pools: onChainPools, loading, error } = usePoolsOnChain(
+    BASE_POOLS,
+    address,
+    chainId
+  );
+
   const {
     activeFilter,
     setActiveFilter,
@@ -62,12 +51,12 @@ export default function LiquiditySection() {
     sort,
     setSort,
     filtered,
-  } = usePoolsFilter(POOLS);
+  } = usePoolsFilter(onChainPools);
 
   return (
     <section className="w-full px-4 sm:px-6 lg:px-10 py-6 lg:py-8">
       <div className="max-w-6xl mx-auto space-y-6 lg:space-y-8">
-        {/* Header + hero banner */}
+        {/* Header + banner */}
         <div className="grid gap-4 lg:gap-6 lg:grid-cols-[2fr,1.3fr] items-stretch">
           <LiquidityHeaderCard />
           <LiquidityHeroBanner />
@@ -83,8 +72,15 @@ export default function LiquiditySection() {
           setSort={setSort}
         />
 
-        {/* Pools table */}
-        <PoolsTable pools={filtered} />
+        {/* Error banner se qualcosa va storto */}
+        {error && (
+          <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-[11px] text-amber-100">
+            Failed to load on-chain pool data: {error}
+          </div>
+        )}
+
+        {/* Pools table con TVL + volume/fees + "My position" */}
+        <PoolsTable pools={filtered} loading={loading} />
       </div>
     </section>
   );

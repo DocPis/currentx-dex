@@ -7,8 +7,7 @@ import Header from "./components/Header";
 import Tabs from "./components/Tabs";
 import SwapSection from "./components/SwapSection";
 import DashboardSection from "./components/DashboardSection";
-// Usa SOLO questa import per la nuova UI liquidity:
-import LiquiditySection from "./sections/LiquiditySection";
+import LiquiditySection from "./components/LiquiditySection";
 
 import {
   SEPOLIA_CHAIN_ID_HEX,
@@ -124,7 +123,10 @@ export default function App() {
 
     return () => {
       if (!window.ethereum) return;
-      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+      window.ethereum.removeListener(
+        "accountsChanged",
+        handleAccountsChanged
+      );
       window.ethereum.removeListener("chainChanged", handleChainChanged);
     };
   }, []);
@@ -135,6 +137,7 @@ export default function App() {
 
   let content;
   if (tab === "dashboard") content = <DashboardSection />;
+
   if (tab === "swap")
     content = (
       <SwapSection
@@ -146,9 +149,14 @@ export default function App() {
         onRefreshBalances={() => refreshBalances(address)}
       />
     );
-  if (tab === "liquidity")
-  content = <LiquiditySection tokenRegistry={tokenRegistry} />;
 
+  if (tab === "liquidity")
+    content = (
+      <LiquiditySection
+        address={address}
+        chainId={chainId}
+      />
+    );
 
   /* ----------------------------------------------------
      RENDER
