@@ -1,6 +1,6 @@
 // src/components/SwapSection.jsx
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   BrowserProvider,
   Contract,
@@ -13,86 +13,16 @@ import {
   SEPOLIA_CHAIN_ID_HEX,
   UNISWAP_V2_ROUTER,
   UNISWAP_V2_ROUTER_ABI,
-  UNISWAP_V2_FACTORY,
-  UNISWAP_V2_FACTORY_ABI,
-  UNISWAP_V2_PAIR_ABI,
-  WETH_ADDRESS,
-  USDC_ADDRESS,
   ERC20_ABI,
-  WETH_ABI,
 } from "../config/uniswapSepolia";
 
 import { TOKENS, AVAILABLE_TOKENS } from "../config/tokenRegistry";
-
-/* ---------- HELPERS PATH UNISWAP ---------- */
-
-function addrForPath(symbol) {
-  if (symbol === "ETH" || symbol === "WETH") return WETH_ADDRESS;
-  if (symbol === "USDC") return USDC_ADDRESS;
-  if (symbol === "DAI") return TOKENS.DAI.address;
-  if (symbol === "WBTC") return TOKENS.WBTC.address;
-  throw new Error(`Unsupported token symbol in path: ${symbol}`);
-}
-
-function buildPath(tokenIn, tokenOut) {
-  if (tokenIn === tokenOut) {
-    throw new Error("Cannot swap the same token.");
-  }
-
-  const inIsEthish = tokenIn === "ETH" || tokenIn === "WETH";
-  const outIsEthish = tokenOut === "ETH" || tokenOut === "WETH";
-
-  // ETH/WETH <-> USDC
-  if (inIsEthish && tokenOut === "USDC") {
-    return [addrForPath("ETH"), addrForPath("USDC")];
-  }
-  if (tokenIn === "USDC" && outIsEthish) {
-    return [addrForPath("USDC"), addrForPath("ETH")];
-  }
-
-  // ETH/WETH <-> DAI
-  if (inIsEthish && tokenOut === "DAI") {
-    return [addrForPath("ETH"), addrForPath("DAI")];
-  }
-  if (tokenIn === "DAI" && outIsEthish) {
-    return [addrForPath("DAI"), addrForPath("ETH")];
-  }
-
-  // ETH/WETH <-> WBTC
-  if (inIsEthish && tokenOut === "WBTC") {
-    return [addrForPath("ETH"), addrForPath("WBTC")];
-  }
-  if (tokenIn === "WBTC" && outIsEthish) {
-    return [addrForPath("WBTC"), addrForPath("ETH")];
-  }
-
-  // USDC <-> WBTC via WETH
-  if (tokenIn === "USDC" && tokenOut === "WBTC") {
-    return [addrForPath("USDC"), addrForPath("ETH"), addrForPath("WBTC")];
-  }
-  if (tokenIn === "WBTC" && tokenOut === "USDC") {
-    return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("USDC")];
-  }
-
-  // DAI <-> USDC via WETH
-  if (tokenIn === "DAI" && tokenOut === "USDC") {
-    return [addrForPath("DAI"), addrForPath("ETH"), addrForPath("USDC")];
-  }
-  if (tokenIn === "USDC" && tokenOut === "DAI") {
-    return [addrForPath("USDC"), addrForPath("ETH"), addrForPath("DAI")];
-  }
-
-  // DAI <-> WBTC via WETH
-  if (tokenIn === "DAI" && tokenOut === "WBTC") {
-    return [addrForPath("DAI"), addrForPath("ETH"), addrForPath("WBTC")];
-  }
-  if (tokenIn === "WBTC" && tokenOut === "DAI") {
-    return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("DAI")];
-  }
-
-  // fallback generico via WETH
-  return [addrForPath(tokenIn), addrForPath("ETH"), addrForPath(tokenOut)];
-}
+import { buildPath } from "../utils/uniswapPaths";
+import { wrapEthToWeth, unwrapWethToEth } from "../utils/wrapUnwrap";
+import useSwapQuote from "../hooks/useSwapQuote";
+import useBalancesFormatter from "../hooks/useBalancesFormatter";
+import SwapTradeDetails from "./SwapTradeDetails";
+import SwapTokenSelector from "./SwapTokenSelector";
 
 /* ---------- COMPONENTE PRINCIPALE ---------- */
 
@@ -107,15 +37,7 @@ export default function SwapSection({
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
-  const [expectedOut, setExpectedOut] = useState(null);
-  const [isFetchingQuote, setIsFetchingQuote] = useState(false);
-  const [quoteError, setQuoteError] = useState(null);
-
   const [slippage, setSlippage] = useState("0.5");
-  const [minReceived, setMinReceived] = useState(null);
-  const [priceImpact, setPriceImpact] = useState(null);
-
-  const [showTokenModal, setShowTokenModal] = useState(null); // "sell" | "buy" | null
 
   const [swapState, setSwapState] = useState({
     status: "idle",
@@ -133,227 +55,31 @@ export default function SwapSection({
   const isWrap = sellToken === "ETH" && buyToken === "WETH";
   const isUnwrap = sellToken === "WETH" && buyToken === "ETH";
 
-  /* ---------- BALANCES ---------- */
+  /* ---------- BALANCES (hook) ---------- */
 
-  const getBalanceFor = (symbol) => {
-    if (!balances) return null;
-    const v = balances[symbol];
-    if (typeof v !== "number" || Number.isNaN(v)) return null;
-    return v;
-  };
+  const { getBalanceFor, getBalanceLabel } = useBalancesFormatter(
+    balances,
+    TOKENS
+  );
 
-  const getBalanceLabel = (symbol) => {
-    const bal = getBalanceFor(symbol);
-    if (bal == null) return "—";
-    const decimals = TOKENS[symbol]?.decimals ?? 4;
-    const precision = decimals > 6 ? 6 : decimals;
-    return `${bal.toFixed(precision)} ${symbol}`;
-  };
+  /* ---------- QUOTE + PRICE IMPACT + MIN RECEIVED (hook) ---------- */
 
-  /* ---------- QUOTE + PRICE IMPACT ---------- */
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchQuote() {
-      if (!amountIn || parseFloat(amountIn) <= 0) {
-        setExpectedOut(null);
-        setQuoteError(null);
-        setPriceImpact(null);
-        return;
-      }
-
-      // WRAP/UNWRAP: 1:1, niente Uniswap
-      if (isWrap || isUnwrap) {
-        try {
-          const units = parseUnits(amountIn, 18); // ETH/WETH 18 dec
-          if (!cancelled) {
-            setExpectedOut(units);
-            setQuoteError(null);
-            setPriceImpact(null);
-          }
-        } catch {
-          if (!cancelled) {
-            setExpectedOut(null);
-            setQuoteError("Invalid amount.");
-            setPriceImpact(null);
-          }
-        }
-        return;
-      }
-
-      if (!window.ethereum) {
-        setExpectedOut(null);
-        setQuoteError("No provider available.");
-        setPriceImpact(null);
-        return;
-      }
-
-      try {
-        setIsFetchingQuote(true);
-        setQuoteError(null);
-
-        const provider = new BrowserProvider(window.ethereum);
-        const router = new Contract(
-          UNISWAP_V2_ROUTER,
-          UNISWAP_V2_ROUTER_ABI,
-          provider
-        );
-
-        const amountInUnits = parseUnits(amountIn, tokenIn.decimals || 18);
-        const path = buildPath(sellToken, buyToken);
-
-        const amounts = await router.getAmountsOut(amountInUnits, path);
-        if (cancelled) return;
-
-        if (!amounts || amounts.length < 2) {
-          setExpectedOut(null);
-          setQuoteError("Unable to fetch quote.");
-          setPriceImpact(null);
-          return;
-        }
-
-        const out = amounts[amounts.length - 1];
-        setExpectedOut(out);
-
-        // price impact solo per path dirette (2 token)
-        if (path.length === 2) {
-          try {
-            const factory = new Contract(
-              UNISWAP_V2_FACTORY,
-              UNISWAP_V2_FACTORY_ABI,
-              provider
-            );
-
-            const pairAddress = await factory.getPair(path[0], path[1]);
-            if (
-              !pairAddress ||
-              pairAddress === "0x0000000000000000000000000000000000000000"
-            ) {
-              setPriceImpact(null);
-            } else {
-              const pair = new Contract(
-                pairAddress,
-                UNISWAP_V2_PAIR_ABI,
-                provider
-              );
-              const token0 = (await pair.token0()).toLowerCase();
-              const token1 = (await pair.token1()).toLowerCase();
-              const [reserve0, reserve1] = await pair.getReserves();
-
-              const addrInLower = path[0].toLowerCase();
-              const addrOutLower = path[1].toLowerCase();
-
-              let reserveInRaw;
-              let reserveOutRaw;
-
-              if (token0 === addrInLower && token1 === addrOutLower) {
-                reserveInRaw = reserve0;
-                reserveOutRaw = reserve1;
-              } else if (
-                token0 === addrOutLower &&
-                token1 === addrInLower
-              ) {
-                reserveInRaw = reserve1;
-                reserveOutRaw = reserve0;
-              } else {
-                setPriceImpact(null);
-                return;
-              }
-
-              const reserveInNum =
-                Number(reserveInRaw) /
-                Math.pow(10, tokenIn.decimals || 18);
-              const reserveOutNum =
-                Number(reserveOutRaw) /
-                Math.pow(10, tokenOut.decimals || 18);
-
-              if (reserveInNum <= 0 || reserveOutNum <= 0) {
-                setPriceImpact(null);
-                return;
-              }
-
-              const midPrice = reserveOutNum / reserveInNum;
-              const execPrice =
-                (Number(out) /
-                  Math.pow(10, tokenOut.decimals || 18)) /
-                (Number(amountInUnits) /
-                  Math.pow(10, tokenIn.decimals || 18));
-
-              if (midPrice <= 0 || execPrice <= 0) {
-                setPriceImpact(null);
-                return;
-              }
-
-              let impact = ((midPrice - execPrice) / midPrice) * 100;
-              if (!Number.isFinite(impact)) {
-                setPriceImpact(null);
-                return;
-              }
-              if (impact < 0) impact = 0;
-
-              setPriceImpact(impact.toFixed(2));
-            }
-          } catch (e) {
-            console.warn("Price impact calc error:", e);
-            setPriceImpact(null);
-          }
-        } else {
-          setPriceImpact(null);
-        }
-      } catch (err) {
-        console.error("Quote error:", err);
-        if (!cancelled) {
-          setExpectedOut(null);
-          setQuoteError("Failed to fetch quote. Please try again.");
-          setPriceImpact(null);
-        }
-      } finally {
-        if (!cancelled) setIsFetchingQuote(false);
-      }
-    }
-
-    fetchQuote();
-    return () => {
-      cancelled = true;
-    };
-  }, [
+  const {
+    expectedOut,
+    isFetchingQuote,
+    quoteError,
+    priceImpact,
+    minReceived,
+  } = useSwapQuote({
     amountIn,
     sellToken,
     buyToken,
-    tokenIn.decimals,
-    tokenOut.decimals,
+    tokenIn,
+    tokenOut,
     isWrap,
     isUnwrap,
-  ]);
-
-  /* ---------- MINIMUM RECEIVED ---------- */
-
-  useEffect(() => {
-    if (!expectedOut) {
-      setMinReceived(null);
-      return;
-    }
-
-    if (isWrap || isUnwrap) {
-      setMinReceived(formatUnits(expectedOut, 18));
-      return;
-    }
-
-    const s = parseFloat(slippage || "0");
-    if (Number.isNaN(s) || s < 0 || s > 50) {
-      setMinReceived(null);
-      return;
-    }
-
-    const slippageBps = Math.round(s * 100);
-    const bpsDenominator = 10000n;
-
-    const minOut =
-      (expectedOut * BigInt(10000 - slippageBps)) / bpsDenominator;
-
-    setMinReceived(formatUnits(minOut, tokenOut.decimals || 18));
-  }, [expectedOut, slippage, tokenOut.decimals, isWrap, isUnwrap]);
+    slippage,
+  });
 
   /* ---------- HANDLERS ---------- */
 
@@ -389,11 +115,24 @@ export default function SwapSection({
     }
 
     if (isWrap) {
-      await doWrap(amountIn);
+      await wrapEthToWeth({
+        amountInStr: amountIn,
+        address,
+        chainId,
+        onRefreshBalances,
+        setSwapState,
+      });
       return;
     }
     if (isUnwrap) {
-      await doUnwrap(amountIn);
+      await unwrapWethToEth({
+        amountInStr: amountIn,
+        address,
+        chainId,
+        getBalanceFor,
+        onRefreshBalances,
+        setSwapState,
+      });
       return;
     }
 
@@ -422,107 +161,7 @@ export default function SwapSection({
     await handleSwap(amountIn, minAmountOut.toString());
   };
 
-  /* ---------- WRAP / UNWRAP ---------- */
-
-  async function doWrap(amountInStr) {
-    if (!window.ethereum) {
-      alert("No wallet detected");
-      return;
-    }
-    if (!address || chainId !== SEPOLIA_CHAIN_ID_HEX) {
-      alert("Connect wallet on Sepolia first.");
-      return;
-    }
-
-    try {
-      const amountNum = parseFloat(amountInStr);
-      if (!amountNum || amountNum <= 0) {
-        alert("Invalid amount.");
-        return;
-      }
-
-      setSwapState({ status: "pending", txHash: null, error: null });
-
-      const provider = new BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
-
-      const value = parseEther(amountInStr);
-      const tx = await weth.deposit({ value });
-
-      setSwapState((prev) => ({ ...prev, txHash: tx.hash }));
-      await tx.wait();
-      setSwapState((prev) => ({ ...prev, status: "done" }));
-
-      if (onRefreshBalances) await onRefreshBalances();
-    } catch (err) {
-      console.error("Wrap error:", err);
-      let msg = "Wrap failed.";
-      if (err?.info?.error?.message) msg = err.info.error.message;
-      else if (err?.message) msg = err.message;
-      setSwapState({ status: "error", txHash: null, error: msg });
-    } finally {
-      setTimeout(() => {
-        setSwapState((prev) =>
-          prev.status === "pending" ? { ...prev, status: "idle" } : prev
-        );
-      }, 3000);
-    }
-  }
-
-  async function doUnwrap(amountInStr) {
-    if (!window.ethereum) {
-      alert("No wallet detected");
-      return;
-    }
-    if (!address || chainId !== SEPOLIA_CHAIN_ID_HEX) {
-      alert("Connect wallet on Sepolia first.");
-      return;
-    }
-
-    try {
-      const amountNum = parseFloat(amountInStr);
-      if (!amountNum || amountNum <= 0) {
-        alert("Invalid amount.");
-        return;
-      }
-
-      const wethBal = getBalanceFor("WETH");
-      if (wethBal != null && amountNum > wethBal + 1e-12) {
-        alert("Insufficient WETH balance to unwrap.");
-        return;
-      }
-
-      setSwapState({ status: "pending", txHash: null, error: null });
-
-      const provider = new BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
-      const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
-
-      const amountUnits = parseEther(amountInStr);
-      const tx = await weth.withdraw(amountUnits);
-
-      setSwapState((prev) => ({ ...prev, txHash: tx.hash }));
-      await tx.wait();
-      setSwapState((prev) => ({ ...prev, status: "done" }));
-
-      if (onRefreshBalances) await onRefreshBalances();
-    } catch (err) {
-      console.error("Unwrap error:", err);
-      let msg = "Unwrap failed.";
-      if (err?.info?.error?.message) msg = err.info.error.message;
-      else if (err?.message) msg = err.message;
-      setSwapState({ status: "error", txHash: null, error: msg });
-    } finally {
-      setTimeout(() => {
-        setSwapState((prev) =>
-          prev.status === "pending" ? { ...prev, status: "idle" } : prev
-        );
-      }, 3000);
-    }
-  }
-
-  /* ---------- NORMAL SWAP ---------- */
+  /* ---------- NORMAL SWAP (solo Uniswap) ---------- */
 
   async function handleSwap(amountInStr, minAmountOutStr) {
     if (!window.ethereum) {
@@ -551,8 +190,8 @@ export default function SwapSection({
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
 
-      const tokenIn = TOKENS[sellToken];
-      const tokenOut = TOKENS[buyToken];
+      const tokenInConf = TOKENS[sellToken];
+      const tokenOutConf = TOKENS[buyToken];
 
       const isNativeIn = sellToken === "ETH";
       const isNativeOut = buyToken === "ETH";
@@ -579,11 +218,11 @@ export default function SwapSection({
       } else {
         const amountInUnits = parseUnits(
           amountInStr,
-          tokenIn.decimals || 18
+          tokenInConf.decimals || 18
         );
 
         const tokenContract = new Contract(
-          tokenIn.address,
+          tokenInConf.address,
           ERC20_ABI,
           signer
         );
@@ -639,117 +278,6 @@ export default function SwapSection({
       }, 3000);
     }
   }
-
-  /* ---------- PRICE IMPACT BADGE ---------- */
-
-  const parsedImpact =
-    priceImpact != null ? parseFloat(priceImpact) : null;
-
-  let impactValueClass = "text-slate-100";
-  let impactBadgeLabel = null;
-  let impactBadgeClass = "";
-  let impactTooltip = "";
-
-  if (!isWrap && !isUnwrap && parsedImpact != null && !Number.isNaN(parsedImpact)) {
-    if (parsedImpact < 1) {
-      impactValueClass = "text-emerald-300";
-      impactBadgeLabel = "Low";
-      impactBadgeClass =
-        "rounded-full border border-emerald-500/60 bg-emerald-500/10 px-2 py-[1px] text-[10px] text-emerald-200";
-      impactTooltip =
-        "Low price impact. This trade has minimal effect on the pool price.";
-    } else if (parsedImpact < 5) {
-      impactValueClass = "text-amber-300";
-      impactBadgeLabel = "Medium";
-      impactBadgeClass =
-        "rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-[1px] text-[10px] text-amber-200";
-      impactTooltip =
-        "Medium price impact. This trade will move the pool price noticeably.";
-    } else {
-      impactValueClass = "text-rose-300";
-      impactBadgeLabel = "High";
-      impactBadgeClass =
-        "rounded-full border border-rose-500/60 bg-rose-500/10 px-2 py-[1px] text-[10px] text-rose-200";
-      impactTooltip =
-        "High price impact. You may receive significantly less than the mid price.";
-    }
-  }
-
-  /* ---------- TOKEN SELECTOR ---------- */
-
-  const renderTokenSelector = (side) => {
-    const currentSymbol = side === "sell" ? sellToken : buyToken;
-    const token = TOKENS[currentSymbol];
-
-    return (
-      <div className="relative">
-        <button
-          type="button"
-          onClick={() =>
-            setShowTokenModal(showTokenModal === side ? null : side)
-          }
-          className="inline-flex items-center gap-2 rounded-full bg-slate-800 px-3 py-1.5 text-[12px] text-slate-100 border border-slate-700"
-        >
-          {token.logo && (
-            <img
-              src={token.logo}
-              alt={token.symbol}
-              className="h-5 w-5 rounded-full"
-            />
-          )}
-          <span>{token.symbol}</span>
-          <span className="text-[10px] text-slate-400">▼</span>
-        </button>
-
-        {showTokenModal === side && (
-          <div className="absolute left-0 mt-1 w-40 rounded-xl border border-slate-700 bg-slate-900 shadow-xl z-20">
-            {AVAILABLE_TOKENS.map((sym) => {
-              const t = TOKENS[sym];
-              const isSelected = sym === currentSymbol;
-              return (
-                <button
-                  key={sym}
-                  type="button"
-                  disabled={isSelected}
-                  onClick={() => {
-                    if (side === "sell") {
-                      setSellToken(sym);
-                      if (sym === buyToken) {
-                        setBuyToken(sellToken);
-                      }
-                    } else {
-                      setBuyToken(sym);
-                      if (sym === sellToken) {
-                        setSellToken(buyToken);
-                      }
-                    }
-                    setShowTokenModal(null);
-                    setAmountIn("");
-                    setExpectedOut(null);
-                    setPriceImpact(null);
-                  }}
-                  className={`flex w-full items-center gap-2 px-3 py-2 text-[12px] ${
-                    isSelected
-                      ? "bg-slate-800 text-slate-100"
-                      : "text-slate-200 hover:bg-slate-800"
-                  }`}
-                >
-                  {t.logo && (
-                    <img
-                      src={t.logo}
-                      alt={sym}
-                      className="h-5 w-5 rounded-full"
-                    />
-                  )}
-                  <span>{sym}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   /* ---------- UI ---------- */
 
@@ -813,7 +341,19 @@ export default function SwapSection({
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            {renderTokenSelector("sell")}
+            <SwapTokenSelector
+              value={sellToken}
+              availableTokens={AVAILABLE_TOKENS}
+              tokensConfig={TOKENS}
+              onChange={(sym) => {
+                // logica: se selezioni il token che è sull'altro lato, swappiamo
+                if (sym === buyToken) {
+                  setBuyToken(sellToken);
+                }
+                setSellToken(sym);
+                setAmountIn(""); // reset della quantità → il hook resetta quote/minReceived
+              }}
+            />
             <div className="flex items-center gap-3 flex-1 justify-end">
               <input
                 type="number"
@@ -860,9 +400,7 @@ export default function SwapSection({
               const prevBuy = buyToken;
               setSellToken(prevBuy);
               setBuyToken(prevSell);
-              setAmountIn("");
-              setExpectedOut(null);
-              setPriceImpact(null);
+              setAmountIn(""); // il hook resetta quote/minReceived
             }}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-slate-300 shadow-lg shadow-black/40 hover:bg-slate-800"
           >
@@ -882,7 +420,18 @@ export default function SwapSection({
             </span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            {renderTokenSelector("buy")}
+            <SwapTokenSelector
+              value={buyToken}
+              availableTokens={AVAILABLE_TOKENS}
+              tokensConfig={TOKENS}
+              onChange={(sym) => {
+                if (sym === sellToken) {
+                  setSellToken(buyToken);
+                }
+                setBuyToken(sym);
+                setAmountIn(""); // reset quantità
+              }}
+            />
             <div className="flex flex-col items-end">
               <span className="text-2xl font-semibold text-slate-50">
                 {expectedOut
@@ -934,77 +483,16 @@ export default function SwapSection({
       </div>
 
       {/* TRADE DETAILS */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-950/90 px-4 py-3 text-[11px] text-slate-400">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-slate-200">Trade details</span>
-        </div>
-
-        <div className="mb-2">
-          <div className="mb-1 flex items-center justify-between">
-            <span>Slippage tolerance</span>
-          </div>
-          <div className="flex gap-2">
-            {["0.1", "0.5", "1"].map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => handleSlippagePreset(v)}
-                disabled={isWrap || isUnwrap}
-                className={`flex-1 rounded-full border px-2 py-1 text-[11px] ${
-                  isWrap || isUnwrap
-                    ? "border-slate-800 bg-slate-900 text-slate-500 cursor-not-allowed"
-                    : slippage === v
-                    ? "border-emerald-400 bg-emerald-500/15 text-emerald-200"
-                    : "border-slate-700 bg-slate-900 text-slate-200"
-                }`}
-              >
-                {v}%
-              </button>
-            ))}
-            <div className="flex flex-1 items-center rounded-full border border-slate-700 bg-slate-900 px-2 py-1">
-              <input
-                type="text"
-                value={slippage}
-                disabled={isWrap || isUnwrap}
-                onChange={(e) => handleSlippageInput(e.target.value)}
-                className="w-full bg-transparent text-right text-[11px] text-slate-100 outline-none disabled:text-slate-500"
-                placeholder="Custom %"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-1">
-          <div className="flex justify-between">
-            <span>Minimum received</span>
-            <span className="text-slate-100">
-              {minReceived ? `${minReceived} ${tokenOut.symbol}` : "—"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between">
-            <span>Price impact</span>
-            <span className="flex items-center gap-2">
-              <span className={impactValueClass}>
-                {isWrap || isUnwrap
-                  ? "0.00%"
-                  : priceImpact
-                  ? `${priceImpact}%`
-                  : "—"}
-              </span>
-              {!isWrap &&
-                !isUnwrap &&
-                impactBadgeLabel && (
-                  <span
-                    className={impactBadgeClass}
-                    title={impactTooltip}
-                  >
-                    {impactBadgeLabel}
-                  </span>
-                )}
-            </span>
-          </div>
-        </div>
-      </div>
+      <SwapTradeDetails
+        isWrap={isWrap}
+        isUnwrap={isUnwrap}
+        slippage={slippage}
+        onSlippagePreset={handleSlippagePreset}
+        onSlippageInput={handleSlippageInput}
+        minReceived={minReceived}
+        tokenOutSymbol={tokenOut.symbol}
+        priceImpact={priceImpact}
+      />
 
       {/* STATUS */}
       {swapState.txHash && (

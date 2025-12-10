@@ -1,10 +1,28 @@
 // src/sections/LiquiditySection.jsx
 import React from "react";
 
+// 🔹 Import dei loghi dai file che hai già in src/assets/tokens
+import ethLogo from "../assets/tokens/eth.png";
+import wethLogo from "../assets/tokens/weth.png";
+import usdcLogo from "../assets/tokens/usdc.png";
+import daiLogo from "../assets/tokens/dai.png";
+import wbtcLogo from "../assets/tokens/wbtc.png";
+
+// Mappa simbolo -> logo
+const TOKEN_ICONS = {
+  ETH: ethLogo,
+  WETH: wethLogo,
+  USDC: usdcLogo,
+  DAI: daiLogo,
+  WBTC: wbtcLogo,
+  // CXT lo lasciamo senza logo per ora → cerchio colorato
+};
+
 const POOLS = [
   {
     id: 1,
     pair: "CXT / WETH",
+    tokens: ["CXT", "WETH"],
     type: "Volatile 0.3%",
     tags: ["Core", "Listed"],
     volume: "$26.5K",
@@ -15,6 +33,7 @@ const POOLS = [
   {
     id: 2,
     pair: "WETH / USDC",
+    tokens: ["WETH", "USDC"],
     type: "Stable 0.01%",
     tags: ["Bluechip"],
     volume: "$519.1K",
@@ -25,6 +44,7 @@ const POOLS = [
   {
     id: 3,
     pair: "CXT / USDC",
+    tokens: ["CXT", "USDC"],
     type: "Volatile 1%",
     tags: ["Experimental"],
     volume: "$79.2K",
@@ -213,6 +233,8 @@ function StatCard({ label, value, hint }) {
 }
 
 function PoolRow({ pool, isOdd }) {
+  const tokens = pool.tokens || [];
+
   return (
     <div
       className={`px-4 sm:px-5 py-3.5 sm:py-4 text-[11px] sm:text-xs flex items-center text-slate-100 ${
@@ -221,10 +243,32 @@ function PoolRow({ pool, isOdd }) {
     >
       <div className="w-[28%] flex flex-col gap-1">
         <div className="flex items-center gap-2">
+          {/* Icone token */}
           <div className="flex -space-x-1.5">
-            <span className="h-6 w-6 rounded-full bg-sky-500/90 border border-slate-950 shadow-md shadow-sky-500/50" />
-            <span className="h-6 w-6 rounded-full bg-emerald-400/90 border border-slate-950 shadow-md shadow-emerald-400/50" />
+            {tokens.slice(0, 2).map((symbol) => {
+              const logo = TOKEN_ICONS[symbol.toUpperCase()];
+
+              if (logo) {
+                return (
+                  <img
+                    key={symbol}
+                    src={logo}
+                    alt={symbol}
+                    className="h-6 w-6 rounded-full border border-slate-950 bg-slate-900 object-cover shadow-md"
+                  />
+                );
+              }
+
+              // fallback (es. CXT)
+              return (
+                <span
+                  key={symbol}
+                  className="h-6 w-6 rounded-full bg-sky-500/90 border border-slate-950 shadow-md shadow-sky-500/50"
+                />
+              );
+            })}
           </div>
+
           <div className="flex flex-col">
             <span className="text-xs sm:text-sm font-medium">{pool.pair}</span>
             <span className="text-[10px] text-slate-400">{pool.type}</span>
