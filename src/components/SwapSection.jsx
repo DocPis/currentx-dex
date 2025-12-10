@@ -1,6 +1,13 @@
 // src/components/SwapSection.jsx
+
 import { useState } from "react";
-import { BrowserProvider, Contract, parseUnits, parseEther, formatUnits } from "ethers";
+import {
+  BrowserProvider,
+  Contract,
+  parseUnits,
+  parseEther,
+  formatUnits,
+} from "ethers";
 
 import { TOKENS } from "../config/tokenRegistry";
 import {
@@ -21,9 +28,10 @@ import { useTokenAllowance } from "../hooks/useTokenAllowance";
 import SwapTokenSelector from "./swap/SwapTokenSelector";
 import ApproveButton from "./swap/ApproveButton";
 import SwapActionButton from "./swap/SwapActionButton";
+import SwapConfirmModal from "./swap/SwapConfirmModal";
 
 /* HELPERS */
-import { buildPath } from "../utils/buildPath"; // se esiste; altrimenti lo re-includo
+import { buildPath } from "../utils/buildPath";
 
 export default function SwapSection({
   address,
@@ -32,100 +40,122 @@ export default function SwapSection({
   onConnect,
   onRefreshBalances,
 }) {
-  /** --------------------
-   *  UI STATE
-   -------------------- **/
+  /* ---------- STATE ---------- */
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
 
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  // stato per animazione flip del blocco BUY
+  const [isFlipping, setIsFlipping] = useState(false);
+
   const isConnected = !!address;
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
+
   const tokenIn = TOKENS[sellToken];
   const tokenOut = TOKENS[buyToken];
 
-  /** --------------------
-   *  BALANCES + LABEL
-   -------------------- **/
+  const isWrap = sellToken === "ETH" && buyToken === "WETH";
+  const isUnwrap = sellToken === "WETH" && buyToken === "ETH";
+
+  /* ---------- HOOKS ---------- */
   const { getBalanceLabel } = useBalancesFormatter(balances);
 
-  /** --------------------
-   *  QUOTE / PRICE IMPACT
-   -------------------- **/
   const {
     expectedOut,
     priceImpact,
     isFetchingQuote,
     quoteError,
     reloadQuote,
-  } = useSwapQuote({
-    sellToken,
-    buyToken,
-    amountIn,
-  });
+  } = useSwapQuote({ sellToken, buyToken, amountIn });
 
-  /** --------------------
-   *  ERC20 ALLOWANCE
-   -------------------- **/
-  const {
-    hasAllowance,
-    approving,
-    approve,
-  } = useTokenAllowance({
+  const { hasAllowance, approving, approve } = useTokenAllowance({
     address,
     token: tokenIn,
     amount: amountIn,
   });
 
-  /** --------------------
-   *  WRAP / UNWRAP FLAG
-   -------------------- **/
-  const isWrap = sellToken === "ETH" && buyToken === "WETH";
-  const isUnwrap = sellToken === "WETH" && buyToken === "ETH";
+  const canSwap = isConnected && isOnSepolia;
 
-  /** --------------------
-   *  TOKENS FLIP
-   -------------------- **/
+  /* ---------- HANDLERS ---------- */
+
+  // Flip con animazione del blocco BUY
   const flipTokens = () => {
-    const s = sellToken;
-    const b = buyToken;
-    setSellToken(b);
-    setBuyToken(s);
-    setAmountIn("");
+    setIsFlipping(true);
+
+    setTimeout(() => {
+      const prevSell = sellToken;
+      const prevBuy = buyToken;
+
+      setSellToken(prevBuy);
+      setBuyToken(prevSell);
+
+      setAmountIn("");
+      reloadQuote();
+
+      setTimeout(() => {
+        reloadQuote();
+        setIsFlipping(false);
+      }, 120);
+    }, 150);
   };
 
-  /** --------------------
-   *  HANDLE SWAP
-   -------------------- **/
   async function handleSwapClick() {
-    if (!isConnected) return onConnect();
-    if (!isOnSepolia) return alert("Switch to Sepolia in your wallet.");
-    if (!amountIn || parseFloat(amountIn) <= 0) return alert("Enter an amount.");
+    if (!isConnected) {
+      onConnect && onConnect();
+      return;
+    }
+
+    if (!isOnSepolia) {
+      alert("Switch to Sepolia in your wallet.");
+      return;
+    }
+
+    const value = parseFloat(amountIn || "0");
+    if (!value || value <= 0) {
+      alert("Enter a valid amount.");
+      return;
+    }
+
+    if (!expectedOut && !isWrap && !isUnwrap) {
+      alert("No quote available yet. Wait for the estimation.");
+      return;
+    }
 
     if (!hasAllowance && tokenIn.symbol !== "ETH") {
-      return alert(`Approve ${tokenIn.symbol} first`);
+      alert(`Approve ${tokenIn.symbol} first.`);
+      return;
     }
 
-    // WRAP
-    if (isWrap) {
-      return doWrap(amountIn);
-    }
-
-    // UNWRAP
-    if (isUnwrap) {
-      return doUnwrap(amountIn);
-    }
-
-    if (!expectedOut) {
-      return alert("No quote available. Check amount or liquidity.");
-    }
-
-    await doSwap();
+    setConfirmOpen(true);
   }
 
-  /** --------------------
-   *  WRAP ETH → WETH
-   -------------------- **/
+  async function handleConfirmSwap() {
+    if (!isConnected || !isOnSepolia) return;
+
+    setConfirming(true);
+    try {
+      if (isWrap) {
+        await doWrap(amountIn);
+      } else if (isUnwrap) {
+        await doUnwrap(amountIn);
+      } else {
+        await doSwap();
+      }
+
+      setConfirmOpen(false);
+    } catch (e) {
+      console.error("Swap error:", e);
+      alert(e.message || "Swap failed.");
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  /* ---------- WRAP / UNWRAP ---------- */
+
   async function doWrap(amountStr) {
     const provider = new BrowserProvider(window.ethereum);
     const signer = await provider.getSigner();
@@ -135,12 +165,9 @@ export default function SwapSection({
     const tx = await weth.deposit({ value });
     await tx.wait();
 
-    await onRefreshBalances();
+    onRefreshBalances && onRefreshBalances();
   }
 
-  /** --------------------
-   *  UNWRAP WETH → ETH
-   -------------------- **/
   async function doUnwrap(amountStr) {
     const provider = new BrowserProvider(window.ethereum);
     const signer = await provider.getSigner();
@@ -150,21 +177,27 @@ export default function SwapSection({
     const tx = await weth.withdraw(units);
     await tx.wait();
 
-    await onRefreshBalances();
+    onRefreshBalances && onRefreshBalances();
   }
 
-  /** --------------------
-   *  NORMAL SWAP
-   -------------------- **/
+  /* ---------- NORMAL SWAP VIA UNISWAP V2 ---------- */
+
   async function doSwap() {
     const provider = new BrowserProvider(window.ethereum);
     const signer = await provider.getSigner();
-    const router = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, signer);
+    const router = new Contract(
+      UNISWAP_V2_ROUTER,
+      UNISWAP_V2_ROUTER_ABI,
+      signer
+    );
 
     const amountInUnits = parseUnits(amountIn, tokenIn.decimals || 18);
     const path = buildPath(sellToken, buyToken);
 
-    const minAmountOut = expectedOut - expectedOut / BigInt(100); // 1% slippage default
+    if (!expectedOut) throw new Error("Missing quote.");
+
+    // 1% slippage default
+    const minAmountOut = expectedOut - expectedOut / BigInt(100);
     const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
 
     let tx;
@@ -196,23 +229,24 @@ export default function SwapSection({
     }
 
     await tx.wait();
-    await onRefreshBalances();
+    onRefreshBalances && onRefreshBalances();
   }
 
-  /** --------------------
-   *  RENDER
-   -------------------- **/
+  /* ---------- RENDER ---------- */
+
+  const formattedOut = expectedOut
+    ? formatUnits(expectedOut, tokenOut.decimals || 18)
+    : "0.00";
+
   return (
     <div className="max-w-xl mx-auto space-y-4">
-
-      {/* NOT CONNECTED */}
+      {/* WARNINGS */}
       {!isConnected && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
           Wallet not connected. Connect your wallet from the top right.
         </div>
       )}
 
-      {/* NETWORK WARNING */}
       {isConnected && !isOnSepolia && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
           Wrong network. Switch to <b>Sepolia</b>.
@@ -221,14 +255,14 @@ export default function SwapSection({
 
       {/* SWAP CARD */}
       <div className="rounded-3xl border border-slate-800 bg-slate-950/95 px-5 py-6 shadow-2xl shadow-black/70">
-
         {/* SELL BLOCK */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3">
           <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
             <span>Sell</span>
-            <span className="text-slate-200">{getBalanceLabel(sellToken)}</span>
+            <span className="text-slate-200">
+              {getBalanceLabel(sellToken)}
+            </span>
           </div>
-
           <div className="flex items-center justify-between gap-3">
             <SwapTokenSelector
               current={sellToken}
@@ -238,20 +272,20 @@ export default function SwapSection({
                 reloadQuote();
               }}
             />
-
             <input
               type="number"
               value={amountIn}
               onChange={(e) => setAmountIn(e.target.value)}
               placeholder="0.00"
-              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none"
+              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
             />
           </div>
         </div>
 
-        {/* FLIP */}
+        {/* FLIP BUTTON */}
         <div className="my-3 flex justify-center">
           <button
+            type="button"
             onClick={flipTokens}
             className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-slate-300 shadow-lg shadow-black/40 hover:bg-slate-800"
           >
@@ -259,13 +293,24 @@ export default function SwapSection({
           </button>
         </div>
 
-        {/* BUY BLOCK */}
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3">
+        {/* BUY BLOCK con ANIMAZIONE ROTAZIONE */}
+        <div
+          className={`
+            rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3
+            transition-transform duration-300 ease-out
+            ${isFlipping ? "rotate-y-180 blur-[3px]" : "rotate-y-0"}
+          `}
+          style={{
+            transformStyle: "preserve-3d",
+            backfaceVisibility: "hidden",
+          }}
+        >
           <div className="mb-2 flex items-center justify-between text-[11px] text-slate-400">
             <span>Buy</span>
-            <span className="text-slate-200">{getBalanceLabel(buyToken)}</span>
+            <span className="text-slate-200">
+              {getBalanceLabel(buyToken)}
+            </span>
           </div>
-
           <div className="flex items-center justify-between gap-3">
             <SwapTokenSelector
               current={buyToken}
@@ -275,19 +320,15 @@ export default function SwapSection({
                 reloadQuote();
               }}
             />
-
             <div className="flex flex-col text-right">
               <span className="text-2xl font-semibold text-slate-50">
-                {expectedOut
-                  ? formatUnits(expectedOut, tokenOut.decimals)
-                  : "0.00"}
+                {formattedOut}
               </span>
-
               <span className="text-[11px] text-slate-500">
                 {isFetchingQuote
                   ? "Fetching quote..."
                   : quoteError
-                  ? quoteError
+                  ? "No quote available."
                   : "Estimation"}
               </span>
             </div>
@@ -303,19 +344,18 @@ export default function SwapSection({
           />
         )}
 
-        {/* SWAP BUTTON */}
+        {/* MAIN SWAP BUTTON (apre il modal) */}
         <SwapActionButton
-          canSwap={isConnected && isOnSepolia}
+          canSwap={canSwap}
           disabled={
-            !isConnected ||
-            !isOnSepolia ||
+            !canSwap ||
             !amountIn ||
             (!hasAllowance && tokenIn.symbol !== "ETH")
           }
           onClick={handleSwapClick}
           label={
             !isConnected
-              ? "Connect Wallet"
+              ? "Connect wallet"
               : !isOnSepolia
               ? "Switch to Sepolia"
               : !hasAllowance && tokenIn.symbol !== "ETH"
@@ -325,13 +365,29 @@ export default function SwapSection({
         />
       </div>
 
-      {/* PRICE IMPACT + MIN RECEIVED */}
+      {/* TRADE DETAILS */}
       <div className="rounded-xl border border-slate-800 bg-slate-950/90 px-4 py-3 text-[11px] text-slate-400">
         <div className="flex justify-between">
           <span>Price impact</span>
-          <span>{priceImpact ? `${priceImpact}%` : "—"}</span>
+          <span className="text-slate-100">
+            {priceImpact != null ? `${priceImpact}%` : "—"}
+          </span>
         </div>
       </div>
+
+      {/* CONFIRM MODAL */}
+      <SwapConfirmModal
+        isOpen={confirmOpen}
+        onClose={() => !confirming && setConfirmOpen(false)}
+        onConfirm={handleConfirmSwap}
+        confirming={confirming}
+        sellToken={sellToken}
+        buyToken={buyToken}
+        amountIn={amountIn}
+        expectedOut={expectedOut}
+        tokenOutDecimals={tokenOut.decimals}
+        priceImpact={priceImpact}
+      />
     </div>
   );
 }

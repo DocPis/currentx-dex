@@ -14,3 +14,12 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+@layer utilities {
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+  .rotate-y-0 {
+    transform: rotateY(0deg);
+  }
+}
+
