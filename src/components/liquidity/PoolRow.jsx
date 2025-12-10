@@ -4,7 +4,12 @@ import TokenPairIcons from "./TokenPairIcons.jsx";
 import PoolStats from "./PoolStats.jsx";
 import PoolActions from "./PoolActions.jsx";
 
-export default function PoolRow({ pool, isOdd, onDepositPool }) {
+export default function PoolRow({
+  pool,
+  isOdd,
+  onDepositPool,
+  onWithdrawPool,
+}) {
   const icons = pool.tokens?.slice(0, 2) || [];
 
   const volumeText =
@@ -14,16 +19,19 @@ export default function PoolRow({ pool, isOdd, onDepositPool }) {
   const tvlText = pool.tvlLabel || pool.tvl || "—";
   const aprText = pool.apr || "—";
 
-  const hasPosition =
-    pool.userTvlUsd != null && pool.userTvlUsd > 0 && pool.userSharePct > 0;
+  // ✅ NUOVA LOGICA: hai posizione se hai LP token > 0
+  const hasPosition = (pool.userLpRaw ?? 0n) > 0n;
 
   const detailsUrl = pool.pairAddress
     ? `https://sepolia.etherscan.io/address/${pool.pairAddress}`
     : null;
 
-  // callback che aprirà il modal
   const handleDepositClick = () => {
     if (onDepositPool) onDepositPool(pool);
+  };
+
+  const handleWithdrawClick = () => {
+    if (onWithdrawPool) onWithdrawPool(pool);
   };
 
   return (
@@ -63,12 +71,14 @@ export default function PoolRow({ pool, isOdd, onDepositPool }) {
             <span className="inline-flex items-center rounded-full bg-emerald-500/10 border border-emerald-400/50 px-2 py-[2px]">
               My liquidity:&nbsp;
               <span className="font-semibold">
-                {pool.userTvlLabel}
+                {pool.userTvlLabel || "—"}
               </span>
             </span>
-            <span className="text-emerald-200/90">
-              ({pool.userShareLabel} of pool)
-            </span>
+            {pool.userShareLabel && (
+              <span className="text-emerald-200/90">
+                ({pool.userShareLabel} of pool)
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -86,6 +96,8 @@ export default function PoolRow({ pool, isOdd, onDepositPool }) {
         hasOnChainPool={pool.hasOnChainPool}
         detailsUrl={detailsUrl}
         onDeposit={handleDepositClick}
+        onWithdraw={handleWithdrawClick}
+        hasPosition={hasPosition}
       />
     </div>
   );

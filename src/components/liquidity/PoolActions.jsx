@@ -1,42 +1,64 @@
 // src/components/liquidity/PoolActions.jsx
 
-/**
- * Bottoni di azione a destra:
- * - Deposit (apre modal)
- * - Details (link a Etherscan)
- */
 export default function PoolActions({
   hasOnChainPool,
   detailsUrl,
   onDeposit,
+  onWithdraw,
+  hasPosition, // lo teniamo solo per il tooltip, non per bloccare il click
 }) {
-  // abilitiamo il click se esiste una callback onDeposit;
-  // usiamo hasOnChainPool solo per il tooltip / stile
-  const disabledDeposit = !onDeposit;
+  const depositDisabled = !onDeposit || !hasOnChainPool;
+
+  // ✅ Withdraw cliccabile se esiste la pool on-chain e la callback
+  const withdrawDisabled = !onWithdraw || !hasOnChainPool;
 
   return (
     <div className="w-[18%] flex justify-end gap-2 pr-1 sm:pr-2">
+      {/* DEPOSIT */}
       <button
         className={`rounded-full px-3 py-1.5 text-[10px] sm:text-xs font-semibold ${
-          disabledDeposit
+          depositDisabled
             ? "bg-slate-700 text-slate-400 cursor-not-allowed"
             : "bg-sky-500/90 hover:bg-sky-400 text-slate-950"
         }`}
-        disabled={disabledDeposit}
+        disabled={depositDisabled}
         title={
           hasOnChainPool
-            ? disabledDeposit
-              ? "Connect wallet / reload pools to add liquidity."
+            ? depositDisabled
+              ? "Connect wallet / pool data to add liquidity."
               : "Add liquidity to this pool"
-            : "No on-chain pool for this pair (factory returned zero address)"
+            : "No on-chain pool for this pair"
         }
         onClick={() => {
-          if (!disabledDeposit && onDeposit) onDeposit();
+          if (!depositDisabled && onDeposit) onDeposit();
         }}
       >
         Deposit
       </button>
 
+      {/* WITHDRAW */}
+      <button
+        className={`rounded-full px-3 py-1.5 text-[10px] sm:text-xs font-semibold ${
+          withdrawDisabled
+            ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+            : "bg-rose-500/90 hover:bg-rose-400 text-slate-950"
+        }`}
+        disabled={withdrawDisabled}
+        title={
+          hasOnChainPool
+            ? hasPosition
+              ? "Withdraw your liquidity from this pool"
+              : "You might not have LP in this pool, modal will show your real balance."
+            : "No on-chain pool for this pair"
+        }
+        onClick={() => {
+          if (!withdrawDisabled && onWithdraw) onWithdraw();
+        }}
+      >
+        Withdraw
+      </button>
+
+      {/* DETAILS */}
       {detailsUrl ? (
         <a
           href={detailsUrl}

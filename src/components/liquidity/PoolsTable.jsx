@@ -1,7 +1,12 @@
 // src/components/liquidity/PoolsTable.jsx
 import PoolRow from "./PoolRow";
 
-export default function PoolsTable({ pools, loading, onDepositPool }) {
+export default function PoolsTable({
+  pools,
+  loading,
+  onDepositPool,
+  onWithdrawPool,
+}) {
   return (
     <div className="bg-[#050918]/90 border border-white/5 rounded-2xl overflow-hidden shadow-[0_18px_60px_rgba(0,0,0,0.65)]">
       <div className="px-4 sm:px-5 py-3 border-b border-slate-800/80 flex items-center justify-between text-[11px] sm:text-xs text-slate-400">
@@ -36,6 +41,7 @@ export default function PoolsTable({ pools, loading, onDepositPool }) {
             pool={p}
             isOdd={i % 2 === 1}
             onDepositPool={onDepositPool}
+            onWithdrawPool={onWithdrawPool}
           />
         ))}
     </div>

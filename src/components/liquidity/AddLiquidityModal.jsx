@@ -23,6 +23,7 @@ export default function AddLiquidityModal({
   pool,
   address,
   chainId,
+  onAfterAction,
 }) {
   const [amountA, setAmountA] = useState("");
   const [amountB, setAmountB] = useState("");
@@ -222,11 +223,13 @@ export default function AddLiquidityModal({
       await tx.wait();
 
       setTxPending(false);
-      // reset form
       setAmountA("");
       setAmountB("");
 
-      // chiudi modal dopo successo
+      if (typeof onAfterAction === "function") {
+        onAfterAction();
+      }
+
       onClose();
     } catch (e) {
       console.error("addLiquidity error:", e);
@@ -270,7 +273,8 @@ export default function AddLiquidityModal({
         {isConnected && !isOnSepolia && (
           <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
             You are on a different network. Switch your wallet to{" "}
-            <span className="font-semibold">Sepolia</span> to add liquidity.
+            <span className="font-semibold">Sepolia</span> to add
+            liquidity.
           </div>
         )}
 
@@ -386,3 +390,4 @@ export default function AddLiquidityModal({
     </div>
   );
 }
+
