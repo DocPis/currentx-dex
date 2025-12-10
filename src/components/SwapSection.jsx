@@ -27,7 +27,6 @@ import { TOKENS, AVAILABLE_TOKENS } from "../config/tokenRegistry";
 /* ---------- HELPERS PATH UNISWAP ---------- */
 
 function addrForPath(symbol) {
-  // ETH usa sempre WETH come wrapped
   if (symbol === "ETH" || symbol === "WETH") return WETH_ADDRESS;
   if (symbol === "USDC") return USDC_ADDRESS;
   if (symbol === "DAI") return TOKENS.DAI.address;
@@ -91,7 +90,7 @@ function buildPath(tokenIn, tokenOut) {
     return [addrForPath("WBTC"), addrForPath("ETH"), addrForPath("DAI")];
   }
 
-  // fallback generico 2-hop via WETH
+  // fallback generico via WETH
   return [addrForPath(tokenIn), addrForPath("ETH"), addrForPath(tokenOut)];
 }
 
@@ -101,7 +100,7 @@ export default function SwapSection({
   address,
   chainId,
   balances,        // { ETH, WETH, USDC, DAI, WBTC, ... }
-  tokenRegistry,   // per estensioni future
+  tokenRegistry,   // non usato ora ma utile in futuro
   onConnect,
   onRefreshBalances,
 }) {
@@ -131,11 +130,10 @@ export default function SwapSection({
   const tokenIn = TOKENS[sellToken];
   const tokenOut = TOKENS[buyToken];
 
-  // wrap / unwrap flags
   const isWrap = sellToken === "ETH" && buyToken === "WETH";
   const isUnwrap = sellToken === "WETH" && buyToken === "ETH";
 
-  /* ---------- BALANCE HELPERS ---------- */
+  /* ---------- BALANCES ---------- */
 
   const getBalanceFor = (symbol) => {
     if (!balances) return null;
@@ -147,7 +145,6 @@ export default function SwapSection({
   const getBalanceLabel = (symbol) => {
     const bal = getBalanceFor(symbol);
     if (bal == null) return "—";
-
     const decimals = TOKENS[symbol]?.decimals ?? 4;
     const precision = decimals > 6 ? 6 : decimals;
     return `${bal.toFixed(precision)} ${symbol}`;
@@ -159,7 +156,6 @@ export default function SwapSection({
     let cancelled = false;
 
     async function fetchQuote() {
-      // Nessun amount → reset
       if (!amountIn || parseFloat(amountIn) <= 0) {
         setExpectedOut(null);
         setQuoteError(null);
@@ -167,16 +163,16 @@ export default function SwapSection({
         return;
       }
 
-      // Caso speciale: WRAP / UNWRAP 1:1, niente Uniswap
+      // WRAP/UNWRAP: 1:1, niente Uniswap
       if (isWrap || isUnwrap) {
         try {
-          const units = parseUnits(amountIn, 18); // ETH/WETH sempre 18
+          const units = parseUnits(amountIn, 18); // ETH/WETH 18 dec
           if (!cancelled) {
             setExpectedOut(units);
             setQuoteError(null);
-            setPriceImpact(null); // no price impact
+            setPriceImpact(null);
           }
-        } catch (e) {
+        } catch {
           if (!cancelled) {
             setExpectedOut(null);
             setQuoteError("Invalid amount.");
@@ -186,7 +182,6 @@ export default function SwapSection({
         return;
       }
 
-      // Normale swap via Uniswap
       if (!window.ethereum) {
         setExpectedOut(null);
         setQuoteError("No provider available.");
@@ -205,10 +200,7 @@ export default function SwapSection({
           provider
         );
 
-        const amountInUnits = parseUnits(
-          amountIn,
-          tokenIn.decimals || 18
-        );
+        const amountInUnits = parseUnits(amountIn, tokenIn.decimals || 18);
         const path = buildPath(sellToken, buyToken);
 
         const amounts = await router.getAmountsOut(amountInUnits, path);
@@ -224,7 +216,7 @@ export default function SwapSection({
         const out = amounts[amounts.length - 1];
         setExpectedOut(out);
 
-        // Price impact solo per path dirette (2 token)
+        // price impact solo per path dirette (2 token)
         if (path.length === 2) {
           try {
             const factory = new Contract(
@@ -343,7 +335,6 @@ export default function SwapSection({
       return;
     }
 
-    // per wrap/unwrap, è 1:1 → minimo = importo
     if (isWrap || isUnwrap) {
       setMinReceived(formatUnits(expectedOut, 18));
       return;
@@ -397,7 +388,6 @@ export default function SwapSection({
       return;
     }
 
-    // WRAP / UNWRAP: non serve slippage né router
     if (isWrap) {
       await doWrap(amountIn);
       return;
@@ -432,7 +422,7 @@ export default function SwapSection({
     await handleSwap(amountIn, minAmountOut.toString());
   };
 
-  /* ---------- WRAP / UNWRAP IMPLEMENTATION ---------- */
+  /* ---------- WRAP / UNWRAP ---------- */
 
   async function doWrap(amountInStr) {
     if (!window.ethereum) {
@@ -497,7 +487,6 @@ export default function SwapSection({
         return;
       }
 
-      // controllo veloce sul balance WETH
       const wethBal = getBalanceFor("WETH");
       if (wethBal != null && amountNum > wethBal + 1e-12) {
         alert("Insufficient WETH balance to unwrap.");
@@ -533,7 +522,7 @@ export default function SwapSection({
     }
   }
 
-  /* ---------- NORMAL SWAP VIA UNISWAP ---------- */
+  /* ---------- NORMAL SWAP ---------- */
 
   async function handleSwap(amountInStr, minAmountOutStr) {
     if (!window.ethereum) {
@@ -560,7 +549,7 @@ export default function SwapSection({
         signer
       );
 
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 10; // 10 min
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
 
       const tokenIn = TOKENS[sellToken];
       const tokenOut = TOKENS[buyToken];
@@ -579,7 +568,6 @@ export default function SwapSection({
       let tx;
 
       if (isNativeIn) {
-        // ETH -> ERC20
         const value = parseEther(amountInStr);
         tx = await router.swapExactETHForTokens(
           minAmountOutStr || 0,
@@ -589,7 +577,6 @@ export default function SwapSection({
           { value }
         );
       } else {
-        // ERC20 -> ...
         const amountInUnits = parseUnits(
           amountInStr,
           tokenIn.decimals || 18
@@ -613,7 +600,6 @@ export default function SwapSection({
         }
 
         if (isNativeOut) {
-          // ERC20 -> ETH
           tx = await router.swapExactTokensForETH(
             amountInUnits,
             minAmountOutStr || 0,
@@ -622,7 +608,6 @@ export default function SwapSection({
             deadline
           );
         } else {
-          // ERC20 -> ERC20
           tx = await router.swapExactTokensForTokens(
             amountInUnits,
             minAmountOutStr || 0,
@@ -633,17 +618,9 @@ export default function SwapSection({
         }
       }
 
-      setSwapState((prev) => ({
-        ...prev,
-        txHash: tx.hash,
-      }));
-
+      setSwapState((prev) => ({ ...prev, txHash: tx.hash }));
       await tx.wait();
-
-      setSwapState((prev) => ({
-        ...prev,
-        status: "done",
-      }));
+      setSwapState((prev) => ({ ...prev, status: "done" }));
 
       if (onRefreshBalances) {
         await onRefreshBalances();
@@ -651,16 +628,9 @@ export default function SwapSection({
     } catch (err) {
       console.error("Swap error:", err);
       let msg = "Swap failed.";
-      if (err?.info?.error?.message) {
-        msg = err.info.error.message;
-      } else if (err?.message) {
-        msg = err.message;
-      }
-      setSwapState({
-        status: "error",
-        txHash: null,
-        error: msg,
-      });
+      if (err?.info?.error?.message) msg = err.info.error.message;
+      else if (err?.message) msg = err.message;
+      setSwapState({ status: "error", txHash: null, error: msg });
     } finally {
       setTimeout(() => {
         setSwapState((prev) =>
@@ -705,7 +675,7 @@ export default function SwapSection({
     }
   }
 
-  /* ---------- TOKEN SELECTOR (dropdown) ---------- */
+  /* ---------- TOKEN SELECTOR ---------- */
 
   const renderTokenSelector = (side) => {
     const currentSymbol = side === "sell" ? sellToken : buyToken;
@@ -785,7 +755,7 @@ export default function SwapSection({
 
   return (
     <div className="max-w-xl mx-auto space-y-4">
-      {/* warnings */}
+      {/* warning connessione */}
       {!isConnected && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-100">
           Wallet not connected. Connect your wallet from the top right to start
@@ -800,7 +770,7 @@ export default function SwapSection({
         </div>
       )}
 
-      {/* swap card */}
+      {/* SWAP CARD (AERODROME STYLE) */}
       <div className="rounded-3xl border border-slate-800 bg-slate-950/95 px-5 py-6 shadow-2xl shadow-black/70">
         <div className="mb-2 flex items-center justify-between">
           <div>
@@ -1008,9 +978,7 @@ export default function SwapSection({
           <div className="flex justify-between">
             <span>Minimum received</span>
             <span className="text-slate-100">
-              {minReceived
-                ? `${minReceived} ${tokenOut.symbol}`
-                : "—"}
+              {minReceived ? `${minReceived} ${tokenOut.symbol}` : "—"}
             </span>
           </div>
           <div className="flex items-center justify-between">

@@ -1,16 +1,14 @@
 // src/App.jsx
 
 import { useEffect, useState } from "react";
-import {
-  BrowserProvider,
-  formatEther
-} from "ethers";
+import { BrowserProvider } from "ethers";
 
 import Header from "./components/Header";
 import Tabs from "./components/Tabs";
 import SwapSection from "./components/SwapSection";
 import DashboardSection from "./components/DashboardSection";
-import LiquiditySection from "./components/LiquiditySection";
+// Usa SOLO questa import per la nuova UI liquidity:
+import LiquiditySection from "./sections/LiquiditySection";
 
 import {
   SEPOLIA_CHAIN_ID_HEX,
@@ -157,7 +155,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-black text-slate-50">
       <div className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6">
-        
         <Header
           address={address}
           chainId={chainId}

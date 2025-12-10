@@ -1,16 +1,18 @@
 // src/config/tokenRegistry.js
-// Registry centralizzato dei token supportati da CurrentX su Sepolia.
 
 import ethLogo from "../assets/tokens/eth.png";
 import wethLogo from "../assets/tokens/weth.png";
 import usdcLogo from "../assets/tokens/usdc.png";
-import wbtcLogo from "../assets/tokens/wbtc.png";
+import daiLogo from "../assets/tokens/dai.png";    // <— assicurati che il file esista
+import wbtcLogo from "../assets/tokens/wbtc.png";  // <— idem
+
+import { WETH_ADDRESS, USDC_ADDRESS } from "./uniswapSepolia";
 
 export const TOKENS = {
   ETH: {
     symbol: "ETH",
-    name: "Ethereum",
-    address: null,          // nativo
+    name: "Ether",
+    address: null, // native
     isNative: true,
     isWrappedNative: false,
     decimals: 18,
@@ -20,7 +22,7 @@ export const TOKENS = {
   WETH: {
     symbol: "WETH",
     name: "Wrapped Ether",
-    address: "0xfff9976782d46cc05630d1f6ebab18b2324d6b14", // WETH Sepolia
+    address: WETH_ADDRESS,
     isNative: false,
     isWrappedNative: true,
     decimals: 18,
@@ -29,28 +31,34 @@ export const TOKENS = {
 
   USDC: {
     symbol: "USDC",
-    name: "USD Coin",
-    address: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // USDC Sepolia
+    name: "USD Coin (Sepolia)",
+    address: USDC_ADDRESS,
     isNative: false,
     isWrappedNative: false,
     decimals: 6,
     logo: usdcLogo,
   },
 
+  DAI: {
+    symbol: "DAI",
+    name: "Dai Stablecoin (Sepolia)",
+    address: "0x776b6fC2Ed15D6BB5fC32E0c89de68683118c62A",
+    isNative: false,
+    isWrappedNative: false,
+    decimals: 18,
+    logo: daiLogo,      // <— ora usa il tuo PNG
+  },
+
   WBTC: {
     symbol: "WBTC",
-    name: "Wrapped Bitcoin",
-    // ⚠ se usi un altro contratto WBTC, cambia solo address + decimals
-    address: "0x92f3b59a79bff5dc60c0d59ea13a44d082b2bdfc",
+    name: "Wrapped Bitcoin (Sepolia)",
+    address: "0x92f3b59A79BFF5Dc60C0D59ea13a44d082B2bDFC",
     isNative: false,
     isWrappedNative: false,
     decimals: 8,
-    logo: wbtcLogo,
+    logo: wbtcLogo,     // <— idem
   },
 };
 
-export const AVAILABLE_TOKENS = Object.keys(TOKENS);
-
-export function getToken(symbol) {
-  return TOKENS[symbol];
-}
+// Token che compaiono nel selettore dello swap
+export const AVAILABLE_TOKENS = ["ETH", "WETH", "USDC", "DAI", "WBTC"];
