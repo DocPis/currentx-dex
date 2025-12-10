@@ -22,6 +22,8 @@ const TEST_PRICES_USD = {
   CXT: 1,
 };
 
+const REFRESH_MS = 30000; // ⏱ auto-refresh ogni 30s
+
 function formatUsd(value) {
   if (value == null || Number.isNaN(value)) return "—";
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -43,6 +45,8 @@ function formatPct(value) {
  * - volume 24h in USD (da eventi Swap)
  * - fees 24h (0.3% del volume 24h)
  * - posizione utente: LP balance, share %, valore USD
+ *
+ * E aggiorna automaticamente ogni 30 secondi.
  */
 export function usePoolsOnChain(basePools, address, chainId) {
   const [pools, setPools] = useState(basePools);
@@ -50,21 +54,27 @@ export function usePoolsOnChain(basePools, address, chainId) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.ethereum) {
+      setLoading(false);
+      setError("No provider (window.ethereum not found).");
+      return;
+    }
+
     let cancelled = false;
+    let intervalId;
 
     async function load() {
-      if (typeof window === "undefined" || !window.ethereum) {
-        setLoading(false);
-        setError("No provider (window.ethereum not found).");
-        return;
-      }
+      if (cancelled) return;
 
-      // Se non siamo su Sepolia, possiamo comunque mostrare basePools "vuote"
+      // Se non siamo su Sepolia, mostriamo solo dati “vuoti”
       const isSepolia = chainId === SEPOLIA_CHAIN_ID_HEX || !chainId;
 
       try {
-        setLoading(true);
-        setError(null);
+        if (!intervalId) {
+          // solo al primo giro mostriamo lo skeleton
+          setLoading(true);
+          setError(null);
+        }
 
         const provider = new BrowserProvider(window.ethereum);
         const factory = new Contract(
@@ -276,9 +286,15 @@ export function usePoolsOnChain(basePools, address, chainId) {
       }
     }
 
+    // primo load immediato
     load();
+
+    // auto-refresh ogni 30s
+    intervalId = setInterval(load, REFRESH_MS);
+
     return () => {
       cancelled = true;
+      if (intervalId) clearInterval(intervalId);
     };
   }, [JSON.stringify(basePools), address, chainId]);
 

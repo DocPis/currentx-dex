@@ -1,5 +1,8 @@
 // src/components/liquidity/PoolRow.jsx
-import { TOKEN_ICONS } from "../../utils/tokenIcons";
+
+import TokenPairIcons from "./TokenPairIcons.jsx";
+import PoolStats from "./PoolStats.jsx";
+import PoolActions from "./PoolActions.jsx";
 
 export default function PoolRow({ pool, isOdd }) {
   const icons = pool.tokens?.slice(0, 2) || [];
@@ -24,29 +27,10 @@ export default function PoolRow({ pool, isOdd }) {
         isOdd ? "bg-slate-950/40" : "bg-slate-950/10"
       } border-t border-slate-900/70`}
     >
-      {/* POOL + ICONS + MY POSITION */}
+      {/* LEFT CELL: pool name + tags + my position */}
       <div className="w-[28%] flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <div className="flex -space-x-1.5">
-            {icons.map((sym) => {
-              const src = TOKEN_ICONS[sym];
-              if (!src)
-                return (
-                  <span
-                    key={sym}
-                    className="h-6 w-6 rounded-full bg-slate-700 border border-slate-950"
-                  />
-                );
-              return (
-                <img
-                  key={sym}
-                  src={src}
-                  alt={sym}
-                  className="h-6 w-6 rounded-full border border-slate-950 bg-slate-900 object-cover shadow-md"
-                />
-              );
-            })}
-          </div>
+          <TokenPairIcons tokens={icons} />
 
           <div className="flex flex-col">
             <span className="text-xs sm:text-sm font-medium">
@@ -84,56 +68,19 @@ export default function PoolRow({ pool, isOdd }) {
         )}
       </div>
 
-      {/* VOLUME 24H */}
-      <div className="w-[14%] text-right hidden sm:block text-slate-200">
-        {volumeText}
-      </div>
+      {/* MIDDLE: stats (volume, fees, tvl, apr) */}
+      <PoolStats
+        volumeText={volumeText}
+        feesText={feesText}
+        tvlText={tvlText}
+        aprText={aprText}
+      />
 
-      {/* FEES 24H */}
-      <div className="w-[14%] text-right hidden sm:block text-slate-200">
-        {feesText}
-      </div>
-
-      {/* TVL */}
-      <div className="w-[14%] text-right text-slate-100">{tvlText}</div>
-
-      {/* APR */}
-      <div className="w-[12%] text-right text-emerald-300 font-medium">
-        {aprText}
-      </div>
-
-      {/* ACTIONS */}
-      <div className="w-[18%] flex justify-end gap-2 pr-1 sm:pr-2">
-        <button
-          className="rounded-full bg-sky-500/90 hover:bg-sky-400 text-slate-950 px-3 py-1.5 text-[10px] sm:text-xs font-semibold"
-          disabled={!pool.hasOnChainPool}
-          title={
-            pool.hasOnChainPool
-              ? "Add liquidity via router (todo)"
-              : "No on-chain pool for this pair"
-          }
-        >
-          Deposit
-        </button>
-
-        {detailsUrl ? (
-          <a
-            href={detailsUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="rounded-full border border-slate-600/70 px-3 py-1.5 text-[10px] sm:text-xs text-slate-200 hover:border-slate-300/80 hover:bg-slate-900/70 transition-colors"
-          >
-            Details
-          </a>
-        ) : (
-          <button
-            className="rounded-full border border-slate-600/70 px-3 py-1.5 text-[10px] sm:text-xs text-slate-400 cursor-default"
-            disabled
-          >
-            Details
-          </button>
-        )}
-      </div>
+      {/* RIGHT: actions */}
+      <PoolActions
+        hasOnChainPool={pool.hasOnChainPool}
+        detailsUrl={detailsUrl}
+      />
     </div>
   );
 }
