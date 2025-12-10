@@ -1,4 +1,4 @@
-export default function ApproveButton({ tokenSymbol, onApprove, loading }) {
+export default function ApproveButton({ tokenSymbol, loading, onApprove }) {
   return (
     <button
       onClick={onApprove}
