@@ -1,76 +1,61 @@
 // src/components/Header.jsx
-import currentXLogo from "../assets/currentx-logo.svg";
-import { SEPOLIA_CHAIN_ID_HEX } from "../config/uniswapSepolia";
+import React from "react";
 
-export default function Header({ address, chainId, onConnect, connecting }) {
-  const shortAddr = address
-    ? address.slice(0, 6) + "..." + address.slice(-4)
-    : null;
-
-  const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
+export default function Header({
+  address,
+  isOnSepolia,
+  onConnect,
+  balances,
+}) {
+  const shortAddress = address
+    ? `${address.slice(0, 6)}...${address.slice(-4)}`
+    : "";
 
   return (
-    <header className="flex items-center justify-between gap-4 pb-4 border-b border-slate-800/60">
-      {/* BRAND */}
-      <div className="flex items-center gap-3">
-        <div className="flex items-center justify-center">
-          <img
-            src={currentXLogo}
-            alt="CurrentX Logo"
-            className="h-12 w-12 -translate-y-[1px] object-contain"
-          />
+    <header className="w-full flex items-center justify-between py-4 px-6 border-b border-slate-800 bg-[#020617]">
+      <div className="flex items-center gap-2">
+        <div className="h-8 w-8 rounded-full bg-sky-500 flex items-center justify-center font-bold text-sm">
+          X
         </div>
-
-        <div className="flex flex-col justify-center translate-y-[1px]">
-          <div className="text-2xl font-semibold text-slate-50 leading-none">
+        <div className="flex flex-col">
+          <span className="font-semibold text-slate-50">
             CurrentX
-          </div>
-          <div className="mt-1 text-[11px] text-slate-400 leading-none">
+          </span>
+          <span className="text-xs text-slate-400">
             The new current of decentralized trading.
-          </div>
+          </span>
         </div>
       </div>
 
-      {/* RIGHT SIDE */}
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <div className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-300">
-          <span
-            className={`h-2 w-2 rounded-full ${
-              isOnSepolia
-                ? "bg-emerald-400"
-                : chainId
-                ? "bg-amber-400"
-                : "bg-slate-500"
-            } shadow-[0_0_0_4px_rgba(34,197,94,0.35)]`}
-          />
-          <span>
-            {chainId
-              ? isOnSepolia
-                ? "Sepolia Testnet"
-                : "Wrong network"
-              : "Not connected"}
-          </span>
+      <div className="flex items-center gap-3">
+        <div className="hidden sm:flex items-center gap-3 text-xs text-slate-300">
+          <span>ETH: {balances.ETH.toFixed(4)}</span>
+          <span>WETH: {balances.WETH.toFixed(4)}</span>
+          <span>USDC: {balances.USDC.toFixed(2)}</span>
         </div>
 
-        {address && (
-          <div className="hidden items-center rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1.5 text-[11px] text-slate-300 sm:inline-flex">
-            {shortAddr}
-          </div>
-        )}
-
-        <button
-          onClick={onConnect}
-          disabled={connecting}
-          className="inline-flex items-center rounded-full bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2 text-xs font-semibold text-slate-950 shadow-lg shadow-emerald-500/40 disabled:opacity-60"
+        <div
+          className={`px-3 py-1.5 rounded-full text-xs font-medium border ${
+            isOnSepolia
+              ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
+              : "border-amber-500/50 bg-amber-500/10 text-amber-300"
+          }`}
         >
-          {connecting
-            ? "Connecting..."
-            : address
-            ? isOnSepolia
-              ? "Connected"
-              : "Switch to Sepolia"
-            : "Connect Wallet"}
-        </button>
+          {isOnSepolia ? "Sepolia Testnet" : "Wrong network"}
+        </div>
+
+        {address ? (
+          <div className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700">
+            {shortAddress}
+          </div>
+        ) : (
+          <button
+            onClick={onConnect}
+            className="px-4 py-1.5 rounded-full bg-sky-500 hover:bg-sky-400 text-xs font-semibold text-white shadow-md"
+          >
+            Connect wallet
+          </button>
+        )}
       </div>
     </header>
   );

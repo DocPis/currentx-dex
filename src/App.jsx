@@ -1,181 +1,81 @@
 // src/App.jsx
-
-import { useEffect, useState } from "react";
-import { BrowserProvider } from "ethers";
-
+import React, { useState } from "react";
 import Header from "./components/Header";
-import Tabs from "./components/Tabs";
 import SwapSection from "./components/SwapSection";
-import DashboardSection from "./components/DashboardSection";
 import LiquiditySection from "./components/LiquiditySection";
-
-import {
-  SEPOLIA_CHAIN_ID_HEX,
-  loadTokenRegistry,
-} from "./config/uniswapSepolia";
-
-import { getAllBalances } from "./utils/getBalances";
+import { useWallet } from "./hooks/useWallet";
+import { useBalances } from "./hooks/useBalances";
 
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
-  const [address, setAddress] = useState(null);
-  const [chainId, setChainId] = useState(null);
+  const [tab, setTab] = useState("swap");
+  const { address, isOnSepolia, connect } = useWallet();
+  const { balances, refresh } = useBalances(address);
 
-  const [balances, setBalances] = useState({});
-  const [tokenRegistry, setTokenRegistry] = useState(null);
-
-  const [connecting, setConnecting] = useState(false);
-
-  /* ----------------------------------------------------
-     UNIVERSAL BALANCE LOADER
-  ---------------------------------------------------- */
-
-  async function refreshBalances(currentAddress) {
-    if (!currentAddress) return;
-
+  const handleConnect = async () => {
     try {
-      const all = await getAllBalances(currentAddress);
-      setBalances(all);
+      await connect();
+      await refresh();
     } catch (e) {
-      console.error("Balance refresh error:", e);
+      alert(e.message || "Failed to connect wallet");
     }
-  }
-
-  /* ----------------------------------------------------
-     CONNECT WALLET + LOAD REGISTRY
-  ---------------------------------------------------- */
-
-  async function handleConnect() {
-    if (!window.ethereum) {
-      alert("No wallet detected.");
-      return;
-    }
-
-    try {
-      setConnecting(true);
-
-      const provider = new BrowserProvider(window.ethereum);
-
-      const accounts = await window.ethereum.request({
-        method: "eth_requestAccounts",
-      });
-
-      const addr = accounts[0];
-      setAddress(addr);
-
-      let currentChainId = await window.ethereum.request({
-        method: "eth_chainId",
-      });
-
-      setChainId(currentChainId);
-
-      // Forza Sepolia
-      if (currentChainId !== SEPOLIA_CHAIN_ID_HEX) {
-        try {
-          await window.ethereum.request({
-            method: "wallet_switchEthereumChain",
-            params: [{ chainId: SEPOLIA_CHAIN_ID_HEX }],
-          });
-          currentChainId = SEPOLIA_CHAIN_ID_HEX;
-          setChainId(SEPOLIA_CHAIN_ID_HEX);
-        } catch (err) {
-          console.warn("Cannot switch:", err);
-        }
-      }
-
-      // Carica registry
-      const registry = await loadTokenRegistry(provider);
-      setTokenRegistry(registry);
-
-      // Carica balances
-      await refreshBalances(addr);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  /* ----------------------------------------------------
-     ACCOUNT + CHAIN LISTENERS
-  ---------------------------------------------------- */
-
-  useEffect(() => {
-    if (!window.ethereum) return;
-
-    const handleAccountsChanged = async (accounts) => {
-      if (accounts.length === 0) {
-        setAddress(null);
-        setBalances({});
-      } else {
-        const addr = accounts[0];
-        setAddress(addr);
-        await refreshBalances(addr);
-      }
-    };
-
-    const handleChainChanged = (cid) => {
-      setChainId(cid);
-    };
-
-    window.ethereum.on("accountsChanged", handleAccountsChanged);
-    window.ethereum.on("chainChanged", handleChainChanged);
-
-    return () => {
-      if (!window.ethereum) return;
-      window.ethereum.removeListener(
-        "accountsChanged",
-        handleAccountsChanged
-      );
-      window.ethereum.removeListener("chainChanged", handleChainChanged);
-    };
-  }, []);
-
-  /* ----------------------------------------------------
-     WHICH UI TO SHOW
-  ---------------------------------------------------- */
-
-  let content;
-  if (tab === "dashboard") content = <DashboardSection />;
-
-  if (tab === "swap")
-    content = (
-      <SwapSection
-        address={address}
-        chainId={chainId}
-        balances={balances}
-        tokenRegistry={tokenRegistry}
-        onConnect={handleConnect}
-        onRefreshBalances={() => refreshBalances(address)}
-      />
-    );
-
-  if (tab === "liquidity")
-    content = (
-      <LiquiditySection
-        address={address}
-        chainId={chainId}
-      />
-    );
-
-  /* ----------------------------------------------------
-     RENDER
-  ---------------------------------------------------- */
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-950 to-black text-slate-50">
-      <div className="mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6">
-        <Header
-          address={address}
-          chainId={chainId}
-          onConnect={handleConnect}
-          connecting={connecting}
-        />
+    <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col">
+      <Header
+        address={address}
+        isOnSepolia={isOnSepolia}
+        onConnect={handleConnect}
+        balances={balances}
+      />
 
-        <Tabs active={tab} onChange={setTab} />
-
-        <main className="pt-2">{content}</main>
+      {/* Tabs */}
+      <div className="px-6 pt-6">
+        <div className="inline-flex bg-slate-900/80 rounded-full p-1 text-xs sm:text-sm border border-slate-800">
+          <button
+            onClick={() => setTab("dashboard")}
+            className={`px-4 py-1.5 rounded-full ${
+              tab === "dashboard"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-100"
+            }`}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => setTab("swap")}
+            className={`px-4 py-1.5 rounded-full ${
+              tab === "swap"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-100"
+            }`}
+          >
+            Swap
+          </button>
+          <button
+            onClick={() => setTab("liquidity")}
+            className={`px-4 py-1.5 rounded-full ${
+              tab === "liquidity"
+                ? "bg-slate-800 text-white"
+                : "text-slate-400 hover:text-slate-100"
+            }`}
+          >
+            Liquidity
+          </button>
+        </div>
       </div>
+
+      <main className="flex-1">
+        {tab === "swap" && (
+          <SwapSection balances={balances} />
+        )}
+        {tab === "liquidity" && <LiquiditySection />}
+        {tab === "dashboard" && (
+          <div className="mt-10 text-center text-slate-400">
+            Dashboard coming soon.
+          </div>
+        )}
+      </main>
     </div>
   );
 }
