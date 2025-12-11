@@ -13,8 +13,8 @@ export default function App() {
 
   const handleConnect = async () => {
     try {
-      await connect();
-      await refresh();
+      const connectedAddress = await connect();
+      await refresh(connectedAddress);
     } catch (e) {
       alert(e.message || "Failed to connect wallet");
     }
