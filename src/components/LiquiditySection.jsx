@@ -22,8 +22,8 @@ function findTokenMeta(symbol) {
   );
 }
 
-// Piccola componente per mostrare le icone dei due token
-function TokenPairIcons({ token0Symbol, token1Symbol, size = 26 }) {
+// Iconcine dei due token
+function TokenPairIcons({ token0Symbol, token1Symbol }) {
   const t0 = findTokenMeta(token0Symbol);
   const t1 = findTokenMeta(token1Symbol);
 
@@ -60,8 +60,10 @@ export default function LiquiditySection({ address, chainId }) {
   const [selectedPool, setSelectedPool] = useState(null);
   const [showRemoveModal, setShowRemoveModal] = useState(false);
 
-  // In questa versione tracciamo solo la WETH/USDC,
-  // ma puoi aggiungere altre coppie in questo array.
+  // per forzare un reload dopo il remove
+  const [reloadNonce, setReloadNonce] = useState(0);
+
+  // Al momento tracciamo solo WETH/USDC
   const PAIRS_TO_TRACK = useMemo(
     () => [
       {
@@ -150,10 +152,18 @@ export default function LiquiditySection({ address, chainId }) {
             pairAddress,
             token0Symbol: p.symbol0,
             token1Symbol: p.symbol1,
+            token0Address: p.token0,
+            token1Address: p.token1,
             reserve0,
             reserve1,
             totalSupply,
             userLp,
+            reserve0Raw,
+            reserve1Raw,
+            totalSupplyRaw,
+            userLpRaw,
+            dec0,
+            dec1,
           });
         }
 
@@ -167,7 +177,7 @@ export default function LiquiditySection({ address, chainId }) {
     }
 
     fetchPools();
-  }, [address, chainId, PAIRS_TO_TRACK]);
+  }, [address, chainId, PAIRS_TO_TRACK, reloadNonce]);
 
   const handleOpenRemove = (pool) => {
     setSelectedPool(pool);
@@ -177,6 +187,11 @@ export default function LiquiditySection({ address, chainId }) {
   const handleCloseRemove = () => {
     setShowRemoveModal(false);
     setSelectedPool(null);
+  };
+
+  const handleRemoved = () => {
+    // dopo il remove, ricarica le pool
+    setReloadNonce((n) => n + 1);
   };
 
   // --------- RENDER ---------
@@ -248,7 +263,6 @@ export default function LiquiditySection({ address, chainId }) {
             </div>
 
             <div className="flex flex-col items-end gap-2">
-              {/* In futuro qui possiamo aggiungere "Add Liquidity" / "Details" ecc. */}
               <button
                 onClick={() => handleOpenRemove(pool)}
                 className="rounded-full bg-rose-500 px-4 py-2 text-xs font-semibold text-slate-50 shadow-md shadow-rose-900/40 transition hover:bg-rose-400 hover:shadow-rose-800/60"
@@ -264,7 +278,7 @@ export default function LiquiditySection({ address, chainId }) {
           isOpen={showRemoveModal}
           onClose={handleCloseRemove}
           pool={selectedPool}
-          // se il tuo modal si aspetta altre props, aggiungile qui
+          onRemoved={handleRemoved}
         />
       )}
     </section>

@@ -1,8 +1,18 @@
 // src/components/RemoveLiquidityModal.jsx
 
-import React from "react";
+import React, { useState } from "react";
+import { BrowserProvider, Contract, formatUnits } from "ethers";
+import {
+  UNISWAP_V2_ROUTER,
+  UNISWAP_V2_ROUTER_ABI,
+} from "../config/uniswapSepolia";
 
-export default function RemoveLiquidityModal({ isOpen, onClose, pool }) {
+export default function RemoveLiquidityModal({
+  isOpen,
+  onClose,
+  pool,
+  onRemoved,
+}) {
   if (!isOpen || !pool) return null;
 
   const {
@@ -12,11 +22,98 @@ export default function RemoveLiquidityModal({ isOpen, onClose, pool }) {
     totalSupply,
     reserve0,
     reserve1,
+    userLpRaw,
+    token0Address,
+    token1Address,
+    dec0,
+    dec1,
   } = pool;
 
-  // quota utente (% della pool)
+  const [submitting, setSubmitting] = useState(false);
+  const [txHash, setTxHash] = useState(null);
+  const [txError, setTxError] = useState(null);
+
   const sharePct =
     totalSupply > 0 ? ((userLp / totalSupply) * 100).toFixed(4) : "0.0000";
+
+  const disabled = submitting || !userLpRaw || userLpRaw === 0n;
+
+  async function handleRemove() {
+    if (!window.ethereum) {
+      setTxError("No wallet detected.");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      setTxError(null);
+      setTxHash(null);
+
+      const provider = new BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const router = new Contract(
+        UNISWAP_V2_ROUTER,
+        UNISWAP_V2_ROUTER_ABI,
+        signer
+      );
+
+      const account = await signer.getAddress();
+
+      // amount di LP da rimuovere: 100% della posizione utente
+      const liquidity = userLpRaw;
+
+      if (!liquidity || liquidity === 0n) {
+        setTxError("You have no LP to remove.");
+        setSubmitting(false);
+        return;
+      }
+
+      // Per ora min amount = 0 (nessuna protezione slippage)
+      const amountAMin = 0n;
+      const amountBMin = 0n;
+
+      const deadline = BigInt(
+        Math.floor(Date.now() / 1000) + 60 * 20 // 20 minuti
+      );
+
+      console.log("removeLiquidity params", {
+        tokenA: token0Address,
+        tokenB: token1Address,
+        liquidity: liquidity.toString(),
+        amountAMin: amountAMin.toString(),
+        amountBMin: amountBMin.toString(),
+        to: account,
+        deadline: deadline.toString(),
+      });
+
+      const tx = await router.removeLiquidity(
+        token0Address,
+        token1Address,
+        liquidity,
+        amountAMin,
+        amountBMin,
+        account,
+        deadline
+      );
+
+      setTxHash(tx.hash);
+
+      const receipt = await tx.wait();
+
+      if (receipt.status === 1n || receipt.status === 1) {
+        // tx ok
+        if (onRemoved) onRemoved();
+        onClose();
+      } else {
+        setTxError("Transaction failed.");
+      }
+    } catch (err) {
+      console.error("removeLiquidity error:", err);
+      setTxError(err?.shortMessage || err?.message || "Transaction failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -27,7 +124,8 @@ export default function RemoveLiquidityModal({ isOpen, onClose, pool }) {
           </h2>
           <button
             onClick={onClose}
-            className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
+            disabled={submitting}
+            className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             ✕
           </button>
@@ -59,26 +157,46 @@ export default function RemoveLiquidityModal({ isOpen, onClose, pool }) {
         </div>
 
         <div className="mb-4 rounded-xl bg-slate-900/70 px-3 py-3 text-xs text-slate-400">
-          <p className="mb-1 font-semibold text-slate-200">Heads up</p>
+          <p className="mb-1 font-semibold text-slate-200">
+            Amount to remove: <span className="text-teal-300">100%</span> of
+            your LP
+          </p>
           <p>
-            Questo modal al momento è solo UI: non esegue ancora la transazione
-            <span className="text-slate-200 font-mono"> removeLiquidity </span>{" "}
-            sul router. Possiamo agganciare la tx in un secondo step.
+            In questa prima versione rimuoviamo il 100% della tua posizione
+            nella pool. In seguito possiamo aggiungere slider e slippage
+            personalizzato.
           </p>
         </div>
+
+        {txError && (
+          <div className="mb-3 rounded-md bg-red-900/50 px-3 py-2 text-xs text-red-100">
+            {txError}
+          </div>
+        )}
+
+        {txHash && (
+          <div className="mb-3 rounded-md bg-emerald-900/40 px-3 py-2 text-xs text-emerald-100">
+            Tx sent:{" "}
+            <span className="font-mono">
+              {txHash.slice(0, 10)}…{txHash.slice(-6)}
+            </span>
+          </div>
+        )}
 
         <div className="flex justify-end gap-2">
           <button
             onClick={onClose}
-            className="rounded-full border border-slate-700 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800"
+            disabled={submitting}
+            className="rounded-full border border-slate-700 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
             Cancel
           </button>
           <button
-            disabled
-            className="cursor-not-allowed rounded-full bg-rose-500/60 px-4 py-2 text-xs font-semibold text-slate-50"
+            onClick={handleRemove}
+            disabled={disabled}
+            className="rounded-full bg-rose-500 px-4 py-2 text-xs font-semibold text-slate-50 shadow-md shadow-rose-900/40 transition hover:bg-rose-400 hover:shadow-rose-800/60 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Remove (soon)
+            {submitting ? "Removing…" : "Confirm remove"}
           </button>
         </div>
       </div>
