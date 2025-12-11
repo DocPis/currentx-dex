@@ -13,9 +13,9 @@ export const TOKEN_REGISTRY = [
   },
   {
     symbol: "USDC",
-    name: "USD Coin (Test)",
-    address: "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238", // tokenB della tx
+    name: "USD Coin",
+    address: "0x6c3ea9036406852006290770BEdFcAbA0e23A0e8",
     decimals: 6,
-    logo: "/assets/tokens/usdc.svg",
-  },
+    logoURI: "/assets/tokens/usdc.png",
+},
 ];

@@ -13,7 +13,7 @@ import {
 } from "../utils/contracts";
 
 import { TOKEN_REGISTRY } from "../utils/tokenRegistry";
-import { WETH_ADDRESS } from "../config/uniswapSepolia";
+import { WETH_ADDRESS } from "../config/uniswapSepolia"; // (anche se non usato direttamente, ok)
 import { buildPath } from "../utils/buildPath";
 
 // ABIs dai JSON
@@ -21,8 +21,7 @@ const UNISWAP_V2_ROUTER_ABI =
   IUniswapV2RouterJSON.abi ?? IUniswapV2RouterJSON;
 const UNISWAP_V2_FACTORY_ABI =
   IUniswapV2FactoryJSON.abi ?? IUniswapV2FactoryJSON;
-const UNISWAP_V2_PAIR_ABI =
-  IUniswapV2PairJSON.abi ?? IUniswapV2PairJSON;
+const UNISWAP_V2_PAIR_ABI = IUniswapV2PairJSON.abi ?? IUniswapV2PairJSON;
 
 // Mappiamo i token per simbolo (WETH, USDC, ecc.)
 const TOKENS = TOKEN_REGISTRY.reduce((acc, t) => {
@@ -66,6 +65,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
         try {
           const units = parseUnits(amountIn, 18); // ETH/WETH 18 dec
           if (cancelled) return;
+
           setExpectedOut(units);
           setPriceImpact("0.00");
           setQuoteError(null);
@@ -91,6 +91,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
         setIsFetchingQuote(true);
 
         const provider = new BrowserProvider(window.ethereum);
+
         const router = new Contract(
           UNISWAP_V2_ROUTER_ADDRESS,
           UNISWAP_V2_ROUTER_ABI,
@@ -104,7 +105,9 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
 
         const path = buildPath(sellToken, buyToken);
 
+        // 🔥 QUI è importante: getAmountsOut (plurale), come in Uniswap V2
         const amounts = await router.getAmountsOut(amountInUnits, path);
+
         if (cancelled) return;
 
         if (!amounts || amounts.length < 2) {
@@ -127,6 +130,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
             );
 
             const pairAddress = await factory.getPair(path[0], path[1]);
+
             if (
               !pairAddress ||
               pairAddress ===
@@ -151,7 +155,10 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
             let reserveInRaw;
             let reserveOutRaw;
 
-            if (token0 === addrInLower && addrOutLower !== addrInLower) {
+            if (
+              token0 === addrInLower &&
+              addrOutLower !== addrInLower
+            ) {
               reserveInRaw = reserve0;
               reserveOutRaw = reserve1;
             } else if (
@@ -190,10 +197,12 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
             }
 
             let impact = ((midPrice - execPrice) / midPrice) * 100;
+
             if (!Number.isFinite(impact)) {
               setPriceImpact(null);
               return;
             }
+
             if (impact < 0) impact = 0;
 
             setPriceImpact(impact.toFixed(2));
