@@ -1,14 +1,11 @@
 // src/utils/contracts.js
 
-// 🔥 METTI QUI I TUOI INDIRIZZI REALI (gli stessi che usi nello swap)
-// Per ora sono placeholder, ma la forma è questa:
+// Indirizzi Uniswap V2 su Sepolia che stai usando per CurrentX.
 
-export const UNISWAP_V2_FACTORY_ADDRESS =
-  "0xF62c03E08ada871A0bEb309762E260a7a6a880E6"; // TODO: sostituisci
-
+// Router usato nella tua tx di addLiquidity WETH/USDC
 export const UNISWAP_V2_ROUTER_ADDRESS =
-  "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3"; // TODO: sostituisci
+  "0xee567fe1712faf6149d80da1e6934e354124cfe3"; // lowercase
 
-// Esempio (NON usare questi, sono solo esempio!):
-// export const UNISWAP_V2_FACTORY_ADDRESS = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
-// export const UNISWAP_V2_ROUTER_ADDRESS = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
+// Factory letta dal router (router.factory())
+export const UNISWAP_V2_FACTORY_ADDRESS =
+  "0xf62c03e08ada871a0beb309762e260a7a6a880e6"; // lowercase

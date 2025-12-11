@@ -1,498 +1,272 @@
-import React, { useEffect, useState } from "react";
-import { ethers } from "ethers";
+// src/components/LiquiditySection.jsx
 
-// ABI
-import IUniswapV2FactoryABI from "../abi/IUniswapV2Factory.json";
-import IUniswapV2PairABI from "../abi/IUniswapV2Pair.json";
-import IUniswapV2RouterABI from "../abi/IUniswapV2Router02.json";
+import React, { useEffect, useMemo, useState } from "react";
+import { BrowserProvider, Contract, formatUnits } from "ethers";
 
-// SOLO router: la factory la leggiamo da router.factory()
-import { UNISWAP_V2_ROUTER_ADDRESS } from "../utils/contracts";
+import {
+  SEPOLIA_CHAIN_ID_HEX,
+  UNISWAP_V2_FACTORY,
+  UNISWAP_V2_FACTORY_ABI,
+  UNISWAP_V2_PAIR_ABI,
+  WETH_ADDRESS,
+  USDC_ADDRESS,
+} from "../config/uniswapSepolia";
+
 import { TOKEN_REGISTRY } from "../utils/tokenRegistry";
+import RemoveLiquidityModal from "./RemoveLiquidityModal";
 
-const formatUnits =
-  ethers.utils && ethers.utils.formatUnits
-    ? ethers.utils.formatUnits
-    : ethers.formatUnits;
-
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-
-const PAIRS_TO_TRACK = [
-  ["WETH", "USDC"],
-  ["WETH", "WBTC"],
-  ["WETH", "DAI"],
-];
-
-function getTokenBySymbol(symbol) {
-  return TOKEN_REGISTRY.find((t) => t.symbol === symbol);
+// Trova i metadati del token per simbolo
+function findTokenMeta(symbol) {
+  return TOKEN_REGISTRY.find(
+    (t) => t.symbol.toUpperCase() === symbol.toUpperCase()
+  );
 }
 
-const LiquiditySection = ({ provider, account }) => {
+// Piccola componente per mostrare le icone dei due token
+function TokenPairIcons({ token0Symbol, token1Symbol, size = 26 }) {
+  const t0 = findTokenMeta(token0Symbol);
+  const t1 = findTokenMeta(token1Symbol);
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex -space-x-3">
+        {t0 && (
+          <img
+            src={t0.logo}
+            alt={t0.symbol}
+            className="h-7 w-7 rounded-full border border-slate-900 bg-slate-950 object-contain"
+          />
+        )}
+        {t1 && (
+          <img
+            src={t1.logo}
+            alt={t1.symbol}
+            className="h-7 w-7 rounded-full border border-slate-900 bg-slate-950 object-contain"
+          />
+        )}
+      </div>
+      <span className="text-sm font-semibold text-slate-50">
+        {token0Symbol} / {token1Symbol}
+      </span>
+    </div>
+  );
+}
+
+export default function LiquiditySection({ address, chainId }) {
+  const [loading, setLoading] = useState(false);
   const [pools, setPools] = useState([]);
-  const [loadingPools, setLoadingPools] = useState(false);
+  const [error, setError] = useState(null);
 
-  const [isRemoveOpen, setIsRemoveOpen] = useState(false);
-  const [removeState, setRemoveState] = useState({
-    pairAddress: null,
-    token0: null,
-    token1: null,
-    lpBalance: null,
-    totalSupply: null,
-    reserve0: null,
-    reserve1: null,
-  });
-  const [removePercent, setRemovePercent] = useState(100);
-  const [removeEstimates, setRemoveEstimates] = useState({
-    amount0: "0",
-    amount1: "0",
-  });
-  const [isWithdrawing, setIsWithdrawing] = useState(false);
+  const [selectedPool, setSelectedPool] = useState(null);
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
 
-  // ------------------------ LOAD POOLS ------------------------
+  // In questa versione tracciamo solo la WETH/USDC,
+  // ma puoi aggiungere altre coppie in questo array.
+  const PAIRS_TO_TRACK = useMemo(
+    () => [
+      {
+        symbol0: "WETH",
+        symbol1: "USDC",
+        token0: WETH_ADDRESS.toLowerCase(),
+        token1: USDC_ADDRESS.toLowerCase(),
+      },
+    ],
+    []
+  );
+
   useEffect(() => {
-    if (!provider) return;
-    fetchPools();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [provider, account]);
+    async function fetchPools() {
+      setError(null);
+      setPools([]);
 
-  const fetchPools = async () => {
-    try {
-      setLoadingPools(true);
-
-      // 1) partiamo dal router
-      const router = new ethers.Contract(
-        UNISWAP_V2_ROUTER_ADDRESS,
-        IUniswapV2RouterABI.abi,
-        provider
-      );
-
-      const factoryAddress = await router.factory();
-      console.log("🏭 Factory address from router:", factoryAddress);
-
-      if (!factoryAddress || factoryAddress === ZERO_ADDRESS) {
-        console.warn("Factory address is zero/undefined, no pools");
-        setPools([]);
+      if (!window.ethereum) {
+        console.warn("LiquiditySection: provider assente, non chiamo fetchPools");
+        return;
+      }
+      if (!address) {
+        console.warn("LiquiditySection: wallet non connesso");
+        return;
+      }
+      if (chainId && chainId !== SEPOLIA_CHAIN_ID_HEX) {
+        console.warn("LiquiditySection: chain diversa da Sepolia, niente fetch");
         return;
       }
 
-      // 2) factory reale presa dal router
-      const factory = new ethers.Contract(
-        factoryAddress,
-        IUniswapV2FactoryABI.abi,
-        provider
-      );
+      try {
+        setLoading(true);
 
-      const loadedPools = [];
+        const provider = new BrowserProvider(window.ethereum);
 
-      for (const [sym0, sym1] of PAIRS_TO_TRACK) {
-        const t0 = getTokenBySymbol(sym0);
-        const t1 = getTokenBySymbol(sym1);
-        if (!t0 || !t1) continue;
-
-        const pairAddress = await factory.getPair(t0.address, t1.address);
-
-        console.log(
-          "▶️ Checking pair",
-          `${sym0}/${sym1}`,
-          "\n  token0:", t0.address,
-          "\n  token1:", t1.address,
-          "\n  pair  :", pairAddress
-        );
-
-        if (!pairAddress || pairAddress === ZERO_ADDRESS) continue;
-
-        const pairContract = new ethers.Contract(
-          pairAddress,
-          IUniswapV2PairABI.abi,
+        const factory = new Contract(
+          UNISWAP_V2_FACTORY,
+          UNISWAP_V2_FACTORY_ABI,
           provider
         );
 
-        const [reserves, totalSupply, lpBalance] = await Promise.all([
-          pairContract.getReserves(),
-          pairContract.totalSupply(),
-          account ? pairContract.balanceOf(account) : Promise.resolve(0),
-        ]);
+        console.log("Factory address from router:", UNISWAP_V2_FACTORY);
 
-        const reserve0 = reserves._reserve0;
-        const reserve1 = reserves._reserve1;
+        const discoveredPools = [];
 
-        loadedPools.push({
-          id: `${sym0}-${sym1}`,
-          address: pairAddress,
-          token0: t0,
-          token1: t1,
-          reserve0,
-          reserve1,
-          totalSupply,
-          userLpBalance: lpBalance,
-        });
+        for (const p of PAIRS_TO_TRACK) {
+          console.log("Checking pair WETH/USDC");
+          console.log("token0:", p.token0);
+          console.log("token1:", p.token1);
+
+          const pairAddress = await factory.getPair(p.token0, p.token1);
+
+          if (
+            !pairAddress ||
+            pairAddress === "0x0000000000000000000000000000000000000000"
+          ) {
+            console.log("pair:", pairAddress, "(nessuna pool trovata)");
+            continue;
+          }
+
+          console.log("pair:", pairAddress);
+
+          const pairContract = new Contract(
+            pairAddress,
+            UNISWAP_V2_PAIR_ABI,
+            provider
+          );
+
+          const [reserve0Raw, reserve1Raw] = await pairContract.getReserves();
+          const totalSupplyRaw = await pairContract.totalSupply();
+          const userLpRaw = await pairContract.balanceOf(address);
+
+          const token0Meta = findTokenMeta(p.symbol0);
+          const token1Meta = findTokenMeta(p.symbol1);
+
+          const dec0 = token0Meta?.decimals ?? 18;
+          const dec1 = token1Meta?.decimals ?? 18;
+
+          const reserve0 = parseFloat(formatUnits(reserve0Raw, dec0));
+          const reserve1 = parseFloat(formatUnits(reserve1Raw, dec1));
+          const totalSupply = parseFloat(formatUnits(totalSupplyRaw, 18));
+          const userLp = parseFloat(formatUnits(userLpRaw, 18));
+
+          discoveredPools.push({
+            id: `${p.symbol0}-${p.symbol1}`,
+            pairAddress,
+            token0Symbol: p.symbol0,
+            token1Symbol: p.symbol1,
+            reserve0,
+            reserve1,
+            totalSupply,
+            userLp,
+          });
+        }
+
+        setPools(discoveredPools);
+      } catch (err) {
+        console.error("fetchPools error:", err);
+        setError("Error loading pools.");
+      } finally {
+        setLoading(false);
       }
-
-      setPools(loadedPools);
-    } catch (err) {
-      console.error("fetchPools error:", err);
-      setPools([]);
-    } finally {
-      setLoadingPools(false);
-    }
-  };
-
-  // ------------------------ OPEN REMOVE MODAL ------------------------
-  const openRemoveModal = async (pool) => {
-    try {
-      if (!provider || !account) return;
-
-      const signer = await provider.getSigner();
-      const pairContract = new ethers.Contract(
-        pool.address,
-        IUniswapV2PairABI.abi,
-        signer
-      );
-
-      const [lpBalance, reserves, totalSupply] = await Promise.all([
-        pairContract.balanceOf(account),
-        pairContract.getReserves(),
-        pairContract.totalSupply(),
-      ]);
-
-      const reserve0 = reserves._reserve0;
-      const reserve1 = reserves._reserve1;
-
-      setRemoveState({
-        pairAddress: pool.address,
-        token0: pool.token0,
-        token1: pool.token1,
-        lpBalance,
-        totalSupply,
-        reserve0,
-        reserve1,
-      });
-
-      setRemovePercent(100);
-
-      if (!lpBalance || lpBalance === 0 || lpBalance.isZero()) {
-        setRemoveEstimates({ amount0: "0", amount1: "0" });
-      } else {
-        const lpToBurn = lpBalance;
-        const amount0 = lpToBurn.mul(reserve0).div(totalSupply);
-        const amount1 = lpToBurn.mul(reserve1).div(totalSupply);
-
-        setRemoveEstimates({
-          amount0: formatUnits(amount0, pool.token0.decimals),
-          amount1: formatUnits(amount1, pool.token1.decimals),
-        });
-      }
-
-      setIsRemoveOpen(true);
-    } catch (err) {
-      console.error("openRemoveModal error:", err);
-    }
-  };
-
-  // ------------------------ RECALC ESTIMATES ------------------------
-  const recalcEstimates = (percent) => {
-    const { lpBalance, totalSupply, reserve0, reserve1, token0, token1 } =
-      removeState;
-
-    if (
-      !lpBalance ||
-      !totalSupply ||
-      !reserve0 ||
-      !reserve1 ||
-      lpBalance.isZero()
-    ) {
-      setRemoveEstimates({ amount0: "0", amount1: "0" });
-      return;
     }
 
-    const lpToBurn = lpBalance.mul(percent).div(100);
-    const amount0 = lpToBurn.mul(reserve0).div(totalSupply);
-    const amount1 = lpToBurn.mul(reserve1).div(totalSupply);
+    fetchPools();
+  }, [address, chainId, PAIRS_TO_TRACK]);
 
-    setRemoveEstimates({
-      amount0: formatUnits(amount0, token0.decimals),
-      amount1: formatUnits(amount1, token1.decimals),
-    });
+  const handleOpenRemove = (pool) => {
+    setSelectedPool(pool);
+    setShowRemoveModal(true);
   };
 
-  // ------------------------ WITHDRAW ------------------------
-  const handleWithdrawLiquidity = async () => {
-    if (!provider || !account) return;
-
-    const {
-      pairAddress,
-      token0,
-      token1,
-      lpBalance,
-      totalSupply,
-      reserve0,
-      reserve1,
-    } = removeState;
-
-    if (!pairAddress || !lpBalance || lpBalance.isZero()) return;
-
-    try {
-      setIsWithdrawing(true);
-
-      const signer = await provider.getSigner();
-      const router = new ethers.Contract(
-        UNISWAP_V2_ROUTER_ADDRESS,
-        IUniswapV2RouterABI.abi,
-        signer
-      );
-
-      const lpToBurn = lpBalance.mul(removePercent).div(100);
-      if (lpToBurn.isZero()) {
-        console.warn("LP to burn is zero, abort");
-        return;
-      }
-
-      let minAmount0 = 0;
-      let minAmount1 = 0;
-
-      if (totalSupply && reserve0 && reserve1) {
-        const amount0 = lpToBurn.mul(reserve0).div(totalSupply);
-        const amount1 = lpToBurn.mul(reserve1).div(totalSupply);
-
-        minAmount0 = amount0.mul(99).div(100);
-        minAmount1 = amount1.mul(99).div(100);
-      }
-
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 10;
-
-      const tx = await router.removeLiquidity(
-        token0.address,
-        token1.address,
-        lpToBurn,
-        minAmount0,
-        minAmount1,
-        account,
-        deadline
-      );
-
-      await tx.wait();
-
-      setIsRemoveOpen(false);
-      setRemoveState({
-        pairAddress: null,
-        token0: null,
-        token1: null,
-        lpBalance: null,
-        totalSupply: null,
-        reserve0: null,
-        reserve1: null,
-      });
-      setRemoveEstimates({ amount0: "0", amount1: "0" });
-
-      await fetchPools();
-    } catch (err) {
-      console.error("handleWithdrawLiquidity error:", err);
-    } finally {
-      setIsWithdrawing(false);
-    }
+  const handleCloseRemove = () => {
+    setShowRemoveModal(false);
+    setSelectedPool(null);
   };
 
-  // ------------------------ RENDER ------------------------
+  // --------- RENDER ---------
+
   return (
-    <div className="mt-8">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-white">
-            Provide liquidity. Earn CXT emissions.
-          </h2>
-          <p className="text-sm text-slate-400">
-            Earn swap fees and CXT by providing liquidity to core pools.
-          </p>
-        </div>
+    <section className="flex flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-50">
+          Provide liquidity. Earn CXT emissions.
+        </h2>
+        <p className="text-sm text-slate-400">
+          Earn swap fees and CXT by providing liquidity to core pools.
+        </p>
       </div>
 
-      {loadingPools ? (
-        <div className="py-10 text-center text-slate-400">
-          Loading pools...
-        </div>
-      ) : pools.length === 0 ? (
-        <div className="py-10 text-center text-slate-500">
-          No pools found on this network.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {pools.map((pool) => {
-            const {
-              id,
-              token0,
-              token1,
-              reserve0,
-              reserve1,
-              totalSupply,
-              userLpBalance,
-            } = pool;
-
-            const lpBalanceReadable =
-              userLpBalance && !userLpBalance.isZero()
-                ? formatUnits(userLpBalance, 18)
-                : "0";
-
-            return (
-              <div
-                key={id}
-                className="flex items-center justify-between rounded-2xl bg-slate-900/80 px-4 py-3 shadow-sm shadow-black/40"
-              >
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">
-                      {token0.symbol} / {token1.symbol}
-                    </span>
-                  </div>
-                  <div className="text-[11px] text-slate-400">
-                    Reserves:{" "}
-                    {formatUnits(reserve0, token0.decimals)} {token0.symbol} ·{" "}
-                    {formatUnits(reserve1, token1.decimals)} {token1.symbol}
-                  </div>
-                  <div className="text-[11px] text-slate-400">
-                    Total supply:{" "}
-                    {formatUnits(totalSupply || 0, 18)} LP — Your LP:{" "}
-                    {lpBalanceReadable}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    className="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-100 hover:bg-slate-700 disabled:opacity-40"
-                    onClick={() => openRemoveModal(pool)}
-                    disabled={!account}
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+      {loading && (
+        <div className="rounded-xl bg-slate-900/60 px-4 py-3 text-sm text-slate-400">
+          Loading pools…
         </div>
       )}
 
-      {isRemoveOpen && removeState.token0 && removeState.token1 && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-lg rounded-2xl bg-slate-900 p-6 shadow-xl relative">
-            <div className="flex items-center justify-between mb-4">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-pink-400 uppercase tracking-[0.16em]">
-                  Remove liquidity
-                </p>
-                <h2 className="text-lg font-semibold text-white">
-                  {removeState.token0.symbol} / {removeState.token1.symbol}
-                </h2>
-              </div>
-              <button
-                className="rounded-full bg-slate-800 px-2 py-1 text-xs text-slate-300 hover:bg-slate-700"
-                onClick={() => setIsRemoveOpen(false)}
-              >
-                ✕
-              </button>
-            </div>
+      {error && (
+        <div className="rounded-xl bg-red-900/40 px-4 py-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
 
-            <div className="mb-4 rounded-xl bg-slate-800/80 px-3 py-2 text-xs text-slate-300">
-              {!removeState.lpBalance ||
-              removeState.lpBalance.isZero() ? (
-                <span>You don&apos;t have LP tokens in this pool yet.</span>
-              ) : (
-                <span>
-                  Your LP:&nbsp;
-                  <span className="font-mono">
-                    {formatUnits(removeState.lpBalance, 18)}
-                  </span>
-                </span>
-              )}
-            </div>
+      {!loading && !error && pools.length === 0 && (
+        <div className="rounded-xl bg-slate-900/60 px-4 py-8 text-center text-sm text-slate-400">
+          No pools found on this network.
+        </div>
+      )}
 
-            <div className="mb-4">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs text-slate-300">
-                  Amount to withdraw
-                </span>
-                <span className="text-xs font-semibold text-white">
-                  {removePercent}%
-                </span>
-              </div>
-
-              <input
-                type="range"
-                min={1}
-                max={100}
-                step={1}
-                value={removePercent}
-                onChange={(e) => {
-                  const pct = Number(e.target.value);
-                  setRemovePercent(pct);
-                  recalcEstimates(pct);
-                }}
-                className="w-full accent-pink-500"
+      {!loading &&
+        !error &&
+        pools.length > 0 &&
+        pools.map((pool) => (
+          <div
+            key={pool.id}
+            className="flex items-center justify-between rounded-xl bg-slate-900/80 px-5 py-4 shadow-lg shadow-black/40"
+          >
+            <div className="flex flex-col gap-2">
+              <TokenPairIcons
+                token0Symbol={pool.token0Symbol}
+                token1Symbol={pool.token1Symbol}
               />
 
-              <div className="mt-3 flex items-center justify-between gap-2 text-xs">
-                {[25, 50, 75, 100].map((v) => (
-                  <button
-                    key={v}
-                    type="button"
-                    onClick={() => {
-                      setRemovePercent(v);
-                      recalcEstimates(v);
-                    }}
-                    className={`flex-1 rounded-full border px-2 py-1 ${
-                      removePercent === v
-                        ? "border-pink-500 bg-pink-500/10 text-pink-300"
-                        : "border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700"
-                    }`}
-                  >
-                    {v}%
-                  </button>
-                ))}
-              </div>
-            </div>
+              <p className="text-xs text-slate-400">
+                Reserves:{" "}
+                <span className="text-slate-200">
+                  {pool.reserve0} {pool.token0Symbol}
+                </span>{" "}
+                ·{" "}
+                <span className="text-slate-200">
+                  {pool.reserve1} {pool.token1Symbol}
+                </span>
+              </p>
 
-            <div className="mb-4 space-y-1 rounded-xl bg-slate-800/80 px-3 py-3 text-xs text-slate-300">
-              <div className="flex justify-between">
-                <span>Estimated out ({removeState.token0.symbol})</span>
-                <span className="font-mono text-white">
-                  {removeEstimates.amount0}
+              <p className="text-xs text-slate-400">
+                Total supply:{" "}
+                <span className="text-slate-200">
+                  {pool.totalSupply.toFixed(12)} LP
+                </span>{" "}
+                — Your LP:{" "}
+                <span className="text-teal-300">
+                  {pool.userLp.toFixed(12)} LP
                 </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Estimated out ({removeState.token1.symbol})</span>
-                <span className="font-mono text-white">
-                  {removeEstimates.amount1}
-                </span>
-              </div>
-              <p className="mt-1 text-[10px] text-slate-400">
-                You will receive at least 99% of the estimated amounts (1%
-                slippage tolerance on withdrawal).
               </p>
             </div>
 
-            <div className="mt-4 flex justify-end gap-3">
+            <div className="flex flex-col items-end gap-2">
+              {/* In futuro qui possiamo aggiungere "Add Liquidity" / "Details" ecc. */}
               <button
-                className="rounded-full bg-slate-800 px-4 py-2 text-xs text-slate-200 hover:bg-slate-700"
-                onClick={() => setIsRemoveOpen(false)}
+                onClick={() => handleOpenRemove(pool)}
+                className="rounded-full bg-rose-500 px-4 py-2 text-xs font-semibold text-slate-50 shadow-md shadow-rose-900/40 transition hover:bg-rose-400 hover:shadow-rose-800/60"
               >
-                Cancel
-              </button>
-              <button
-                className="rounded-full bg-pink-500 px-4 py-2 text-xs font-semibold text-white hover:bg-pink-400 disabled:opacity-40"
-                disabled={
-                  !removeState.lpBalance ||
-                  removeState.lpBalance.isZero() ||
-                  isWithdrawing
-                }
-                onClick={handleWithdrawLiquidity}
-              >
-                {isWithdrawing ? "Withdrawing..." : "Withdraw liquidity"}
+                Remove
               </button>
             </div>
           </div>
-        </div>
+        ))}
+
+      {showRemoveModal && selectedPool && (
+        <RemoveLiquidityModal
+          isOpen={showRemoveModal}
+          onClose={handleCloseRemove}
+          pool={selectedPool}
+          // se il tuo modal si aspetta altre props, aggiungile qui
+        />
       )}
-    </div>
+    </section>
   );
-};
-
-export default LiquiditySection;
-
+}

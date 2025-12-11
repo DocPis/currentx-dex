@@ -69,7 +69,7 @@ export default function App() {
 
       setChainId(currentChainId);
 
-      // Forziamo Sepolia
+      // Forza Sepolia
       if (currentChainId !== SEPOLIA_CHAIN_ID_HEX) {
         try {
           await window.ethereum.request({
@@ -83,11 +83,11 @@ export default function App() {
         }
       }
 
-      // Load token registry once
+      // Carica registry
       const registry = await loadTokenRegistry(provider);
       setTokenRegistry(registry);
 
-      // Load balances
+      // Carica balances
       await refreshBalances(addr);
     } catch (e) {
       console.error(e);

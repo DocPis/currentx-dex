@@ -3,23 +3,38 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider, Contract, parseUnits } from "ethers";
 
-import {
-  UNISWAP_V2_ROUTER,
-  UNISWAP_V2_ROUTER_ABI,
-  UNISWAP_V2_FACTORY,
-  UNISWAP_V2_FACTORY_ABI,
-  UNISWAP_V2_PAIR_ABI,
-  WETH_ADDRESS,
-} from "../config/uniswapSepolia";
+import IUniswapV2RouterJSON from "../abi/IUniswapV2Router02.json";
+import IUniswapV2FactoryJSON from "../abi/IUniswapV2Factory.json";
+import IUniswapV2PairJSON from "../abi/IUniswapV2Pair.json";
 
-import { TOKENS } from "../config/tokenRegistry";
+import {
+  UNISWAP_V2_ROUTER_ADDRESS,
+  UNISWAP_V2_FACTORY_ADDRESS,
+} from "../utils/contracts";
+
+import { TOKEN_REGISTRY } from "../utils/tokenRegistry";
+import { WETH_ADDRESS } from "../config/uniswapSepolia";
 import { buildPath } from "../utils/buildPath";
 
+// ABIs dai JSON
+const UNISWAP_V2_ROUTER_ABI =
+  IUniswapV2RouterJSON.abi ?? IUniswapV2RouterJSON;
+const UNISWAP_V2_FACTORY_ABI =
+  IUniswapV2FactoryJSON.abi ?? IUniswapV2FactoryJSON;
+const UNISWAP_V2_PAIR_ABI =
+  IUniswapV2PairJSON.abi ?? IUniswapV2PairJSON;
+
+// Mappiamo i token per simbolo (WETH, USDC, ecc.)
+const TOKENS = TOKEN_REGISTRY.reduce((acc, t) => {
+  acc[t.symbol] = t;
+  return acc;
+}, {});
+
 export function useSwapQuote({ sellToken, buyToken, amountIn }) {
-  const [expectedOut, setExpectedOut] = useState(null);     // BigInt | null
-  const [priceImpact, setPriceImpact] = useState(null);     // string | null
+  const [expectedOut, setExpectedOut] = useState(null); // BigInt | null
+  const [priceImpact, setPriceImpact] = useState(null); // string | null
   const [isFetchingQuote, setIsFetchingQuote] = useState(false);
-  const [quoteError, setQuoteError] = useState(null);       // string | null
+  const [quoteError, setQuoteError] = useState(null); // string | null
 
   const tokenIn = TOKENS[sellToken];
   const tokenOut = TOKENS[buyToken];
@@ -34,7 +49,6 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
     let cancelled = false;
 
     async function fetchQuote() {
-      // reset base state
       setQuoteError(null);
 
       // no amount -> reset
@@ -78,7 +92,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
 
         const provider = new BrowserProvider(window.ethereum);
         const router = new Contract(
-          UNISWAP_V2_ROUTER,
+          UNISWAP_V2_ROUTER_ADDRESS,
           UNISWAP_V2_ROUTER_ABI,
           provider
         );
@@ -87,6 +101,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
           amountIn,
           tokenIn?.decimals ?? 18
         );
+
         const path = buildPath(sellToken, buyToken);
 
         const amounts = await router.getAmountsOut(amountInUnits, path);
@@ -106,7 +121,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
         if (path.length === 2) {
           try {
             const factory = new Contract(
-              UNISWAP_V2_FACTORY,
+              UNISWAP_V2_FACTORY_ADDRESS,
               UNISWAP_V2_FACTORY_ABI,
               provider
             );
@@ -114,7 +129,8 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
             const pairAddress = await factory.getPair(path[0], path[1]);
             if (
               !pairAddress ||
-              pairAddress === "0x0000000000000000000000000000000000000000"
+              pairAddress ===
+                "0x0000000000000000000000000000000000000000"
             ) {
               setPriceImpact(null);
               return;
@@ -138,7 +154,10 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
             if (token0 === addrInLower && addrOutLower !== addrInLower) {
               reserveInRaw = reserve0;
               reserveOutRaw = reserve1;
-            } else if (token0 === addrOutLower && addrInLower !== addrOutLower) {
+            } else if (
+              token0 === addrOutLower &&
+              addrInLower !== addrOutLower
+            ) {
               reserveInRaw = reserve1;
               reserveOutRaw = reserve0;
             } else {
@@ -197,6 +216,7 @@ export function useSwapQuote({ sellToken, buyToken, amountIn }) {
     }
 
     fetchQuote();
+
     return () => {
       cancelled = true;
     };
