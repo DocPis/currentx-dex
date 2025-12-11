@@ -41,18 +41,21 @@ export const TOKENS = {
     name: "Ether",
     address: null, // native
     decimals: 18,
+    logo: "/tokens/eth.svg",
   },
   WETH: {
     symbol: "WETH",
     name: "Wrapped Ether",
     address: WETH_ADDRESS,
     decimals: 18,
+    logo: "/tokens/weth.svg",
   },
   USDC: {
     symbol: "USDC",
     name: "USD Coin (test)",
     address: USDC_ADDRESS,
-    decimals: 18, // se il tuo token è diverso, cambiamo dopo
+    decimals: 6,
+    logo: "/tokens/usdc.svg",
   },
 };
 

@@ -1,0 +1,11 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="eth-grad" x1="12" y1="8" x2="52" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#627EEA"/>
+      <stop offset="1" stop-color="#5460E6"/>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="30" fill="#0B1024" stroke="#2C3C80" stroke-width="2"/>
+  <path d="M32 10L20 32.2L32 39.6L44 32.2L32 10Z" fill="url(#eth-grad)" stroke="#9DB3FF" stroke-width="1.2"/>
+  <path d="M32 42.5L20 35.2L32 54L44 35.2L32 42.5Z" fill="#C7D2FF" stroke="#9DB3FF" stroke-width="1.2"/>
+</svg>
