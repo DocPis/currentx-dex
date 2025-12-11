@@ -45,9 +45,11 @@ export function useWallet() {
     if (!window.ethereum) throw new Error("No wallet found");
     const provider = await getProvider();
     const accounts = await provider.send("eth_requestAccounts", []);
-    setAddress(accounts[0] || null);
+    const primaryAccount = accounts[0] || null;
+    setAddress(primaryAccount);
     const cid = await provider.send("eth_chainId", []);
     setChainId(cid);
+    return primaryAccount;
   };
 
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;

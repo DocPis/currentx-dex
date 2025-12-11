@@ -20,8 +20,13 @@ export default function SwapSection({ balances }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <button className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700">
-              {TOKENS[sellToken].symbol}
+            <button className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2">
+              <img
+                src={TOKENS[sellToken].logo}
+                alt={`${TOKENS[sellToken].symbol} logo`}
+                className="h-5 w-5 rounded-full"
+              />
+              <span>{TOKENS[sellToken].symbol}</span>
             </button>
 
             <input
@@ -50,8 +55,13 @@ export default function SwapSection({ balances }) {
           </div>
 
           <div className="flex items-center gap-3">
-            <button className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700">
-              {TOKENS[buyToken].symbol}
+            <button className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2">
+              <img
+                src={TOKENS[buyToken].logo}
+                alt={`${TOKENS[buyToken].symbol} logo`}
+                className="h-5 w-5 rounded-full"
+              />
+              <span>{TOKENS[buyToken].symbol}</span>
             </button>
 
             <div className="flex-1 text-right">
