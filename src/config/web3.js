@@ -1,5 +1,10 @@
 // src/config/web3.js
 import { BrowserProvider, Contract } from "ethers";
+import daiLogo from "../tokens/dai.png";
+import ethLogo from "../tokens/eth.png";
+import usdcLogo from "../tokens/usdc.png";
+import wbtcLogo from "../tokens/wbtc.png";
+import wethLogo from "../tokens/weth.png";
 
 export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
@@ -41,21 +46,35 @@ export const TOKENS = {
     name: "Ether",
     address: null, // native
     decimals: 18,
-    logo: "/tokens/eth.svg",
+    logo: ethLogo,
   },
   WETH: {
     symbol: "WETH",
     name: "Wrapped Ether",
     address: WETH_ADDRESS,
     decimals: 18,
-    logo: "/tokens/weth.svg",
+    logo: wethLogo,
   },
   USDC: {
     symbol: "USDC",
     name: "USD Coin (test)",
     address: USDC_ADDRESS,
     decimals: 6,
-    logo: "/tokens/usdc.svg",
+    logo: usdcLogo,
+  },
+  DAI: {
+    symbol: "DAI",
+    name: "Dai Stablecoin",
+    address: null,
+    decimals: 18,
+    logo: daiLogo,
+  },
+  WBTC: {
+    symbol: "WBTC",
+    name: "Wrapped Bitcoin",
+    address: null,
+    decimals: 8,
+    logo: wbtcLogo,
   },
 };
 
