@@ -1,6 +1,7 @@
 // src/components/LiquiditySection.jsx
-import React from "react";
-import { TOKENS } from "../config/web3";
+import React, { useEffect, useState } from "react";
+import { formatUnits } from "ethers";
+import { TOKENS, getProvider, getV2PairReserves } from "../config/web3";
 
 const mockPools = [
   {
@@ -36,6 +37,17 @@ const mockPools = [
     emissionApr: 12.6,
     poolType: "stable",
   },
+  {
+    id: "eth-usdc",
+    token0Symbol: "ETH",
+    token1Symbol: "USDC",
+    volume24hUsd: 765000,
+    fees24hUsd: 2200,
+    tvlUsd: 15800000,
+    feeApr: 4.35,
+    emissionApr: 14.2,
+    poolType: "volatile",
+  },
 ];
 
 const formatNumber = (v) => {
@@ -46,6 +58,47 @@ const formatNumber = (v) => {
 };
 
 export default function LiquiditySection() {
+  const [ethUsdcTvl, setEthUsdcTvl] = useState(null);
+  const [tvlError, setTvlError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTvl = async () => {
+      try {
+        setTvlError("");
+        const provider = await getProvider();
+        const { reserve0, reserve1, token0 } = await getV2PairReserves(
+          provider,
+          TOKENS.WETH.address,
+          TOKENS.USDC.address
+        );
+
+        const wethIs0 =
+          token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
+        const reserveWeth = wethIs0 ? reserve0 : reserve1;
+        const reserveUsdc = wethIs0 ? reserve1 : reserve0;
+
+        const wethFloat = Number(
+          formatUnits(reserveWeth, TOKENS.WETH.decimals)
+        );
+        const usdcFloat = Number(
+          formatUnits(reserveUsdc, TOKENS.USDC.decimals)
+        );
+
+        // Assume USDC ~ $1; pool is balanced so TVL ≈ 2 * USDC side in USD
+        const tvlUsd = usdcFloat * 2;
+        if (!cancelled) setEthUsdcTvl(tvlUsd);
+      } catch (e) {
+        if (!cancelled) setTvlError(e.message || "Failed to load TVL");
+      }
+    };
+
+    loadTvl();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const totalVolume = mockPools.reduce(
     (a, p) => a + p.volume24hUsd,
     0
@@ -122,6 +175,8 @@ export default function LiquiditySection() {
           {mockPools.map((p) => {
             const token0 = TOKENS[p.token0Symbol];
             const token1 = TOKENS[p.token1Symbol];
+            const tvlOverride =
+              p.id === "eth-usdc" && ethUsdcTvl ? ethUsdcTvl : p.tvlUsd;
 
             return (
               <div
@@ -155,7 +210,7 @@ export default function LiquiditySection() {
                   {formatNumber(p.fees24hUsd)}
                 </div>
                 <div className="col-span-2 text-right text-xs sm:text-sm">
-                  {formatNumber(p.tvlUsd)}
+                  {formatNumber(tvlOverride)}
                 </div>
                 <div className="col-span-1 text-right text-xs sm:text-sm">
                   {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
