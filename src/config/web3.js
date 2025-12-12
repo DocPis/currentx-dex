@@ -197,6 +197,17 @@ function getAmountOut(amountIn, reserveIn, reserveOut) {
   );
 }
 
+export function computePriceImpact(amountIn, amountOut, reserveIn, reserveOut) {
+  if (!reserveIn || !reserveOut || amountIn <= 0n || amountOut <= 0n) {
+    return 0;
+  }
+  const midPrice = Number(reserveOut) / Number(reserveIn);
+  const execPrice = Number(amountOut) / Number(amountIn);
+  if (!midPrice || !execPrice) return 0;
+  const impact = ((midPrice - execPrice) / midPrice) * 100;
+  return Math.max(0, impact);
+}
+
 // Calcola una quote Uniswap V2 (getAmountsOut) per un path
 export async function getV2Quote(provider, amountIn, path) {
   if (!provider) throw new Error("Missing provider");
@@ -237,6 +248,51 @@ export async function getV2Quote(provider, amountIn, path) {
   }
 
   return amount;
+}
+
+// Quote + meta (single hop) per price impact e swap
+export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) {
+  if (!provider) throw new Error("Missing provider");
+
+  const factory = new Contract(
+    UNIV2_FACTORY_ADDRESS,
+    UNIV2_FACTORY_ABI,
+    provider
+  );
+
+  const pairAddress = await factory.getPair(tokenIn, tokenOut);
+  if (!pairAddress || pairAddress === ZERO_ADDRESS) {
+    throw new Error("Pair not found on Sepolia");
+  }
+
+  const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
+  const [reserve0, reserve1] = await pair.getReserves();
+  const token0 = await pair.token0();
+
+  const tokenInIs0 = token0.toLowerCase() === tokenIn.toLowerCase();
+  const reserveIn = tokenInIs0 ? reserve0 : reserve1;
+  const reserveOut = tokenInIs0 ? reserve1 : reserve0;
+
+  if (reserveIn === 0n || reserveOut === 0n) {
+    throw new Error("Pool has no liquidity");
+  }
+
+  const amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
+  const priceImpactPct = computePriceImpact(
+    amountIn,
+    amountOut,
+    reserveIn,
+    reserveOut
+  );
+
+  return {
+    amountOut,
+    reserveIn,
+    reserveOut,
+    tokenInIs0,
+    pairAddress,
+    priceImpactPct,
+  };
 }
 
 export async function getV2PairReserves(provider, tokenA, tokenB) {

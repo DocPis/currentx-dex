@@ -1,7 +1,15 @@
 // src/components/SwapSection.jsx
 import React, { useEffect, useState } from "react";
-import { parseUnits, formatUnits } from "ethers";
-import { TOKENS, getProvider, getV2Quote } from "../config/web3";
+import { parseUnits, formatUnits, Contract } from "ethers";
+import {
+  TOKENS,
+  getProvider,
+  getV2QuoteWithMeta,
+  WETH_ADDRESS,
+  ERC20_ABI,
+  WETH_ABI,
+  UNIV2_PAIR_ABI,
+} from "../config/web3";
 
 const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "DAI", "WBTC"];
 
@@ -75,8 +83,13 @@ export default function SwapSection({ balances }) {
   const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
   const [quoteOut, setQuoteOut] = useState(null);
+  const [quoteOutRaw, setQuoteOutRaw] = useState(null);
+  const [priceImpact, setPriceImpact] = useState(null);
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
+  const [slippage, setSlippage] = useState("0.5");
+  const [swapStatus, setSwapStatus] = useState("");
+  const [swapLoading, setSwapLoading] = useState(false);
 
   const selectSell = (symbol) => {
     if (symbol === buyToken) setBuyToken(sellToken);
@@ -97,12 +110,17 @@ export default function SwapSection({ balances }) {
     (["ETH", "WETH"].includes(sellToken) && buyToken === "USDC") ||
     (sellToken === "USDC" && ["ETH", "WETH"].includes(buyToken));
 
+  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
+  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
+
   useEffect(() => {
     let cancelled = false;
 
     const fetchQuote = async () => {
       setQuoteError("");
       setQuoteOut(null);
+      setQuoteOutRaw(null);
+      setPriceImpact(null);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isEthUsdcPath) {
@@ -114,8 +132,6 @@ export default function SwapSection({ balances }) {
         setQuoteLoading(true);
         const provider = await getProvider();
 
-        const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
-        const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
         const sellAddress = TOKENS[sellKey].address;
         const buyAddress = TOKENS[buyKey].address;
 
@@ -124,15 +140,19 @@ export default function SwapSection({ balances }) {
           TOKENS[sellKey].decimals
         );
 
-        const out = await getV2Quote(provider, amountWei, [
+        const meta = await getV2QuoteWithMeta(
+          provider,
+          amountWei,
           sellAddress,
-          buyAddress,
-        ]);
+          buyAddress
+        );
 
         if (cancelled) return;
 
-        const formatted = formatUnits(out, TOKENS[buyKey].decimals);
+        const formatted = formatUnits(meta.amountOut, TOKENS[buyKey].decimals);
         setQuoteOut(formatted);
+        setQuoteOutRaw(meta.amountOut);
+        setPriceImpact(meta.priceImpactPct);
       } catch (e) {
         if (cancelled) return;
         setQuoteError(e.message || "Failed to fetch quote");
@@ -147,6 +167,79 @@ export default function SwapSection({ balances }) {
       cancelled = true;
     };
   }, [amountIn, sellToken, buyToken, isEthUsdcPath]);
+
+  const slippageBps = (() => {
+    const val = Number(slippage);
+    if (Number.isNaN(val) || val < 0) return 50; // default 0.5%
+    return Math.min(5000, Math.round(val * 100)); // cap 50%
+  })();
+
+  const minReceivedRaw = quoteOutRaw
+    ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
+    : null;
+
+  const handleSwap = async () => {
+    try {
+      setSwapStatus("");
+      if (swapLoading) return;
+      if (!amountIn || Number.isNaN(Number(amountIn))) {
+        throw new Error("Inserisci un importo valido");
+      }
+      if (!isEthUsdcPath) {
+        throw new Error("Swap supportato solo per ETH/USDC su Sepolia (demo)");
+      }
+      if (!quoteOutRaw) {
+        throw new Error("Recupero quote in corso, riprova");
+      }
+
+      setSwapLoading(true);
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+
+      const sellAddress =
+        sellKey === "WETH" ? WETH_ADDRESS : TOKENS[sellKey].address;
+      const buyAddress = TOKENS[buyKey].address;
+
+      const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+      const { amountOut, tokenInIs0, pairAddress } = await getV2QuoteWithMeta(
+        provider,
+        amountWei,
+        sellAddress,
+        buyAddress
+      );
+
+      const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
+
+      // Step 1: transfer tokenIn to pair (wrap ETH -> WETH if needed)
+      if (sellKey === "WETH" && sellToken === "ETH") {
+        const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+        await (await weth.deposit({ value: amountWei })).wait();
+        await (await weth.transfer(pairAddress, amountWei)).wait();
+      } else {
+        const token = new Contract(sellAddress, ERC20_ABI, signer);
+        await (await token.transfer(pairAddress, amountWei)).wait();
+      }
+
+      // Step 2: perform swap on pair
+      const amount0Out = tokenInIs0 ? 0n : minOut;
+      const amount1Out = tokenInIs0 ? minOut : 0n;
+      const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
+      const tx = await pair.swap(amount0Out, amount1Out, user, "0x");
+      const receipt = await tx.wait();
+
+      setSwapStatus(
+        `Swap eseguito (tx ${receipt.hash.slice(0, 10)}...), min ricevuto: ${formatUnits(
+          minOut,
+          TOKENS[buyKey].decimals
+        )} ${buyToken}`
+      );
+    } catch (e) {
+      setSwapStatus(e.message || "Swap fallito");
+    } finally {
+      setSwapLoading(false);
+    }
+  };
 
   return (
     <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
@@ -234,15 +327,58 @@ export default function SwapSection({ balances }) {
           </div>
         </div>
 
-        <button className="w-full py-3 mt-1 rounded-full bg-gradient-to-r from-sky-500 to-indigo-500 text-sm font-semibold text-white shadow-lg shadow-sky-500/30">
-          Swap
-        </button>
+        <div className="flex flex-col sm:flex-row gap-3 mt-2">
+          <div className="flex-1 rounded-2xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-300">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-slate-400">Slippage (%)</span>
+              <input
+                value={slippage}
+                onChange={(e) => setSlippage(e.target.value)}
+                className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500">Min ricevuto</span>
+              <span className="text-slate-100">
+                {minReceivedRaw
+                  ? `${Number(
+                      formatUnits(minReceivedRaw, TOKENS[buyKey].decimals)
+                    ).toFixed(6)} ${buyToken}`
+                  : "--"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500">Price impact</span>
+              <span className="text-slate-100">
+                {priceImpact !== null
+                  ? `${priceImpact.toFixed(2)}%`
+                  : "--"}
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={handleSwap}
+            disabled={swapLoading || quoteLoading}
+            className="w-full sm:w-40 py-3 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
+          >
+            {swapLoading ? "Swapping..." : "Swap"}
+          </button>
+        </div>
+
+        {swapStatus && (
+          <div className="mt-2 text-xs text-slate-200 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
+            {swapStatus}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 w-full max-w-xl rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3 text-xs text-slate-300">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-slate-400">Price impact</span>
-          <span>--</span>
+          <span>
+            {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
+          </span>
         </div>
       </div>
     </div>
