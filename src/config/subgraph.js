@@ -205,18 +205,23 @@ export async function fetchDashboardStats() {
     throw new Error("No factory data");
   } catch (err) {
     const message = err?.message || "";
-    const noFactoriesField =
+    const noFactoriesFieldPrimary =
       message.includes("Type `Query` has no field `factories`") ||
       message.includes('Cannot query field "factories"');
 
-    const data = await postSubgraph(fallbackQuery).catch((fallbackErr) => {
-      if (noFactoriesField) return null;
+    try {
+      const data = await postSubgraph(fallbackQuery);
+      const factory = data?.factories?.[0];
+      if (factory) return parseFactory(factory);
+      return null;
+    } catch (fallbackErr) {
+      const fbMsg = fallbackErr?.message || "";
+      const noFactoriesFieldFallback =
+        fbMsg.includes("Type `Query` has no field `factories`") ||
+        fbMsg.includes('Cannot query field "factories"');
+      if (noFactoriesFieldPrimary || noFactoriesFieldFallback) return null;
       throw fallbackErr;
-    });
-
-    const factory = data?.factories?.[0];
-    if (factory) return parseFactory(factory);
-    return null;
+    }
   }
 }
 

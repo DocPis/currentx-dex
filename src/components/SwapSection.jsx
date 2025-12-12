@@ -78,6 +78,44 @@ function TokenSelector({ side, selected, onSelect, balances }) {
   );
 }
 
+function PairInfoBox({ info }) {
+  if (!info) return null;
+
+  const sellDecimals = TOKENS[info.sellKey]?.decimals || 18;
+  const buyDecimals = TOKENS[info.buyKey]?.decimals || 18;
+
+  const reserveSell = Number(
+    formatUnits(info.reserveSell || 0n, sellDecimals)
+  ).toFixed(4);
+  const reserveBuy = Number(
+    formatUnits(info.reserveBuy || 0n, buyDecimals)
+  ).toFixed(4);
+
+  return (
+    <div className="mt-3 w-full max-w-xl text-[11px] text-slate-300 bg-slate-900/70 border border-slate-800 rounded-xl px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-slate-400">Pair</span>
+        <a
+          href={`https://sepolia.etherscan.io/address/${info.pairAddress}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sky-400 hover:text-sky-300 underline"
+        >
+          {info.pairAddress}
+        </a>
+      </div>
+      <div className="flex flex-wrap gap-4 mt-1">
+        <span>
+          Reserve {info.sellKey}: {reserveSell}
+        </span>
+        <span>
+          Reserve {info.buyKey}: {reserveBuy}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export default function SwapSection({ balances }) {
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
@@ -90,6 +128,7 @@ export default function SwapSection({ balances }) {
   const [slippage, setSlippage] = useState("0.5");
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
+  const [pairInfo, setPairInfo] = useState(null);
 
   const selectSell = (symbol) => {
     if (symbol === buyToken) setBuyToken(sellToken);
@@ -109,6 +148,13 @@ export default function SwapSection({ balances }) {
   const isEthUsdcPath =
     (["ETH", "WETH"].includes(sellToken) && buyToken === "USDC") ||
     (sellToken === "USDC" && ["ETH", "WETH"].includes(buyToken));
+  const isDirectEthWeth =
+    (sellToken === "ETH" && buyToken === "WETH") ||
+    (sellToken === "WETH" && buyToken === "ETH");
+  const isUsdcDaiPath =
+    (sellToken === "USDC" && buyToken === "DAI") ||
+    (sellToken === "DAI" && buyToken === "USDC");
+  const isSupportedPath = isEthUsdcPath || isDirectEthWeth || isUsdcDaiPath;
 
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
   const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
@@ -121,10 +167,23 @@ export default function SwapSection({ balances }) {
       setQuoteOut(null);
       setQuoteOutRaw(null);
       setPriceImpact(null);
+      setPairInfo(null);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
-      if (!isEthUsdcPath) {
-        setQuoteError("Quote available only for ETH/USDC (Uniswap V2 Sepolia)");
+      if (!isSupportedPath) {
+        setQuoteError(
+          "Quote available only for ETH/WETH/USDC and USDC/DAI on Sepolia"
+        );
+        return;
+      }
+
+      // Direct wrap/unwrap path: 1:1, zero fee
+      if (isDirectEthWeth) {
+        const directWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        setQuoteOut(amountIn);
+        setQuoteOutRaw(directWei);
+        setPriceImpact(0);
+        setPairInfo(null);
         return;
       }
 
@@ -153,6 +212,13 @@ export default function SwapSection({ balances }) {
         setQuoteOut(formatted);
         setQuoteOutRaw(meta.amountOut);
         setPriceImpact(meta.priceImpactPct);
+        setPairInfo({
+          pairAddress: meta.pairAddress,
+          reserveSell: meta.reserveIn,
+          reserveBuy: meta.reserveOut,
+          sellKey,
+          buyKey,
+        });
       } catch (e) {
         if (cancelled) return;
         setQuoteError(e.message || "Failed to fetch quote");
@@ -185,8 +251,10 @@ export default function SwapSection({ balances }) {
       if (!amountIn || Number.isNaN(Number(amountIn))) {
         throw new Error("Enter a valid amount");
       }
-      if (!isEthUsdcPath) {
-        throw new Error("Swap supported only for ETH/USDC on Sepolia (demo)");
+      if (!isSupportedPath) {
+        throw new Error(
+          "Swap supported only for ETH/WETH/USDC and USDC/DAI on Sepolia (demo)"
+        );
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
@@ -196,6 +264,29 @@ export default function SwapSection({ balances }) {
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
+
+      // Direct wrap/unwrap (no fee)
+      if (isDirectEthWeth) {
+        const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+
+        let tx;
+        if (sellToken === "ETH") {
+          tx = await weth.deposit({ value: amountWei });
+        } else {
+          tx = await weth.withdraw(amountWei);
+        }
+        const receipt = await tx.wait();
+        setSwapStatus({
+          message: `Swap executed (wrap/unwrap). Received ${formatUnits(
+            amountWei,
+            TOKENS[buyKey].decimals
+          )} ${buyToken}`,
+          hash: receipt.hash,
+          variant: "success",
+        });
+        return;
+      }
 
       const sellAddress =
         sellKey === "WETH" ? WETH_ADDRESS : TOKENS[sellKey].address;
@@ -332,7 +423,9 @@ export default function SwapSection({ balances }) {
                   ? "Loading quote..."
                   : quoteError ||
                     (amountIn
-                      ? "Live quote via Uniswap V2 (Sepolia)"
+                      ? isDirectEthWeth
+                        ? "Direct wrap/unwrap (no fee)"
+                        : "Live quote via Uniswap V2 (Sepolia)"
                       : "Enter an amount to fetch a quote")}
               </div>
             </div>
@@ -450,6 +543,8 @@ export default function SwapSection({ balances }) {
           </span>
         </div>
       </div>
+
+      <PairInfoBox info={pairInfo} />
     </div>
   );
 }

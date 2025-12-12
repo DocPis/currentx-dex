@@ -1,5 +1,5 @@
 // src/config/web3.js
-import { BrowserProvider, Contract } from "ethers";
+import { BrowserProvider, Contract, formatUnits } from "ethers";
 import daiLogo from "../tokens/dai.png";
 import ethLogo from "../tokens/eth.png";
 import usdcLogo from "../tokens/usdc.png";
@@ -10,7 +10,7 @@ export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
 // Addresses (lowercase to avoid checksum issues)
 export const WETH_ADDRESS =
-  "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
+  "0x7b79995e5f793a07bc00c21412e50ecae098e7f9";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 
@@ -162,7 +162,7 @@ export const TOKENS = {
   DAI: {
     symbol: "DAI",
     name: "Dai Stablecoin",
-    address: null,
+    address: "0x3e622317f8c93f7328350cf0b56d9ed4c620c5d6",
     decimals: 18,
     logo: daiLogo,
   },
@@ -210,13 +210,34 @@ function getAmountOut(amountIn, reserveIn, reserveOut) {
   );
 }
 
-export function computePriceImpact(amountIn, amountOut, reserveIn, reserveOut) {
-  if (!reserveIn || !reserveOut || amountIn <= 0n || amountOut <= 0n) {
+function normalize(amount, decimals) {
+  return Number(formatUnits(amount, decimals));
+}
+
+export function computePriceImpact(
+  amountIn,
+  amountOut,
+  reserveIn,
+  reserveOut,
+  decimalsIn,
+  decimalsOut
+) {
+  if (
+    !reserveIn ||
+    !reserveOut ||
+    amountIn <= 0n ||
+    amountOut <= 0n ||
+    decimalsIn === undefined ||
+    decimalsOut === undefined
+  ) {
     return 0;
   }
-  const midPrice = Number(reserveOut) / Number(reserveIn);
-  const execPrice = Number(amountOut) / Number(amountIn);
-  if (!midPrice || !execPrice) return 0;
+
+  const midPrice =
+    normalize(reserveOut, decimalsOut) / normalize(reserveIn, decimalsIn);
+  const execPrice =
+    normalize(amountOut, decimalsOut) / normalize(amountIn, decimalsIn);
+  if (!midPrice || !execPrice || !Number.isFinite(midPrice)) return 0;
   const impact = ((midPrice - execPrice) / midPrice) * 100;
   return Math.max(0, impact);
 }
@@ -263,6 +284,14 @@ export async function getV2Quote(provider, amountIn, path) {
   return amount;
 }
 
+function findTokenMeta(address) {
+  if (!address) return null;
+  const lower = address.toLowerCase();
+  return Object.values(TOKENS).find(
+    (t) => t.address && t.address.toLowerCase() === lower
+  );
+}
+
 // Quote + meta (single hop) per price impact e swap
 export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) {
   if (!provider) throw new Error("Missing provider");
@@ -290,12 +319,16 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
     throw new Error("Pool has no liquidity");
   }
 
+  const metaIn = findTokenMeta(tokenIn);
+  const metaOut = findTokenMeta(tokenOut);
   const amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
   const priceImpactPct = computePriceImpact(
     amountIn,
     amountOut,
     reserveIn,
-    reserveOut
+    reserveOut,
+    metaIn?.decimals ?? 18,
+    metaOut?.decimals ?? 18
   );
 
   return {

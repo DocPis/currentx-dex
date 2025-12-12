@@ -33,6 +33,10 @@ export default function Header({
           <span>WETH: {balances.WETH.toFixed(4)}</span>
           <span>USDC: {balances.USDC.toFixed(2)}</span>
         </div>
+        <div className="flex sm:hidden items-center gap-2 text-[11px] text-slate-300">
+          <span>ETH {balances.ETH.toFixed(3)}</span>
+          <span>WETH {balances.WETH.toFixed(3)}</span>
+        </div>
 
         <div
           className={`px-3 py-1.5 rounded-full text-xs font-medium border ${
