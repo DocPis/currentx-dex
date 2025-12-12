@@ -235,9 +235,19 @@ export default function SwapSection({ balances }) {
           TOKENS[buyKey].decimals
         )} ${buyToken}`,
         hash: receipt.hash,
+        variant: "success",
       });
     } catch (e) {
-      setSwapStatus({ message: e.message || "Swap fallito" });
+      const userRejected =
+        e?.code === 4001 ||
+        e?.code === "ACTION_REJECTED" ||
+        (e?.message || "").toLowerCase().includes("user denied");
+
+      const message = userRejected
+        ? "Transaction was rejected in wallet."
+        : e.message || "Swap failed";
+
+      setSwapStatus({ message, variant: "error" });
     } finally {
       setSwapLoading(false);
     }
@@ -401,8 +411,23 @@ export default function SwapSection({ balances }) {
         </div>
 
         {swapStatus && (
-          <div className="mt-2 text-xs text-slate-200 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
-            <div>{swapStatus.message}</div>
+          <div
+            className={`mt-2 text-xs rounded-xl px-3 py-2 border backdrop-blur-sm ${
+              swapStatus.variant === "success"
+                ? "bg-slate-900/80 border-slate-700 text-slate-100"
+                : "bg-rose-500/10 border-rose-500/40 text-rose-100"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  swapStatus.variant === "success"
+                    ? "bg-emerald-400"
+                    : "bg-rose-400"
+                }`}
+              />
+              <span>{swapStatus.message}</span>
+            </div>
             {swapStatus.hash && (
               <a
                 href={`https://sepolia.etherscan.io/tx/${swapStatus.hash}`}
@@ -410,7 +435,7 @@ export default function SwapSection({ balances }) {
                 rel="noreferrer"
                 className="text-sky-400 hover:text-sky-300 underline mt-1 inline-block"
               >
-                Apri tx su SepoliaScan
+                Open on SepoliaScan
               </a>
             )}
           </div>
