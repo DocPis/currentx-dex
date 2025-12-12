@@ -12,6 +12,8 @@ export function useBalances(address) {
     ETH: 0,
     WETH: 0,
     USDC: 0,
+    DAI: 0,
+    WBTC: 0,
   });
   const [loading, setLoading] = useState(false);
   const isRefreshing = useRef(false);
@@ -34,27 +36,27 @@ export function useBalances(address) {
         const ethBalance = await provider.getBalance(walletAddress);
         const eth = Number(formatUnits(ethBalance, TOKENS.ETH.decimals));
 
-        // WETH
-        const wethContract = await getErc20(
-          TOKENS.WETH.address,
-          provider
-        );
-        const wethRaw = await wethContract.balanceOf(walletAddress);
-        const weth = Number(
-          formatUnits(wethRaw, TOKENS.WETH.decimals)
-        );
+        // Helper per leggere i token ERC20 solo se abbiamo l'indirizzo
+        const getErc20Balance = async (tokenKey) => {
+          const token = TOKENS[tokenKey];
+          if (!token?.address) return 0;
+          const contract = await getErc20(token.address, provider);
+          const raw = await contract.balanceOf(walletAddress);
+          return Number(formatUnits(raw, token.decimals));
+        };
 
-        // USDC
-        const usdcContract = await getErc20(
-          TOKENS.USDC.address,
-          provider
-        );
-        const usdcRaw = await usdcContract.balanceOf(walletAddress);
-        const usdc = Number(
-          formatUnits(usdcRaw, TOKENS.USDC.decimals)
-        );
+        const weth = await getErc20Balance("WETH");
+        const usdc = await getErc20Balance("USDC");
+        const dai = await getErc20Balance("DAI");
+        const wbtc = await getErc20Balance("WBTC");
 
-        setBalances({ ETH: eth, WETH: weth, USDC: usdc });
+        setBalances({
+          ETH: eth,
+          WETH: weth,
+          USDC: usdc,
+          DAI: dai,
+          WBTC: wbtc,
+        });
       } catch (e) {
         console.error("Error loading balances:", e);
       } finally {
@@ -74,7 +76,7 @@ export function useBalances(address) {
     if (address) {
       refresh(address);
     } else {
-      setBalances({ ETH: 0, WETH: 0, USDC: 0 });
+      setBalances({ ETH: 0, WETH: 0, USDC: 0, DAI: 0, WBTC: 0 });
     }
   }, [address, refresh]);
 
