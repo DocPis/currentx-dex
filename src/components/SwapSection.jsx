@@ -88,7 +88,7 @@ export default function SwapSection({ balances }) {
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
-  const [swapStatus, setSwapStatus] = useState("");
+  const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
 
   const selectSell = (symbol) => {
@@ -180,7 +180,7 @@ export default function SwapSection({ balances }) {
 
   const handleSwap = async () => {
     try {
-      setSwapStatus("");
+      setSwapStatus(null);
       if (swapLoading) return;
       if (!amountIn || Number.isNaN(Number(amountIn))) {
         throw new Error("Inserisci un importo valido");
@@ -229,14 +229,15 @@ export default function SwapSection({ balances }) {
       const tx = await swapFn(amount0Out, amount1Out, user, "0x");
       const receipt = await tx.wait();
 
-      setSwapStatus(
-        `Swap eseguito. Tx: ${receipt.hash}. Min ricevuto: ${formatUnits(
+      setSwapStatus({
+        message: `Swap eseguito. Min ricevuto: ${formatUnits(
           minOut,
           TOKENS[buyKey].decimals
-        )} ${buyToken}`
-      );
+        )} ${buyToken}`,
+        hash: receipt.hash,
+      });
     } catch (e) {
-      setSwapStatus(e.message || "Swap fallito");
+      setSwapStatus({ message: e.message || "Swap fallito" });
     } finally {
       setSwapLoading(false);
     }
@@ -332,11 +333,27 @@ export default function SwapSection({ balances }) {
           <div className="flex-1 rounded-2xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-300">
             <div className="flex items-center justify-between mb-2">
               <span className="text-slate-400">Slippage (%)</span>
-              <input
-                value={slippage}
-                onChange={(e) => setSlippage(e.target.value)}
-                className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
-              />
+              <div className="flex items-center gap-2">
+                {[0.1, 0.5, 1].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setSlippage(String(p))}
+                    className={`px-2 py-1 rounded-lg text-[11px] border ${
+                      Number(slippage) === p
+                        ? "bg-sky-500/20 border-sky-500/50 text-sky-100"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
+                    }`}
+                  >
+                    {p}%
+                  </button>
+                ))}
+                <input
+                  value={slippage}
+                  onChange={(e) => setSlippage(e.target.value)}
+                  className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
+                />
+              </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">Min ricevuto</span>
@@ -348,7 +365,7 @@ export default function SwapSection({ balances }) {
                   : "--"}
               </span>
             </div>
-            <div className="flex items-center justify-between text-[11px]">
+            <div className="flex items-center justify-between text-[11px] mt-1">
               <span className="text-slate-500">Price impact</span>
               <span className="text-slate-100">
                 {priceImpact !== null
@@ -361,15 +378,41 @@ export default function SwapSection({ balances }) {
           <button
             onClick={handleSwap}
             disabled={swapLoading || quoteLoading}
-            className="w-full sm:w-40 py-3 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
+            className="w-full sm:w-44 py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
           >
-            {swapLoading ? "Swapping..." : "Swap"}
+            <span className="inline-flex items-center gap-2 justify-center">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+              >
+                <path
+                  d="M5 12h14M13 6l6 6-6 6"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              {swapLoading ? "Swapping..." : "Swap now"}
+            </span>
           </button>
         </div>
 
         {swapStatus && (
           <div className="mt-2 text-xs text-slate-200 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2">
-            {swapStatus}
+            <div>{swapStatus.message}</div>
+            {swapStatus.hash && (
+              <a
+                href={`https://sepolia.etherscan.io/tx/${swapStatus.hash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-400 hover:text-sky-300 underline mt-1 inline-block"
+              >
+                Apri tx su SepoliaScan
+              </a>
+            )}
           </div>
         )}
       </div>
