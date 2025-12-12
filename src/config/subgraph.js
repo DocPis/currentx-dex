@@ -128,7 +128,7 @@ export async function fetchV2PairData(tokenA, tokenB) {
         volume24hUsd: undefined,
         fees24hUsd: undefined,
         note:
-          "Subgraph schema lacks `pairs`; using pairCreateds fallback (no live TVL/volume).",
+          "Live TVL/volume unavailable: subgraph schema lacks `pairs` (using pairCreateds fallback).",
       };
     }
 
@@ -204,10 +204,19 @@ export async function fetchDashboardStats() {
     if (factory) return parseFactory(factory);
     throw new Error("No factory data");
   } catch (err) {
-    const data = await postSubgraph(fallbackQuery);
+    const message = err?.message || "";
+    const noFactoriesField =
+      message.includes("Type `Query` has no field `factories`") ||
+      message.includes('Cannot query field "factories"');
+
+    const data = await postSubgraph(fallbackQuery).catch((fallbackErr) => {
+      if (noFactoriesField) return null;
+      throw fallbackErr;
+    });
+
     const factory = data?.factories?.[0];
     if (factory) return parseFactory(factory);
-    throw err;
+    return null;
   }
 }
 

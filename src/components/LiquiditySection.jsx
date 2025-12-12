@@ -547,7 +547,7 @@ export default function LiquiditySection() {
               </div>
             )}
             {subgraphError && (
-              <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">
+              <div className="px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-700 text-slate-200">
                 Subgraph: {subgraphError}
               </div>
             )}
