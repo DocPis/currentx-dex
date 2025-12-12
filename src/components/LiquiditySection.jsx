@@ -1,7 +1,14 @@
 // src/components/LiquiditySection.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { formatUnits } from "ethers";
-import { TOKENS, getProvider, getV2PairReserves } from "../config/web3";
+import {
+  TOKENS,
+  getProvider,
+  getV2PairReserves,
+  WETH_ADDRESS,
+  USDC_ADDRESS,
+} from "../config/web3";
+import { fetchV2PairData } from "../config/subgraph";
 
 const mockPools = [
   {
@@ -60,34 +67,53 @@ const formatNumber = (v) => {
 export default function LiquiditySection() {
   const [ethUsdcTvl, setEthUsdcTvl] = useState(null);
   const [tvlError, setTvlError] = useState("");
+  const [ethUsdcLive, setEthUsdcLive] = useState(null);
+  const [subgraphError, setSubgraphError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     const loadTvl = async () => {
       try {
         setTvlError("");
-        const provider = await getProvider();
-        const { reserve0, reserve1, token0 } = await getV2PairReserves(
-          provider,
-          TOKENS.WETH.address,
-          TOKENS.USDC.address
-        );
+        setSubgraphError("");
 
-        const wethIs0 =
-          token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
-        const reserveWeth = wethIs0 ? reserve0 : reserve1;
-        const reserveUsdc = wethIs0 ? reserve1 : reserve0;
+        // Subgraph (primary)
+        try {
+          const live = await fetchV2PairData(WETH_ADDRESS, USDC_ADDRESS);
+          if (!cancelled) setEthUsdcLive(live);
+        } catch (sgErr) {
+          if (!cancelled)
+            setSubgraphError(sgErr.message || "Subgraph fetch failed");
+        }
 
-        const wethFloat = Number(
-          formatUnits(reserveWeth, TOKENS.WETH.decimals)
-        );
-        const usdcFloat = Number(
-          formatUnits(reserveUsdc, TOKENS.USDC.decimals)
-        );
+        // On-chain fallback TVL if wallet/provider is available
+        try {
+          const provider = await getProvider();
+          const { reserve0, reserve1, token0 } = await getV2PairReserves(
+            provider,
+            TOKENS.WETH.address,
+            TOKENS.USDC.address
+          );
 
-        // Assume USDC ~ $1; pool is balanced so TVL ≈ 2 * USDC side in USD
-        const tvlUsd = usdcFloat * 2;
-        if (!cancelled) setEthUsdcTvl(tvlUsd);
+          const wethIs0 =
+            token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
+          const reserveWeth = wethIs0 ? reserve0 : reserve1;
+          const reserveUsdc = wethIs0 ? reserve1 : reserve0;
+
+          const wethFloat = Number(
+            formatUnits(reserveWeth, TOKENS.WETH.decimals)
+          );
+          const usdcFloat = Number(
+            formatUnits(reserveUsdc, TOKENS.USDC.decimals)
+          );
+
+          // Assume USDC ~ $1; pool is balanced so TVL ≈ 2 * USDC side in USD
+          const tvlUsd = usdcFloat * 2;
+          if (!cancelled) setEthUsdcTvl(tvlUsd);
+        } catch (chainErr) {
+          if (!cancelled)
+            setTvlError(chainErr.message || "Failed to load TVL");
+        }
       } catch (e) {
         if (!cancelled) setTvlError(e.message || "Failed to load TVL");
       }
@@ -99,12 +125,29 @@ export default function LiquiditySection() {
     };
   }, []);
 
-  const totalVolume = mockPools.reduce(
-    (a, p) => a + p.volume24hUsd,
-    0
-  );
-  const totalFees = mockPools.reduce((a, p) => a + p.fees24hUsd, 0);
-  const totalTvl = mockPools.reduce((a, p) => a + p.tvlUsd, 0);
+  const pools = useMemo(() => {
+    return mockPools.map((p) => {
+      if (p.id === "eth-usdc") {
+        const overrides = {};
+        if (ethUsdcLive) {
+          overrides.tvlUsd =
+            ethUsdcLive.tvlUsd || ethUsdcTvl || p.tvlUsd;
+          overrides.volume24hUsd =
+            ethUsdcLive.volume24hUsd ?? p.volume24hUsd;
+          overrides.fees24hUsd =
+            ethUsdcLive.fees24hUsd ?? p.fees24hUsd;
+        } else if (ethUsdcTvl) {
+          overrides.tvlUsd = ethUsdcTvl;
+        }
+        return { ...p, ...overrides };
+      }
+      return p;
+    });
+  }, [ethUsdcLive, ethUsdcTvl]);
+
+  const totalVolume = pools.reduce((a, p) => a + p.volume24hUsd, 0);
+  const totalFees = pools.reduce((a, p) => a + p.fees24hUsd, 0);
+  const totalTvl = pools.reduce((a, p) => a + p.tvlUsd, 0);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
@@ -172,11 +215,9 @@ export default function LiquiditySection() {
         </div>
 
         <div className="px-2 sm:px-4 pb-3">
-          {mockPools.map((p) => {
+          {pools.map((p) => {
             const token0 = TOKENS[p.token0Symbol];
             const token1 = TOKENS[p.token1Symbol];
-            const tvlOverride =
-              p.id === "eth-usdc" && ethUsdcTvl ? ethUsdcTvl : p.tvlUsd;
 
             return (
               <div
@@ -210,7 +251,7 @@ export default function LiquiditySection() {
                   {formatNumber(p.fees24hUsd)}
                 </div>
                 <div className="col-span-2 text-right text-xs sm:text-sm">
-                  {formatNumber(tvlOverride)}
+                  {formatNumber(p.tvlUsd)}
                 </div>
                 <div className="col-span-1 text-right text-xs sm:text-sm">
                   {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
