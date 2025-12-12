@@ -221,15 +221,16 @@ export default function SwapSection({ balances }) {
         await (await token.transfer(pairAddress, amountWei)).wait();
       }
 
-      // Step 2: perform swap on pair
+      // Step 2: perform swap on pair (explicit function lookup to avoid undefined)
       const amount0Out = tokenInIs0 ? 0n : minOut;
       const amount1Out = tokenInIs0 ? minOut : 0n;
       const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
-      const tx = await pair.swap(amount0Out, amount1Out, user, "0x");
+      const swapFn = pair.getFunction("swap");
+      const tx = await swapFn(amount0Out, amount1Out, user, "0x");
       const receipt = await tx.wait();
 
       setSwapStatus(
-        `Swap eseguito (tx ${receipt.hash.slice(0, 10)}...), min ricevuto: ${formatUnits(
+        `Swap eseguito. Tx: ${receipt.hash}. Min ricevuto: ${formatUnits(
           minOut,
           TOKENS[buyKey].decimals
         )} ${buyToken}`
