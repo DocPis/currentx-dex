@@ -1,12 +1,15 @@
 // src/components/LiquiditySection.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { formatUnits } from "ethers";
+import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
   getV2PairReserves,
   WETH_ADDRESS,
   USDC_ADDRESS,
+  ERC20_ABI,
+  UNIV2_PAIR_ABI,
+  WETH_ABI,
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
 
@@ -69,6 +72,11 @@ export default function LiquiditySection() {
   const [tvlError, setTvlError] = useState("");
   const [ethUsdcLive, setEthUsdcLive] = useState(null);
   const [subgraphError, setSubgraphError] = useState("");
+  const [depositEth, setDepositEth] = useState("");
+  const [depositUsdc, setDepositUsdc] = useState("");
+  const [withdrawLp, setWithdrawLp] = useState("");
+  const [actionStatus, setActionStatus] = useState("");
+  const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,6 +156,98 @@ export default function LiquiditySection() {
   const totalVolume = pools.reduce((a, p) => a + p.volume24hUsd, 0);
   const totalFees = pools.reduce((a, p) => a + p.fees24hUsd, 0);
   const totalTvl = pools.reduce((a, p) => a + p.tvlUsd, 0);
+
+  const handleDeposit = async () => {
+    try {
+      setActionStatus("");
+      setActionLoading(true);
+
+      const ethAmount = depositEth ? Number(depositEth) : 0;
+      const usdcAmount = depositUsdc ? Number(depositUsdc) : 0;
+      if (ethAmount <= 0 || usdcAmount <= 0) {
+        throw new Error("Enter amounts for ETH and USDC");
+      }
+
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+
+      // Pair address
+      const { pairAddress } = await getV2PairReserves(
+        provider,
+        WETH_ADDRESS,
+        USDC_ADDRESS
+      );
+      const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
+
+      // Wrap ETH -> WETH
+      const wethContract = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+      const wethValue = parseUnits(ethAmount.toString(), TOKENS.WETH.decimals);
+      await (await wethContract.deposit({ value: wethValue })).wait();
+
+      // Transfer WETH + USDC to pair
+      const usdcContract = new Contract(
+        USDC_ADDRESS,
+        ERC20_ABI,
+        signer
+      );
+      const usdcValue = parseUnits(
+        usdcAmount.toString(),
+        TOKENS.USDC.decimals
+      );
+
+      await (await wethContract.transfer(pairAddress, wethValue)).wait();
+      await (await usdcContract.transfer(pairAddress, usdcValue)).wait();
+
+      // Mint LP to user
+      const tx = await pair.mint(user);
+      const receipt = await tx.wait();
+      setActionStatus(
+        `Deposited and minted LP (tx ${receipt.hash.slice(0, 10)}...)`
+      );
+    } catch (e) {
+      setActionStatus(e.message || "Deposit failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleWithdraw = async () => {
+    try {
+      setActionStatus("");
+      setActionLoading(true);
+      const lpAmount = withdrawLp ? Number(withdrawLp) : 0;
+      if (lpAmount <= 0) throw new Error("Enter LP amount to withdraw");
+
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+
+      const { pairAddress } = await getV2PairReserves(
+        provider,
+        WETH_ADDRESS,
+        USDC_ADDRESS
+      );
+
+      const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
+
+      // Pair as ERC20 to get decimals and transfer LP to pair before burn
+      const pairErc20 = new Contract(pairAddress, ERC20_ABI, signer);
+      const lpDecimals = await pairErc20.decimals();
+      const lpValue = parseUnits(lpAmount.toString(), lpDecimals);
+
+      await (await pairErc20.transfer(pairAddress, lpValue)).wait();
+      const tx = await pair.burn(user);
+      const receipt = await tx.wait();
+      setActionStatus(
+        `Withdrew liquidity (tx ${receipt.hash.slice(0, 10)}...)`
+      );
+    } catch (e) {
+      setActionStatus(e.message || "Withdraw failed");
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
@@ -262,6 +362,61 @@ export default function LiquiditySection() {
               </div>
             );
           })}
+        </div>
+
+        {/* ETH/USDC actions */}
+        <div className="px-4 pb-4 border-t border-slate-800/70 pt-4">
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-3">
+              <input
+                value={depositEth}
+                onChange={(e) => setDepositEth(e.target.value)}
+                placeholder="ETH amount"
+                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+              />
+              <input
+                value={depositUsdc}
+                onChange={(e) => setDepositUsdc(e.target.value)}
+                placeholder="USDC amount"
+                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+              />
+              <button
+                disabled={actionLoading}
+                onClick={handleDeposit}
+                className="px-4 py-2 rounded-lg bg-sky-600 text-sm font-semibold text-white shadow disabled:opacity-60"
+              >
+                {actionLoading ? "Processing..." : "Deposit ETH/USDC"}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <input
+                value={withdrawLp}
+                onChange={(e) => setWithdrawLp(e.target.value)}
+                placeholder="LP tokens"
+                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+              />
+              <button
+                disabled={actionLoading}
+                onClick={handleWithdraw}
+                className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-semibold text-white shadow disabled:opacity-60"
+              >
+                {actionLoading ? "Processing..." : "Withdraw ETH/USDC"}
+              </button>
+            </div>
+            {actionStatus && (
+              <div className="text-xs text-slate-300">{actionStatus}</div>
+            )}
+            {subgraphError && (
+              <div className="text-[11px] text-amber-300">
+                Subgraph: {subgraphError}
+              </div>
+            )}
+            {tvlError && (
+              <div className="text-[11px] text-amber-300">
+                On-chain TVL: {tvlError}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
