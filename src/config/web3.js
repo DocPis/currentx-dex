@@ -162,9 +162,25 @@ export const TOKENS = {
   },
 };
 
+export function getInjectedEthereum() {
+  if (typeof window === "undefined") return null;
+  const { ethereum } = window;
+  if (!ethereum) return null;
+  if (Array.isArray(ethereum.providers) && ethereum.providers.length) {
+    const metamask = ethereum.providers.find((p) => p.isMetaMask);
+    return metamask || ethereum.providers[0];
+  }
+  return ethereum;
+}
+
 export async function getProvider() {
-  if (!window.ethereum) throw new Error("No wallet found");
-  return new BrowserProvider(window.ethereum);
+  const eth = getInjectedEthereum();
+  if (!eth) {
+    throw new Error(
+      "No wallet found. Su mobile apri il sito nel browser MetaMask o usa un provider compatibile."
+    );
+  }
+  return new BrowserProvider(eth);
 }
 
 export async function getErc20(address, provider) {

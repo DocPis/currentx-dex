@@ -1,43 +1,82 @@
 // src/hooks/useWallet.js
 import { useEffect, useState } from "react";
-import { SEPOLIA_CHAIN_ID_HEX, getProvider } from "../config/web3";
+import {
+  SEPOLIA_CHAIN_ID_HEX,
+  getProvider,
+  getInjectedEthereum,
+} from "../config/web3";
 
 export function useWallet() {
   const [address, setAddress] = useState(null);
   const [chainId, setChainId] = useState(null);
 
   useEffect(() => {
-    if (!window.ethereum) return;
+    let removeListeners = null;
+    let initTimeout;
 
-    const handleAccountsChanged = (accounts) => {
-      setAddress(accounts[0] || null);
+    const initWithProvider = (eth) => {
+      if (!eth) return;
+
+      const handleAccountsChanged = (accounts) => {
+        setAddress(accounts[0] || null);
+      };
+
+      const handleChainChanged = (chainIdHex) => {
+        setChainId(chainIdHex);
+      };
+
+      eth
+        .request({ method: "eth_accounts" })
+        .then((accounts) => {
+          if (accounts.length) setAddress(accounts[0]);
+        })
+        .catch(() => {});
+
+      eth
+        .request({ method: "eth_chainId" })
+        .then(setChainId)
+        .catch(() => {});
+
+      eth.on("accountsChanged", handleAccountsChanged);
+      eth.on("chainChanged", handleChainChanged);
+
+      removeListeners = () => {
+        eth.removeListener("accountsChanged", handleAccountsChanged);
+        eth.removeListener("chainChanged", handleChainChanged);
+      };
     };
 
-    const handleChainChanged = (chainIdHex) => {
-      setChainId(chainIdHex);
+    const attemptInit = () => {
+      const eth = getInjectedEthereum();
+      if (eth && !removeListeners) {
+        initWithProvider(eth);
+      }
     };
 
-    window.ethereum
-      .request({ method: "eth_accounts" })
-      .then((accounts) => {
-        if (accounts.length) setAddress(accounts[0]);
-      })
-      .catch(() => {});
+    attemptInit();
 
-    window.ethereum
-      .request({ method: "eth_chainId" })
-      .then(setChainId)
-      .catch(() => {});
+    if (!getInjectedEthereum()) {
+      const handleEthereumInit = () => attemptInit();
+      window.addEventListener(
+        "ethereum#initialized",
+        handleEthereumInit,
+        { once: true }
+      );
+      initTimeout = setTimeout(attemptInit, 1200);
 
-    window.ethereum.on("accountsChanged", handleAccountsChanged);
-    window.ethereum.on("chainChanged", handleChainChanged);
+      return () => {
+        clearTimeout(initTimeout);
+        window.removeEventListener(
+          "ethereum#initialized",
+          handleEthereumInit
+        );
+        if (removeListeners) removeListeners();
+      };
+    }
 
     return () => {
-      window.ethereum.removeListener(
-        "accountsChanged",
-        handleAccountsChanged
-      );
-      window.ethereum.removeListener("chainChanged", handleChainChanged);
+      if (initTimeout) clearTimeout(initTimeout);
+      if (removeListeners) removeListeners();
     };
   }, []);
 
