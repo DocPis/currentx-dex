@@ -1,14 +1,23 @@
 // src/config/subgraph.js
 const SUBGRAPH_URL = import.meta.env.VITE_UNIV2_SUBGRAPH;
+const SUBGRAPH_API_KEY = import.meta.env.VITE_UNIV2_SUBGRAPH_API_KEY;
 
 async function postSubgraph(query, variables = {}) {
   if (!SUBGRAPH_URL) {
     throw new Error("Missing VITE_UNIV2_SUBGRAPH env var");
   }
 
+  const headers = {
+    "Content-Type": "application/json",
+  };
+
+  if (SUBGRAPH_API_KEY) {
+    headers.Authorization = `Bearer ${SUBGRAPH_API_KEY}`;
+  }
+
   const res = await fetch(SUBGRAPH_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ query, variables }),
   });
 
@@ -24,8 +33,12 @@ async function postSubgraph(query, variables = {}) {
 }
 
 // Fetch Uniswap V2 pair data (tvl, 24h volume) by token addresses
+// Falls back to pairCreateds when the schema does not expose `pairs`
 export async function fetchV2PairData(tokenA, tokenB) {
-  const query = `
+  const tokenALower = tokenA.toLowerCase();
+  const tokenBLower = tokenB.toLowerCase();
+
+  const mainQuery = `
     query PairData($tokenA: String!, $tokenB: String!) {
       pairs(
         first: 1
@@ -52,23 +65,104 @@ export async function fetchV2PairData(tokenA, tokenB) {
     }
   `;
 
-  const data = await postSubgraph(query, {
-    tokenA: tokenA.toLowerCase(),
-    tokenB: tokenB.toLowerCase(),
-  });
+  try {
+    const data = await postSubgraph(mainQuery, {
+      tokenA: tokenALower,
+      tokenB: tokenBLower,
+    });
 
-  const pair = data?.pairs?.[0];
-  if (!pair) throw new Error("Pair not found in subgraph");
+    const pair = data?.pairs?.[0];
+    if (!pair) throw new Error("Pair not found in subgraph");
 
-  const day = pair.pairDayDatas?.[0];
-  const tvlUsd = Number(pair.reserveUSD || 0);
-  const volume24hUsd = Number(day?.dailyVolumeUSD || 0);
-  const fees24hUsd = volume24hUsd * 0.003; // 0.30% fee tier
+    const day = pair.pairDayDatas?.[0];
+    const tvlUsd = Number(pair.reserveUSD || 0);
+    const volume24hUsd = Number(day?.dailyVolumeUSD || 0);
+    const fees24hUsd = volume24hUsd * 0.003; // 0.30% fee tier
 
-  return {
-    pairId: pair.id,
-    tvlUsd,
-    volume24hUsd,
-    fees24hUsd,
-  };
+    return {
+      pairId: pair.id,
+      tvlUsd,
+      volume24hUsd,
+      fees24hUsd,
+    };
+  } catch (err) {
+    const message = err?.message || "";
+    const noPairsField =
+      message.includes("Type `Query` has no field `pairs`") ||
+      message.includes('Cannot query field "pairs"');
+
+    if (!noPairsField) {
+      throw err;
+    }
+
+    // Fallback for schemas that only expose pairCreateds events
+    const fallbackQuery = `
+      query PairCreated($tokenA: String!, $tokenB: String!) {
+        pairCreateds(
+          first: 1
+          where: {
+            token0_in: [$tokenA, $tokenB]
+            token1_in: [$tokenA, $tokenB]
+          }
+          orderBy: blockNumber
+          orderDirection: desc
+        ) {
+          id
+          token0
+          token1
+          pair
+        }
+      }
+    `;
+
+    const data = await postSubgraph(fallbackQuery, {
+      tokenA: tokenALower,
+      tokenB: tokenBLower,
+    });
+
+    const evt = data?.pairCreateds?.[0];
+    if (evt) {
+      return {
+        pairId: evt.pair || evt.id,
+        tvlUsd: undefined,
+        volume24hUsd: undefined,
+        fees24hUsd: undefined,
+        note:
+          "Subgraph schema lacks `pairs`; using pairCreateds fallback (no live TVL/volume).",
+      };
+    }
+
+    // Final fallback: show the most recent pair, regardless of tokens, to avoid blank UI
+    const catchAllQuery = `
+      query LastPairCreated {
+        pairCreateds(
+          first: 1
+          orderBy: blockNumber
+          orderDirection: desc
+        ) {
+          id
+          token0
+          token1
+          pair
+        }
+      }
+    `;
+
+    const catchAll = await postSubgraph(catchAllQuery);
+    const any = catchAll?.pairCreateds?.[0];
+    if (any) {
+      return {
+        pairId: any.pair || any.id,
+        tvlUsd: undefined,
+        volume24hUsd: undefined,
+        fees24hUsd: undefined,
+        note:
+          "Pair not found for the configured tokens; showing the most recent pairCreated (no live TVL/volume).",
+      };
+    }
+
+    throw new Error(
+      "No pairCreateds found in subgraph; check indexing or schema."
+    );
+  }
 }

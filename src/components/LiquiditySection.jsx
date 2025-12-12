@@ -86,12 +86,22 @@ export default function LiquiditySection() {
         setSubgraphError("");
 
         // Subgraph (primary)
-        try {
-          const live = await fetchV2PairData(WETH_ADDRESS, USDC_ADDRESS);
-          if (!cancelled) setEthUsdcLive(live);
-        } catch (sgErr) {
-          if (!cancelled)
-            setSubgraphError(sgErr.message || "Subgraph fetch failed");
+        const subgraphUrl = import.meta.env.VITE_UNIV2_SUBGRAPH;
+        if (subgraphUrl) {
+          try {
+            const live = await fetchV2PairData(WETH_ADDRESS, USDC_ADDRESS);
+            if (!cancelled) {
+              setEthUsdcLive(live);
+              if (live?.note) setSubgraphError(live.note);
+            }
+          } catch (sgErr) {
+            if (!cancelled)
+              setSubgraphError(sgErr.message || "Subgraph fetch failed");
+          }
+        } else if (!cancelled) {
+          setSubgraphError(
+            "Set VITE_UNIV2_SUBGRAPH to enable live subgraph data"
+          );
         }
 
         // On-chain fallback TVL if wallet/provider is available
@@ -251,59 +261,151 @@ export default function LiquiditySection() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
-      {/* top cards */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <div className="col-span-1 lg:col-span-2 bg-[#050816] border border-slate-800/80 rounded-2xl p-5 sm:p-6 shadow-xl shadow-black/40">
-          <p className="text-sm text-slate-400 mb-4">
-            Provide liquidity to enable low-slippage swaps and earn
-            emissions.
-          </p>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-                Volume
+      {/* hero / stats */}
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+        <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-6">
+            <div className="flex items-start gap-3">
+              <div className="h-11 w-11 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-300">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                >
+                  <path
+                    d="M5 6h14M5 12h14M5 18h14"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
               </div>
-              <div className="text-lg sm:text-xl font-semibold">
-                {formatNumber(totalVolume)}
+              <div>
+                <p className="text-sm text-slate-300/90">
+                  Provide liquidity to enable low-slippage swaps and earn
+                  emissions.
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
+                    Live data
+                  </span>
+                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                    Sepolia V2
+                  </span>
+                </div>
               </div>
             </div>
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-                Fees
+            <div className="grid grid-cols-3 gap-4 min-w-[280px] text-right">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                  Volume 24h
+                </div>
+                <div className="text-xl font-semibold">
+                  {formatNumber(totalVolume)}
+                </div>
               </div>
-              <div className="text-lg sm:text-xl font-semibold">
-                {formatNumber(totalFees)}
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                  Fees 24h
+                </div>
+                <div className="text-xl font-semibold">
+                  {formatNumber(totalFees)}
+                </div>
               </div>
-            </div>
-            <div>
-              <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">
-                TVL
-              </div>
-              <div className="text-lg sm:text-xl font-semibold">
-                {formatNumber(totalTvl)}
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                  TVL
+                </div>
+                <div className="text-xl font-semibold">
+                  {formatNumber(totalTvl)}
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="col-span-1 bg-gradient-to-br from-[#1b1f4d] via-[#4338ca] to-[#f97316] rounded-2xl p-5 sm:p-6 shadow-xl shadow-black/40">
-          <div className="h-full flex flex-col justify-between">
-            <div className="text-xs font-medium tracking-[0.2em] text-slate-200/80 mb-3">
-              BUILT FOR CURRENTX
+        <div className="rounded-3xl bg-gradient-to-br from-indigo-700 via-sky-600 to-cyan-400 border border-white/10 shadow-2xl shadow-indigo-900/40 p-6 relative overflow-hidden">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.12),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,0.18),transparent_40%)]" />
+          <div className="relative h-full flex flex-col justify-between">
+            <div className="text-xs font-semibold tracking-[0.2em] text-white/80 mb-3">
+              CURRENTX LIQUIDITY
             </div>
-            <div className="text-2xl sm:text-3xl font-bold leading-tight mb-4">
-              <span className="block">BUILT</span>
-              <span className="block text-slate-100/80 text-base mt-1">
-                to power liquidity
-              </span>
+            <div className="text-3xl font-bold leading-tight mb-2 drop-shadow">
+              Autopilot Mode
+            </div>
+            <p className="text-sm text-white/80 mb-4 max-w-sm">
+              Deploy liquidity with a balanced ETH/USDC mix and track live TVL
+              from the subgraph.
+            </p>
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 text-sm font-semibold text-white border border-white/30 w-fit shadow-lg shadow-black/30">
+              Start providing
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4"
+              >
+                <path
+                  d="M5 12h14M13 6l6 6-6 6"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
           </div>
         </div>
       </div>
 
-      {/* pools table */}
-      <div className="bg-[#050816] border border-slate-800/80 rounded-2xl shadow-xl shadow-black/40">
-        <div className="px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-b border-slate-800/70 pt-4">
+      {/* controls */}
+      <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
+              Pools
+            </span>
+            <span className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-500">
+              Tokens
+            </span>
+            <span className="hidden sm:inline text-slate-500 text-xs">
+              Sorted by TVL • Live (subgraph + on-chain fallback)
+            </span>
+          </div>
+          <div className="flex items-center gap-3 w-full lg:w-auto">
+            <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 text-slate-500"
+              >
+                <circle
+                  cx="11"
+                  cy="11"
+                  r="6"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                />
+                <path
+                  d="M15.5 15.5 20 20"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+              <input
+                placeholder="Search pools..."
+                className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
+              />
+            </div>
+            <button className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30">
+              Launch pool
+            </button>
+          </div>
+        </div>
+        <div className="px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
           <div className="grid grid-cols-12 py-2">
             <div className="col-span-4">Pools</div>
             <div className="col-span-2 text-right">Volume</div>
@@ -322,7 +424,7 @@ export default function LiquiditySection() {
             return (
               <div
                 key={p.id}
-                className="grid grid-cols-12 items-center px-2 sm:px-4 py-3 rounded-xl hover:bg-slate-900/80 transition"
+                className="grid grid-cols-12 items-center px-2 sm:px-4 py-3 rounded-2xl hover:bg-slate-900/80 border border-transparent hover:border-slate-800 transition"
               >
                 <div className="col-span-4 flex items-center gap-3">
                   <div className="flex -space-x-2">
@@ -331,12 +433,12 @@ export default function LiquiditySection() {
                         key={idx}
                         src={t?.logo}
                         alt={`${t?.symbol || "token"} logo`}
-                        className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                        className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
                       />
                     ))}
                   </div>
                   <div className="flex flex-col">
-                    <div className="text-sm font-medium">
+                    <div className="text-sm font-semibold">
                       {p.token0Symbol} / {p.token1Symbol}
                     </div>
                     <div className="text-[11px] text-slate-500 capitalize">
@@ -365,54 +467,58 @@ export default function LiquiditySection() {
         </div>
 
         {/* ETH/USDC actions */}
-        <div className="px-4 pb-4 border-t border-slate-800/70 pt-4">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-3">
+        <div className="px-4 pb-4 border-t border-slate-800/70 pt-4 bg-slate-900/40 rounded-b-3xl">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
                 value={depositEth}
                 onChange={(e) => setDepositEth(e.target.value)}
                 placeholder="ETH amount"
-                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+                className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <input
                 value={depositUsdc}
                 onChange={(e) => setDepositUsdc(e.target.value)}
                 placeholder="USDC amount"
-                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+                className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <button
                 disabled={actionLoading}
                 onClick={handleDeposit}
-                className="px-4 py-2 rounded-lg bg-sky-600 text-sm font-semibold text-white shadow disabled:opacity-60"
+                className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
               >
                 {actionLoading ? "Processing..." : "Deposit ETH/USDC"}
               </button>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
                 value={withdrawLp}
                 onChange={(e) => setWithdrawLp(e.target.value)}
                 placeholder="LP tokens"
-                className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-100 min-w-[140px]"
+                className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <button
                 disabled={actionLoading}
                 onClick={handleWithdraw}
-                className="px-4 py-2 rounded-lg bg-indigo-600 text-sm font-semibold text-white shadow disabled:opacity-60"
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60"
               >
                 {actionLoading ? "Processing..." : "Withdraw ETH/USDC"}
               </button>
             </div>
+          </div>
+          <div className="flex flex-wrap gap-3 mt-3 text-xs">
             {actionStatus && (
-              <div className="text-xs text-slate-300">{actionStatus}</div>
+              <div className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200">
+                {actionStatus}
+              </div>
             )}
             {subgraphError && (
-              <div className="text-[11px] text-amber-300">
+              <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">
                 Subgraph: {subgraphError}
               </div>
             )}
             {tvlError && (
-              <div className="text-[11px] text-amber-300">
+              <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">
                 On-chain TVL: {tvlError}
               </div>
             )}
