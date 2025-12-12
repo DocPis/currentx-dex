@@ -166,3 +166,90 @@ export async function fetchV2PairData(tokenA, tokenB) {
     );
   }
 }
+
+// Fetch global dashboard stats; tries Uniswap V2 naming first, then generic factory
+export async function fetchDashboardStats() {
+  const primaryQuery = `
+    query Dashboard {
+      uniswapFactories(first: 1) {
+        totalLiquidityUSD
+        totalVolumeUSD
+        pairCount
+        txCount
+      }
+    }
+  `;
+
+  const fallbackQuery = `
+    query DashboardFallback {
+      factories(first: 1) {
+        totalLiquidityUSD
+        totalVolumeUSD
+        pairCount
+        txCount
+      }
+    }
+  `;
+
+  const parseFactory = (factory) => ({
+    totalLiquidityUsd: Number(factory?.totalLiquidityUSD || 0),
+    totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+    pairCount: Number(factory?.pairCount || 0),
+    txCount: Number(factory?.txCount || 0),
+  });
+
+  try {
+    const data = await postSubgraph(primaryQuery);
+    const factory = data?.uniswapFactories?.[0];
+    if (factory) return parseFactory(factory);
+    throw new Error("No factory data");
+  } catch (err) {
+    const data = await postSubgraph(fallbackQuery);
+    const factory = data?.factories?.[0];
+    if (factory) return parseFactory(factory);
+    throw err;
+  }
+}
+
+// Fetch recent pair day data for a token pair (sorted desc by date)
+export async function fetchPairHistory(tokenA, tokenB, days = 7) {
+  const tokenALower = tokenA.toLowerCase();
+  const tokenBLower = tokenB.toLowerCase();
+
+  const query = `
+    query PairHistory($tokenA: String!, $tokenB: String!, $days: Int!) {
+      pairs(
+        first: 1
+        where: {
+          token0_in: [$tokenA, $tokenB]
+          token1_in: [$tokenA, $tokenB]
+        }
+      ) {
+        id
+        pairDayDatas(
+          first: $days
+          orderBy: date
+          orderDirection: desc
+        ) {
+          date
+          reserveUSD
+          dailyVolumeUSD
+        }
+      }
+    }
+  `;
+
+  const data = await postSubgraph(query, {
+    tokenA: tokenALower,
+    tokenB: tokenBLower,
+    days,
+  });
+
+  const pair = data?.pairs?.[0];
+  const history = pair?.pairDayDatas || [];
+  return history.map((d) => ({
+    date: Number(d.date) * 1000,
+    tvlUsd: Number(d.reserveUSD || 0),
+    volumeUsd: Number(d.dailyVolumeUSD || 0),
+  }));
+}

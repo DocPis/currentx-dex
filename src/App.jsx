@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import Header from "./components/Header";
 import SwapSection from "./components/SwapSection";
 import LiquiditySection from "./components/LiquiditySection";
+import Dashboard from "./components/Dashboard";
 import { useWallet } from "./hooks/useWallet";
 import { useBalances } from "./hooks/useBalances";
 
@@ -72,11 +73,7 @@ export default function App() {
           <SwapSection balances={balances} />
         )}
         {tab === "liquidity" && <LiquiditySection />}
-        {tab === "dashboard" && (
-          <div className="mt-10 text-center text-slate-400">
-            Dashboard coming soon.
-          </div>
-        )}
+        {tab === "dashboard" && <Dashboard />}
       </main>
     </div>
   );
