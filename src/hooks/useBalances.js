@@ -36,7 +36,7 @@ export function useBalances(address) {
         const ethBalance = await provider.getBalance(walletAddress);
         const eth = Number(formatUnits(ethBalance, TOKENS.ETH.decimals));
 
-        // Helper per leggere i token ERC20 solo se abbiamo l'indirizzo
+        // Helper to read ERC20 balances only when we have an address
         const getErc20Balance = async (tokenKey) => {
           const token = TOKENS[tokenKey];
           if (!token?.address) return 0;

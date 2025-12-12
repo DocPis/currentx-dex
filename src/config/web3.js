@@ -8,17 +8,17 @@ import wethLogo from "../tokens/weth.png";
 
 export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
-// Indirizzi (in lowercase per evitare errori di checksum)
+// Addresses (lowercase to avoid checksum issues)
 export const WETH_ADDRESS =
   "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 
-// Uniswap V2 (Sepolia) - factory fornita dall'utente
+// Uniswap V2 (Sepolia) - factory provided by the user
 export const UNIV2_FACTORY_ADDRESS =
   "0xF62c03E08ada871A0bEb309762E260a7a6a880E6";
 
-// Semplice ERC20 ABI
+// Minimal ERC20 ABI
 export const ERC20_ABI = [
   {
     inputs: [{ internalType: "address", name: "", type: "address" }],
@@ -64,7 +64,7 @@ export const WETH_ABI = [
   },
 ];
 
-// ABI minimale Uniswap V2
+// Minimal Uniswap V2 ABI
 export const UNIV2_FACTORY_ABI = [
   {
     inputs: [
@@ -136,6 +136,7 @@ export const UNIV2_PAIR_ABI = [
 ];
 
 // Registry dei token che usiamo nello swap
+// Token registry used across swaps
 export const TOKENS = {
   ETH: {
     symbol: "ETH",
@@ -189,7 +190,7 @@ export async function getProvider() {
   const eth = getInjectedEthereum();
   if (!eth) {
     throw new Error(
-      "No wallet found. Su mobile apri il sito nel browser MetaMask o usa un provider compatibile."
+      "No wallet found. On mobile, open the site in the MetaMask in-app browser or another injected wallet."
     );
   }
   return new BrowserProvider(eth);

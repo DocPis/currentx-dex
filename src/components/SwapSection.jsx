@@ -124,7 +124,7 @@ export default function SwapSection({ balances }) {
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isEthUsdcPath) {
-        setQuoteError("Quote disponibile solo per ETH/USDC (Uniswap V2 Sepolia)");
+        setQuoteError("Quote available only for ETH/USDC (Uniswap V2 Sepolia)");
         return;
       }
 
@@ -183,13 +183,13 @@ export default function SwapSection({ balances }) {
       setSwapStatus(null);
       if (swapLoading) return;
       if (!amountIn || Number.isNaN(Number(amountIn))) {
-        throw new Error("Inserisci un importo valido");
+        throw new Error("Enter a valid amount");
       }
       if (!isEthUsdcPath) {
-        throw new Error("Swap supportato solo per ETH/USDC su Sepolia (demo)");
+        throw new Error("Swap supported only for ETH/USDC on Sepolia (demo)");
       }
       if (!quoteOutRaw) {
-        throw new Error("Recupero quote in corso, riprova");
+        throw new Error("Fetching quote, please retry");
       }
 
       setSwapLoading(true);
@@ -230,7 +230,7 @@ export default function SwapSection({ balances }) {
       const receipt = await tx.wait();
 
       setSwapStatus({
-        message: `Swap eseguito. Min ricevuto: ${formatUnits(
+        message: `Swap executed. Min received: ${formatUnits(
           minOut,
           TOKENS[buyKey].decimals
         )} ${buyToken}`,
@@ -356,7 +356,7 @@ export default function SwapSection({ balances }) {
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">Min ricevuto</span>
+              <span className="text-slate-500">Min received</span>
               <span className="text-slate-100">
                 {minReceivedRaw
                   ? `${Number(

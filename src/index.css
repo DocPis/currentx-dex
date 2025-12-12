@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* extra stile base */
+/* extra base styles */
 body {
   @apply bg-slate-950 text-slate-50;
 }

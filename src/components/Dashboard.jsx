@@ -134,7 +134,7 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
           <p className="text-sm text-slate-400">
-            TVL, volume e attività live dal subgraph Sepolia (WETH/USDC focus).
+            Live TVL, volume, and activity from the Sepolia subgraph (WETH/USDC focus).
           </p>
         </div>
         {error && (
@@ -170,7 +170,7 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-sky-400" />
-              Ultimi {history.length} giorni
+              Last {history.length} days
             </div>
           </div>
           <div className="h-40">
@@ -201,7 +201,7 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Ultimi {history.length} giorni
+              Last {history.length} days
             </div>
           </div>
           <div className="h-40">
@@ -231,9 +231,9 @@ export default function Dashboard() {
               {TOKENS.WETH.symbol} / {TOKENS.USDC.symbol} (Sepolia)
             </div>
           </div>
-          <div className="text-xs text-slate-500">
-            Subgraph endpoint: {import.meta.env.VITE_UNIV2_SUBGRAPH ? "configurato" : "manca VITE_UNIV2_SUBGRAPH"}
-          </div>
+            <div className="text-xs text-slate-500">
+              Subgraph endpoint: {import.meta.env.VITE_UNIV2_SUBGRAPH ? "configured" : "missing VITE_UNIV2_SUBGRAPH"}
+            </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm text-left">
@@ -261,7 +261,7 @@ export default function Dashboard() {
               {!history.length && !loading && (
                 <tr>
                   <td colSpan={3} className="py-3 text-center text-slate-500">
-                    Nessun dato disponibile
+                    No data available
                   </td>
                 </tr>
               )}
