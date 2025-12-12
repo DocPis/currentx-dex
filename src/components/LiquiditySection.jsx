@@ -1,16 +1,40 @@
 // src/components/LiquiditySection.jsx
 import React from "react";
+import { TOKENS } from "../config/web3";
 
 const mockPools = [
   {
-    id: "1",
-    token0Symbol: "USDC",
-    token1Symbol: "AERO",
-    volume24hUsd: 80957,
-    fees24hUsd: 242,
-    tvlUsd: 38560000,
-    feeApr: 0,
-    emissionApr: 16.24,
+    id: "weth-usdc",
+    token0Symbol: "WETH",
+    token1Symbol: "USDC",
+    volume24hUsd: 1204500,
+    fees24hUsd: 3600,
+    tvlUsd: 18250000,
+    feeApr: 5.72,
+    emissionApr: 18.4,
+    poolType: "volatile",
+  },
+  {
+    id: "wbtc-usdc",
+    token0Symbol: "WBTC",
+    token1Symbol: "USDC",
+    volume24hUsd: 987000,
+    fees24hUsd: 2950,
+    tvlUsd: 20500000,
+    feeApr: 4.98,
+    emissionApr: 16.1,
+    poolType: "volatile",
+  },
+  {
+    id: "dai-usdc",
+    token0Symbol: "DAI",
+    token1Symbol: "USDC",
+    volume24hUsd: 453200,
+    fees24hUsd: 690,
+    tvlUsd: 12480000,
+    feeApr: 3.12,
+    emissionApr: 12.6,
+    poolType: "stable",
   },
 ];
 
@@ -95,36 +119,53 @@ export default function LiquiditySection() {
         </div>
 
         <div className="px-2 sm:px-4 pb-3">
-          {mockPools.map((p) => (
-            <div
-              key={p.id}
-              className="grid grid-cols-12 items-center px-2 sm:px-4 py-3 rounded-xl hover:bg-slate-900/80 transition"
-            >
-              <div className="col-span-4 flex flex-col">
-                <div className="text-sm font-medium">
-                  {p.token0Symbol} / {p.token1Symbol}
+          {mockPools.map((p) => {
+            const token0 = TOKENS[p.token0Symbol];
+            const token1 = TOKENS[p.token1Symbol];
+
+            return (
+              <div
+                key={p.id}
+                className="grid grid-cols-12 items-center px-2 sm:px-4 py-3 rounded-xl hover:bg-slate-900/80 transition"
+              >
+                <div className="col-span-4 flex items-center gap-3">
+                  <div className="flex -space-x-2">
+                    {[token0, token1].map((t, idx) => (
+                      <img
+                        key={idx}
+                        src={t?.logo}
+                        alt={`${t?.symbol || "token"} logo`}
+                        className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-col">
+                    <div className="text-sm font-medium">
+                      {p.token0Symbol} / {p.token1Symbol}
+                    </div>
+                    <div className="text-[11px] text-slate-500 capitalize">
+                      {p.poolType || "volatile"} pool
+                    </div>
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-500">
-                  Basic volatile
+                <div className="col-span-2 text-right text-xs sm:text-sm">
+                  {formatNumber(p.volume24hUsd)}
+                </div>
+                <div className="col-span-2 text-right text-xs sm:text-sm">
+                  {formatNumber(p.fees24hUsd)}
+                </div>
+                <div className="col-span-2 text-right text-xs sm:text-sm">
+                  {formatNumber(p.tvlUsd)}
+                </div>
+                <div className="col-span-1 text-right text-xs sm:text-sm">
+                  {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
+                </div>
+                <div className="col-span-1 text-right text-xs sm:text-sm">
+                  {p.emissionApr.toFixed(2)}%
                 </div>
               </div>
-              <div className="col-span-2 text-right text-xs sm:text-sm">
-                {formatNumber(p.volume24hUsd)}
-              </div>
-              <div className="col-span-2 text-right text-xs sm:text-sm">
-                {formatNumber(p.fees24hUsd)}
-              </div>
-              <div className="col-span-2 text-right text-xs sm:text-sm">
-                {formatNumber(p.tvlUsd)}
-              </div>
-              <div className="col-span-1 text-right text-xs sm:text-sm">
-                {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
-              </div>
-              <div className="col-span-1 text-right text-xs sm:text-sm">
-                {p.emissionApr.toFixed(2)}%
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
