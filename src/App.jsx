@@ -32,39 +32,24 @@ export default function App() {
 
       {/* Tabs */}
       <div className="px-4 sm:px-6 pt-6">
-        <div className="flex justify-center">
-          <div className="flex bg-slate-900/80 rounded-full p-1 text-xs sm:text-sm border border-slate-800 w-full max-w-md overflow-x-auto whitespace-nowrap">
+        <div className="flex flex-wrap justify-center gap-3 text-xs sm:text-sm">
+          {[
+            { id: "dashboard", label: "Dashboard" },
+            { id: "swap", label: "Swap" },
+            { id: "liquidity", label: "Liquidity" },
+          ].map((item) => (
             <button
-              onClick={() => setTab("dashboard")}
-              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
-                tab === "dashboard"
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-400 hover:text-slate-100"
+              key={item.id}
+              onClick={() => setTab(item.id)}
+              className={`px-4 py-2 rounded-xl border transition shadow-sm ${
+                tab === item.id
+                  ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
+                  : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
               }`}
             >
-              Dashboard
+              {item.label}
             </button>
-            <button
-              onClick={() => setTab("swap")}
-              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
-                tab === "swap"
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-400 hover:text-slate-100"
-              }`}
-            >
-              Swap
-            </button>
-            <button
-              onClick={() => setTab("liquidity")}
-              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
-                tab === "liquidity"
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-400 hover:text-slate-100"
-              }`}
-            >
-              Liquidity
-            </button>
-          </div>
+          ))}
         </div>
       </div>
 
