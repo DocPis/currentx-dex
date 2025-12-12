@@ -239,17 +239,30 @@ export async function fetchPairHistory(tokenA, tokenB, days = 7) {
     }
   `;
 
-  const data = await postSubgraph(query, {
-    tokenA: tokenALower,
-    tokenB: tokenBLower,
-    days,
-  });
+  try {
+    const data = await postSubgraph(query, {
+      tokenA: tokenALower,
+      tokenB: tokenBLower,
+      days,
+    });
 
-  const pair = data?.pairs?.[0];
-  const history = pair?.pairDayDatas || [];
-  return history.map((d) => ({
-    date: Number(d.date) * 1000,
-    tvlUsd: Number(d.reserveUSD || 0),
-    volumeUsd: Number(d.dailyVolumeUSD || 0),
-  }));
+    const pair = data?.pairs?.[0];
+    const history = pair?.pairDayDatas || [];
+    return history.map((d) => ({
+      date: Number(d.date) * 1000,
+      tvlUsd: Number(d.reserveUSD || 0),
+      volumeUsd: Number(d.dailyVolumeUSD || 0),
+    }));
+  } catch (err) {
+    const message = err?.message || "";
+    const noPairsField =
+      message.includes("Type `Query` has no field `pairs`") ||
+      message.includes('Cannot query field "pairs"');
+
+    if (noPairsField) {
+      // Schema lacks pairs/pairDayDatas; return empty to avoid hard failures.
+      return [];
+    }
+    throw err;
+  }
 }
