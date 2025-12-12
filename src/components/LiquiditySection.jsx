@@ -362,7 +362,7 @@ export default function LiquiditySection() {
       {/* controls */}
       <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
               Pools
             </span>
@@ -370,10 +370,10 @@ export default function LiquiditySection() {
               Tokens
             </span>
             <span className="hidden sm:inline text-slate-500 text-xs">
-              Sorted by TVL • Live (subgraph + on-chain fallback)
+              Sorted by TVL | Live (subgraph + on-chain fallback)
             </span>
           </div>
-          <div className="flex items-center gap-3 w-full lg:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
             <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
               <svg
                 viewBox="0 0 24 24"
@@ -405,7 +405,7 @@ export default function LiquiditySection() {
             </button>
           </div>
         </div>
-        <div className="px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
+        <div className="hidden md:block px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
           <div className="grid grid-cols-12 py-2">
             <div className="col-span-4">Pools</div>
             <div className="col-span-2 text-right">Volume</div>
@@ -424,9 +424,9 @@ export default function LiquiditySection() {
             return (
               <div
                 key={p.id}
-                className="grid grid-cols-12 items-center px-2 sm:px-4 py-3 rounded-2xl hover:bg-slate-900/80 border border-transparent hover:border-slate-800 transition"
+                className="flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl hover:bg-slate-900/80 border border-transparent hover:border-slate-800 transition"
               >
-                <div className="col-span-4 flex items-center gap-3">
+                <div className="md:col-span-4 flex items-center gap-3">
                   <div className="flex -space-x-2">
                     {[token0, token1].map((t, idx) => (
                       <img
@@ -446,19 +446,53 @@ export default function LiquiditySection() {
                     </div>
                   </div>
                 </div>
-                <div className="col-span-2 text-right text-xs sm:text-sm">
+
+                <div className="flex flex-wrap gap-2 w-full text-xs text-slate-400 md:hidden">
+                  <div className="flex justify-between w-full">
+                    <span>Volume</span>
+                    <span className="text-slate-100">
+                      {formatNumber(p.volume24hUsd)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between w-full">
+                    <span>Fees</span>
+                    <span className="text-slate-100">
+                      {formatNumber(p.fees24hUsd)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between w-full">
+                    <span>TVL</span>
+                    <span className="text-slate-100">
+                      {formatNumber(p.tvlUsd)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between w-full">
+                    <span>Fee APR</span>
+                    <span className="text-slate-100">
+                      {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between w-full">
+                    <span>Emission APR</span>
+                    <span className="text-slate-100">
+                      {p.emissionApr.toFixed(2)}%
+                    </span>
+                  </div>
+                </div>
+
+                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
                   {formatNumber(p.volume24hUsd)}
                 </div>
-                <div className="col-span-2 text-right text-xs sm:text-sm">
+                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
                   {formatNumber(p.fees24hUsd)}
                 </div>
-                <div className="col-span-2 text-right text-xs sm:text-sm">
+                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
                   {formatNumber(p.tvlUsd)}
                 </div>
-                <div className="col-span-1 text-right text-xs sm:text-sm">
+                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
                   {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
                 </div>
-                <div className="col-span-1 text-right text-xs sm:text-sm">
+                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
                   {p.emissionApr.toFixed(2)}%
                 </div>
               </div>
@@ -485,7 +519,7 @@ export default function LiquiditySection() {
               <button
                 disabled={actionLoading}
                 onClick={handleDeposit}
-                className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
+                className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60 w-full md:w-auto"
               >
                 {actionLoading ? "Processing..." : "Deposit ETH/USDC"}
               </button>
@@ -500,7 +534,7 @@ export default function LiquiditySection() {
               <button
                 disabled={actionLoading}
                 onClick={handleWithdraw}
-                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60"
+                className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
               >
                 {actionLoading ? "Processing..." : "Withdraw ETH/USDC"}
               </button>

@@ -12,8 +12,8 @@ export default function Header({
     : "";
 
   return (
-    <header className="w-full flex items-center justify-between py-4 px-6 border-b border-slate-800 bg-[#020617]">
-      <div className="flex items-center gap-2">
+    <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617]">
+      <div className="flex items-center gap-2 w-full md:w-auto">
         <div className="h-8 w-8 rounded-full bg-sky-500 flex items-center justify-center font-bold text-sm">
           X
         </div>
@@ -27,7 +27,7 @@ export default function Header({
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap md:flex-nowrap items-center gap-3 justify-end w-full md:w-auto">
         <div className="hidden sm:flex items-center gap-3 text-xs text-slate-300">
           <span>ETH: {balances.ETH.toFixed(4)}</span>
           <span>WETH: {balances.WETH.toFixed(4)}</span>
@@ -45,13 +45,13 @@ export default function Header({
         </div>
 
         {address ? (
-          <div className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700">
+          <div className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700 w-full sm:w-auto text-center">
             {shortAddress}
           </div>
         ) : (
           <button
             onClick={onConnect}
-            className="px-4 py-1.5 rounded-full bg-sky-500 hover:bg-sky-400 text-xs font-semibold text-white shadow-md"
+            className="px-4 py-1.5 rounded-full bg-sky-500 hover:bg-sky-400 text-xs font-semibold text-white shadow-md w-full sm:w-auto"
           >
             Connect wallet
           </button>

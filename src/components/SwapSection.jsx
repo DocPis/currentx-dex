@@ -9,10 +9,10 @@ function TokenSelector({ side, selected, onSelect, balances }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="relative">
+    <div className="relative w-full sm:w-auto">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-[120px] hover:border-sky-500/60 transition"
+        className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[120px] hover:border-sky-500/60 transition"
       >
         <img
           src={TOKENS[selected].logo}
@@ -149,8 +149,8 @@ export default function SwapSection({ balances }) {
   }, [amountIn, sellToken, buyToken, isEthUsdcPath]);
 
   return (
-    <div className="w-full flex flex-col items-center mt-10">
-      <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-6 shadow-xl">
+    <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
+      <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-4 sm:p-6 shadow-xl">
         {/* SELL */}
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
@@ -161,7 +161,7 @@ export default function SwapSection({ balances }) {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <TokenSelector
               side="sell"
               selected={sellToken}
@@ -173,7 +173,7 @@ export default function SwapSection({ balances }) {
               value={amountIn}
               onChange={(e) => setAmountIn(e.target.value)}
               placeholder="0.00"
-              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
+              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full"
             />
           </div>
         </div>
@@ -208,7 +208,7 @@ export default function SwapSection({ balances }) {
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <TokenSelector
               side="buy"
               selected={buyToken}
@@ -216,8 +216,8 @@ export default function SwapSection({ balances }) {
               balances={balances}
             />
 
-            <div className="flex-1 text-right">
-              <div className="text-2xl font-semibold text-slate-50">
+            <div className="flex-1 text-right w-full">
+              <div className="text-2xl sm:text-3xl font-semibold text-slate-50">
                 {quoteOut !== null
                   ? Number(quoteOut).toFixed(6)
                   : "0.00"}
@@ -240,7 +240,7 @@ export default function SwapSection({ balances }) {
       </div>
 
       <div className="mt-4 w-full max-w-xl rounded-2xl bg-slate-900/60 border border-slate-800 px-4 py-3 text-xs text-slate-300">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-slate-400">Price impact</span>
           <span>--</span>
         </div>

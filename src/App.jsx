@@ -30,38 +30,40 @@ export default function App() {
       />
 
       {/* Tabs */}
-      <div className="px-6 pt-6">
-        <div className="inline-flex bg-slate-900/80 rounded-full p-1 text-xs sm:text-sm border border-slate-800">
-          <button
-            onClick={() => setTab("dashboard")}
-            className={`px-4 py-1.5 rounded-full ${
-              tab === "dashboard"
-                ? "bg-slate-800 text-white"
-                : "text-slate-400 hover:text-slate-100"
-            }`}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => setTab("swap")}
-            className={`px-4 py-1.5 rounded-full ${
-              tab === "swap"
-                ? "bg-slate-800 text-white"
-                : "text-slate-400 hover:text-slate-100"
-            }`}
-          >
-            Swap
-          </button>
-          <button
-            onClick={() => setTab("liquidity")}
-            className={`px-4 py-1.5 rounded-full ${
-              tab === "liquidity"
-                ? "bg-slate-800 text-white"
-                : "text-slate-400 hover:text-slate-100"
-            }`}
-          >
-            Liquidity
-          </button>
+      <div className="px-4 sm:px-6 pt-6">
+        <div className="flex justify-center">
+          <div className="flex bg-slate-900/80 rounded-full p-1 text-xs sm:text-sm border border-slate-800 w-full max-w-md overflow-x-auto whitespace-nowrap">
+            <button
+              onClick={() => setTab("dashboard")}
+              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
+                tab === "dashboard"
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              Dashboard
+            </button>
+            <button
+              onClick={() => setTab("swap")}
+              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
+                tab === "swap"
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              Swap
+            </button>
+            <button
+              onClick={() => setTab("liquidity")}
+              className={`px-4 py-1.5 rounded-full flex-1 sm:flex-none ${
+                tab === "liquidity"
+                  ? "bg-slate-800 text-white"
+                  : "text-slate-400 hover:text-slate-100"
+              }`}
+            >
+              Liquidity
+            </button>
+          </div>
         </div>
       </div>
 
