@@ -91,7 +91,12 @@ export function useWallet() {
     return primaryAccount;
   };
 
+  const disconnect = () => {
+    setAddress(null);
+    setChainId(null);
+  };
+
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
 
-  return { address, chainId, isOnSepolia, connect };
+  return { address, chainId, isOnSepolia, connect, disconnect };
 }

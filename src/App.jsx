@@ -9,10 +9,19 @@ import { useBalances } from "./hooks/useBalances";
 
 export default function App() {
   const [tab, setTab] = useState("swap");
-  const { address, isOnSepolia, connect } = useWallet();
+  const { address, isOnSepolia, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
 
   const handleConnect = async () => {
+    if (address) {
+      const shouldDisconnect = window.confirm("Disconnect your wallet?");
+      if (shouldDisconnect) {
+        disconnect();
+        await refresh(null);
+      }
+      return;
+    }
+
     try {
       const connectedAddress = await connect();
       await refresh(connectedAddress);

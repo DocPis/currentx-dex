@@ -38,18 +38,16 @@ export default function Header({
           {isOnSepolia ? "Sepolia Testnet" : "Wrong network"}
         </div>
 
-        {address ? (
-          <div className="px-3 py-1.5 rounded-full bg-slate-800 text-xs text-slate-100 border border-slate-700 w-full sm:w-auto text-center">
-            {shortAddress}
-          </div>
-        ) : (
-          <button
-            onClick={onConnect}
-            className="px-4 py-1.5 rounded-full bg-sky-500 hover:bg-sky-400 text-xs font-semibold text-white shadow-md w-full sm:w-auto"
-          >
-            Connect wallet
-          </button>
-        )}
+        <button
+          onClick={onConnect}
+          className={`px-4 py-1.5 rounded-full text-xs font-semibold w-full sm:w-auto shadow-md ${
+            address
+              ? "bg-slate-800 text-slate-100 border border-slate-700 hover:border-slate-500"
+              : "bg-sky-500 hover:bg-sky-400 text-white"
+          }`}
+        >
+          {address ? `Connected: ${shortAddress}` : "Connect wallet"}
+        </button>
       </div>
     </header>
   );
