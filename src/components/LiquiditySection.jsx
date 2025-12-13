@@ -286,7 +286,12 @@ export default function LiquiditySection() {
         }
       } catch (err) {
         if (!cancelled) {
-          setPairError(err.message || "Failed to load pool data");
+          const message = err?.message || "Failed to load pool data";
+          if (message.toLowerCase().includes("pair not found on sepolia")) {
+            setPairError("Pair non trovata su Sepolia per questa combinazione di token.");
+          } else {
+            setPairError(message);
+          }
           setLpBalanceError(err.message || "Failed to load LP balance");
         }
       }
