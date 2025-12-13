@@ -14,7 +14,9 @@ export default function App() {
 
   const handleConnect = async () => {
     if (address) {
-      const shouldDisconnect = window.confirm("Disconnect your wallet?");
+      const shouldDisconnect = window.confirm(
+        "Disconnect from CurrentX?\nYou can reconnect anytime."
+      );
       if (shouldDisconnect) {
         disconnect();
         await refresh(null);
