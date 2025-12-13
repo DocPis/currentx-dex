@@ -78,7 +78,15 @@ export async function fetchV2PairData(tokenA, tokenB) {
     });
 
     const pair = data?.pairs?.[0];
-    if (!pair) throw new Error("Pair not found in subgraph");
+    if (!pair) {
+      return {
+        pairId: null,
+        tvlUsd: undefined,
+        volume24hUsd: undefined,
+        fees24hUsd: undefined,
+        note: "Pair not found in subgraph; live TVL/volume unavailable.",
+      };
+    }
 
     const dayRes = await postSubgraph(pairDayQuery, { pairId: pair.id });
     const day = dayRes?.pairDayDatas?.[0];
