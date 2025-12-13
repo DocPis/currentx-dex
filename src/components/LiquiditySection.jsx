@@ -367,7 +367,7 @@ export default function LiquiditySection() {
           if (!cancelled) {
             setDepositToken1(suggested1.toFixed(4));
             setDepositQuote(
-              `To keep the ratio, for ${amount0} ${token0Meta?.symbol} add ~${suggested1.toFixed(
+              `For ${amount0} ${token0Meta?.symbol} add ~${suggested1.toFixed(
                 4
               )} ${token1Meta?.symbol}.`
             );
@@ -381,7 +381,7 @@ export default function LiquiditySection() {
           if (!cancelled) {
             setDepositToken0(suggested0.toFixed(4));
             setDepositQuote(
-              `To keep the ratio, for ${amount1} ${token1Meta?.symbol} add ~${suggested0.toFixed(
+              `For ${amount1} ${token1Meta?.symbol} add ~${suggested0.toFixed(
                 4
               )} ${token0Meta?.symbol}.`
             );
