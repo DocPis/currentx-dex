@@ -77,38 +77,6 @@ function TokenSelector({ side, selected, onSelect, balances }) {
   );
 }
 
-function PairInfoBox({ info }) {
-  if (!info) return null;
-  const reserve0 = Number(
-    formatUnits(info.reserve0 || 0n, info.decimals0 || 18)
-  ).toFixed(4);
-  const reserve1 = Number(
-    formatUnits(info.reserve1 || 0n, info.decimals1 || 18)
-  ).toFixed(4);
-  return (
-    <div className="mt-3 w-full max-w-xl text-[11px] text-slate-300 bg-slate-900/70 border border-slate-800 rounded-xl px-3 py-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-slate-400">Pair</span>
-        <a
-          href={`https://sepolia.etherscan.io/address/${info.pairAddress}`}
-          target="_blank"
-          rel="noreferrer"
-          className="text-sky-400 hover:text-sky-300 underline"
-        >
-          {info.pairAddress}
-        </a>
-      </div>
-      <div className="flex flex-wrap gap-4 mt-1">
-        <span>Reserve token0: {reserve0}</span>
-        <span>Reserve token1: {reserve1}</span>
-      </div>
-      <div className="text-slate-400 mt-1">
-        token0: {info.token0} | token1: {info.token1}
-      </div>
-    </div>
-  );
-}
-
 export default function SwapSection({ balances }) {
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
@@ -121,7 +89,6 @@ export default function SwapSection({ balances }) {
   const [slippage, setSlippage] = useState("0.5");
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
-  const [pairInfo, setPairInfo] = useState(null);
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
   const sellBalance = balances?.[sellToken] || 0;
@@ -182,7 +149,6 @@ export default function SwapSection({ balances }) {
       setQuoteOut(null);
       setQuoteOutRaw(null);
       setPriceImpact(null);
-      setPairInfo(null);
       setApproveNeeded(false);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
@@ -232,21 +198,6 @@ export default function SwapSection({ balances }) {
         setQuoteOut(formatted);
         setQuoteOutRaw(meta.amountOut);
         setPriceImpact(meta.priceImpactPct);
-        setPairInfo({
-          pairAddress: meta.pairAddress,
-          token0: meta.token0,
-          token1: meta.token1,
-          reserve0: meta.reserve0,
-          reserve1: meta.reserve1,
-          decimals0:
-            Object.values(TOKENS).find(
-              (t) => t.address && t.address.toLowerCase() === meta.token0.toLowerCase()
-            )?.decimals || 18,
-          decimals1:
-            Object.values(TOKENS).find(
-              (t) => t.address && t.address.toLowerCase() === meta.token1.toLowerCase()
-            )?.decimals || 18,
-        });
 
         // Precompute allowance requirement for ERC20 sells
         if (sellToken !== "ETH" && sellAddress) {
@@ -727,7 +678,6 @@ export default function SwapSection({ balances }) {
         )}
       </div>
 
-      <PairInfoBox info={pairInfo} />
     </div>
   );
 }
