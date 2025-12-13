@@ -110,6 +110,7 @@ export default function LiquiditySection() {
     const loadPools = async () => {
       const updates = {};
       setSubgraphError("");
+      setTvlError("");
       for (const pool of basePools) {
         const token0Addr = resolveTokenAddress(pool.token0Symbol);
         const token1Addr = resolveTokenAddress(pool.token1Symbol);
@@ -173,8 +174,12 @@ export default function LiquiditySection() {
           }
         } catch (chainErr) {
           // ignore per-pool chain errors to avoid breaking the whole list
-          if (!cancelled && !tvlError) {
-            setTvlError(chainErr.message || "Failed to load TVL");
+          const msg = chainErr?.message || "Failed to load TVL";
+          const pairMissing =
+            msg.toLowerCase().includes("pair not found on sepolia") &&
+            Boolean(pairIdOverride);
+          if (!cancelled && !tvlError && !pairMissing) {
+            setTvlError(msg);
           }
         }
       }
@@ -292,7 +297,10 @@ export default function LiquiditySection() {
       } catch (err) {
         if (!cancelled) {
           const message = err?.message || "Failed to load pool data";
-          if (message.toLowerCase().includes("pair not found on sepolia")) {
+          const pairMissing = message.toLowerCase().includes("pair not found on sepolia");
+          if (pairMissing && pairIdOverride) {
+            setPairError("");
+          } else if (pairMissing) {
             setPairError("Pair non trovata su Sepolia per questa combinazione di token.");
           } else {
             setPairError(message);
