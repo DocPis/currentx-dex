@@ -10,6 +10,8 @@ import {
   ERC20_ABI,
   UNIV2_PAIR_ABI,
   WETH_ABI,
+  UNIV2_ROUTER_ABI,
+  UNIV2_ROUTER_ADDRESS,
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
 
@@ -77,6 +79,12 @@ export default function LiquiditySection() {
   const [withdrawLp, setWithdrawLp] = useState("");
   const [actionStatus, setActionStatus] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
+  const [depositQuote, setDepositQuote] = useState("");
+  const [depositQuoteError, setDepositQuoteError] = useState("");
+  const [lastEdited, setLastEdited] = useState("");
+  const [lpBalance, setLpBalance] = useState(null);
+  const [lpBalanceError, setLpBalanceError] = useState("");
+  const [lpRefreshTick, setLpRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +149,12 @@ export default function LiquiditySection() {
     return () => {
       cancelled = true;
     };
+  }, [lpRefreshTick]);
+
+  // Auto refresh LP/tvl every 30s
+  useEffect(() => {
+    const id = setInterval(() => setLpRefreshTick((t) => t + 1), 30000);
+    return () => clearInterval(id);
   }, []);
 
   const pools = useMemo(() => {
@@ -167,6 +181,95 @@ export default function LiquiditySection() {
   const totalFees = pools.reduce((a, p) => a + p.fees24hUsd, 0);
   const totalTvl = pools.reduce((a, p) => a + p.tvlUsd, 0);
 
+  // Suggest balanced amount based on current reserves
+  useEffect(() => {
+    let cancelled = false;
+    const fetchQuote = async () => {
+      setDepositQuote("");
+      setDepositQuoteError("");
+      const ethAmount = depositEth ? Number(depositEth) : 0;
+      const usdcAmount = depositUsdc ? Number(depositUsdc) : 0;
+      if (!ethAmount && !usdcAmount) return;
+      if (!lastEdited) return;
+      try {
+        const provider = await getProvider();
+        const { reserve0, reserve1, token0 } = await getV2PairReserves(
+          provider,
+          TOKENS.WETH.address,
+          TOKENS.USDC.address
+        );
+        const wethIs0 =
+          token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
+        const reserveWeth = wethIs0 ? reserve0 : reserve1;
+        const reserveUsdc = wethIs0 ? reserve1 : reserve0;
+        if (reserveWeth === 0n || reserveUsdc === 0n) return;
+
+        const priceUsdcPerEth =
+          Number(formatUnits(reserveUsdc, TOKENS.USDC.decimals)) /
+          Number(formatUnits(reserveWeth, TOKENS.WETH.decimals));
+
+        if (ethAmount > 0 && lastEdited === "ETH" && !Number.isNaN(priceUsdcPerEth)) {
+          const suggestedUsdc = ethAmount * priceUsdcPerEth;
+          if (!cancelled) {
+            setDepositUsdc(suggestedUsdc.toFixed(2));
+            setDepositQuote(
+              `To keep the current ratio, for ${ethAmount} ETH add ~${suggestedUsdc.toFixed(
+                2
+              )} USDC.`
+            );
+          }
+        } else if (usdcAmount > 0 && lastEdited === "USDC" && !Number.isNaN(priceUsdcPerEth)) {
+          const suggestedEth = usdcAmount / priceUsdcPerEth;
+          if (!cancelled) {
+            setDepositEth(suggestedEth.toFixed(4));
+            setDepositQuote(
+              `To keep the current ratio, for ${usdcAmount} USDC add ~${suggestedEth.toFixed(
+                4
+              )} ETH.`
+            );
+          }
+        }
+      } catch (err) {
+        if (!cancelled)
+          setDepositQuoteError(err.message || "Quote balance failed");
+      }
+    };
+    fetchQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [depositEth, depositUsdc, lastEdited]);
+
+  // Fetch LP balance for the user (ETH/USDC pool)
+  useEffect(() => {
+    let cancelled = false;
+    const loadLpBalance = async () => {
+      setLpBalance(null);
+      setLpBalanceError("");
+      try {
+        const provider = await getProvider();
+        const signer = await provider.getSigner();
+        const user = await signer.getAddress();
+        const { pairAddress } = await getV2PairReserves(
+          provider,
+          WETH_ADDRESS,
+          USDC_ADDRESS
+        );
+        const pairErc20 = new Contract(pairAddress, ERC20_ABI, signer);
+        const decimals = await pairErc20.decimals();
+        const balance = await pairErc20.balanceOf(user);
+        if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
+      } catch (err) {
+        if (!cancelled)
+          setLpBalanceError(err.message || "Failed to load LP balance");
+      }
+    };
+    loadLpBalance();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleDeposit = async () => {
     try {
       setActionStatus("");
@@ -182,41 +285,57 @@ export default function LiquiditySection() {
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
 
-      // Pair address
-      const { pairAddress } = await getV2PairReserves(
-        provider,
-        WETH_ADDRESS,
-        USDC_ADDRESS
-      );
-      const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
-
-      // Wrap ETH -> WETH
-      const wethContract = new Contract(WETH_ADDRESS, WETH_ABI, signer);
-      const wethValue = parseUnits(ethAmount.toString(), TOKENS.WETH.decimals);
-      await (await wethContract.deposit({ value: wethValue })).wait();
-
-      // Transfer WETH + USDC to pair
-      const usdcContract = new Contract(
-        USDC_ADDRESS,
-        ERC20_ABI,
+      const router = new Contract(
+        UNIV2_ROUTER_ADDRESS,
+        UNIV2_ROUTER_ABI,
         signer
       );
+      const usdcContract = new Contract(USDC_ADDRESS, ERC20_ABI, signer);
+
+      const ethValue = parseUnits(ethAmount.toString(), TOKENS.WETH.decimals);
       const usdcValue = parseUnits(
         usdcAmount.toString(),
         TOKENS.USDC.decimals
       );
 
-      await (await wethContract.transfer(pairAddress, wethValue)).wait();
-      await (await usdcContract.transfer(pairAddress, usdcValue)).wait();
-
-      // Mint LP to user
-      const tx = await pair.mint(user);
-      const receipt = await tx.wait();
-      setActionStatus(
-        `Deposited and minted LP (tx ${receipt.hash.slice(0, 10)}...)`
+      // Approve USDC to router if needed
+      const allowance = await usdcContract.allowance(
+        user,
+        UNIV2_ROUTER_ADDRESS
       );
+      if (allowance < usdcValue) {
+        await (await usdcContract.approve(UNIV2_ROUTER_ADDRESS, usdcValue)).wait();
+      }
+
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
+
+      const tx = await router.addLiquidityETH(
+        USDC_ADDRESS,
+        usdcValue,
+        0, // amountTokenMin
+        0, // amountETHMin
+        user,
+        deadline,
+        { value: ethValue }
+      );
+      const receipt = await tx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt.hash,
+        message: "Deposited liquidity",
+      });
+      setLpRefreshTick((t) => t + 1);
     } catch (e) {
-      setActionStatus(e.message || "Deposit failed");
+      const userRejected =
+        e?.code === 4001 ||
+        e?.code === "ACTION_REJECTED" ||
+        (e?.message || "").toLowerCase().includes("user denied");
+      setActionStatus({
+        variant: "error",
+        message: userRejected
+          ? "Transaction was rejected in wallet."
+          : e.message || "Deposit failed",
+      });
     } finally {
       setActionLoading(false);
     }
@@ -239,21 +358,54 @@ export default function LiquiditySection() {
         USDC_ADDRESS
       );
 
-      const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, signer);
-
-      // Pair as ERC20 to get decimals and transfer LP to pair before burn
       const pairErc20 = new Contract(pairAddress, ERC20_ABI, signer);
       const lpDecimals = await pairErc20.decimals();
       const lpValue = parseUnits(lpAmount.toString(), lpDecimals);
 
-      await (await pairErc20.transfer(pairAddress, lpValue)).wait();
-      const tx = await pair.burn(user);
-      const receipt = await tx.wait();
-      setActionStatus(
-        `Withdrew liquidity (tx ${receipt.hash.slice(0, 10)}...)`
+      // Approve router to spend LP
+      const lpAllowance = await pairErc20.allowance(
+        user,
+        UNIV2_ROUTER_ADDRESS
       );
+      if (lpAllowance < lpValue) {
+        await (
+          await pairErc20.approve(UNIV2_ROUTER_ADDRESS, lpValue)
+        ).wait();
+      }
+
+      const router = new Contract(
+        UNIV2_ROUTER_ADDRESS,
+        UNIV2_ROUTER_ABI,
+        signer
+      );
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
+
+      const tx = await router.removeLiquidityETH(
+        USDC_ADDRESS,
+        lpValue,
+        0, // amountTokenMin
+        0, // amountETHMin
+        user,
+        deadline
+      );
+      const receipt = await tx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt.hash,
+        message: "Withdrew liquidity",
+      });
+      setLpRefreshTick((t) => t + 1);
     } catch (e) {
-      setActionStatus(e.message || "Withdraw failed");
+      const userRejected =
+        e?.code === 4001 ||
+        e?.code === "ACTION_REJECTED" ||
+        (e?.message || "").toLowerCase().includes("user denied");
+      setActionStatus({
+        variant: "error",
+        message: userRejected
+          ? "Transaction was rejected in wallet."
+          : e.message || "Withdraw failed",
+      });
     } finally {
       setActionLoading(false);
     }
@@ -506,13 +658,19 @@ export default function LiquiditySection() {
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
                 value={depositEth}
-                onChange={(e) => setDepositEth(e.target.value)}
+                onChange={(e) => {
+                  setLastEdited("ETH");
+                  setDepositEth(e.target.value);
+                }}
                 placeholder="ETH amount"
                 className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <input
                 value={depositUsdc}
-                onChange={(e) => setDepositUsdc(e.target.value)}
+                onChange={(e) => {
+                  setLastEdited("USDC");
+                  setDepositUsdc(e.target.value);
+                }}
                 placeholder="USDC amount"
                 className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
@@ -531,6 +689,23 @@ export default function LiquiditySection() {
                 placeholder="LP tokens"
                 className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
+              {lpBalance !== null && (
+                <div className="text-xs text-slate-400 self-center">
+                  LP balance: {lpBalance.toFixed(4)}{" "}
+                  <button
+                    type="button"
+                    className="text-sky-400 hover:text-sky-300 underline ml-1"
+                    onClick={() => setLpRefreshTick((t) => t + 1)}
+                  >
+                    Refresh
+                  </button>
+                </div>
+              )}
+              {lpBalanceError && (
+                <div className="text-xs text-rose-300 self-center">
+                  {lpBalanceError}
+                </div>
+              )}
               <button
                 disabled={actionLoading}
                 onClick={handleWithdraw}
@@ -541,9 +716,35 @@ export default function LiquiditySection() {
             </div>
           </div>
           <div className="flex flex-wrap gap-3 mt-3 text-xs">
-            {actionStatus && (
+            {depositQuote && (
               <div className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200">
-                {actionStatus}
+                {depositQuote}
+              </div>
+            )}
+            {depositQuoteError && (
+              <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-200">
+                {depositQuoteError}
+              </div>
+            )}
+            {actionStatus && (
+              <div
+                className={`px-3 py-2 rounded-lg border ${
+                  actionStatus.variant === "success"
+                    ? "bg-slate-900 border-slate-800 text-slate-200"
+                    : "bg-rose-500/10 border-rose-500/30 text-rose-200"
+                }`}
+              >
+                <div>{actionStatus.message}</div>
+                {actionStatus.hash && (
+                  <a
+                    href={`https://sepolia.etherscan.io/tx/${actionStatus.hash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sky-400 hover:text-sky-300 underline"
+                  >
+                    View on SepoliaScan
+                  </a>
+                )}
               </div>
             )}
             {subgraphError && (
