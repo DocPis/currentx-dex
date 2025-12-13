@@ -103,7 +103,6 @@ export default function LiquiditySection() {
   const [withdrawLp, setWithdrawLp] = useState("");
   const [actionStatus, setActionStatus] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
-  const [depositQuote, setDepositQuote] = useState("");
   const [depositQuoteError, setDepositQuoteError] = useState("");
   const [lastEdited, setLastEdited] = useState("");
   const [lpBalance, setLpBalance] = useState(null);
@@ -213,7 +212,6 @@ export default function LiquiditySection() {
     setDepositToken0("");
     setDepositToken1("");
     setWithdrawLp("");
-    setDepositQuote("");
     setDepositQuoteError("");
     setLastEdited("");
     setActionStatus("");
@@ -344,7 +342,6 @@ export default function LiquiditySection() {
   useEffect(() => {
     let cancelled = false;
     const fetchQuote = () => {
-      setDepositQuote("");
       setDepositQuoteError("");
       const amount0 = depositToken0 ? Number(depositToken0) : 0;
       const amount1 = depositToken1 ? Number(depositToken1) : 0;
@@ -384,11 +381,6 @@ export default function LiquiditySection() {
           const suggested1 = amount0 * priceToken1Per0;
           if (!cancelled) {
             setDepositToken1(suggested1.toFixed(4));
-            setDepositQuote(
-              `For ${amount0} ${token0Meta?.symbol} add ~${suggested1.toFixed(
-                4
-              )} ${token1Meta?.symbol}.`
-            );
           }
         } else if (
           amount1 > 0 &&
@@ -398,11 +390,6 @@ export default function LiquiditySection() {
           const suggested0 = amount1 / priceToken1Per0;
           if (!cancelled) {
             setDepositToken0(suggested0.toFixed(4));
-            setDepositQuote(
-              `For ${amount1} ${token1Meta?.symbol} add ~${suggested0.toFixed(
-                4
-              )} ${token0Meta?.symbol}.`
-            );
           }
         }
       } catch (err) {
@@ -427,7 +414,7 @@ export default function LiquiditySection() {
   ]);
 
   const applyDepositRatio = (percentage) => {
-    if (!hasPairInfo) return;
+    if (!hasPairInfo || !tokenBalances) return;
     try {
       const decimals0 = token0Meta?.decimals ?? 18;
       const decimals1 = token1Meta?.decimals ?? 18;
@@ -445,23 +432,27 @@ export default function LiquiditySection() {
       const priceToken1Per0 = reserve1Float / reserve0Float;
       if (!Number.isFinite(priceToken1Per0) || priceToken1Per0 <= 0) return;
 
-      const amount0 = depositToken0 ? Number(depositToken0) : 0;
-      const amount1 = depositToken1 ? Number(depositToken1) : 0;
+      const available0 = Number(tokenBalances.token0 || 0) * percentage;
+      const available1 = Number(tokenBalances.token1 || 0) * percentage;
+      const required1ForAvail0 = available0 * priceToken1Per0;
 
-      const base0 = amount0 > 0 ? amount0 : amount1 > 0 ? amount1 / priceToken1Per0 : 0;
-      if (base0 <= 0) return;
+      let next0 = 0;
+      let next1 = 0;
+      if (available0 > 0 && required1ForAvail0 <= available1) {
+        next0 = available0;
+        next1 = required1ForAvail0;
+      } else if (available1 > 0) {
+        next1 = available1;
+        next0 = next1 / priceToken1Per0;
+      } else {
+        return;
+      }
 
-      const next0 = base0 * percentage;
-      const next1 = next0 * priceToken1Per0;
+      if (next0 <= 0 || next1 <= 0) return;
 
       setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
       setDepositToken0(next0.toFixed(4));
       setDepositToken1(next1.toFixed(4));
-      setDepositQuote(
-        `For ${next0.toFixed(4)} ${token0Meta?.symbol} add ~${next1.toFixed(
-          4
-        )} ${token1Meta?.symbol}.`
-      );
     } catch (err) {
       setDepositQuoteError(err.message || "Quote balance failed");
     }
@@ -1173,7 +1164,7 @@ export default function LiquiditySection() {
                 <span>Ratio quick-fill:</span>
                 <button
                   type="button"
-                  disabled={!hasPairInfo}
+                  disabled={!hasPairInfo || !tokenBalances}
                   onClick={() => applyDepositRatio(0.5)}
                   className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                 >
@@ -1181,7 +1172,7 @@ export default function LiquiditySection() {
                 </button>
                 <button
                   type="button"
-                  disabled={!hasPairInfo}
+                  disabled={!hasPairInfo || !tokenBalances}
                   onClick={() => applyDepositRatio(1)}
                   className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                 >
@@ -1244,11 +1235,6 @@ export default function LiquiditySection() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-300">
-            {depositQuote && (
-              <div className="px-2 py-1.5 rounded border border-slate-700/60 bg-transparent">
-                {depositQuote}
-              </div>
-            )}
             {depositQuoteError && (
               <div className="px-2 py-1.5 rounded border border-rose-500/30 bg-transparent text-rose-200">
                 {depositQuoteError}
