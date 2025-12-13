@@ -2,6 +2,7 @@
 import { BrowserProvider, Contract, formatUnits } from "ethers";
 import daiLogo from "../tokens/dai.png";
 import ethLogo from "../tokens/eth.png";
+import tetherLogo from "../tokens/tether.png";
 import usdcLogo from "../tokens/usdc.png";
 import wbtcLogo from "../tokens/wbtc.png";
 import wethLogo from "../tokens/weth.png";
@@ -13,6 +14,8 @@ export const WETH_ADDRESS =
   "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+export const USDT_ADDRESS =
+  "0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0";
 // Fixed WETH/USDC pair (provided by user)
 export const WETH_USDC_PAIR_ADDRESS =
   "0x72e46e15ef83c896de44b1874b4af7ddab5b4f74";
@@ -225,10 +228,17 @@ export const TOKENS = {
     decimals: 6,
     logo: usdcLogo,
   },
+  USDT: {
+    symbol: "USDT",
+    name: "Tether USD (test)",
+    address: USDT_ADDRESS,
+    decimals: 6,
+    logo: tetherLogo,
+  },
   DAI: {
     symbol: "DAI",
     name: "Dai Stablecoin",
-    address: "0x3e622317f8c93f7328350cf0b56d9ed4c620c5d6",
+    address: "0xff34b3d4aee8ddcd6f9afffb6fe49bd371b8a357",
     decimals: 18,
     logo: daiLogo,
   },

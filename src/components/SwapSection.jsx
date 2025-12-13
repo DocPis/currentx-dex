@@ -12,7 +12,7 @@ import {
   UNIV2_ROUTER_ADDRESS,
 } from "../config/web3";
 
-const TOKEN_OPTIONS = ["ETH", "WETH", "USDC"];
+const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI"];
 
 function TokenSelector({ side, selected, onSelect, balances }) {
   const [open, setOpen] = useState(false);
@@ -129,10 +129,31 @@ export default function SwapSection({ balances }) {
     (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDC";
   const isUsdcEth =
     sellToken === "USDC" && (buyToken === "ETH" || buyToken === "WETH");
+  const isEthUsdt =
+    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDT";
+  const isUsdtEth =
+    sellToken === "USDT" && (buyToken === "ETH" || buyToken === "WETH");
+  const isUsdcDai =
+    (sellToken === "USDC" && buyToken === "DAI") ||
+    (sellToken === "DAI" && buyToken === "USDC");
+  const isUsdcUsdt =
+    (sellToken === "USDC" && buyToken === "USDT") ||
+    (sellToken === "USDT" && buyToken === "USDC");
+  const isWethDai =
+    (sellToken === "WETH" && buyToken === "DAI") ||
+    (sellToken === "DAI" && buyToken === "WETH");
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
-  const isSupported = isEthUsdc || isUsdcEth || isDirectEthWeth;
+  const isSupported =
+    isEthUsdc ||
+    isUsdcEth ||
+    isEthUsdt ||
+    isUsdtEth ||
+    isUsdcDai ||
+    isUsdcUsdt ||
+    isWethDai ||
+    isDirectEthWeth;
 
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
   const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
@@ -149,7 +170,9 @@ export default function SwapSection({ balances }) {
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
-        setQuoteError("Swap support: ETH/WETH <-> USDC, ETH <-> WETH");
+        setQuoteError(
+          "Swap support: ETH/WETH <-> USDC/USDT, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+        );
         return;
       }
 
@@ -199,13 +222,13 @@ export default function SwapSection({ balances }) {
           reserve0: meta.reserve0,
           reserve1: meta.reserve1,
           decimals0:
-            meta.token0.toLowerCase() === WETH_ADDRESS.toLowerCase()
-              ? 18
-              : TOKENS.USDC.decimals,
+            Object.values(TOKENS).find(
+              (t) => t.address && t.address.toLowerCase() === meta.token0.toLowerCase()
+            )?.decimals || 18,
           decimals1:
-            meta.token1.toLowerCase() === WETH_ADDRESS.toLowerCase()
-              ? 18
-              : TOKENS.USDC.decimals,
+            Object.values(TOKENS).find(
+              (t) => t.address && t.address.toLowerCase() === meta.token1.toLowerCase()
+            )?.decimals || 18,
         });
 
         // Precompute allowance requirement for ERC20 sells
@@ -298,7 +321,9 @@ export default function SwapSection({ balances }) {
         throw new Error("Enter a valid amount");
       }
       if (!isSupported) {
-        throw new Error("Swap support: ETH/WETH <-> USDC, ETH <-> WETH");
+        throw new Error(
+          "Swap support: ETH/WETH <-> USDC/USDT, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+        );
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
@@ -350,8 +375,11 @@ export default function SwapSection({ balances }) {
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
 
       let tx;
-      if (sellToken === "ETH") {
-        const path = [WETH_ADDRESS, TOKENS.USDC.address];
+      if (sellToken === "ETH" && (buyToken === "USDC" || buyToken === "USDT")) {
+        const path = [
+          WETH_ADDRESS,
+          buyToken === "USDC" ? TOKENS.USDC.address : TOKENS.USDT.address,
+        ];
         tx = await router.swapExactETHForTokens(
           minOut,
           path,
@@ -359,8 +387,14 @@ export default function SwapSection({ balances }) {
           deadline,
           { value: amountWei }
         );
-      } else if (buyToken === "ETH") {
-        const path = [TOKENS.USDC.address, WETH_ADDRESS];
+      } else if (
+        (sellToken === "USDC" || sellToken === "USDT") &&
+        buyToken === "ETH"
+      ) {
+        const path = [
+          sellToken === "USDC" ? TOKENS.USDC.address : TOKENS.USDT.address,
+          WETH_ADDRESS,
+        ];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -374,7 +408,45 @@ export default function SwapSection({ balances }) {
           deadline
         );
       } else {
-        const path = [WETH_ADDRESS, TOKENS.USDC.address];
+        // ERC20 -> ERC20 paths
+        let path = [];
+        if (
+          (sellToken === "WETH" && buyToken === "USDC") ||
+          (sellToken === "USDC" && buyToken === "WETH")
+        ) {
+          path =
+            sellToken === "WETH"
+              ? [WETH_ADDRESS, TOKENS.USDC.address]
+              : [TOKENS.USDC.address, WETH_ADDRESS];
+        } else if (
+          (sellToken === "WETH" && buyToken === "USDT") ||
+          (sellToken === "USDT" && buyToken === "WETH")
+        ) {
+          path =
+            sellToken === "WETH"
+              ? [WETH_ADDRESS, TOKENS.USDT.address]
+              : [TOKENS.USDT.address, WETH_ADDRESS];
+        } else if (isUsdcDai) {
+          path =
+            sellToken === "USDC"
+              ? [TOKENS.USDC.address, TOKENS.DAI.address]
+              : [TOKENS.DAI.address, TOKENS.USDC.address];
+        } else if (isUsdcUsdt) {
+          path =
+            sellToken === "USDC"
+              ? [TOKENS.USDC.address, TOKENS.USDT.address]
+              : [TOKENS.USDT.address, TOKENS.USDC.address];
+        } else if (isWethDai) {
+          path =
+            sellToken === "WETH"
+              ? [WETH_ADDRESS, TOKENS.DAI.address]
+              : [TOKENS.DAI.address, WETH_ADDRESS];
+        }
+
+        if (!path.length) {
+          throw new Error("Unsupported path for tokens");
+        }
+
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
