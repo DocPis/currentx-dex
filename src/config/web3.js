@@ -16,6 +16,8 @@ export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 export const USDT_ADDRESS =
   "0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0";
+export const WBTC_ADDRESS =
+  "0x29f2d40b0605204364af54ec677bd022da425d03";
 // Fixed WETH/USDC pair (provided by user)
 export const WETH_USDC_PAIR_ADDRESS =
   "0x92aC66C621832EF02629c10A3Db25C5e92eA33d4";
@@ -320,7 +322,7 @@ export const TOKENS = {
   WBTC: {
     symbol: "WBTC",
     name: "Wrapped Bitcoin",
-    address: null,
+    address: WBTC_ADDRESS,
     decimals: 8,
     logo: wbtcLogo,
   },
