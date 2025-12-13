@@ -180,17 +180,6 @@ export async function fetchDashboardStats() {
     }
   `;
 
-  const fallbackQuery = `
-    query DashboardFallback {
-      factories(first: 1) {
-        totalLiquidityUSD
-        totalVolumeUSD
-        pairCount
-        txCount
-      }
-    }
-  `;
-
   const parseFactory = (factory) => ({
     totalLiquidityUsd: Number(factory?.totalLiquidityUSD || 0),
     totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
@@ -205,23 +194,11 @@ export async function fetchDashboardStats() {
     throw new Error("No factory data");
   } catch (err) {
     const message = err?.message || "";
-    const noFactoriesFieldPrimary =
-      message.includes("Type `Query` has no field `factories`") ||
-      message.includes('Cannot query field "factories"');
-
-    try {
-      const data = await postSubgraph(fallbackQuery);
-      const factory = data?.factories?.[0];
-      if (factory) return parseFactory(factory);
-      return null;
-    } catch (fallbackErr) {
-      const fbMsg = fallbackErr?.message || "";
-      const noFactoriesFieldFallback =
-        fbMsg.includes("Type `Query` has no field `factories`") ||
-        fbMsg.includes('Cannot query field "factories"');
-      if (noFactoriesFieldPrimary || noFactoriesFieldFallback) return null;
-      throw fallbackErr;
-    }
+    const noFactoriesField =
+      message.includes("Type `Query` has no field `uniswapFactories`") ||
+      message.includes('Cannot query field "uniswapFactories"');
+    if (noFactoriesField) return null;
+    throw err;
   }
 }
 
