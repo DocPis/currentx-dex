@@ -18,7 +18,8 @@ export const USDT_ADDRESS =
   "0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0";
 // Fixed WETH/USDC pair (provided by user)
 export const WETH_USDC_PAIR_ADDRESS =
-  "0x72e46e15ef83c896de44b1874b4af7ddab5b4f74";
+  "0x92aC66C621832EF02629c10A3Db25C5e92eA33d4";
+
 
 // Uniswap V2 (Sepolia) - factory provided by the user
 export const UNIV2_FACTORY_ADDRESS =

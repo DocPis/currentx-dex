@@ -12,6 +12,7 @@ export function useBalances(address) {
     ETH: 0,
     WETH: 0,
     USDC: 0,
+    USDT: 0,
     DAI: 0,
     WBTC: 0,
   });
@@ -47,6 +48,7 @@ export function useBalances(address) {
 
         const weth = await getErc20Balance("WETH");
         const usdc = await getErc20Balance("USDC");
+        const usdt = await getErc20Balance("USDT");
         const dai = await getErc20Balance("DAI");
         const wbtc = await getErc20Balance("WBTC");
 
@@ -54,6 +56,7 @@ export function useBalances(address) {
           ETH: eth,
           WETH: weth,
           USDC: usdc,
+          USDT: usdt,
           DAI: dai,
           WBTC: wbtc,
         });

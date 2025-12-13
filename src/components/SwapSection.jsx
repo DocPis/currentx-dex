@@ -139,6 +139,10 @@ export default function SwapSection({ balances }) {
   const isUsdcUsdt =
     (sellToken === "USDC" && buyToken === "USDT") ||
     (sellToken === "USDT" && buyToken === "USDC");
+  const isEthDai =
+    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "DAI";
+  const isDaiEth =
+    sellToken === "DAI" && (buyToken === "ETH" || buyToken === "WETH");
   const isWethDai =
     (sellToken === "WETH" && buyToken === "DAI") ||
     (sellToken === "DAI" && buyToken === "WETH");
@@ -150,6 +154,8 @@ export default function SwapSection({ balances }) {
     isUsdcEth ||
     isEthUsdt ||
     isUsdtEth ||
+    isEthDai ||
+    isDaiEth ||
     isUsdcDai ||
     isUsdcUsdt ||
     isWethDai ||
@@ -171,7 +177,7 @@ export default function SwapSection({ balances }) {
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
         setQuoteError(
-          "Swap support: ETH/WETH <-> USDC/USDT, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
         );
         return;
       }
@@ -322,7 +328,7 @@ export default function SwapSection({ balances }) {
       }
       if (!isSupported) {
         throw new Error(
-          "Swap support: ETH/WETH <-> USDC/USDT, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
         );
       }
       if (!quoteOutRaw) {
@@ -375,10 +381,17 @@ export default function SwapSection({ balances }) {
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
 
       let tx;
-      if (sellToken === "ETH" && (buyToken === "USDC" || buyToken === "USDT")) {
+      if (
+        sellToken === "ETH" &&
+        (buyToken === "USDC" || buyToken === "USDT" || buyToken === "DAI")
+      ) {
         const path = [
           WETH_ADDRESS,
-          buyToken === "USDC" ? TOKENS.USDC.address : TOKENS.USDT.address,
+          buyToken === "USDC"
+            ? TOKENS.USDC.address
+            : buyToken === "USDT"
+              ? TOKENS.USDT.address
+              : TOKENS.DAI.address,
         ];
         tx = await router.swapExactETHForTokens(
           minOut,
@@ -388,11 +401,15 @@ export default function SwapSection({ balances }) {
           { value: amountWei }
         );
       } else if (
-        (sellToken === "USDC" || sellToken === "USDT") &&
+        (sellToken === "USDC" || sellToken === "USDT" || sellToken === "DAI") &&
         buyToken === "ETH"
       ) {
         const path = [
-          sellToken === "USDC" ? TOKENS.USDC.address : TOKENS.USDT.address,
+          sellToken === "USDC"
+            ? TOKENS.USDC.address
+            : sellToken === "USDT"
+              ? TOKENS.USDT.address
+              : TOKENS.DAI.address,
           WETH_ADDRESS,
         ];
         const token = new Contract(sellAddress, ERC20_ABI, signer);

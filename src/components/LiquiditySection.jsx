@@ -10,6 +10,7 @@ import {
   ERC20_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
+  WETH_ABI,
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
 
@@ -18,6 +19,18 @@ const basePools = [
     id: "weth-usdc",
     token0Symbol: "WETH",
     token1Symbol: "USDC",
+    poolType: "volatile",
+  },
+  {
+    id: "weth-dai",
+    token0Symbol: "WETH",
+    token1Symbol: "DAI",
+    poolType: "volatile",
+  },
+  {
+    id: "weth-usdt",
+    token0Symbol: "WETH",
+    token1Symbol: "USDT",
     poolType: "volatile",
   },
   {
@@ -135,9 +148,13 @@ export default function LiquiditySection() {
           const metaA = TOKENS[pool.token0Symbol];
           const metaB = TOKENS[pool.token1Symbol];
           const stableA =
-            metaA?.symbol === "USDC" || metaA?.symbol === "USDT";
+            metaA?.symbol === "USDC" ||
+            metaA?.symbol === "USDT" ||
+            metaA?.symbol === "DAI";
           const stableB =
-            metaB?.symbol === "USDC" || metaB?.symbol === "USDT";
+            metaB?.symbol === "USDC" ||
+            metaB?.symbol === "USDT" ||
+            metaB?.symbol === "DAI";
           let tvlUsd;
           if (stableA) {
             const usd = Number(formatUnits(resA, metaA.decimals));
@@ -412,6 +429,21 @@ export default function LiquiditySection() {
       );
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
+
+      // Auto-wrap ETH when the pool uses WETH but the router path is ERC20/ETH-agnostic
+      const poolHasWeth =
+        selectedPool.token0Symbol === "WETH" ||
+        selectedPool.token1Symbol === "WETH";
+      if (poolHasWeth && !usesNativeEth) {
+        const wethNeeded =
+          selectedPool.token0Symbol === "WETH" ? parsed0 : parsed1;
+        const wethContract = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+        const currentWeth = await wethContract.balanceOf(user);
+        const wrapAmount = wethNeeded - currentWeth;
+        if (wrapAmount > 0n) {
+          await (await wethContract.deposit({ value: wrapAmount })).wait();
+        }
+      }
 
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
@@ -834,7 +866,9 @@ export default function LiquiditySection() {
                   <div className="flex justify-between w-full">
                     <span>Emission APR</span>
                     <span className="text-slate-100">
-                      {p.emissionApr.toFixed(2)}%
+                      {p.emissionApr !== undefined
+                        ? `${p.emissionApr.toFixed(2)}%`
+                        : "N/A"}
                     </span>
                   </div>
                 </div>
@@ -852,7 +886,9 @@ export default function LiquiditySection() {
                   {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
                 </div>
                 <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
-                  {p.emissionApr.toFixed(2)}%
+                  {p.emissionApr !== undefined
+                    ? `${p.emissionApr.toFixed(2)}%`
+                    : "N/A"}
                 </div>
               </button>
             );
@@ -956,23 +992,23 @@ export default function LiquiditySection() {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-3 mt-3 text-xs">
+          <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-300">
             {depositQuote && (
-              <div className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200">
+              <div className="px-2 py-1.5 rounded border border-slate-700/60 bg-transparent">
                 {depositQuote}
               </div>
             )}
             {depositQuoteError && (
-              <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-rose-200">
+              <div className="px-2 py-1.5 rounded border border-rose-500/30 bg-transparent text-rose-200">
                 {depositQuoteError}
               </div>
             )}
             {actionStatus && (
               <div
-                className={`px-3 py-2 rounded-lg border ${
+                className={`px-2 py-1.5 rounded border bg-transparent ${
                   actionStatus.variant === "success"
-                    ? "bg-slate-900 border-slate-800 text-slate-200"
-                    : "bg-rose-500/10 border-rose-500/30 text-rose-200"
+                    ? "border-slate-700/60 text-slate-200"
+                    : "border-rose-500/30 text-rose-200"
                 }`}
               >
                 <div>{actionStatus.message}</div>
@@ -989,12 +1025,12 @@ export default function LiquiditySection() {
               </div>
             )}
             {subgraphError && (
-              <div className="px-3 py-2 rounded-lg bg-slate-900/70 border border-slate-700 text-slate-200">
+              <div className="px-2 py-1.5 rounded border border-slate-700/60 bg-transparent text-slate-200">
                 Subgraph: {subgraphError}
               </div>
             )}
             {tvlError && (
-              <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200">
+              <div className="px-2 py-1.5 rounded border border-amber-500/30 bg-transparent text-amber-200">
                 On-chain TVL: {tvlError}
               </div>
             )}
