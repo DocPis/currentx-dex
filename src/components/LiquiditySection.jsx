@@ -68,6 +68,18 @@ const formatNumber = (v) => {
   return `~$${val.toFixed(2)}`;
 };
 
+const formatTokenBalance = (v) => {
+  const num = Number(v || 0);
+  if (!Number.isFinite(num)) return "--";
+  if (Math.abs(num) >= 1_000_000) {
+    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  if (Math.abs(num) >= 1) {
+    return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  }
+  return num.toFixed(6);
+};
+
 const resolveTokenAddress = (symbol) => {
   if (!symbol) return null;
   if (symbol === "ETH") return WETH_ADDRESS;
@@ -97,6 +109,9 @@ export default function LiquiditySection() {
   const [lpBalance, setLpBalance] = useState(null);
   const [lpBalanceError, setLpBalanceError] = useState("");
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
+  const [tokenBalances, setTokenBalances] = useState(null);
+  const [tokenBalanceError, setTokenBalanceError] = useState("");
+  const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
 
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
@@ -206,6 +221,8 @@ export default function LiquiditySection() {
     setPairInfo(null);
     setLpBalance(null);
     setLpBalanceError("");
+    setTokenBalances(null);
+    setTokenBalanceError("");
   }, [selectedPoolId]);
 
   const pools = useMemo(() => {
@@ -456,6 +473,67 @@ export default function LiquiditySection() {
     const target = base * percentage;
     setWithdrawLp(target.toFixed(4));
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadBalances = async () => {
+      setTokenBalanceLoading(true);
+      setTokenBalanceError("");
+      setTokenBalances(null);
+      if (!poolSupportsActions) {
+        setTokenBalanceLoading(false);
+        return;
+      }
+      try {
+        const provider = await getProvider();
+        const signer = await provider.getSigner();
+        const user = await signer.getAddress();
+
+        const fetchBalance = async (symbol, address, meta) => {
+          if (symbol === "ETH") {
+            const bal = await provider.getBalance(user);
+            return Number(formatUnits(bal, 18));
+          }
+          const erc20 = new Contract(address, ERC20_ABI, provider);
+          const decimals = meta?.decimals ?? (await erc20.decimals());
+          const bal = await erc20.balanceOf(user);
+          return Number(formatUnits(bal, decimals));
+        };
+
+        const [bal0, bal1] = await Promise.all([
+          fetchBalance(selectedPool.token0Symbol, token0Address, token0Meta),
+          fetchBalance(selectedPool.token1Symbol, token1Address, token1Meta),
+        ]);
+
+        if (!cancelled) {
+          setTokenBalances({
+            token0: bal0,
+            token1: bal1,
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTokenBalanceError(err.message || "Failed to load token balances");
+        }
+      } finally {
+        if (!cancelled) setTokenBalanceLoading(false);
+      }
+    };
+    loadBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    poolSupportsActions,
+    selectedPoolId,
+    lpRefreshTick,
+    token0Address,
+    token1Address,
+    selectedPool?.token0Symbol,
+    selectedPool?.token1Symbol,
+    token0Meta?.decimals,
+    token1Meta?.decimals,
+  ]);
 
   const handleDeposit = async () => {
     try {
@@ -1014,6 +1092,54 @@ export default function LiquiditySection() {
               </a>
             )}
           </div>
+          {poolSupportsActions && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+              {[
+                {
+                  symbol: token0Meta?.symbol || selectedPool?.token0Symbol,
+                  balance: tokenBalances?.token0,
+                  logo: token0Meta?.logo,
+                },
+                {
+                  symbol: token1Meta?.symbol || selectedPool?.token1Symbol,
+                  balance: tokenBalances?.token1,
+                  logo: token1Meta?.logo,
+                },
+              ].map((t, idx) => (
+                <div
+                  key={idx}
+                  className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-sky-900/40 border border-slate-800/80 px-4 py-3 flex items-center justify-between"
+                >
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Balance
+                    </div>
+                    <div className="text-xl font-semibold text-slate-100 flex items-baseline gap-2">
+                      <span>
+                        {tokenBalanceLoading
+                          ? "Loading..."
+                          : formatTokenBalance(t.balance)}
+                      </span>
+                      <span className="text-sm text-slate-400">{t.symbol}</span>
+                    </div>
+                  </div>
+                  {t.logo && (
+                    <img
+                      src={t.logo}
+                      alt={`${t.symbol || "token"} logo`}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain shadow-lg shadow-black/30"
+                    />
+                  )}
+                  <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_20%,rgba(94,234,212,0.08),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(14,165,233,0.08),transparent_35%)]" />
+                </div>
+              ))}
+            </div>
+          )}
+          {tokenBalanceError && (
+            <div className="text-[11px] text-amber-200 mb-3">
+              Token balances: {tokenBalanceError}
+            </div>
+          )}
           <div className="flex flex-col lg:flex-row lg:items-center gap-4">
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
