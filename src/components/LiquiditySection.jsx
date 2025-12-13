@@ -259,7 +259,7 @@ export default function LiquiditySection() {
       if (!selectedPool) return;
       if (!poolSupportsActions) {
         setPairError(
-          "Pool non configurato per l'on-chain (indirizzo token mancante)."
+          "Pool not configured on-chain (missing token address)."
         );
         return;
       }
@@ -301,7 +301,7 @@ export default function LiquiditySection() {
           if (pairMissing && pairIdOverride) {
             setPairError("");
           } else if (pairMissing) {
-            setPairError("Pair non trovata su Sepolia per questa combinazione di token.");
+            setPairError("Pair not found on Sepolia for this token combination.");
           } else {
             setPairError(message);
           }
@@ -367,7 +367,7 @@ export default function LiquiditySection() {
           if (!cancelled) {
             setDepositToken1(suggested1.toFixed(4));
             setDepositQuote(
-              `Per mantenere il ratio, per ${amount0} ${token0Meta?.symbol} aggiungi ~${suggested1.toFixed(
+              `To keep the ratio, for ${amount0} ${token0Meta?.symbol} add ~${suggested1.toFixed(
                 4
               )} ${token1Meta?.symbol}.`
             );
@@ -381,7 +381,7 @@ export default function LiquiditySection() {
           if (!cancelled) {
             setDepositToken0(suggested0.toFixed(4));
             setDepositQuote(
-              `Per mantenere il ratio, per ${amount1} ${token1Meta?.symbol} aggiungi ~${suggested0.toFixed(
+              `To keep the ratio, for ${amount1} ${token1Meta?.symbol} add ~${suggested0.toFixed(
                 4
               )} ${token0Meta?.symbol}.`
             );
@@ -414,11 +414,11 @@ export default function LiquiditySection() {
       setActionLoading(true);
 
       if (!selectedPool) {
-        throw new Error("Seleziona un pool");
+        throw new Error("Select a pool");
       }
       if (!poolSupportsActions) {
         throw new Error(
-          "Pool non supportato: manca l'indirizzo di uno dei token"
+          "Unsupported pool: missing address for one of the tokens"
         );
       }
 
@@ -426,7 +426,7 @@ export default function LiquiditySection() {
       const amount1 = depositToken1 ? Number(depositToken1) : 0;
       if (amount0 <= 0 || amount1 <= 0) {
         throw new Error(
-          `Inserisci importi per ${selectedPool.token0Symbol} e ${selectedPool.token1Symbol}`
+          `Enter amounts for ${selectedPool.token0Symbol} and ${selectedPool.token1Symbol}`
         );
       }
 
@@ -581,11 +581,11 @@ export default function LiquiditySection() {
       if (lpAmount <= 0) throw new Error("Enter LP amount to withdraw");
 
       if (!selectedPool) {
-        throw new Error("Seleziona un pool");
+        throw new Error("Select a pool");
       }
       if (!poolSupportsActions) {
         throw new Error(
-          "Pool non supportato: manca l'indirizzo di uno dei token"
+          "Unsupported pool: missing address for one of the tokens"
         );
       }
 
@@ -869,7 +869,7 @@ export default function LiquiditySection() {
                       )}
                       {!rowSupports && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200 border border-amber-500/30">
-                          Solo dati
+                          Data only
                         </span>
                       )}
                     </div>
@@ -945,7 +945,7 @@ export default function LiquiditySection() {
               </div>
               {!poolSupportsActions && (
                 <div className="text-[11px] text-amber-200 mt-1">
-                  Interazione disabilitata: manca l&apos;indirizzo on-chain di almeno un token.
+                  Interaction disabled: missing on-chain address for at least one token.
                 </div>
               )}
               {pairError && (

@@ -392,7 +392,7 @@ export function computePriceImpact(
   return Math.max(0, impact);
 }
 
-// Calcola una quote Uniswap V2 (getAmountsOut) per un path
+// Compute a Uniswap V2 quote (getAmountsOut) for a given path
 export async function getV2Quote(provider, amountIn, path) {
   if (!provider) throw new Error("Missing provider");
   if (!Array.isArray(path) || path.length < 2)
