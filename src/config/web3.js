@@ -524,7 +524,12 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
   };
 }
 
-export async function getV2PairReserves(provider, tokenA, tokenB) {
+export async function getV2PairReserves(
+  provider,
+  tokenA,
+  tokenB,
+  pairAddressOverride
+) {
   if (!provider) throw new Error("Missing provider");
 
   const factory = new Contract(
@@ -545,9 +550,11 @@ export async function getV2PairReserves(provider, tokenA, tokenB) {
       tokenBLower
     );
 
-  const pairAddress = isWethUsdc
-    ? WETH_USDC_PAIR_ADDRESS
-    : await factory.getPair(tokenA, tokenB);
+  const pairAddress =
+    pairAddressOverride ||
+    (isWethUsdc
+      ? WETH_USDC_PAIR_ADDRESS
+      : await factory.getPair(tokenA, tokenB));
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
     throw new Error("Pair not found on Sepolia");
   }

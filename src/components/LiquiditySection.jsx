@@ -120,6 +120,7 @@ export default function LiquiditySection() {
           if (!cancelled && live) {
             updates[pool.id] = {
               ...updates[pool.id],
+              pairId: live.pairId,
               tvlUsd: live.tvlUsd,
               volume24hUsd: live.volume24hUsd,
               fees24hUsd:
@@ -136,10 +137,12 @@ export default function LiquiditySection() {
         // On-chain TVL fallback (only if stable side present to avoid wrong USD calc)
         try {
           const provider = await getProvider();
+          const pairIdOverride = updates[pool.id]?.pairId;
           const { reserve0, reserve1, token0 } = await getV2PairReserves(
             provider,
             token0Addr,
-            token1Addr
+            token1Addr,
+            pairIdOverride
           );
           const token0IsA = token0.toLowerCase() === token0Addr.toLowerCase();
           const resA = token0IsA ? reserve0 : reserve1;
@@ -224,6 +227,7 @@ export default function LiquiditySection() {
     selectedPool &&
     !usesNativeEth &&
     (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
+  const pairIdOverride = selectedPool?.pairId;
 
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
@@ -260,7 +264,8 @@ export default function LiquiditySection() {
         const res = await getV2PairReserves(
           provider,
           token0Address,
-          token1Address
+          token1Address,
+          pairIdOverride
         );
         if (cancelled) return;
         setPairInfo({
