@@ -13,6 +13,9 @@ export const WETH_ADDRESS =
   "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
+// Fixed WETH/USDC pair on Sepolia (provided by user)
+export const WETH_USDC_PAIR_ADDRESS =
+  "0x72e46e15ef83c896de44b1874b4af7ddab5b4f74";
 
 // Uniswap V2 (Sepolia) - factory provided by the user
 export const UNIV2_FACTORY_ADDRESS =
@@ -260,7 +263,21 @@ export async function getV2Quote(provider, amountIn, path) {
     const tokenIn = path[i];
     const tokenOut = path[i + 1];
 
-    const pairAddress = await factory.getPair(tokenIn, tokenOut);
+    const tokenInLower = tokenIn?.toLowerCase?.();
+    const tokenOutLower = tokenOut?.toLowerCase?.();
+    const isWethUsdc =
+      tokenInLower &&
+      tokenOutLower &&
+      [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+        tokenInLower
+      ) &&
+      [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+        tokenOutLower
+      );
+
+    const pairAddress = isWethUsdc
+      ? WETH_USDC_PAIR_ADDRESS
+      : await factory.getPair(tokenIn, tokenOut);
     if (!pairAddress || pairAddress === ZERO_ADDRESS) {
       throw new Error("Pair not found on Sepolia");
     }
@@ -302,7 +319,21 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
     provider
   );
 
-  const pairAddress = await factory.getPair(tokenIn, tokenOut);
+  const tokenInLower = tokenIn?.toLowerCase?.();
+  const tokenOutLower = tokenOut?.toLowerCase?.();
+  const isWethUsdc =
+    tokenInLower &&
+    tokenOutLower &&
+    [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+      tokenInLower
+    ) &&
+    [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+      tokenOutLower
+    );
+
+  const pairAddress = isWethUsdc
+    ? WETH_USDC_PAIR_ADDRESS
+    : await factory.getPair(tokenIn, tokenOut);
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
     throw new Error("Pair not found on Sepolia");
   }
@@ -350,7 +381,21 @@ export async function getV2PairReserves(provider, tokenA, tokenB) {
     provider
   );
 
-  const pairAddress = await factory.getPair(tokenA, tokenB);
+  const tokenALower = tokenA?.toLowerCase?.();
+  const tokenBLower = tokenB?.toLowerCase?.();
+  const isWethUsdc =
+    tokenALower &&
+    tokenBLower &&
+    [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+      tokenALower
+    ) &&
+    [WETH_ADDRESS.toLowerCase(), USDC_ADDRESS.toLowerCase()].includes(
+      tokenBLower
+    );
+
+  const pairAddress = isWethUsdc
+    ? WETH_USDC_PAIR_ADDRESS
+    : await factory.getPair(tokenA, tokenB);
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
     throw new Error("Pair not found on Sepolia");
   }
