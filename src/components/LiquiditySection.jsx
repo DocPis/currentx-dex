@@ -10,7 +10,6 @@ import {
   ERC20_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
-  WETH_ABI,
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
 
@@ -221,6 +220,10 @@ export default function LiquiditySection() {
   const usesNativeEth =
     selectedPool &&
     (selectedPool.token0Symbol === "ETH" || selectedPool.token1Symbol === "ETH");
+  const usesWethWithToken =
+    selectedPool &&
+    !usesNativeEth &&
+    (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
 
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
@@ -430,26 +433,43 @@ export default function LiquiditySection() {
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
-      // Auto-wrap ETH when the pool uses WETH but the router path is ERC20/ETH-agnostic
-      const poolHasWeth =
-        selectedPool.token0Symbol === "WETH" ||
-        selectedPool.token1Symbol === "WETH";
-      if (poolHasWeth && !usesNativeEth) {
-        const wethNeeded =
-          selectedPool.token0Symbol === "WETH" ? parsed0 : parsed1;
-        const wethContract = new Contract(WETH_ADDRESS, WETH_ABI, signer);
-        const currentWeth = await wethContract.balanceOf(user);
-        const wrapAmount = wethNeeded - currentWeth;
-        if (wrapAmount > 0n) {
-          await (await wethContract.deposit({ value: wrapAmount })).wait();
-        }
-      }
-
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
         const ethValue = ethIsToken0 ? parsed0 : parsed1;
         const tokenAmount = ethIsToken0 ? parsed1 : parsed0;
         const tokenAddress = ethIsToken0 ? token1Address : token0Address;
+        const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
+        const allowance = await tokenContract.allowance(
+          user,
+          UNIV2_ROUTER_ADDRESS
+        );
+        if (allowance < tokenAmount) {
+          await (
+            await tokenContract.approve(UNIV2_ROUTER_ADDRESS, tokenAmount)
+          ).wait();
+        }
+
+        const tx = await router.addLiquidityETH(
+          tokenAddress,
+          tokenAmount,
+          0, // amountTokenMin
+          0, // amountETHMin
+          user,
+          deadline,
+          { value: ethValue }
+        );
+        const receipt = await tx.wait();
+        setActionStatus({
+          variant: "success",
+          hash: receipt.hash,
+          message: `Deposited ${getPoolLabel(selectedPool)}`,
+        });
+      } else if (usesWethWithToken) {
+        const wethIsToken0 = selectedPool.token0Symbol === "WETH";
+        const ethValue = wethIsToken0 ? parsed0 : parsed1;
+        const tokenAmount = wethIsToken0 ? parsed1 : parsed0;
+        const tokenAddress = wethIsToken0 ? token1Address : token0Address;
+
         const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
         const allowance = await tokenContract.allowance(
           user,
