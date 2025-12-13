@@ -341,6 +341,7 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
   const [reserve0, reserve1] = await pair.getReserves();
   const token0 = await pair.token0();
+  const token1 = await pair.token1();
 
   const tokenInIs0 = token0.toLowerCase() === tokenIn.toLowerCase();
   const reserveIn = tokenInIs0 ? reserve0 : reserve1;
@@ -368,6 +369,8 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
     reserveOut,
     tokenInIs0,
     pairAddress,
+    token0,
+    token1,
     priceImpactPct,
   };
 }

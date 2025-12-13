@@ -293,12 +293,25 @@ export default function SwapSection({ balances }) {
       const buyAddress = TOKENS[buyKey].address;
 
       const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
-      const { amountOut, tokenInIs0, pairAddress } = await getV2QuoteWithMeta(
-        provider,
-        amountWei,
-        sellAddress,
-        buyAddress
-      );
+      const {
+        amountOut,
+        tokenInIs0,
+        pairAddress,
+        token0,
+        token1,
+      } = await getV2QuoteWithMeta(provider, amountWei, sellAddress, buyAddress);
+
+      // Validate that the resolved pair actually matches the expected tokens
+      const tokensLower = [token0, token1].map((t) => t.toLowerCase());
+      const expectedLower = [WETH_ADDRESS.toLowerCase(), TOKENS.USDC.address.toLowerCase()];
+      const hasExpectedTokens =
+        tokensLower.includes(expectedLower[0]) && tokensLower.includes(expectedLower[1]);
+
+      if (!hasExpectedTokens) {
+        throw new Error(
+          "Resolved pair tokens do not match WETH/USDC. Check the configured pair address."
+        );
+      }
 
       const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
 
