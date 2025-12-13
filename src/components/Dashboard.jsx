@@ -148,7 +148,7 @@ export default function Dashboard() {
         <StatCard label="TVL totale" value={stats?.totalLiquidityUsd} />
         <StatCard label="Volume totale" value={stats?.totalVolumeUsd} />
         <StatCard
-          label="Coppie"
+          label="Pairs"
           value={stats?.pairCount}
           prefix=""
         />
@@ -187,22 +187,22 @@ export default function Dashboard() {
             )}
           </div>
           <div className="mt-3 text-xs text-slate-500">
-            Dati da pairDayDatas del subgraph (Sepolia Uniswap V2).
+            Data from pairDayDatas on the subgraph (Sepolia Uniswap V2).
           </div>
         </div>
 
         <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="text-sm text-slate-400">Volume 24h WETH/USDC</div>
+              <div className="text-sm text-slate-400">24h Volume WETH/USDC</div>
               <div className="text-xl font-semibold">
                 ${formatNumber(history[0]?.volumeUsd || 0)}
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Last {history.length} days
-            </div>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-slate-500">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          Last {history.length} days
+        </div>
           </div>
           <div className="h-40">
             {loading ? (
@@ -218,7 +218,7 @@ export default function Dashboard() {
             )}
           </div>
           <div className="mt-3 text-xs text-slate-500">
-            Dati da pairDayDatas (dailyVolumeUSD).
+            Data from pairDayDatas (dailyVolumeUSD).
           </div>
         </div>
       </div>
@@ -226,7 +226,7 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm text-slate-400">Pool monitorata</div>
+            <div className="text-sm text-slate-400">Monitored pool</div>
             <div className="text-lg font-semibold text-slate-50">
               {TOKENS.WETH.symbol} / {TOKENS.USDC.symbol} (Sepolia)
             </div>
