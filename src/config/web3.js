@@ -22,9 +22,9 @@ export const WETH_USDC_PAIR_ADDRESS =
 
 // Uniswap V2 (Sepolia) - factory provided by the user
 export const UNIV2_FACTORY_ADDRESS =
-  "0xf62c03e08ada871a0beb309762e260a7a6a880e6";
+  "0xb70112d72da5d6df0bb2b26a2307e4ba27cfe042";
 export const UNIV2_ROUTER_ADDRESS =
-  "0xee567fe1712faf6149d80da1e6934e354124cfe3";
+  "0xf9ac1ee27a2db3a471e1f590cd689dee6a2c391d";
 
 // Minimal ERC20 ABI
 export const ERC20_ABI = [

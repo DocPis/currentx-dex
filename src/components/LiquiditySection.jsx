@@ -13,58 +13,47 @@ import {
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
 
-const mockPools = [
+const basePools = [
   {
     id: "weth-usdc",
     token0Symbol: "WETH",
     token1Symbol: "USDC",
-    volume24hUsd: 1204500,
-    fees24hUsd: 3600,
-    tvlUsd: 18250000,
-    feeApr: 5.72,
-    emissionApr: 18.4,
     poolType: "volatile",
   },
   {
     id: "wbtc-usdc",
     token0Symbol: "WBTC",
     token1Symbol: "USDC",
-    volume24hUsd: 987000,
-    fees24hUsd: 2950,
-    tvlUsd: 20500000,
-    feeApr: 4.98,
-    emissionApr: 16.1,
     poolType: "volatile",
   },
   {
     id: "dai-usdc",
     token0Symbol: "DAI",
     token1Symbol: "USDC",
-    volume24hUsd: 453200,
-    fees24hUsd: 690,
-    tvlUsd: 12480000,
-    feeApr: 3.12,
-    emissionApr: 12.6,
+    poolType: "stable",
+  },
+  {
+    id: "usdt-usdc",
+    token0Symbol: "USDT",
+    token1Symbol: "USDC",
     poolType: "stable",
   },
   {
     id: "eth-usdc",
     token0Symbol: "ETH",
     token1Symbol: "USDC",
-    volume24hUsd: 765000,
-    fees24hUsd: 2200,
-    tvlUsd: 15800000,
-    feeApr: 4.35,
-    emissionApr: 14.2,
     poolType: "volatile",
   },
 ];
 
 const formatNumber = (v) => {
-  if (v >= 1_000_000_000) return `~$${(v / 1_000_000_000).toFixed(2)}B`;
-  if (v >= 1_000_000) return `~$${(v / 1_000_000).toFixed(2)}M`;
-  if (v >= 1_000) return `~$${(v / 1_000).toFixed(2)}K`;
-  return `~$${v.toFixed(2)}`;
+  const num = Number(v || 0);
+  if (!Number.isFinite(num)) return "~$0.00";
+  const val = Math.max(0, num);
+  if (val >= 1_000_000_000) return `~$${(val / 1_000_000_000).toFixed(2)}B`;
+  if (val >= 1_000_000) return `~$${(val / 1_000_000).toFixed(2)}M`;
+  if (val >= 1_000) return `~$${(val / 1_000).toFixed(2)}K`;
+  return `~$${val.toFixed(2)}`;
 };
 
 const resolveTokenAddress = (symbol) => {
@@ -78,11 +67,10 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 
 export default function LiquiditySection() {
-  const [ethUsdcTvl, setEthUsdcTvl] = useState(null);
   const [tvlError, setTvlError] = useState("");
-  const [ethUsdcLive, setEthUsdcLive] = useState(null);
   const [subgraphError, setSubgraphError] = useState("");
-  const [selectedPoolId, setSelectedPoolId] = useState(mockPools[0].id);
+  const [poolStats, setPoolStats] = useState({});
+  const [selectedPoolId, setSelectedPoolId] = useState(basePools[0].id);
   const [searchTerm, setSearchTerm] = useState("");
   const [pairInfo, setPairInfo] = useState(null);
   const [pairError, setPairError] = useState("");
@@ -98,76 +86,89 @@ export default function LiquiditySection() {
   const [lpBalanceError, setLpBalanceError] = useState("");
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadTvl = async () => {
-      try {
-        setTvlError("");
-        setSubgraphError("");
-
-        // Subgraph (primary)
-        const subgraphUrl = import.meta.env.VITE_UNIV2_SUBGRAPH;
-        if (subgraphUrl) {
-          try {
-            const live = await fetchV2PairData(WETH_ADDRESS, USDC_ADDRESS);
-            if (!cancelled) {
-              setEthUsdcLive(live);
-              if (live?.note) setSubgraphError(live.note);
-            }
-          } catch (sgErr) {
-            if (!cancelled)
-              setSubgraphError(sgErr.message || "Subgraph fetch failed");
-          }
-        } else if (!cancelled) {
-          setSubgraphError(
-            "Set VITE_UNIV2_SUBGRAPH to enable live subgraph data"
-          );
-        }
-
-        // On-chain fallback TVL if wallet/provider is available
-        try {
-          const provider = await getProvider();
-          const { reserve0, reserve1, token0 } = await getV2PairReserves(
-            provider,
-            TOKENS.WETH.address,
-            TOKENS.USDC.address
-          );
-
-          const wethIs0 =
-            token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
-          const reserveWeth = wethIs0 ? reserve0 : reserve1;
-          const reserveUsdc = wethIs0 ? reserve1 : reserve0;
-
-          const wethFloat = Number(
-            formatUnits(reserveWeth, TOKENS.WETH.decimals)
-          );
-          const usdcFloat = Number(
-            formatUnits(reserveUsdc, TOKENS.USDC.decimals)
-          );
-
-          // Assume USDC ~ $1; pool is balanced so TVL ≈ 2 * USDC side in USD
-          const tvlUsd = usdcFloat * 2;
-          if (!cancelled) setEthUsdcTvl(tvlUsd);
-        } catch (chainErr) {
-          if (!cancelled)
-            setTvlError(chainErr.message || "Failed to load TVL");
-        }
-      } catch (e) {
-        if (!cancelled) setTvlError(e.message || "Failed to load TVL");
-      }
-    };
-
-    loadTvl();
-    return () => {
-      cancelled = true;
-    };
-  }, [lpRefreshTick]);
-
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
     const id = setInterval(() => setLpRefreshTick((t) => t + 1), 30000);
     return () => clearInterval(id);
   }, []);
+
+  // Load live data for all pools (subgraph + on-chain TVL fallback)
+  useEffect(() => {
+    let cancelled = false;
+    const loadPools = async () => {
+      const updates = {};
+      setSubgraphError("");
+      for (const pool of basePools) {
+        const token0Addr = resolveTokenAddress(pool.token0Symbol);
+        const token1Addr = resolveTokenAddress(pool.token1Symbol);
+        if (!token0Addr || !token1Addr) continue;
+
+        try {
+          const live = await fetchV2PairData(token0Addr, token1Addr);
+          if (!cancelled && live) {
+            updates[pool.id] = {
+              ...updates[pool.id],
+              tvlUsd: live.tvlUsd,
+              volume24hUsd: live.volume24hUsd,
+              fees24hUsd:
+                live.fees24hUsd ??
+                (live.volume24hUsd ? live.volume24hUsd * 0.003 : undefined),
+            };
+          }
+        } catch (err) {
+          if (!cancelled && !subgraphError) {
+            setSubgraphError(err.message || "Subgraph fetch failed");
+          }
+        }
+
+        // On-chain TVL fallback (only if stable side present to avoid wrong USD calc)
+        try {
+          const provider = await getProvider();
+          const { reserve0, reserve1, token0 } = await getV2PairReserves(
+            provider,
+            token0Addr,
+            token1Addr
+          );
+          const token0IsA = token0.toLowerCase() === token0Addr.toLowerCase();
+          const resA = token0IsA ? reserve0 : reserve1;
+          const resB = token0IsA ? reserve1 : reserve0;
+          const metaA = TOKENS[pool.token0Symbol];
+          const metaB = TOKENS[pool.token1Symbol];
+          const stableA =
+            metaA?.symbol === "USDC" || metaA?.symbol === "USDT";
+          const stableB =
+            metaB?.symbol === "USDC" || metaB?.symbol === "USDT";
+          let tvlUsd;
+          if (stableA) {
+            const usd = Number(formatUnits(resA, metaA.decimals));
+            tvlUsd = usd * 2;
+          } else if (stableB) {
+            const usd = Number(formatUnits(resB, metaB.decimals));
+            tvlUsd = usd * 2;
+          }
+          if (!cancelled && tvlUsd !== undefined) {
+            updates[pool.id] = {
+              ...updates[pool.id],
+              tvlUsd: updates[pool.id]?.tvlUsd ?? tvlUsd,
+            };
+          }
+        } catch (chainErr) {
+          // ignore per-pool chain errors to avoid breaking the whole list
+          if (!cancelled && !tvlError) {
+            setTvlError(chainErr.message || "Failed to load TVL");
+          }
+        }
+      }
+
+      if (!cancelled && Object.keys(updates).length) {
+        setPoolStats((prev) => ({ ...prev, ...updates }));
+      }
+    };
+    loadPools();
+    return () => {
+      cancelled = true;
+    };
+  }, [lpRefreshTick]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -184,24 +185,11 @@ export default function LiquiditySection() {
   }, [selectedPoolId]);
 
   const pools = useMemo(() => {
-    return mockPools.map((p) => {
-      if (p.id === "eth-usdc") {
-        const overrides = {};
-        if (ethUsdcLive) {
-          overrides.tvlUsd =
-            ethUsdcLive.tvlUsd || ethUsdcTvl || p.tvlUsd;
-          overrides.volume24hUsd =
-            ethUsdcLive.volume24hUsd ?? p.volume24hUsd;
-          overrides.fees24hUsd =
-            ethUsdcLive.fees24hUsd ?? p.fees24hUsd;
-        } else if (ethUsdcTvl) {
-          overrides.tvlUsd = ethUsdcTvl;
-        }
-        return { ...p, ...overrides };
-      }
-      return p;
-    });
-  }, [ethUsdcLive, ethUsdcTvl]);
+    return basePools.map((p) => ({
+      ...p,
+      ...(poolStats[p.id] || {}),
+    }));
+  }, [poolStats]);
 
   const selectedPool = useMemo(() => {
     const found = pools.find((p) => p.id === selectedPoolId);
@@ -229,9 +217,9 @@ export default function LiquiditySection() {
     });
   }, [pools, searchTerm]);
 
-  const totalVolume = pools.reduce((a, p) => a + p.volume24hUsd, 0);
-  const totalFees = pools.reduce((a, p) => a + p.fees24hUsd, 0);
-  const totalTvl = pools.reduce((a, p) => a + p.tvlUsd, 0);
+  const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
+  const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
+  const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
 
   useEffect(() => {
     let cancelled = false;
