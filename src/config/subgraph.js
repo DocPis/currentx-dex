@@ -52,15 +52,21 @@ export async function fetchV2PairData(tokenA, tokenB) {
         volumeUSD
         token0 { id symbol }
         token1 { id symbol }
-        pairDayDatas(
-          first: 1
-          orderBy: date
-          orderDirection: desc
-        ) {
-          date
-          dailyVolumeUSD
-          reserveUSD
-        }
+      }
+    }
+  `;
+
+  const pairDayQuery = `
+    query PairDay($pairId: Bytes!) {
+      pairDayDatas(
+        first: 1
+        where: { pairAddress: $pairId }
+        orderBy: date
+        orderDirection: desc
+      ) {
+        date
+        dailyVolumeUSD
+        reserveUSD
       }
     }
   `;
@@ -74,7 +80,8 @@ export async function fetchV2PairData(tokenA, tokenB) {
     const pair = data?.pairs?.[0];
     if (!pair) throw new Error("Pair not found in subgraph");
 
-    const day = pair.pairDayDatas?.[0];
+    const dayRes = await postSubgraph(pairDayQuery, { pairId: pair.id });
+    const day = dayRes?.pairDayDatas?.[0];
     const tvlUsd = Number(pair.reserveUSD || 0);
     const volume24hUsd = Number(day?.dailyVolumeUSD || 0);
     const fees24hUsd = volume24hUsd * 0.003; // 0.30% fee tier
@@ -207,8 +214,8 @@ export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();
   const tokenBLower = tokenB.toLowerCase();
 
-  const query = `
-    query PairHistory($tokenA: String!, $tokenB: String!, $days: Int!) {
+  const pairQuery = `
+    query PairForHistory($tokenA: String!, $tokenB: String!) {
       pairs(
         first: 1
         where: {
@@ -217,28 +224,39 @@ export async function fetchPairHistory(tokenA, tokenB, days = 7) {
         }
       ) {
         id
-        pairDayDatas(
-          first: $days
-          orderBy: date
-          orderDirection: desc
-        ) {
-          date
-          reserveUSD
-          dailyVolumeUSD
-        }
+      }
+    }
+  `;
+
+  const historyQuery = `
+    query PairHistory($pairId: Bytes!, $days: Int!) {
+      pairDayDatas(
+        first: $days
+        where: { pairAddress: $pairId }
+        orderBy: date
+        orderDirection: desc
+      ) {
+        date
+        reserveUSD
+        dailyVolumeUSD
       }
     }
   `;
 
   try {
-    const data = await postSubgraph(query, {
+    const pairRes = await postSubgraph(pairQuery, {
       tokenA: tokenALower,
       tokenB: tokenBLower,
-      days,
     });
 
-    const pair = data?.pairs?.[0];
-    const history = pair?.pairDayDatas || [];
+    const pair = pairRes?.pairs?.[0];
+    if (!pair?.id) return [];
+
+    const historyRes = await postSubgraph(historyQuery, {
+      pairId: pair.id,
+      days,
+    });
+    const history = historyRes?.pairDayDatas || [];
     return history.map((d) => ({
       date: Number(d.date) * 1000,
       tvlUsd: Number(d.reserveUSD || 0),
