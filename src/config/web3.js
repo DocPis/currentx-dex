@@ -20,6 +20,8 @@ export const WETH_USDC_PAIR_ADDRESS =
 // Uniswap V2 (Sepolia) - factory provided by the user
 export const UNIV2_FACTORY_ADDRESS =
   "0xf62c03e08ada871a0beb309762e260a7a6a880e6";
+export const UNIV2_ROUTER_ADDRESS =
+  "0xee567fe1712faf6149d80da1e6934e354124cfe3";
 
 // Minimal ERC20 ABI
 export const ERC20_ABI = [
@@ -32,10 +34,30 @@ export const ERC20_ABI = [
   },
   {
     inputs: [
+      { internalType: "address", name: "owner", type: "address" },
+      { internalType: "address", name: "spender", type: "address" },
+    ],
+    name: "allowance",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
       { internalType: "address", name: "to", type: "address" },
       { internalType: "uint256", name: "amount", type: "uint256" },
     ],
     name: "transfer",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "spender", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    name: "approve",
     outputs: [{ internalType: "bool", name: "", type: "bool" }],
     stateMutability: "nonpayable",
     type: "function",
@@ -52,6 +74,47 @@ export const ERC20_ABI = [
     name: "symbol",
     outputs: [{ internalType: "string", name: "", type: "string" }],
     stateMutability: "view",
+    type: "function",
+  },
+];
+
+export const UNIV2_ROUTER_ABI = [
+  {
+    inputs: [
+      { internalType: "uint256", name: "amountIn", type: "uint256" },
+      { internalType: "uint256", name: "amountOutMin", type: "uint256" },
+      { internalType: "address[]", name: "path", type: "address[]" },
+      { internalType: "address", name: "to", type: "address" },
+      { internalType: "uint256", name: "deadline", type: "uint256" },
+    ],
+    name: "swapExactTokensForTokens",
+    outputs: [{ internalType: "uint256[]", name: "amounts", type: "uint256[]" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "amountOutMin", type: "uint256" },
+      { internalType: "address[]", name: "path", type: "address[]" },
+      { internalType: "address", name: "to", type: "address" },
+      { internalType: "uint256", name: "deadline", type: "uint256" },
+    ],
+    name: "swapExactETHForTokens",
+    outputs: [{ internalType: "uint256[]", name: "amounts", type: "uint256[]" }],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "amountIn", type: "uint256" },
+      { internalType: "uint256", name: "amountOutMin", type: "uint256" },
+      { internalType: "address[]", name: "path", type: "address[]" },
+      { internalType: "address", name: "to", type: "address" },
+      { internalType: "uint256", name: "deadline", type: "uint256" },
+    ],
+    name: "swapExactTokensForETH",
+    outputs: [{ internalType: "uint256[]", name: "amounts", type: "uint256[]" }],
+    stateMutability: "nonpayable",
     type: "function",
   },
 ];
@@ -206,11 +269,10 @@ export async function getErc20(address, provider) {
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 function getAmountOut(amountIn, reserveIn, reserveOut) {
-  const amountInWithFee = (amountIn * 997n) / 1000n;
-  return (
-    (amountInWithFee * reserveOut) /
-    (reserveIn * 1000n + amountInWithFee)
-  );
+  // Uniswap V2 formula (no scaling loss):
+  // amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+  const amountInWithFee = amountIn * 997n;
+  return (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
 }
 
 function normalize(amount, decimals) {

@@ -1,6 +1,16 @@
-// src/components/SwapSection.jsx (mocked swap UI)
-import React, { useMemo, useState } from "react";
-import { TOKENS } from "../config/web3";
+// src/components/SwapSection.jsx
+import React, { useEffect, useState } from "react";
+import { Contract, formatUnits, parseUnits } from "ethers";
+import {
+  TOKENS,
+  getProvider,
+  getV2QuoteWithMeta,
+  WETH_ADDRESS,
+  ERC20_ABI,
+  WETH_ABI,
+  UNIV2_ROUTER_ABI,
+  UNIV2_ROUTER_ADDRESS,
+} from "../config/web3";
 
 const TOKEN_OPTIONS = ["ETH", "WETH", "USDC"];
 
@@ -67,53 +77,289 @@ function TokenSelector({ side, selected, onSelect, balances }) {
   );
 }
 
+function PairInfoBox({ info }) {
+  if (!info) return null;
+  const reserve0 = Number(
+    formatUnits(info.reserve0 || 0n, info.decimals0 || 18)
+  ).toFixed(4);
+  const reserve1 = Number(
+    formatUnits(info.reserve1 || 0n, info.decimals1 || 18)
+  ).toFixed(4);
+  return (
+    <div className="mt-3 w-full max-w-xl text-[11px] text-slate-300 bg-slate-900/70 border border-slate-800 rounded-xl px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-slate-400">Pair</span>
+        <a
+          href={`https://sepolia.etherscan.io/address/${info.pairAddress}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sky-400 hover:text-sky-300 underline"
+        >
+          {info.pairAddress}
+        </a>
+      </div>
+      <div className="flex flex-wrap gap-4 mt-1">
+        <span>Reserve token0: {reserve0}</span>
+        <span>Reserve token1: {reserve1}</span>
+      </div>
+      <div className="text-slate-400 mt-1">
+        token0: {info.token0} | token1: {info.token1}
+      </div>
+    </div>
+  );
+}
+
 export default function SwapSection({ balances }) {
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
+  const [quoteOut, setQuoteOut] = useState(null);
+  const [quoteOutRaw, setQuoteOutRaw] = useState(null);
+  const [priceImpact, setPriceImpact] = useState(null);
+  const [quoteError, setQuoteError] = useState("");
+  const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
   const [swapStatus, setSwapStatus] = useState(null);
+  const [swapLoading, setSwapLoading] = useState(false);
+  const [pairInfo, setPairInfo] = useState(null);
 
-  const rate = useMemo(() => {
-    // Simple mocked price table; tweak as needed
-    const basePrices = {
-      ETH: 2000,
-      WETH: 2000,
-      USDC: 1,
+  const isEthUsdc =
+    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDC";
+  const isUsdcEth =
+    sellToken === "USDC" && (buyToken === "ETH" || buyToken === "WETH");
+  const isDirectEthWeth =
+    (sellToken === "ETH" && buyToken === "WETH") ||
+    (sellToken === "WETH" && buyToken === "ETH");
+  const isSupported = isEthUsdc || isUsdcEth || isDirectEthWeth;
+
+  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
+  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchQuote = async () => {
+      setQuoteError("");
+      setQuoteOut(null);
+      setQuoteOutRaw(null);
+      setPriceImpact(null);
+      setPairInfo(null);
+
+      if (!amountIn || Number.isNaN(Number(amountIn))) return;
+      if (!isSupported) {
+        setQuoteError("Swap support: ETH/WETH ⇄ USDC, ETH ⇄ WETH");
+        return;
+      }
+
+      if (isDirectEthWeth) {
+        const directWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        setQuoteOut(amountIn);
+        setQuoteOutRaw(directWei);
+        setPriceImpact(0);
+        return;
+      }
+
+      try {
+        setQuoteLoading(true);
+        const provider = await getProvider();
+        const sellAddress = TOKENS[sellKey].address;
+        const buyAddress = TOKENS[buyKey].address;
+        const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+
+        const meta = await getV2QuoteWithMeta(
+          provider,
+          amountWei,
+          sellAddress,
+          buyAddress
+        );
+        if (cancelled) return;
+
+        const tokensLower = [meta.token0, meta.token1].map((t) =>
+          t.toLowerCase()
+        );
+        if (
+          !tokensLower.includes(sellAddress.toLowerCase()) ||
+          !tokensLower.includes(buyAddress.toLowerCase())
+        ) {
+          throw new Error(
+            "Resolved pair tokens do not match the selected assets"
+          );
+        }
+
+        const formatted = formatUnits(meta.amountOut, TOKENS[buyKey].decimals);
+        setQuoteOut(formatted);
+        setQuoteOutRaw(meta.amountOut);
+        setPriceImpact(meta.priceImpactPct);
+        setPairInfo({
+          pairAddress: meta.pairAddress,
+          token0: meta.token0,
+          token1: meta.token1,
+          reserve0: meta.reserve0,
+          reserve1: meta.reserve1,
+          decimals0:
+            meta.token0.toLowerCase() === WETH_ADDRESS.toLowerCase()
+              ? 18
+              : TOKENS.USDC.decimals,
+          decimals1:
+            meta.token1.toLowerCase() === WETH_ADDRESS.toLowerCase()
+              ? 18
+              : TOKENS.USDC.decimals,
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setQuoteError(e.message || "Failed to fetch quote");
+      } finally {
+        if (!cancelled) setQuoteLoading(false);
+      }
     };
-    const sell = basePrices[sellToken];
-    const buy = basePrices[buyToken];
-    if (!sell || !buy) return null;
-    return sell / buy;
-  }, [sellToken, buyToken]);
+    fetchQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [amountIn, sellToken, buyToken, isSupported]);
 
-  const quoteOut = useMemo(() => {
-    if (!amountIn || Number.isNaN(Number(amountIn)) || !rate) return null;
-    return Number(amountIn) * rate;
-  }, [amountIn, rate]);
+  const slippageBps = (() => {
+    const val = Number(slippage);
+    if (Number.isNaN(val) || val < 0) return 50;
+    return Math.min(5000, Math.round(val * 100));
+  })();
 
-  const handleSwap = () => {
-    if (!quoteOut) {
-      setSwapStatus({ variant: "error", message: "Enter a valid amount" });
-      return;
+  const minReceivedRaw = quoteOutRaw
+    ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
+    : null;
+
+  const handleSwap = async () => {
+    try {
+      setSwapStatus(null);
+      if (swapLoading) return;
+      if (!amountIn || Number.isNaN(Number(amountIn))) {
+        throw new Error("Enter a valid amount");
+      }
+      if (!isSupported) {
+        throw new Error("Swap support: ETH/WETH ⇄ USDC, ETH ⇄ WETH");
+      }
+      if (!quoteOutRaw) {
+        throw new Error("Fetching quote, please retry");
+      }
+
+      setSwapLoading(true);
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+
+      if (isDirectEthWeth) {
+        const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
+        let tx;
+        if (sellToken === "ETH") {
+          tx = await weth.deposit({ value: amountWei });
+        } else {
+          tx = await weth.withdraw(amountWei);
+        }
+        const receipt = await tx.wait();
+        setSwapStatus({
+          message: `Swap executed (wrap/unwrap). Received ${formatUnits(
+            amountWei,
+            TOKENS[buyKey].decimals
+          )} ${buyToken}`,
+          hash: receipt.hash,
+          variant: "success",
+        });
+        return;
+      }
+
+      const sellAddress = TOKENS[sellKey].address;
+      const buyAddress = TOKENS[buyKey].address;
+      const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+
+      const { amountOut } = await getV2QuoteWithMeta(
+        provider,
+        amountWei,
+        sellAddress,
+        buyAddress
+      );
+
+      const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
+      const router = new Contract(
+        UNIV2_ROUTER_ADDRESS,
+        UNIV2_ROUTER_ABI,
+        signer
+      );
+      const deadline =
+        Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
+
+      let tx;
+      if (sellToken === "ETH") {
+        // ETH -> USDC (path: WETH -> USDC)
+        const path = [WETH_ADDRESS, TOKENS.USDC.address];
+        console.log("router swapExactETHForTokens", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
+        tx = await router.swapExactETHForTokens(
+          minOut,
+          path,
+          user,
+          deadline,
+          { value: amountWei }
+        );
+      } else if (buyToken === "ETH") {
+        // USDC -> ETH (path: USDC -> WETH)
+        const path = [TOKENS.USDC.address, WETH_ADDRESS];
+        const token = new Contract(sellAddress, ERC20_ABI, signer);
+        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+        if (allowance < amountWei) {
+          await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
+        }
+        console.log("router swapExactTokensForETH", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
+        tx = await router.swapExactTokensForETH(
+          amountWei,
+          minOut,
+          path,
+          user,
+          deadline
+        );
+      } else {
+        // WETH -> USDC
+        const path = [WETH_ADDRESS, TOKENS.USDC.address];
+        const token = new Contract(sellAddress, ERC20_ABI, signer);
+        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+        if (allowance < amountWei) {
+          await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
+        }
+        console.log("router swapExactTokensForTokens", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
+        tx = await router.swapExactTokensForTokens(
+          amountWei,
+          minOut,
+          path,
+          user,
+          deadline
+        );
+      }
+
+      const receipt = await tx.wait();
+
+      setSwapStatus({
+        message: `Swap executed. Min received: ${formatUnits(
+          minOut,
+          TOKENS[buyKey].decimals
+        )} ${buyToken}`,
+        hash: receipt.hash,
+        variant: "success",
+      });
+    } catch (e) {
+      const userRejected =
+        e?.code === 4001 ||
+        e?.code === "ACTION_REJECTED" ||
+        (e?.message || "").toLowerCase().includes("user denied");
+      const message = userRejected
+        ? "Transaction was rejected in wallet."
+        : e.message || "Swap failed";
+      setSwapStatus({ message, variant: "error" });
+    } finally {
+      setSwapLoading(false);
     }
-    setSwapStatus({
-      variant: "success",
-      message: `Mock swap executed: ${amountIn} ${sellToken} -> ${quoteOut.toFixed(
-        4
-      )} ${buyToken}`,
-    });
-  };
-
-  const flipTokens = () => {
-    setSellToken(buyToken);
-    setBuyToken(sellToken);
   };
 
   return (
     <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
       <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-4 sm:p-6 shadow-xl">
-        {/* SELL */}
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
@@ -140,10 +386,12 @@ export default function SwapSection({ balances }) {
           </div>
         </div>
 
-        {/* FLIP BUTTON */}
         <div className="flex justify-center my-2">
           <button
-            onClick={flipTokens}
+            onClick={() => {
+              setSellToken(buyToken);
+              setBuyToken(sellToken);
+            }}
             className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/30 hover:border-sky-500/60 transition"
             aria-label="Invert tokens"
           >
@@ -161,7 +409,6 @@ export default function SwapSection({ balances }) {
           </button>
         </div>
 
-        {/* BUY */}
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Buy</span>
@@ -181,10 +428,17 @@ export default function SwapSection({ balances }) {
             />
             <div className="flex-1 text-right w-full">
               <div className="text-2xl sm:text-3xl font-semibold text-slate-50">
-                {quoteOut !== null ? quoteOut.toFixed(6) : "0.00"}
+                {quoteOut !== null ? Number(quoteOut).toFixed(6) : "0.00"}
               </div>
               <div className="text-[11px] text-slate-500">
-                Mock quote (no on-chain call)
+                {quoteLoading
+                  ? "Loading quote..."
+                  : quoteError ||
+                    (amountIn
+                      ? isDirectEthWeth
+                        ? "Direct wrap/unwrap (no fee)"
+                        : "Live quote via Uniswap V2 (Sepolia)"
+                      : "Enter an amount to fetch a quote")}
               </div>
             </div>
           </div>
@@ -217,21 +471,26 @@ export default function SwapSection({ balances }) {
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">Min received (mock)</span>
+              <span className="text-slate-500">Min received</span>
               <span className="text-slate-100">
-                {quoteOut !== null
-                  ? `${(quoteOut * (1 - Number(slippage || 0) / 100)).toFixed(6)} ${buyToken}`
+                {minReceivedRaw
+                  ? `${Number(
+                      formatUnits(minReceivedRaw, TOKENS[buyKey].decimals)
+                    ).toFixed(6)} ${buyToken}`
                   : "--"}
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px] mt-1">
-              <span className="text-slate-500">Price impact (mock)</span>
-              <span className="text-slate-100">--</span>
+              <span className="text-slate-500">Price impact</span>
+              <span className="text-slate-100">
+                {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
+              </span>
             </div>
           </div>
 
           <button
             onClick={handleSwap}
+            disabled={swapLoading || quoteLoading}
             className="w-full sm:w-44 py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
           >
             <span className="inline-flex items-center gap-2 justify-center">
@@ -249,7 +508,7 @@ export default function SwapSection({ balances }) {
                   strokeLinejoin="round"
                 />
               </svg>
-              Swap now
+              {swapLoading ? "Swapping..." : "Swap now"}
             </span>
           </button>
         </div>
@@ -272,9 +531,21 @@ export default function SwapSection({ balances }) {
               />
               <span>{swapStatus.message}</span>
             </div>
+            {swapStatus.hash && (
+              <a
+                href={`https://sepolia.etherscan.io/tx/${swapStatus.hash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-400 hover:text-sky-300 underline mt-1 inline-block"
+              >
+                Open on SepoliaScan
+              </a>
+            )}
           </div>
         )}
       </div>
+
+      <PairInfoBox info={pairInfo} />
     </div>
   );
 }
