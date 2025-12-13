@@ -124,6 +124,17 @@ export default function SwapSection({ balances }) {
   const [pairInfo, setPairInfo] = useState(null);
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
+  const sellBalance = balances?.[sellToken] || 0;
+  const handleQuickPercent = (pct) => {
+    const bal = balances?.[sellToken] || 0;
+    const decimals = Math.min(6, TOKENS[sellKey]?.decimals ?? 6);
+    if (!bal) {
+      setAmountIn("");
+      return;
+    }
+    const val = (bal * pct).toFixed(decimals);
+    setAmountIn(val);
+  };
 
   const isEthUsdc =
     (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDC";
@@ -528,6 +539,21 @@ export default function SwapSection({ balances }) {
               placeholder="0.00"
               className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full"
             />
+          </div>
+          <div className="flex justify-end gap-2 mt-3 text-[11px] sm:text-xs">
+            {[0.25, 0.5, 1].map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => handleQuickPercent(p)}
+                className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-200 hover:border-sky-500/60 transition"
+              >
+                {Math.round(p * 100)}%
+              </button>
+            ))}
+            <div className="px-2 py-1 text-slate-400">
+              {(sellBalance || 0).toFixed(4)} {sellToken} disponibili
+            </div>
           </div>
         </div>
 
