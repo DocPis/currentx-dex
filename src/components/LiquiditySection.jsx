@@ -233,6 +233,7 @@ export default function LiquiditySection() {
     !usesNativeEth &&
     (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
   const pairIdOverride = selectedPool?.pairId;
+  const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
 
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
@@ -407,6 +408,54 @@ export default function LiquiditySection() {
     token0Meta?.symbol,
     token1Meta?.symbol,
   ]);
+
+  const applyDepositRatio = (percentage) => {
+    if (!hasPairInfo) return;
+    try {
+      const decimals0 = token0Meta?.decimals ?? 18;
+      const decimals1 = token1Meta?.decimals ?? 18;
+      const pairToken0Lower = pairInfo.token0.toLowerCase();
+      const inputToken0Lower = (token0Address || "").toLowerCase();
+      const reserveForToken0 =
+        pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1;
+      const reserveForToken1 =
+        pairToken0Lower === inputToken0Lower ? pairInfo.reserve1 : pairInfo.reserve0;
+
+      const reserve0Float = Number(formatUnits(reserveForToken0, decimals0));
+      const reserve1Float = Number(formatUnits(reserveForToken1, decimals1));
+      if (reserve0Float === 0 || reserve1Float === 0) return;
+
+      const priceToken1Per0 = reserve1Float / reserve0Float;
+      if (!Number.isFinite(priceToken1Per0) || priceToken1Per0 <= 0) return;
+
+      const amount0 = depositToken0 ? Number(depositToken0) : 0;
+      const amount1 = depositToken1 ? Number(depositToken1) : 0;
+
+      const base0 = amount0 > 0 ? amount0 : amount1 > 0 ? amount1 / priceToken1Per0 : 0;
+      if (base0 <= 0) return;
+
+      const next0 = base0 * percentage;
+      const next1 = next0 * priceToken1Per0;
+
+      setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+      setDepositToken0(next0.toFixed(4));
+      setDepositToken1(next1.toFixed(4));
+      setDepositQuote(
+        `For ${next0.toFixed(4)} ${token0Meta?.symbol} add ~${next1.toFixed(
+          4
+        )} ${token1Meta?.symbol}.`
+      );
+    } catch (err) {
+      setDepositQuoteError(err.message || "Quote balance failed");
+    }
+  };
+
+  const applyWithdrawRatio = (percentage) => {
+    const base = lpBalance ?? 0;
+    if (base <= 0) return;
+    const target = base * percentage;
+    setWithdrawLp(target.toFixed(4));
+  };
 
   const handleDeposit = async () => {
     try {
@@ -994,6 +1043,25 @@ export default function LiquiditySection() {
                   ? "Processing..."
                   : `Deposit ${getPoolLabel(selectedPool)}`}
               </button>
+              <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span>Ratio quick-fill:</span>
+                <button
+                  type="button"
+                  disabled={!hasPairInfo}
+                  onClick={() => applyDepositRatio(0.5)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  50%
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasPairInfo}
+                  onClick={() => applyDepositRatio(1)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  100%
+                </button>
+              </div>
             </div>
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
@@ -1028,6 +1096,25 @@ export default function LiquiditySection() {
                   ? "Processing..."
                   : `Withdraw ${getPoolLabel(selectedPool)}`}
               </button>
+              <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                <span>Withdraw:</span>
+                <button
+                  type="button"
+                  disabled={lpBalance === null || lpBalance <= 0}
+                  onClick={() => applyWithdrawRatio(0.5)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  50%
+                </button>
+                <button
+                  type="button"
+                  disabled={lpBalance === null || lpBalance <= 0}
+                  onClick={() => applyWithdrawRatio(1)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  100%
+                </button>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-300">
