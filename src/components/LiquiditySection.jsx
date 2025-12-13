@@ -8,8 +8,6 @@ import {
   WETH_ADDRESS,
   USDC_ADDRESS,
   ERC20_ABI,
-  UNIV2_PAIR_ABI,
-  WETH_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
 } from "../config/web3";
@@ -69,13 +67,27 @@ const formatNumber = (v) => {
   return `~$${v.toFixed(2)}`;
 };
 
+const resolveTokenAddress = (symbol) => {
+  if (!symbol) return null;
+  if (symbol === "ETH") return WETH_ADDRESS;
+  const token = TOKENS[symbol];
+  return token?.address || null;
+};
+
+const getPoolLabel = (pool) =>
+  pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
+
 export default function LiquiditySection() {
   const [ethUsdcTvl, setEthUsdcTvl] = useState(null);
   const [tvlError, setTvlError] = useState("");
   const [ethUsdcLive, setEthUsdcLive] = useState(null);
   const [subgraphError, setSubgraphError] = useState("");
-  const [depositEth, setDepositEth] = useState("");
-  const [depositUsdc, setDepositUsdc] = useState("");
+  const [selectedPoolId, setSelectedPoolId] = useState(mockPools[0].id);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [pairInfo, setPairInfo] = useState(null);
+  const [pairError, setPairError] = useState("");
+  const [depositToken0, setDepositToken0] = useState("");
+  const [depositToken1, setDepositToken1] = useState("");
   const [withdrawLp, setWithdrawLp] = useState("");
   const [actionStatus, setActionStatus] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
@@ -157,6 +169,20 @@ export default function LiquiditySection() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    setDepositToken0("");
+    setDepositToken1("");
+    setWithdrawLp("");
+    setDepositQuote("");
+    setDepositQuoteError("");
+    setLastEdited("");
+    setActionStatus("");
+    setPairError("");
+    setPairInfo(null);
+    setLpBalance(null);
+    setLpBalanceError("");
+  }, [selectedPoolId]);
+
   const pools = useMemo(() => {
     return mockPools.map((p) => {
       if (p.id === "eth-usdc") {
@@ -177,55 +203,161 @@ export default function LiquiditySection() {
     });
   }, [ethUsdcLive, ethUsdcTvl]);
 
+  const selectedPool = useMemo(() => {
+    const found = pools.find((p) => p.id === selectedPoolId);
+    return found || pools[0];
+  }, [pools, selectedPoolId]);
+
+  const token0Meta = selectedPool ? TOKENS[selectedPool.token0Symbol] : null;
+  const token1Meta = selectedPool ? TOKENS[selectedPool.token1Symbol] : null;
+  const token0Address = resolveTokenAddress(selectedPool?.token0Symbol);
+  const token1Address = resolveTokenAddress(selectedPool?.token1Symbol);
+  const poolSupportsActions = Boolean(token0Address && token1Address);
+  const usesNativeEth =
+    selectedPool &&
+    (selectedPool.token0Symbol === "ETH" || selectedPool.token1Symbol === "ETH");
+
+  const filteredPools = useMemo(() => {
+    if (!searchTerm) return pools;
+    const q = searchTerm.toLowerCase();
+    return pools.filter((p) => {
+      return (
+        p.id.toLowerCase().includes(q) ||
+        p.token0Symbol.toLowerCase().includes(q) ||
+        p.token1Symbol.toLowerCase().includes(q)
+      );
+    });
+  }, [pools, searchTerm]);
+
   const totalVolume = pools.reduce((a, p) => a + p.volume24hUsd, 0);
   const totalFees = pools.reduce((a, p) => a + p.fees24hUsd, 0);
   const totalTvl = pools.reduce((a, p) => a + p.tvlUsd, 0);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadPair = async () => {
+      setPairInfo(null);
+      setPairError("");
+
+      if (!selectedPool) return;
+      if (!poolSupportsActions) {
+        setPairError(
+          "Pool non configurato per l'on-chain (indirizzo token mancante)."
+        );
+        return;
+      }
+
+      try {
+        const provider = await getProvider();
+        const res = await getV2PairReserves(
+          provider,
+          token0Address,
+          token1Address
+        );
+        if (cancelled) return;
+        setPairInfo({
+          ...res,
+          token0Address,
+          token1Address,
+        });
+
+        try {
+          const signer = await provider.getSigner();
+          const user = await signer.getAddress();
+          const pairErc20 = new Contract(res.pairAddress, ERC20_ABI, signer);
+          const decimals = await pairErc20.decimals();
+          const balance = await pairErc20.balanceOf(user);
+          if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
+        } catch (balanceErr) {
+          if (!cancelled) {
+            setLpBalance(null);
+            setLpBalanceError(
+              balanceErr.message || "Failed to load LP balance"
+            );
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setPairError(err.message || "Failed to load pool data");
+          setLpBalanceError(err.message || "Failed to load LP balance");
+        }
+      }
+    };
+
+    loadPair();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    selectedPoolId,
+    poolSupportsActions,
+    token0Address,
+    token1Address,
+    lpRefreshTick,
+  ]);
+
   // Suggest balanced amount based on current reserves
   useEffect(() => {
     let cancelled = false;
-    const fetchQuote = async () => {
+    const fetchQuote = () => {
       setDepositQuote("");
       setDepositQuoteError("");
-      const ethAmount = depositEth ? Number(depositEth) : 0;
-      const usdcAmount = depositUsdc ? Number(depositUsdc) : 0;
-      if (!ethAmount && !usdcAmount) return;
+      const amount0 = depositToken0 ? Number(depositToken0) : 0;
+      const amount1 = depositToken1 ? Number(depositToken1) : 0;
+      if (!amount0 && !amount1) return;
       if (!lastEdited) return;
+      if (!pairInfo || !poolSupportsActions) return;
+
       try {
-        const provider = await getProvider();
-        const { reserve0, reserve1, token0 } = await getV2PairReserves(
-          provider,
-          TOKENS.WETH.address,
-          TOKENS.USDC.address
+        const decimals0 = token0Meta?.decimals ?? 18;
+        const decimals1 = token1Meta?.decimals ?? 18;
+        const pairToken0Lower = pairInfo.token0.toLowerCase();
+        const inputToken0Lower = (token0Address || "").toLowerCase();
+        const reserveForToken0 =
+          pairToken0Lower === inputToken0Lower
+            ? pairInfo.reserve0
+            : pairInfo.reserve1;
+        const reserveForToken1 =
+          pairToken0Lower === inputToken0Lower
+            ? pairInfo.reserve1
+            : pairInfo.reserve0;
+
+        const reserve0Float = Number(
+          formatUnits(reserveForToken0, decimals0)
         );
-        const wethIs0 =
-          token0.toLowerCase() === TOKENS.WETH.address.toLowerCase();
-        const reserveWeth = wethIs0 ? reserve0 : reserve1;
-        const reserveUsdc = wethIs0 ? reserve1 : reserve0;
-        if (reserveWeth === 0n || reserveUsdc === 0n) return;
+        const reserve1Float = Number(
+          formatUnits(reserveForToken1, decimals1)
+        );
+        if (reserve0Float === 0 || reserve1Float === 0) return;
 
-        const priceUsdcPerEth =
-          Number(formatUnits(reserveUsdc, TOKENS.USDC.decimals)) /
-          Number(formatUnits(reserveWeth, TOKENS.WETH.decimals));
+        const priceToken1Per0 = reserve1Float / reserve0Float;
 
-        if (ethAmount > 0 && lastEdited === "ETH" && !Number.isNaN(priceUsdcPerEth)) {
-          const suggestedUsdc = ethAmount * priceUsdcPerEth;
+        if (
+          amount0 > 0 &&
+          lastEdited === token0Meta?.symbol &&
+          !Number.isNaN(priceToken1Per0)
+        ) {
+          const suggested1 = amount0 * priceToken1Per0;
           if (!cancelled) {
-            setDepositUsdc(suggestedUsdc.toFixed(2));
+            setDepositToken1(suggested1.toFixed(4));
             setDepositQuote(
-              `To keep the current ratio, for ${ethAmount} ETH add ~${suggestedUsdc.toFixed(
-                2
-              )} USDC.`
+              `Per mantenere il ratio, per ${amount0} ${token0Meta?.symbol} aggiungi ~${suggested1.toFixed(
+                4
+              )} ${token1Meta?.symbol}.`
             );
           }
-        } else if (usdcAmount > 0 && lastEdited === "USDC" && !Number.isNaN(priceUsdcPerEth)) {
-          const suggestedEth = usdcAmount / priceUsdcPerEth;
+        } else if (
+          amount1 > 0 &&
+          lastEdited === token1Meta?.symbol &&
+          !Number.isNaN(priceToken1Per0)
+        ) {
+          const suggested0 = amount1 / priceToken1Per0;
           if (!cancelled) {
-            setDepositEth(suggestedEth.toFixed(4));
+            setDepositToken0(suggested0.toFixed(4));
             setDepositQuote(
-              `To keep the current ratio, for ${usdcAmount} USDC add ~${suggestedEth.toFixed(
+              `Per mantenere il ratio, per ${amount1} ${token1Meta?.symbol} aggiungi ~${suggested0.toFixed(
                 4
-              )} ETH.`
+              )} ${token0Meta?.symbol}.`
             );
           }
         }
@@ -238,47 +370,38 @@ export default function LiquiditySection() {
     return () => {
       cancelled = true;
     };
-  }, [depositEth, depositUsdc, lastEdited]);
-
-  // Fetch LP balance for the user (ETH/USDC pool)
-  useEffect(() => {
-    let cancelled = false;
-    const loadLpBalance = async () => {
-      setLpBalance(null);
-      setLpBalanceError("");
-      try {
-        const provider = await getProvider();
-        const signer = await provider.getSigner();
-        const user = await signer.getAddress();
-        const { pairAddress } = await getV2PairReserves(
-          provider,
-          WETH_ADDRESS,
-          USDC_ADDRESS
-        );
-        const pairErc20 = new Contract(pairAddress, ERC20_ABI, signer);
-        const decimals = await pairErc20.decimals();
-        const balance = await pairErc20.balanceOf(user);
-        if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
-      } catch (err) {
-        if (!cancelled)
-          setLpBalanceError(err.message || "Failed to load LP balance");
-      }
-    };
-    loadLpBalance();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  }, [
+    depositToken0,
+    depositToken1,
+    lastEdited,
+    pairInfo,
+    poolSupportsActions,
+    token0Address,
+    token1Address,
+    token0Meta?.symbol,
+    token1Meta?.symbol,
+  ]);
 
   const handleDeposit = async () => {
     try {
       setActionStatus("");
       setActionLoading(true);
 
-      const ethAmount = depositEth ? Number(depositEth) : 0;
-      const usdcAmount = depositUsdc ? Number(depositUsdc) : 0;
-      if (ethAmount <= 0 || usdcAmount <= 0) {
-        throw new Error("Enter amounts for ETH and USDC");
+      if (!selectedPool) {
+        throw new Error("Seleziona un pool");
+      }
+      if (!poolSupportsActions) {
+        throw new Error(
+          "Pool non supportato: manca l'indirizzo di uno dei token"
+        );
+      }
+
+      const amount0 = depositToken0 ? Number(depositToken0) : 0;
+      const amount1 = depositToken1 ? Number(depositToken1) : 0;
+      if (amount0 <= 0 || amount1 <= 0) {
+        throw new Error(
+          `Inserisci importi per ${selectedPool.token0Symbol} e ${selectedPool.token1Symbol}`
+        );
       }
 
       const provider = await getProvider();
@@ -290,40 +413,91 @@ export default function LiquiditySection() {
         UNIV2_ROUTER_ABI,
         signer
       );
-      const usdcContract = new Contract(USDC_ADDRESS, ERC20_ABI, signer);
 
-      const ethValue = parseUnits(ethAmount.toString(), TOKENS.WETH.decimals);
-      const usdcValue = parseUnits(
-        usdcAmount.toString(),
-        TOKENS.USDC.decimals
+      const parsed0 = parseUnits(
+        amount0.toString(),
+        token0Meta?.decimals ?? 18
       );
-
-      // Approve USDC to router if needed
-      const allowance = await usdcContract.allowance(
-        user,
-        UNIV2_ROUTER_ADDRESS
+      const parsed1 = parseUnits(
+        amount1.toString(),
+        token1Meta?.decimals ?? 18
       );
-      if (allowance < usdcValue) {
-        await (await usdcContract.approve(UNIV2_ROUTER_ADDRESS, usdcValue)).wait();
-      }
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
-      const tx = await router.addLiquidityETH(
-        USDC_ADDRESS,
-        usdcValue,
-        0, // amountTokenMin
-        0, // amountETHMin
-        user,
-        deadline,
-        { value: ethValue }
-      );
-      const receipt = await tx.wait();
-      setActionStatus({
-        variant: "success",
-        hash: receipt.hash,
-        message: "Deposited liquidity",
-      });
+      if (usesNativeEth) {
+        const ethIsToken0 = selectedPool.token0Symbol === "ETH";
+        const ethValue = ethIsToken0 ? parsed0 : parsed1;
+        const tokenAmount = ethIsToken0 ? parsed1 : parsed0;
+        const tokenAddress = ethIsToken0 ? token1Address : token0Address;
+        const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
+        const allowance = await tokenContract.allowance(
+          user,
+          UNIV2_ROUTER_ADDRESS
+        );
+        if (allowance < tokenAmount) {
+          await (
+            await tokenContract.approve(UNIV2_ROUTER_ADDRESS, tokenAmount)
+          ).wait();
+        }
+
+        const tx = await router.addLiquidityETH(
+          tokenAddress,
+          tokenAmount,
+          0, // amountTokenMin
+          0, // amountETHMin
+          user,
+          deadline,
+          { value: ethValue }
+        );
+        const receipt = await tx.wait();
+        setActionStatus({
+          variant: "success",
+          hash: receipt.hash,
+          message: `Deposited ${getPoolLabel(selectedPool)}`,
+        });
+      } else {
+        const token0Contract = new Contract(token0Address, ERC20_ABI, signer);
+        const token1Contract = new Contract(token1Address, ERC20_ABI, signer);
+
+        const allowance0 = await token0Contract.allowance(
+          user,
+          UNIV2_ROUTER_ADDRESS
+        );
+        if (allowance0 < parsed0) {
+          await (
+            await token0Contract.approve(UNIV2_ROUTER_ADDRESS, parsed0)
+          ).wait();
+        }
+
+        const allowance1 = await token1Contract.allowance(
+          user,
+          UNIV2_ROUTER_ADDRESS
+        );
+        if (allowance1 < parsed1) {
+          await (
+            await token1Contract.approve(UNIV2_ROUTER_ADDRESS, parsed1)
+          ).wait();
+        }
+
+        const tx = await router.addLiquidity(
+          token0Address,
+          token1Address,
+          parsed0,
+          parsed1,
+          0, // amountAMin
+          0, // amountBMin
+          user,
+          deadline
+        );
+        const receipt = await tx.wait();
+        setActionStatus({
+          variant: "success",
+          hash: receipt.hash,
+          message: `Deposited ${getPoolLabel(selectedPool)}`,
+        });
+      }
+
       setLpRefreshTick((t) => t + 1);
     } catch (e) {
       const userRejected =
@@ -348,17 +522,24 @@ export default function LiquiditySection() {
       const lpAmount = withdrawLp ? Number(withdrawLp) : 0;
       if (lpAmount <= 0) throw new Error("Enter LP amount to withdraw");
 
+      if (!selectedPool) {
+        throw new Error("Seleziona un pool");
+      }
+      if (!poolSupportsActions) {
+        throw new Error(
+          "Pool non supportato: manca l'indirizzo di uno dei token"
+        );
+      }
+
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
 
-      const { pairAddress } = await getV2PairReserves(
-        provider,
-        WETH_ADDRESS,
-        USDC_ADDRESS
-      );
+      const resolvedPair =
+        pairInfo ||
+        (await getV2PairReserves(provider, token0Address, token1Address));
 
-      const pairErc20 = new Contract(pairAddress, ERC20_ABI, signer);
+      const pairErc20 = new Contract(resolvedPair.pairAddress, ERC20_ABI, signer);
       const lpDecimals = await pairErc20.decimals();
       const lpValue = parseUnits(lpAmount.toString(), lpDecimals);
 
@@ -380,19 +561,35 @@ export default function LiquiditySection() {
       );
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
 
-      const tx = await router.removeLiquidityETH(
-        USDC_ADDRESS,
-        lpValue,
-        0, // amountTokenMin
-        0, // amountETHMin
-        user,
-        deadline
-      );
+      let tx;
+      if (usesNativeEth) {
+        const tokenAddress =
+          selectedPool.token0Symbol === "ETH" ? token1Address : token0Address;
+        tx = await router.removeLiquidityETH(
+          tokenAddress,
+          lpValue,
+          0, // amountTokenMin
+          0, // amountETHMin
+          user,
+          deadline
+        );
+      } else {
+        tx = await router.removeLiquidity(
+          token0Address,
+          token1Address,
+          lpValue,
+          0, // amountAMin
+          0, // amountBMin
+          user,
+          deadline
+        );
+      }
+
       const receipt = await tx.wait();
       setActionStatus({
         variant: "success",
         hash: receipt.hash,
-        message: "Withdrew liquidity",
+        message: `Withdrew ${getPoolLabel(selectedPool)}`,
       });
       setLpRefreshTick((t) => t + 1);
     } catch (e) {
@@ -548,6 +745,8 @@ export default function LiquiditySection() {
                 />
               </svg>
               <input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search pools..."
                 className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
               />
@@ -569,14 +768,24 @@ export default function LiquiditySection() {
         </div>
 
         <div className="px-2 sm:px-4 pb-3">
-          {pools.map((p) => {
+          {filteredPools.map((p) => {
             const token0 = TOKENS[p.token0Symbol];
             const token1 = TOKENS[p.token1Symbol];
+            const isSelected = selectedPoolId === p.id;
+            const rowSupports =
+              resolveTokenAddress(p.token0Symbol) &&
+              resolveTokenAddress(p.token1Symbol);
 
             return (
-              <div
+              <button
+                type="button"
                 key={p.id}
-                className="flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl hover:bg-slate-900/80 border border-transparent hover:border-slate-800 transition"
+                onClick={() => setSelectedPoolId(p.id)}
+                className={`w-full text-left flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl transition border ${
+                  isSelected
+                    ? "bg-slate-900/90 border-sky-700/60 shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)]"
+                    : "border-transparent hover:border-slate-800 hover:bg-slate-900/70"
+                }`}
               >
                 <div className="md:col-span-4 flex items-center gap-3">
                   <div className="flex -space-x-2">
@@ -593,8 +802,18 @@ export default function LiquiditySection() {
                     <div className="text-sm font-semibold">
                       {p.token0Symbol} / {p.token1Symbol}
                     </div>
-                    <div className="text-[11px] text-slate-500 capitalize">
+                    <div className="text-[11px] text-slate-500 capitalize flex items-center gap-2">
                       {p.poolType || "volatile"} pool
+                      {isSelected && (
+                        <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200 border border-sky-500/30">
+                          Active
+                        </span>
+                      )}
+                      {!rowSupports && (
+                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200 border border-amber-500/30">
+                          Solo dati
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -647,39 +866,71 @@ export default function LiquiditySection() {
                 <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
                   {p.emissionApr.toFixed(2)}%
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
 
-        {/* ETH/USDC actions */}
+        {/* Actions */}
         <div className="px-4 pb-4 border-t border-slate-800/70 pt-4 bg-slate-900/40 rounded-b-3xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                Active pool
+              </div>
+              <div className="text-sm font-semibold text-slate-100">
+                {getPoolLabel(selectedPool)}
+              </div>
+              {!poolSupportsActions && (
+                <div className="text-[11px] text-amber-200 mt-1">
+                  Interazione disabilitata: manca l&apos;indirizzo on-chain di almeno un token.
+                </div>
+              )}
+              {pairError && (
+                <div className="text-[11px] text-amber-200 mt-1">
+                  {pairError}
+                </div>
+              )}
+            </div>
+            {pairInfo?.pairAddress && (
+              <a
+                href={`https://sepolia.etherscan.io/address/${pairInfo.pairAddress}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs text-sky-400 hover:text-sky-300 underline"
+              >
+                View pair on SepoliaScan
+              </a>
+            )}
+          </div>
           <div className="flex flex-col lg:flex-row lg:items-center gap-4">
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
               <input
-                value={depositEth}
+                value={depositToken0}
                 onChange={(e) => {
-                  setLastEdited("ETH");
-                  setDepositEth(e.target.value);
+                  setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+                  setDepositToken0(e.target.value);
                 }}
-                placeholder="ETH amount"
+                placeholder={`${token0Meta?.symbol || "Token A"} amount`}
                 className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <input
-                value={depositUsdc}
+                value={depositToken1}
                 onChange={(e) => {
-                  setLastEdited("USDC");
-                  setDepositUsdc(e.target.value);
+                  setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
+                  setDepositToken1(e.target.value);
                 }}
-                placeholder="USDC amount"
+                placeholder={`${token1Meta?.symbol || "Token B"} amount`}
                 className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
               />
               <button
-                disabled={actionLoading}
+                disabled={actionLoading || !poolSupportsActions || !!pairError}
                 onClick={handleDeposit}
                 className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60 w-full md:w-auto"
               >
-                {actionLoading ? "Processing..." : "Deposit ETH/USDC"}
+                {actionLoading
+                  ? "Processing..."
+                  : `Deposit ${getPoolLabel(selectedPool)}`}
               </button>
             </div>
             <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -707,11 +958,13 @@ export default function LiquiditySection() {
                 </div>
               )}
               <button
-                disabled={actionLoading}
+                disabled={actionLoading || !poolSupportsActions || !!pairError}
                 onClick={handleWithdraw}
                 className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
               >
-                {actionLoading ? "Processing..." : "Withdraw ETH/USDC"}
+                {actionLoading
+                  ? "Processing..."
+                  : `Withdraw ${getPoolLabel(selectedPool)}`}
               </button>
             </div>
           </div>
