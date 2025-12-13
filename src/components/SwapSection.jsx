@@ -12,7 +12,7 @@ import {
   UNIV2_ROUTER_ADDRESS,
 } from "../config/web3";
 
-const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI"];
+const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC"];
 
 function TokenSelector({ side, selected, onSelect, balances }) {
   const [open, setOpen] = useState(false);
@@ -117,6 +117,9 @@ export default function SwapSection({ balances }) {
   const isUsdcUsdt =
     (sellToken === "USDC" && buyToken === "USDT") ||
     (sellToken === "USDT" && buyToken === "USDC");
+  const isUsdcWbtc =
+    (sellToken === "USDC" && buyToken === "WBTC") ||
+    (sellToken === "WBTC" && buyToken === "USDC");
   const isEthDai =
     (sellToken === "ETH" || sellToken === "WETH") && buyToken === "DAI";
   const isDaiEth =
@@ -137,6 +140,7 @@ export default function SwapSection({ balances }) {
     isUsdcDai ||
     isUsdcUsdt ||
     isWethDai ||
+    isUsdcWbtc ||
     isDirectEthWeth;
 
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
@@ -154,7 +158,7 @@ export default function SwapSection({ balances }) {
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
         setQuoteError(
-          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT/WBTC, WETH <-> DAI, USDC <-> WBTC"
         );
         return;
       }
@@ -290,7 +294,7 @@ export default function SwapSection({ balances }) {
       }
       if (!isSupported) {
         throw new Error(
-          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT, WETH <-> DAI"
+          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT/WBTC, WETH <-> DAI, USDC <-> WBTC"
         );
       }
       if (!quoteOutRaw) {
@@ -415,6 +419,11 @@ export default function SwapSection({ balances }) {
             sellToken === "USDC"
               ? [TOKENS.USDC.address, TOKENS.USDT.address]
               : [TOKENS.USDT.address, TOKENS.USDC.address];
+        } else if (isUsdcWbtc) {
+          path =
+            sellToken === "USDC"
+              ? [TOKENS.USDC.address, TOKENS.WBTC.address]
+              : [TOKENS.WBTC.address, TOKENS.USDC.address];
         } else if (isWethDai) {
           path =
             sellToken === "WETH"
