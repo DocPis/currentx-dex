@@ -122,6 +122,8 @@ export default function SwapSection({ balances }) {
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [pairInfo, setPairInfo] = useState(null);
+  const [approveNeeded, setApproveNeeded] = useState(false);
+  const [approveLoading, setApproveLoading] = useState(false);
 
   const isEthUsdc =
     (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDC";
@@ -143,10 +145,11 @@ export default function SwapSection({ balances }) {
       setQuoteOutRaw(null);
       setPriceImpact(null);
       setPairInfo(null);
+      setApproveNeeded(false);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
-        setQuoteError("Swap support: ETH/WETH ⇄ USDC, ETH ⇄ WETH");
+        setQuoteError("Swap support: ETH/WETH <-> USDC, ETH <-> WETH");
         return;
       }
 
@@ -204,6 +207,24 @@ export default function SwapSection({ balances }) {
               ? 18
               : TOKENS.USDC.decimals,
         });
+
+        // Precompute allowance requirement for ERC20 sells
+        if (sellToken !== "ETH" && sellAddress) {
+          try {
+            const signer = await provider.getSigner();
+            const user = await signer.getAddress();
+            const token = new Contract(sellAddress, ERC20_ABI, signer);
+            const allowance = await token.allowance(
+              user,
+              UNIV2_ROUTER_ADDRESS
+            );
+            setApproveNeeded(allowance < amountWei);
+          } catch {
+            setApproveNeeded(false);
+          }
+        } else {
+          setApproveNeeded(false);
+        }
       } catch (e) {
         if (cancelled) return;
         setQuoteError(e.message || "Failed to fetch quote");
@@ -227,6 +248,48 @@ export default function SwapSection({ balances }) {
     ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
     : null;
 
+  const handleApprove = async () => {
+    if (sellToken === "ETH") return;
+    try {
+      setApproveLoading(true);
+      setSwapStatus(null);
+      if (!amountIn || Number.isNaN(Number(amountIn))) {
+        throw new Error("Enter a valid amount");
+      }
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+      const sellAddress = TOKENS[sellKey].address;
+      const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+      const token = new Contract(sellAddress, ERC20_ABI, signer);
+      const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+      if (allowance >= amountWei) {
+        setApproveNeeded(false);
+        return;
+      }
+      const tx = await token.approve(UNIV2_ROUTER_ADDRESS, amountWei);
+      await tx.wait();
+      setApproveNeeded(false);
+      setSwapStatus({
+        variant: "success",
+        message: "Approval successful",
+      });
+    } catch (e) {
+      const userRejected =
+        e?.code === 4001 ||
+        e?.code === "ACTION_REJECTED" ||
+        (e?.message || "").toLowerCase().includes("user denied");
+      setSwapStatus({
+        variant: "error",
+        message: userRejected
+          ? "Approval was rejected in wallet."
+          : e.message || "Approve failed",
+      });
+    } finally {
+      setApproveLoading(false);
+    }
+  };
+
   const handleSwap = async () => {
     try {
       setSwapStatus(null);
@@ -235,7 +298,7 @@ export default function SwapSection({ balances }) {
         throw new Error("Enter a valid amount");
       }
       if (!isSupported) {
-        throw new Error("Swap support: ETH/WETH ⇄ USDC, ETH ⇄ WETH");
+        throw new Error("Swap support: ETH/WETH <-> USDC, ETH <-> WETH");
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
@@ -284,14 +347,11 @@ export default function SwapSection({ balances }) {
         UNIV2_ROUTER_ABI,
         signer
       );
-      const deadline =
-        Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
 
       let tx;
       if (sellToken === "ETH") {
-        // ETH -> USDC (path: WETH -> USDC)
         const path = [WETH_ADDRESS, TOKENS.USDC.address];
-        console.log("router swapExactETHForTokens", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
         tx = await router.swapExactETHForTokens(
           minOut,
           path,
@@ -300,14 +360,12 @@ export default function SwapSection({ balances }) {
           { value: amountWei }
         );
       } else if (buyToken === "ETH") {
-        // USDC -> ETH (path: USDC -> WETH)
         const path = [TOKENS.USDC.address, WETH_ADDRESS];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
           await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
         }
-        console.log("router swapExactTokensForETH", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
         tx = await router.swapExactTokensForETH(
           amountWei,
           minOut,
@@ -316,14 +374,12 @@ export default function SwapSection({ balances }) {
           deadline
         );
       } else {
-        // WETH -> USDC
         const path = [WETH_ADDRESS, TOKENS.USDC.address];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
           await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
         }
-        console.log("router swapExactTokensForTokens", { path, amountWei: amountWei.toString(), minOut: minOut.toString(), deadline });
         tx = await router.swapExactTokensForTokens(
           amountWei,
           minOut,
@@ -488,29 +544,40 @@ export default function SwapSection({ balances }) {
             </div>
           </div>
 
-          <button
-            onClick={handleSwap}
-            disabled={swapLoading || quoteLoading}
-            className="w-full sm:w-44 py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
-          >
-            <span className="inline-flex items-center gap-2 justify-center">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
+          <div className="flex flex-col gap-2 w-full sm:w-44">
+            {approveNeeded && sellToken !== "ETH" ? (
+              <button
+                onClick={handleApprove}
+                disabled={approveLoading || quoteLoading}
+                className="w-full py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm font-semibold text-white hover:border-sky-500/60 transition disabled:opacity-60"
               >
-                <path
-                  d="M5 12h14M13 6l6 6-6 6"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              {swapLoading ? "Swapping..." : "Swap now"}
-            </span>
-          </button>
+                {approveLoading ? "Approving..." : `Approve ${sellToken}`}
+              </button>
+            ) : null}
+            <button
+              onClick={handleSwap}
+              disabled={swapLoading || quoteLoading || (approveNeeded && sellToken !== "ETH")}
+              className="w-full py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
+            >
+              <span className="inline-flex items-center gap-2 justify-center">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M5 12h14M13 6l6 6-6 6"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                {swapLoading ? "Swapping..." : "Swap now"}
+              </span>
+            </button>
+          </div>
         </div>
 
         {swapStatus && (
