@@ -1,6 +1,8 @@
 // src/components/WalletModal.jsx
 import React from "react";
 
+import metamaskIcon from "../assets/wallets/metamask.png";
+
 const wallets = [
   {
     id: "trustwallet",
@@ -9,7 +11,7 @@ const wallets = [
     accent: "from-sky-500 to-indigo-500",
     cta: true,
   },
-  { id: "metamask", name: "MetaMask", badge: "Detected" },
+  { id: "metamask", name: "MetaMask", badge: "Detected", logo: metamaskIcon },
   { id: "rabbit", name: "Rabby Wallet", badge: "Detected" },
 ];
 
@@ -59,15 +61,23 @@ export default function WalletModal({
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div
-                    className={`h-10 w-10 rounded-xl flex items-center justify-center text-sm font-semibold ${
-                      wallet.cta
-                        ? "bg-white/15 text-white"
-                        : "bg-slate-800 text-slate-100"
-                    }`}
-                  >
-                    {wallet.name.slice(0, 2).toUpperCase()}
-                  </div>
+                  {wallet.logo ? (
+                    <img
+                      src={wallet.logo}
+                      alt={`${wallet.name} logo`}
+                      className="h-10 w-10 rounded-xl border border-slate-800 bg-slate-900 object-contain"
+                    />
+                  ) : (
+                    <div
+                      className={`h-10 w-10 rounded-xl flex items-center justify-center text-sm font-semibold ${
+                        wallet.cta
+                          ? "bg-white/15 text-white"
+                          : "bg-slate-800 text-slate-100"
+                      }`}
+                    >
+                      {wallet.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
                   <div className="flex flex-col">
                     <span className="font-semibold">{wallet.name}</span>
                     {wallet.description && (
