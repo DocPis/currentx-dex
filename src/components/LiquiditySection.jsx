@@ -851,8 +851,7 @@ export default function LiquiditySection() {
   };
 
   return (
-    <>
-      <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
+    <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
       {/* hero / stats */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
         <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
@@ -1485,9 +1484,9 @@ export default function LiquiditySection() {
               </div>
             )}
           </div>
+          </div>
         </div>
-      </div>
-      </div>
+      )}
       {showTokenList && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm px-4 py-8 overflow-y-auto">
           <div className="w-full max-w-5xl bg-[#060a1a] border border-slate-800 rounded-3xl shadow-2xl shadow-black/50 overflow-hidden">
@@ -1613,6 +1612,6 @@ export default function LiquiditySection() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }
