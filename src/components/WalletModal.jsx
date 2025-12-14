@@ -2,6 +2,7 @@
 import React from "react";
 
 import metamaskIcon from "../assets/wallets/metamask.png";
+import rabbyIcon from "../assets/wallets/rabby.png";
 
 const wallets = [
   {
@@ -12,7 +13,7 @@ const wallets = [
     cta: true,
   },
   { id: "metamask", name: "MetaMask", badge: "Detected", logo: metamaskIcon },
-  { id: "rabbit", name: "Rabby Wallet", badge: "Detected" },
+  { id: "rabby", name: "Rabby Wallet", badge: "Detected", logo: rabbyIcon },
 ];
 
 export default function WalletModal({
