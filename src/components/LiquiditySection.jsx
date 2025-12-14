@@ -321,6 +321,16 @@ export default function LiquiditySection() {
     );
   }, [tokenSelection?.baseSymbol]);
 
+  const selectionPools = useMemo(() => {
+    const base = tokenSelection?.baseSymbol;
+    const pair = tokenSelection?.pairSymbol;
+    if (!base || !pair) return [];
+    return pools.filter((p) => {
+      const symbols = [p.token0Symbol, p.token1Symbol];
+      return symbols.includes(base) && symbols.includes(pair);
+    });
+  }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
+
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
@@ -1066,6 +1076,88 @@ export default function LiquiditySection() {
                 )}
               </div>
             </div>
+
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm mb-2">
+                  <span className="h-2 w-2 rounded-full bg-sky-400" />
+                  Concentrated Pools
+                </div>
+                <div className="text-xs text-slate-400">
+                  These pools require you to specify a price range in which your liquidity will be active.
+                </div>
+              </div>
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm mb-2">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                  Basic Pools
+                </div>
+                <div className="text-xs text-slate-400">
+                  Constant-product pools spanning the full range, with no active management required.
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 space-y-3">
+              {selectionPools.map((p) => (
+                <div
+                  key={`sel-${p.id}`}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 shadow-lg shadow-black/30"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      {[TOKENS[p.token0Symbol], TOKENS[p.token1Symbol]].map((t, idx) => (
+                        <img
+                          key={idx}
+                          src={t?.logo}
+                          alt={`${t?.symbol} logo`}
+                          className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                        />
+                      ))}
+                      <div className="flex flex-col">
+                        <div className="text-sm font-semibold text-slate-100">
+                          {p.token0Symbol} / {p.token1Symbol}
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                          {p.poolType || "volatile"} pool
+                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] border border-slate-700">
+                            Live
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm text-slate-200">
+                      <div className="text-right">
+                        <div className="text-[11px] text-slate-500">APR</div>
+                        <div>{p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[11px] text-slate-500">TVL</div>
+                        <div>{formatNumber(p.tvlUsd)}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                        onClick={() => {
+                          // keep selection; optionally scroll to deposit inputs
+                          const elem = document.getElementById("pool-actions");
+                          if (elem) elem.scrollIntoView({ behavior: "smooth" });
+                        }}
+                      >
+                        New deposit
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!selectionPools.length && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-4 text-sm text-slate-400">
+                  No pools found for this pair yet.
+                </div>
+              )}
+            </div>
+
+            <div id="pool-actions" />
           </div>
         </div>
       ) : (
