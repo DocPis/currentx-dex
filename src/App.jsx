@@ -4,6 +4,7 @@ import Header from "./components/Header";
 import SwapSection from "./components/SwapSection";
 import LiquiditySection from "./components/LiquiditySection";
 import Dashboard from "./components/Dashboard";
+import Farms from "./components/Farms";
 import { useWallet } from "./hooks/useWallet";
 import { useBalances } from "./hooks/useBalances";
 import WalletModal from "./components/WalletModal";
@@ -82,6 +83,7 @@ export default function App() {
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
+            { id: "farms", label: "Farms" },
           ].map((item) => (
             <button
               key={item.id}
@@ -102,6 +104,9 @@ export default function App() {
         {tab === "swap" && <SwapSection balances={balances} />}
         {tab === "liquidity" && <LiquiditySection />}
         {tab === "dashboard" && <Dashboard />}
+        {tab === "farms" && (
+          <Farms address={address} onConnect={handleConnect} />
+        )}
       </main>
 
       <WalletModal

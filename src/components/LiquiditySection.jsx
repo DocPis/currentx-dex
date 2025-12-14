@@ -1077,27 +1077,6 @@ export default function LiquiditySection() {
               </div>
             </div>
 
-            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm mb-2">
-                  <span className="h-2 w-2 rounded-full bg-sky-400" />
-                  Concentrated Pools
-                </div>
-                <div className="text-xs text-slate-400">
-                  These pools require you to specify a price range in which your liquidity will be active.
-                </div>
-              </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm mb-2">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  Basic Pools
-                </div>
-                <div className="text-xs text-slate-400">
-                  Constant-product pools spanning the full range, with no active management required.
-                </div>
-              </div>
-            </div>
-
             <div className="mt-6 space-y-3">
               {selectionPools.map((p) => (
                 <div
