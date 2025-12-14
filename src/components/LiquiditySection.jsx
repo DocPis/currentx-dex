@@ -555,6 +555,19 @@ export default function LiquiditySection() {
     if (target) target.scrollIntoView({ behavior: "smooth" });
   };
 
+  const handleOpenPoolDepositFromRow = (pool) => {
+    if (!pool) return;
+    setTokenSelection({
+      baseSymbol: pool.token0Symbol,
+      pairSymbol: pool.token1Symbol,
+    });
+    setSelectedPoolId(pool.id);
+    setSelectionDepositPoolId(pool.id);
+    setPairSelectorOpen(false);
+    const target = document.getElementById("token-selection-deposit");
+    if (target) target.scrollIntoView({ behavior: "smooth" });
+  };
+
   useEffect(() => {
     let cancelled = false;
     const loadBalances = async () => {
@@ -1426,8 +1439,8 @@ export default function LiquiditySection() {
             <div className="col-span-2 text-right">Volume</div>
             <div className="col-span-2 text-right">Fees</div>
             <div className="col-span-2 text-right">TVL</div>
-            <div className="col-span-1 text-right">Fee APR</div>
             <div className="col-span-1 text-right">Emission APR</div>
+            <div className="col-span-1 text-right">Action</div>
           </div>
         </div>
 
@@ -1502,19 +1515,22 @@ export default function LiquiditySection() {
                     </span>
                   </div>
                   <div className="flex justify-between w-full">
-                    <span>Fee APR</span>
-                    <span className="text-slate-100">
-                      {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between w-full">
                     <span>Emission APR</span>
                     <span className="text-slate-100">
                       {p.emissionApr !== undefined
                         ? `${p.emissionApr.toFixed(2)}%`
-                        : "N/A"}
+                        : p.feeApr
+                          ? `${p.feeApr.toFixed(2)}%`
+                          : "N/A"}
                     </span>
                   </div>
+                  <button
+                    type="button"
+                    className="mt-1 px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                    onClick={() => handleOpenPoolDepositFromRow(p)}
+                  >
+                    Deposit / Withdraw
+                  </button>
                 </div>
 
                 <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
@@ -1527,12 +1543,20 @@ export default function LiquiditySection() {
                   {formatNumber(p.tvlUsd)}
                 </div>
                 <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
-                  {p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}
-                </div>
-                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
                   {p.emissionApr !== undefined
                     ? `${p.emissionApr.toFixed(2)}%`
-                    : "N/A"}
+                    : p.feeApr
+                      ? `${p.feeApr.toFixed(2)}%`
+                      : "N/A"}
+                </div>
+                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                    onClick={() => handleOpenPoolDepositFromRow(p)}
+                  >
+                    Deposit
+                  </button>
                 </div>
               </button>
             );
