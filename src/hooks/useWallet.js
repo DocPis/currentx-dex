@@ -8,9 +8,19 @@ import {
   getInjectedProviderByType,
 } from "../config/web3";
 
+const SESSION_KEY = "cx_session_connected";
+
 export function useWallet() {
   const [address, setAddress] = useState(null);
   const [chainId, setChainId] = useState(null);
+  const [sessionConnected, setSessionConnected] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return sessionStorage.getItem(SESSION_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  });
 
   useEffect(() => {
     let removeListeners = null;
@@ -49,6 +59,7 @@ export function useWallet() {
     };
 
     const attemptInit = () => {
+      if (!sessionConnected) return;
       const eth = getInjectedEthereum();
       if (eth && !removeListeners) {
         initWithProvider(eth);
@@ -57,7 +68,7 @@ export function useWallet() {
 
     attemptInit();
 
-    if (!getInjectedEthereum()) {
+    if (!getInjectedEthereum() && sessionConnected) {
       const handleEthereumInit = () => attemptInit();
       window.addEventListener(
         "ethereum#initialized",
@@ -80,7 +91,7 @@ export function useWallet() {
       if (initTimeout) clearTimeout(initTimeout);
       if (removeListeners) removeListeners();
     };
-  }, []);
+  }, [sessionConnected]);
 
   const connect = async (walletType) => {
     const injected = walletType
@@ -105,12 +116,24 @@ export function useWallet() {
     setAddress(primaryAccount);
     const cid = await provider.send("eth_chainId", []);
     setChainId(cid);
+    try {
+      sessionStorage.setItem(SESSION_KEY, "1");
+      setSessionConnected(true);
+    } catch (e) {
+      // ignore
+    }
     return primaryAccount;
   };
 
   const disconnect = () => {
     setAddress(null);
     setChainId(null);
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      setSessionConnected(false);
+    } catch (e) {
+      // ignore
+    }
   };
 
   const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
