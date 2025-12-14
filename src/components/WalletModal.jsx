@@ -1,20 +1,20 @@
 // src/components/WalletModal.jsx
-import React from "react";
+import React, { useEffect, useState } from "react";
 
 import metamaskIcon from "../assets/wallets/metamask.png";
 import rabbyIcon from "../assets/wallets/rabby.png";
 import trustIcon from "../assets/wallets/trustwallet.png";
+import { getInjectedProviderByType } from "../config/web3";
 
 const wallets = [
   {
     id: "trustwallet",
     name: "Trust Wallet",
     description: "Mobile & browser extension",
-    badge: "Detected",
     logo: trustIcon,
   },
-  { id: "metamask", name: "MetaMask", badge: "Detected", logo: metamaskIcon },
-  { id: "rabby", name: "Rabby Wallet", badge: "Detected", logo: rabbyIcon },
+  { id: "metamask", name: "MetaMask", logo: metamaskIcon },
+  { id: "rabby", name: "Rabby Wallet", logo: rabbyIcon },
 ];
 
 export default function WalletModal({
@@ -22,6 +22,21 @@ export default function WalletModal({
   onClose,
   onSelectWallet,
 }) {
+  const [detected, setDetected] = useState({});
+
+  useEffect(() => {
+    if (!open) return;
+    const map = {};
+    ["metamask", "rabby", "trustwallet"].forEach((id) => {
+      try {
+        map[id] = Boolean(getInjectedProviderByType(id));
+      } catch (e) {
+        map[id] = false;
+      }
+    });
+    setDetected(map);
+  }, [open]);
+
   if (!open) return null;
 
   const handleSelect = (id) => {
@@ -53,9 +68,9 @@ export default function WalletModal({
         <div className="p-3 space-y-3 max-h-[75vh] overflow-y-auto">
           {wallets.map((wallet) => (
             <button
-            key={wallet.id}
-            onClick={() => handleSelect(wallet.id)}
-            className={`w-full text-left rounded-2xl border border-slate-800 px-4 py-3 transition hover:border-sky-500/50 hover:shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)] ${
+              key={wallet.id}
+              onClick={() => handleSelect(wallet.id)}
+              className={`w-full text-left rounded-2xl border border-slate-800 px-4 py-3 transition hover:border-sky-500/50 hover:shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)] ${
                 wallet.cta
                   ? `bg-gradient-to-r ${wallet.accent} text-white`
                   : "bg-slate-900/60 text-slate-100"
@@ -89,9 +104,9 @@ export default function WalletModal({
                     )}
                   </div>
                 </div>
-                {wallet.badge && (
+                {detected[wallet.id] && (
                   <span className="text-[11px] px-2 py-1 rounded-full bg-slate-800 text-slate-200 border border-slate-700">
-                    {wallet.badge}
+                    Detected
                   </span>
                 )}
               </div>
