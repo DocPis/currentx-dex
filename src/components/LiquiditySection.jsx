@@ -15,6 +15,12 @@ import { fetchV2PairData } from "../config/subgraph";
 
 const basePools = [
   {
+    id: "crx-weth",
+    token0Symbol: "CRX",
+    token1Symbol: "WETH",
+    poolType: "volatile",
+  },
+  {
     id: "weth-usdc",
     token0Symbol: "WETH",
     token1Symbol: "USDC",
