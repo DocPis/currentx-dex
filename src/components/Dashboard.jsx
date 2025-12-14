@@ -145,8 +145,8 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <StatCard label="TVL totale" value={stats?.totalLiquidityUsd} />
-        <StatCard label="Volume totale" value={stats?.totalVolumeUsd} />
+        <StatCard label="Total TVL" value={stats?.totalLiquidityUsd} />
+        <StatCard label="Total Volume" value={stats?.totalVolumeUsd} />
         <StatCard
           label="Pairs"
           value={stats?.pairCount}
@@ -239,7 +239,7 @@ export default function Dashboard() {
           <table className="min-w-full text-sm text-left">
             <thead className="text-slate-400 text-xs uppercase">
               <tr>
-                <th className="py-2 pr-4">Data</th>
+                <th className="py-2 pr-4">Date</th>
                 <th className="py-2 pr-4 text-right">TVL</th>
                 <th className="py-2 pr-4 text-right">Volume 24h</th>
               </tr>
