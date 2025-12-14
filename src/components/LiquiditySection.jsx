@@ -124,6 +124,8 @@ export default function LiquiditySection() {
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
   const [showTokenList, setShowTokenList] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
+  const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
+  const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
 
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
@@ -306,6 +308,18 @@ export default function LiquiditySection() {
 
   const poolsCount = pools.length;
   const tokensCount = tokenEntries.length;
+  const baseSelected = tokenSelection?.baseSymbol
+    ? TOKENS[tokenSelection.baseSymbol]
+    : null;
+  const pairSelected = tokenSelection?.pairSymbol
+    ? TOKENS[tokenSelection.pairSymbol]
+    : null;
+  const pairOptions = useMemo(() => {
+    if (!tokenSelection?.baseSymbol) return [];
+    return Object.values(TOKENS).filter(
+      (t) => t.symbol !== tokenSelection.baseSymbol
+    );
+  }, [tokenSelection?.baseSymbol]);
 
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
@@ -508,6 +522,13 @@ export default function LiquiditySection() {
     if (base <= 0) return;
     const target = base * percentage;
     setWithdrawLp(target.toFixed(4));
+  };
+
+  const handleTokenPick = (token) => {
+    if (!token?.symbol) return;
+    setTokenSelection({ baseSymbol: token.symbol, pairSymbol: null });
+    setShowTokenList(false);
+    setPairSelectorOpen(false);
   };
 
   useEffect(() => {
@@ -982,6 +1003,124 @@ export default function LiquiditySection() {
             </button>
           </div>
         </div>
+        {tokenSelection && (
+          <div className="px-4 sm:px-6 pb-4">
+            <div className="max-w-4xl mx-auto rounded-3xl bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/40 p-6">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <div>
+                  <div className="text-sm font-semibold text-slate-50">New deposit</div>
+                  <div className="text-xs text-slate-500">Select a token and pair to start providing liquidity.</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTokenSelection(null);
+                    setPairSelectorOpen(false);
+                  }}
+                  className="h-9 px-3 rounded-full border border-slate-800 bg-slate-900 text-slate-200 text-xs hover:border-slate-600"
+                >
+                  Back to pools
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="rounded-2xl bg-slate-950/60 border border-slate-800 px-4 py-3 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {baseSelected?.logo && (
+                      <img
+                        src={baseSelected.logo}
+                        alt={`${baseSelected.symbol} logo`}
+                        className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      />
+                    )}
+                    <div className="flex flex-col">
+                      <span className="text-xs text-slate-500">Token you want to deposit</span>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {baseSelected?.symbol || tokenSelection.baseSymbol}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTokenList(true)}
+                    className="h-9 w-9 flex items-center justify-center rounded-full border border-slate-800 text-slate-300 hover:border-slate-600"
+                    aria-label="Change base token"
+                  >
+                    ↺
+                  </button>
+                </div>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setPairSelectorOpen((v) => !v)}
+                    className="w-full rounded-2xl bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg shadow-blue-500/30"
+                  >
+                    <div className="flex items-center gap-3">
+                      {pairSelected?.logo ? (
+                        <img
+                          src={pairSelected.logo}
+                          alt={`${pairSelected.symbol} logo`}
+                          className="h-10 w-10 rounded-full border border-blue-400/40 bg-blue-500/20 object-contain"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-blue-500/20 border border-blue-400/40" />
+                      )}
+                      <div className="flex flex-col text-left">
+                        <span className="text-xs text-blue-100/80">Token you want to pair with</span>
+                        <span className="text-sm font-semibold">
+                          {pairSelected?.symbol || "Select token"}
+                        </span>
+                      </div>
+                    </div>
+                    <svg
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      className={`h-4 w-4 transition ${pairSelectorOpen ? "rotate-180" : ""}`}
+                    >
+                      <path
+                        d="M6 8l4 4 4-4"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </button>
+                  {pairSelectorOpen && (
+                    <div className="absolute z-30 mt-2 w-full max-h-72 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                      {pairOptions.map((opt) => (
+                        <button
+                          key={`pair-${opt.symbol}`}
+                          type="button"
+                          onClick={() => {
+                            setTokenSelection((prev) => ({
+                              ...prev,
+                              pairSymbol: opt.symbol,
+                            }));
+                            setPairSelectorOpen(false);
+                          }}
+                          className="w-full px-4 py-3 flex items-center gap-3 text-sm text-slate-100 hover:bg-slate-800/70"
+                        >
+                          <img
+                            src={opt.logo}
+                            alt={`${opt.symbol} logo`}
+                            className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                          />
+                          <div className="flex flex-col items-start">
+                            <span className="font-semibold">{opt.symbol}</span>
+                            <span className="text-[11px] text-slate-500">{opt.name}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="hidden md:block px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
           <div className="grid grid-cols-12 py-2">
             <div className="col-span-4">Pools</div>
@@ -1429,9 +1568,11 @@ export default function LiquiditySection() {
 
             <div className="divide-y divide-slate-800">
               {filteredTokens.map((t) => (
-                <div
+                <button
+                  type="button"
+                  onClick={() => handleTokenPick(t)}
                   key={t.symbol}
-                  className="grid grid-cols-12 items-center px-5 py-3 hover:bg-slate-900/40 transition"
+                  className="w-full grid grid-cols-12 items-center px-5 py-3 hover:bg-slate-900/40 transition text-left"
                 >
                   <div className="col-span-12 md:col-span-5 flex items-center gap-3">
                     <img
@@ -1461,7 +1602,7 @@ export default function LiquiditySection() {
                     --
                     <div className="text-[11px] text-slate-500">Balance</div>
                   </div>
-                </div>
+                </button>
               ))}
               {!filteredTokens.length && (
                 <div className="px-5 py-6 text-sm text-slate-400">
