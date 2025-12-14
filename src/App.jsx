@@ -14,18 +14,13 @@ export default function App() {
   const { address, isOnSepolia, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
 
-  const handleConnect = async () => {
-    if (address) {
-      const shouldDisconnect = window.confirm(
-        "Disconnect from CurrentX?\nYou can reconnect anytime."
-      );
-      if (shouldDisconnect) {
-        disconnect();
-        await refresh(null);
-      }
-      return;
-    }
+  const handleConnect = () => {
     setShowWalletModal(true);
+  };
+
+  const handleDisconnect = async () => {
+    disconnect();
+    await refresh(null);
   };
 
   const handleWalletSelect = async (walletId) => {
@@ -44,6 +39,8 @@ export default function App() {
         address={address}
         isOnSepolia={isOnSepolia}
         onConnect={handleConnect}
+        onSwitchWallet={() => setShowWalletModal(true)}
+        onDisconnect={handleDisconnect}
         balances={balances}
       />
 
@@ -79,7 +76,7 @@ export default function App() {
       </main>
 
       <WalletModal
-        open={showWalletModal && !address}
+        open={showWalletModal}
         onClose={() => setShowWalletModal(false)}
         onSelectWallet={handleWalletSelect}
       />
