@@ -541,6 +541,15 @@ export default function LiquiditySection() {
     setPairSelectorOpen(false);
   };
 
+  const handleSelectPoolFromPair = (poolId) => {
+    if (!poolId) return;
+    setSelectedPoolId(poolId);
+    setTokenSelection(null);
+    setPairSelectorOpen(false);
+    const target = document.getElementById("pool-actions");
+    if (target) target.scrollIntoView({ behavior: "smooth" });
+  };
+
   useEffect(() => {
     let cancelled = false;
     const loadBalances = async () => {
@@ -1117,11 +1126,7 @@ export default function LiquiditySection() {
                       <button
                         type="button"
                         className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                        onClick={() => {
-                          // keep selection; optionally scroll to deposit inputs
-                          const elem = document.getElementById("pool-actions");
-                          if (elem) elem.scrollIntoView({ behavior: "smooth" });
-                        }}
+                        onClick={() => handleSelectPoolFromPair(p.id)}
                       >
                         New deposit
                       </button>
