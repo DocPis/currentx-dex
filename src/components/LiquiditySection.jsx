@@ -304,6 +304,9 @@ export default function LiquiditySection() {
     });
   }, [tokenEntries, tokenSearch]);
 
+  const poolsCount = pools.length;
+  const tokensCount = tokenEntries.length;
+
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
@@ -932,14 +935,14 @@ export default function LiquiditySection() {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
-              Pools
+              Pools ({poolsCount})
             </span>
             <button
               type="button"
               onClick={() => setShowTokenList(true)}
               className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-300 hover:border-sky-600/60 hover:text-slate-100"
             >
-              Tokens
+              Tokens ({tokensCount})
             </button>
             <span className="hidden sm:inline text-slate-500 text-xs">
               Sorted by TVL | Live (subgraph + on-chain fallback)

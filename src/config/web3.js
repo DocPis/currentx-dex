@@ -368,18 +368,6 @@ function collectInjectedProviders() {
   return out;
 }
 
-const trustNameMatch = (p) => {
-  const name =
-    (p?.walletName ||
-      p?.name ||
-      p?.providerInfo?.name ||
-      p?.info?.name ||
-      "")?.toLowerCase?.() || "";
-  const rdns =
-    (p?.providerInfo?.rdns || p?.info?.rdns || "")?.toLowerCase?.() || "";
-  return name.includes("trust") || rdns.includes("trustwallet") || rdns.includes("trust");
-};
-
 const isTrust = (p) => {
   const name =
     (p?.walletName ||
@@ -429,12 +417,11 @@ export function getInjectedProviderByType(type) {
     if (trustwallet?.ethereum) return trustwallet.ethereum;
     if (trustwallet) return trustwallet;
     if (Array.isArray(ethereum?.providers)) {
-      const tw = ethereum.providers.find((p) => isTrust(p) || trustNameMatch(p));
+      const tw = ethereum.providers.find((p) => isTrust(p));
       if (tw) return tw;
     }
-    if (ethereum && (isTrust(ethereum) || trustNameMatch(ethereum))) return ethereum;
-    // Fallback: single provider scenario
-    if (ethereum && !Array.isArray(ethereum.providers)) return ethereum;
+    if (ethereum && isTrust(ethereum)) return ethereum;
+    return null;
   }
 
   const candidates = collectInjectedProviders();
