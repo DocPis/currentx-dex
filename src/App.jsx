@@ -9,7 +9,7 @@ import { useBalances } from "./hooks/useBalances";
 import WalletModal from "./components/WalletModal";
 
 export default function App() {
-  const [tab, setTab] = useState("swap");
+  const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
   const { address, isOnSepolia, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
