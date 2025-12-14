@@ -3,6 +3,7 @@ import React from "react";
 
 import metamaskIcon from "../assets/wallets/metamask.png";
 import rabbyIcon from "../assets/wallets/rabby.png";
+import trustIcon from "../assets/wallets/trustwallet.png";
 
 const wallets = [
   {
@@ -11,6 +12,7 @@ const wallets = [
     description: "Mobile & browser extension",
     accent: "from-sky-500 to-indigo-500",
     cta: true,
+    logo: trustIcon,
   },
   { id: "metamask", name: "MetaMask", badge: "Detected", logo: metamaskIcon },
   { id: "rabby", name: "Rabby Wallet", badge: "Detected", logo: rabbyIcon },
