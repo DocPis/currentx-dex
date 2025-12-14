@@ -41,13 +41,6 @@ export default function Farms({ address, onConnect }) {
             Deposit your LP tokens and earn our native token (CRX).
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onConnect}
-          className="px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30"
-        >
-          {address ? "Connected" : "Connect wallet"}
-        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
