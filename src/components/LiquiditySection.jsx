@@ -96,6 +96,11 @@ const resolveTokenAddress = (symbol) => {
 const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 
+const shortenAddress = (addr) => {
+  if (!addr) return "Native asset";
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+};
+
 export default function LiquiditySection() {
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
@@ -117,6 +122,8 @@ export default function LiquiditySection() {
   const [tokenBalances, setTokenBalances] = useState(null);
   const [tokenBalanceError, setTokenBalanceError] = useState("");
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
+  const [showTokenList, setShowTokenList] = useState(false);
+  const [tokenSearch, setTokenSearch] = useState("");
 
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
@@ -267,6 +274,35 @@ export default function LiquiditySection() {
       );
     });
   }, [pools, searchTerm]);
+
+  const tokenEntries = useMemo(() => {
+    const tvlMap = {};
+    pools.forEach((p) => {
+      const share = Number(p.tvlUsd || 0) / 2;
+      if (share > 0) {
+        tvlMap[p.token0Symbol] = (tvlMap[p.token0Symbol] || 0) + share;
+        tvlMap[p.token1Symbol] = (tvlMap[p.token1Symbol] || 0) + share;
+      }
+    });
+
+    return Object.values(TOKENS).map((t) => ({
+      ...t,
+      tvlUsd: tvlMap[t.symbol] || 0,
+    }));
+  }, [pools]);
+
+  const filteredTokens = useMemo(() => {
+    const q = tokenSearch.trim().toLowerCase();
+    if (!q) return tokenEntries;
+    return tokenEntries.filter((t) => {
+      const address = t.address || "";
+      return (
+        t.symbol.toLowerCase().includes(q) ||
+        (t.name || "").toLowerCase().includes(q) ||
+        address.toLowerCase().includes(q)
+      );
+    });
+  }, [tokenEntries, tokenSearch]);
 
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
@@ -897,9 +933,13 @@ export default function LiquiditySection() {
             <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
               Pools
             </span>
-            <span className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-500">
+            <button
+              type="button"
+              onClick={() => setShowTokenList(true)}
+              className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-300 hover:border-sky-600/60 hover:text-slate-100"
+            >
               Tokens
-            </span>
+            </button>
             <span className="hidden sm:inline text-slate-500 text-xs">
               Sorted by TVL | Live (subgraph + on-chain fallback)
             </span>
@@ -1304,6 +1344,130 @@ export default function LiquiditySection() {
           </div>
         </div>
       </div>
+    </div>
+      {showTokenList && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm px-4 py-8 overflow-y-auto">
+          <div className="w-full max-w-5xl bg-[#060a1a] border border-slate-800 rounded-3xl shadow-2xl shadow-black/50 overflow-hidden">
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-800">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                  Tokens
+                </div>
+                <div className="text-lg font-semibold text-slate-50">
+                  Available assets ({filteredTokens.length})
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTokenList(false)}
+                className="h-9 w-9 rounded-full bg-slate-900 text-slate-200 flex items-center justify-center border border-slate-800 hover:border-slate-600"
+                aria-label="Close token list"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M6 6l12 12M6 18L18 6"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-5 py-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full md:w-80">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 text-slate-500"
+                >
+                  <circle
+                    cx="11"
+                    cy="11"
+                    r="6"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M15.5 15.5 20 20"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <input
+                  value={tokenSearch}
+                  onChange={(e) => setTokenSearch(e.target.value)}
+                  placeholder="Symbol or address..."
+                  className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
+                <span className="px-2 py-1 rounded-full bg-slate-900 border border-slate-800">
+                  Filters
+                </span>
+                <span className="text-slate-400">Default</span>
+              </div>
+            </div>
+
+            <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
+              <div className="col-span-5">Token</div>
+              <div className="col-span-3 text-right">TVL</div>
+              <div className="col-span-2 text-right">Onchain price</div>
+              <div className="col-span-2 text-right">Balance</div>
+            </div>
+
+            <div className="divide-y divide-slate-800">
+              {filteredTokens.map((t) => (
+                <div
+                  key={t.symbol}
+                  className="grid grid-cols-12 items-center px-5 py-3 hover:bg-slate-900/40 transition"
+                >
+                  <div className="col-span-12 md:col-span-5 flex items-center gap-3">
+                    <img
+                      src={t.logo}
+                      alt={`${t.symbol} logo`}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                    />
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                        {t.symbol}
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                      </div>
+                      <div className="text-[12px] text-slate-400">
+                        {shortenAddress(t.address)}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-span-6 md:col-span-3 text-right text-sm text-slate-100">
+                    {formatNumber(t.tvlUsd)}
+                    <div className="text-[11px] text-slate-500">TVL</div>
+                  </div>
+                  <div className="col-span-6 md:col-span-2 text-right text-sm text-slate-100">
+                    --
+                    <div className="text-[11px] text-slate-500">Onchain price</div>
+                  </div>
+                  <div className="col-span-12 md:col-span-2 text-right text-sm text-slate-100">
+                    --
+                    <div className="text-[11px] text-slate-500">Balance</div>
+                  </div>
+                </div>
+              ))}
+              {!filteredTokens.length && (
+                <div className="px-5 py-6 text-sm text-slate-400">
+                  No tokens match this search.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
