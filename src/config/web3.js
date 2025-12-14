@@ -336,29 +336,58 @@ export const TOKENS = {
   },
 };
 
-export function getInjectedEthereum() {
-  if (typeof window === "undefined") return null;
-  const { ethereum } = window;
-  if (!ethereum) return null;
-  if (Array.isArray(ethereum.providers) && ethereum.providers.length) {
-    const metamask = ethereum.providers.find((p) => p.isMetaMask);
-    return metamask || ethereum.providers[0];
+function collectInjectedProviders() {
+  if (typeof window === "undefined") return [];
+  const { ethereum, trustwallet } = window;
+  const out = [];
+  const seen = new Set();
+  const push = (p) => {
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+
+  if (Array.isArray(ethereum?.providers)) ethereum.providers.forEach(push);
+  if (Array.isArray(ethereum?.detected)) ethereum.detected.forEach(push);
+  if (ethereum?.providerMap) {
+    if (typeof ethereum.providerMap.values === "function") {
+      Array.from(ethereum.providerMap.values()).forEach(push);
+    } else if (typeof ethereum.providerMap === "object") {
+      Object.values(ethereum.providerMap).forEach(push);
+    }
   }
-  return ethereum;
+  push(ethereum);
+  push(trustwallet);
+
+  return out;
+}
+
+const isTrust = (p) => p?.isTrustWallet || p?.isTrust || p?.isTrustProvider;
+const isBrave = (p) => p?.isBraveWallet || p?.isBraveWalletProvider;
+const isMetaMaskStrict = (p) =>
+  p?.isMetaMask && !p?.isRabby && !isTrust(p) && !isBrave(p);
+
+export function getInjectedEthereum() {
+  const candidates = collectInjectedProviders();
+  if (!candidates.length) return null;
+
+  const metamask = candidates.find(isMetaMaskStrict);
+  const trust = candidates.find(isTrust);
+  const brave = candidates.find(isBrave);
+  const metaCompat = candidates.find((p) => p?.isMetaMask);
+
+  // Prefer explicit wallets: MetaMask strict > Trust > Brave > any MetaMask flag > first available
+  return metamask || trust || brave || metaCompat || candidates[0];
 }
 
 export function getInjectedProviderByType(type) {
-  if (typeof window === "undefined") return null;
-  const { ethereum } = window;
-  if (!ethereum) return null;
-  const candidates = Array.isArray(ethereum.providers) && ethereum.providers.length
-    ? ethereum.providers
-    : [ethereum];
+  const candidates = collectInjectedProviders();
+  if (!candidates.length) return null;
 
   const match = candidates.find((p) => {
     if (type === "rabby") return p.isRabby;
-    if (type === "trustwallet") return p.isTrust || p.isTrustWallet;
-    if (type === "metamask") return p.isMetaMask && !p.isRabby;
+    if (type === "trustwallet") return isTrust(p);
+    if (type === "metamask") return isMetaMaskStrict(p) || p.isMetaMask;
     return false;
   });
 

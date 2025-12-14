@@ -10,8 +10,7 @@ const wallets = [
     id: "trustwallet",
     name: "Trust Wallet",
     description: "Mobile & browser extension",
-    accent: "from-sky-500 to-indigo-500",
-    cta: true,
+    badge: "Detected",
     logo: trustIcon,
   },
   { id: "metamask", name: "MetaMask", badge: "Detected", logo: metamaskIcon },
@@ -54,14 +53,14 @@ export default function WalletModal({
         <div className="p-3 space-y-3 max-h-[75vh] overflow-y-auto">
           {wallets.map((wallet) => (
             <button
-              key={wallet.id}
-              onClick={() => handleSelect(wallet.id)}
-              className={`w-full text-left rounded-2xl border border-slate-800 px-4 py-3 transition hover:border-sky-500/50 hover:shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)] ${
+            key={wallet.id}
+            onClick={() => handleSelect(wallet.id)}
+            className={`w-full text-left rounded-2xl border border-slate-800 px-4 py-3 transition hover:border-sky-500/50 hover:shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)] ${
                 wallet.cta
                   ? `bg-gradient-to-r ${wallet.accent} text-white`
                   : "bg-slate-900/60 text-slate-100"
               }`}
-            >
+          >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {wallet.logo ? (
