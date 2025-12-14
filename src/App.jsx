@@ -6,9 +6,11 @@ import LiquiditySection from "./components/LiquiditySection";
 import Dashboard from "./components/Dashboard";
 import { useWallet } from "./hooks/useWallet";
 import { useBalances } from "./hooks/useBalances";
+import WalletModal from "./components/WalletModal";
 
 export default function App() {
   const [tab, setTab] = useState("swap");
+  const [showWalletModal, setShowWalletModal] = useState(false);
   const { address, isOnSepolia, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
 
@@ -23,10 +25,14 @@ export default function App() {
       }
       return;
     }
+    setShowWalletModal(true);
+  };
 
+  const handleWalletSelect = async (walletId) => {
     try {
-      const connectedAddress = await connect();
+      const connectedAddress = await connect(walletId);
       await refresh(connectedAddress);
+      setShowWalletModal(false);
     } catch (e) {
       alert(e.message || "Failed to connect wallet");
     }
@@ -71,6 +77,12 @@ export default function App() {
         {tab === "liquidity" && <LiquiditySection />}
         {tab === "dashboard" && <Dashboard />}
       </main>
+
+      <WalletModal
+        open={showWalletModal && !address}
+        onClose={() => setShowWalletModal(false)}
+        onSelectWallet={handleWalletSelect}
+      />
     </div>
   );
 }

@@ -80,9 +80,9 @@ export function useWallet() {
     };
   }, []);
 
-  const connect = async () => {
+  const connect = async (walletType) => {
     if (!window.ethereum) throw new Error("No wallet found");
-    const provider = await getProvider();
+    const provider = await getProvider(walletType);
     const accounts = await provider.send("eth_requestAccounts", []);
     const primaryAccount = accounts[0] || null;
     setAddress(primaryAccount);

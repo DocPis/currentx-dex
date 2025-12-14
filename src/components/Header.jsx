@@ -1,12 +1,7 @@
 // src/components/Header.jsx
 import React from "react";
 
-export default function Header({
-  address,
-  isOnSepolia,
-  onConnect,
-  balances,
-}) {
+export default function Header({ address, isOnSepolia, onConnect, balances }) {
   const shortAddress = address
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : "";

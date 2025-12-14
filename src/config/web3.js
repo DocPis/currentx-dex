@@ -339,8 +339,28 @@ export function getInjectedEthereum() {
   return ethereum;
 }
 
-export async function getProvider() {
-  const eth = getInjectedEthereum();
+export function getInjectedProviderByType(type) {
+  if (typeof window === "undefined") return null;
+  const { ethereum } = window;
+  if (!ethereum) return null;
+  const candidates = Array.isArray(ethereum.providers) && ethereum.providers.length
+    ? ethereum.providers
+    : [ethereum];
+
+  const match = candidates.find((p) => {
+    if (type === "rabby") return p.isRabby;
+    if (type === "trustwallet") return p.isTrust || p.isTrustWallet;
+    if (type === "metamask") return p.isMetaMask && !p.isRabby;
+    return false;
+  });
+
+  return match || getInjectedEthereum();
+}
+
+export async function getProvider(preferredType) {
+  const eth = preferredType
+    ? getInjectedProviderByType(preferredType)
+    : getInjectedEthereum();
   if (!eth) {
     throw new Error(
       "No wallet found. On mobile, open the site in the MetaMask in-app browser or another injected wallet."
