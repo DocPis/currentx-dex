@@ -9,11 +9,11 @@ export default function Header({ address, isOnSepolia, onConnect, balances }) {
 
   return (
     <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617]">
-      <div className="flex items-center gap-3 w-full md:w-auto">
+      <div className="flex items-center gap-1 w-full md:w-auto">
         <img
           src={currentxLogo}
           alt="CurrentX logo"
-          className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-cover"
+          className="h-20 w-20 object-contain"
         />
         <div className="flex flex-col">
           <span className="font-semibold text-slate-50">
