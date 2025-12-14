@@ -30,7 +30,7 @@ export default function Header({
   const isWrongNetwork = Boolean(address && !isOnSepolia);
 
   return (
-    <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617]">
+    <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617] relative z-20">
       <div className="flex items-center gap-1 w-full md:w-auto">
         <img
           src={currentxLogo}
@@ -60,7 +60,7 @@ export default function Header({
           </div>
         )}
 
-        <div className="relative" ref={menuRef}>
+        <div className="relative z-30" ref={menuRef}>
           <button
             onClick={() => {
               if (!address) {
