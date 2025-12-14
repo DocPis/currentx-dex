@@ -12,7 +12,7 @@ import {
   UNIV2_ROUTER_ADDRESS,
 } from "../config/web3";
 
-const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC"];
+const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 
 function TokenSelector({ side, selected, onSelect, balances }) {
   const [open, setOpen] = useState(false);
@@ -25,7 +25,7 @@ function TokenSelector({ side, selected, onSelect, balances }) {
         <img
           src={TOKENS[selected].logo}
           alt={`${selected} logo`}
-          className="h-5 w-5 rounded-full object-contain"
+          className="h-6 w-6 rounded-full object-contain"
         />
         <span className="text-sm font-semibold">{selected}</span>
         <svg
@@ -61,7 +61,7 @@ function TokenSelector({ side, selected, onSelect, balances }) {
               <img
                 src={TOKENS[symbol].logo}
                 alt={`${symbol} logo`}
-                className="h-5 w-5 rounded-full object-contain"
+                className="h-6 w-6 rounded-full object-contain"
               />
               <div className="flex flex-col items-start">
                 <span className="font-medium">{symbol}</span>
@@ -130,6 +130,7 @@ export default function SwapSection({ balances }) {
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
+  const involvesCrx = sellToken === "CRX" || buyToken === "CRX";
   const isSupported =
     isEthUsdc ||
     isUsdcEth ||
@@ -154,6 +155,11 @@ export default function SwapSection({ balances }) {
       setQuoteOutRaw(null);
       setPriceImpact(null);
       setApproveNeeded(false);
+
+      if (involvesCrx) {
+        setQuoteError("CRX swaps coming soon (mock token).");
+        return;
+      }
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -296,6 +302,9 @@ export default function SwapSection({ balances }) {
         throw new Error(
           "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT/WBTC, WETH <-> DAI, USDC <-> WBTC"
         );
+      }
+      if (involvesCrx) {
+        throw new Error("CRX swaps coming soon (mock token).");
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
@@ -501,7 +510,7 @@ export default function SwapSection({ balances }) {
             />
           </div>
           <div className="flex justify-end gap-2 mt-3 text-[11px] sm:text-xs">
-            {[0.25, 0.5, 1].map((p) => (
+            {[0.25, 0.5, 0.75, 1].map((p) => (
               <button
                 key={p}
                 type="button"

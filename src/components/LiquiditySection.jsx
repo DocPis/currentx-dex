@@ -1181,6 +1181,14 @@ export default function LiquiditySection() {
                 <button
                   type="button"
                   disabled={!hasPairInfo || !tokenBalances}
+                  onClick={() => applyDepositRatio(0.75)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  75%
+                </button>
+                <button
+                  type="button"
+                  disabled={!hasPairInfo || !tokenBalances}
                   onClick={() => applyDepositRatio(1)}
                   className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                 >
@@ -1230,6 +1238,14 @@ export default function LiquiditySection() {
                   className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                 >
                   50%
+                </button>
+                <button
+                  type="button"
+                  disabled={lpBalance === null || lpBalance <= 0}
+                  onClick={() => applyWithdrawRatio(0.75)}
+                  className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                >
+                  75%
                 </button>
                 <button
                   type="button"

@@ -6,6 +6,7 @@ import tetherLogo from "../tokens/tether.png";
 import usdcLogo from "../tokens/usdc.png";
 import wbtcLogo from "../tokens/wbtc.png";
 import wethLogo from "../tokens/weth.png";
+import currentxLogo from "../assets/currentx.png";
 
 export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
@@ -325,6 +326,13 @@ export const TOKENS = {
     address: WBTC_ADDRESS,
     decimals: 8,
     logo: wbtcLogo,
+  },
+  CRX: {
+    symbol: "CRX",
+    name: "CurrentX (native mock)",
+    address: null,
+    decimals: 18,
+    logo: currentxLogo,
   },
 };
 
