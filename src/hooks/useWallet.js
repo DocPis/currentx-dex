@@ -1,9 +1,11 @@
 // src/hooks/useWallet.js
 import { useEffect, useState } from "react";
+import { BrowserProvider } from "ethers";
 import {
   SEPOLIA_CHAIN_ID_HEX,
   getProvider,
   getInjectedEthereum,
+  getInjectedProviderByType,
 } from "../config/web3";
 
 export function useWallet() {
@@ -81,9 +83,24 @@ export function useWallet() {
   }, []);
 
   const connect = async (walletType) => {
-    if (!window.ethereum) throw new Error("No wallet found");
-    const provider = await getProvider(walletType);
-    const accounts = await provider.send("eth_requestAccounts", []);
+    const injected = walletType
+      ? getInjectedProviderByType(walletType)
+      : getInjectedEthereum();
+    if (!injected) {
+      throw new Error(
+        "Selected wallet not detected. Please install/open the chosen wallet and retry."
+      );
+    }
+    const provider = new BrowserProvider(injected);
+    const requester = injected.request ? injected : provider;
+    const accounts = await (requester.request
+      ? requester.request({ method: "eth_requestAccounts", params: [] })
+      : provider.send("eth_requestAccounts", []));
+    if (!accounts || !accounts.length) {
+      throw new Error(
+        "No account returned. Please unlock the selected wallet and approve the connection."
+      );
+    }
     const primaryAccount = accounts[0] || null;
     setAddress(primaryAccount);
     const cid = await provider.send("eth_chainId", []);

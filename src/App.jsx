@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import Header from "./components/Header";
 import SwapSection from "./components/SwapSection";
 import LiquiditySection from "./components/LiquiditySection";
@@ -11,8 +11,15 @@ import WalletModal from "./components/WalletModal";
 export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
+  const [connectError, setConnectError] = useState("");
   const { address, isOnSepolia, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
+
+  useEffect(() => {
+    if (!connectError) return undefined;
+    const id = setTimeout(() => setConnectError(""), 4000);
+    return () => clearTimeout(id);
+  }, [connectError]);
 
   const handleConnect = () => {
     setShowWalletModal(true);
@@ -28,13 +35,37 @@ export default function App() {
       const connectedAddress = await connect(walletId);
       await refresh(connectedAddress);
       setShowWalletModal(false);
+      setConnectError("");
     } catch (e) {
-      alert(e.message || "Failed to connect wallet");
+      const msg =
+        e?.code === 4001 || e?.code === "ACTION_REJECTED"
+          ? "Request rejected in wallet. Please approve to continue."
+          : e?.message || "Failed to connect wallet";
+      setConnectError(msg);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col">
+    <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col relative">
+      {connectError && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
+          <div className="bg-slate-900/95 border border-rose-500/40 text-rose-100 px-4 py-3 rounded-2xl shadow-2xl shadow-rose-900/40 flex items-start gap-3 min-w-[260px]">
+            <div className="h-2 w-2 mt-1.5 rounded-full bg-rose-400 shadow-[0_0_12px_rgba(248,113,113,0.7)]" />
+            <div className="text-sm">
+              <div className="font-semibold text-rose-100">Connection rejected</div>
+              <div className="text-rose-200/80 text-xs">{connectError}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setConnectError("")}
+              className="ml-auto text-rose-200/70 hover:text-rose-100"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
       <Header
         address={address}
         isOnSepolia={isOnSepolia}
@@ -68,9 +99,7 @@ export default function App() {
       </div>
 
       <main className="flex-1">
-        {tab === "swap" && (
-          <SwapSection balances={balances} />
-        )}
+        {tab === "swap" && <SwapSection balances={balances} />}
         {tab === "liquidity" && <LiquiditySection />}
         {tab === "dashboard" && <Dashboard />}
       </main>

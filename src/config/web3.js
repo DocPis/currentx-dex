@@ -356,14 +356,50 @@ function collectInjectedProviders() {
       Object.values(ethereum.providerMap).forEach(push);
     }
   }
+  if (Array.isArray(trustwallet?.providers)) trustwallet.providers.forEach(push);
+  if (Array.isArray(trustwallet?.ethereum?.providers))
+    trustwallet.ethereum.providers.forEach(push);
   push(ethereum);
   push(trustwallet);
+  push(trustwallet?.ethereum);
+  push(trustwallet?.provider);
   push(rabby);
 
   return out;
 }
 
-const isTrust = (p) => p?.isTrustWallet || p?.isTrust || p?.isTrustProvider;
+const trustNameMatch = (p) => {
+  const name =
+    (p?.walletName ||
+      p?.name ||
+      p?.providerInfo?.name ||
+      p?.info?.name ||
+      "")?.toLowerCase?.() || "";
+  const rdns =
+    (p?.providerInfo?.rdns || p?.info?.rdns || "")?.toLowerCase?.() || "";
+  return name.includes("trust") || rdns.includes("trustwallet") || rdns.includes("trust");
+};
+
+const isTrust = (p) => {
+  const name =
+    (p?.walletName ||
+      p?.name ||
+      p?.providerInfo?.name ||
+      p?.info?.name ||
+      "")?.toLowerCase?.() || "";
+  const rdns =
+    (p?.providerInfo?.rdns || p?.info?.rdns || "")?.toLowerCase?.() || "";
+
+  return (
+    p?.isTrustWallet ||
+    p?.isTrustWalletV2 ||
+    p?.isTrust ||
+    p?.isTrustProvider ||
+    name.includes("trust") ||
+    rdns.includes("trustwallet") ||
+    rdns.includes("trust")
+  );
+};
 const isBrave = (p) => p?.isBraveWallet || p?.isBraveWalletProvider;
 const isRabby = (p) =>
   p?.isRabby ||
@@ -388,6 +424,19 @@ export function getInjectedEthereum() {
 }
 
 export function getInjectedProviderByType(type) {
+  if (typeof window !== "undefined" && type === "trustwallet") {
+    const { trustwallet, ethereum } = window;
+    if (trustwallet?.ethereum) return trustwallet.ethereum;
+    if (trustwallet) return trustwallet;
+    if (Array.isArray(ethereum?.providers)) {
+      const tw = ethereum.providers.find((p) => isTrust(p) || trustNameMatch(p));
+      if (tw) return tw;
+    }
+    if (ethereum && (isTrust(ethereum) || trustNameMatch(ethereum))) return ethereum;
+    // Fallback: single provider scenario
+    if (ethereum && !Array.isArray(ethereum.providers)) return ethereum;
+  }
+
   const candidates = collectInjectedProviders();
   if (!candidates.length) return null;
 
