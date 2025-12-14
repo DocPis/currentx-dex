@@ -1002,20 +1002,20 @@ export default function LiquiditySection() {
                 <button
                   type="button"
                   onClick={() => setPairSelectorOpen((v) => !v)}
-                  className="w-full rounded-2xl bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg shadow-blue-500/30"
+                  className="w-full rounded-2xl bg-slate-900/80 border border-slate-800 text-slate-100 px-4 py-3 flex items-center justify-between shadow-lg shadow-black/40"
                 >
                   <div className="flex items-center gap-3">
                     {pairSelected?.logo ? (
                       <img
                         src={pairSelected.logo}
                         alt={`${pairSelected.symbol} logo`}
-                        className="h-10 w-10 rounded-full border border-blue-400/40 bg-blue-500/20 object-contain"
+                        className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
                       />
                     ) : (
-                      <div className="h-10 w-10 rounded-full bg-blue-500/20 border border-blue-400/40" />
+                      <div className="h-10 w-10 rounded-full bg-slate-900 border border-slate-800" />
                     )}
                     <div className="flex flex-col text-left">
-                      <span className="text-xs text-blue-100/80">Token you want to pair with</span>
+                      <span className="text-xs text-slate-400">Token you want to pair with</span>
                       <span className="text-sm font-semibold">
                         {pairSelected?.symbol || "Select token"}
                       </span>
@@ -1025,7 +1025,7 @@ export default function LiquiditySection() {
                     viewBox="0 0 20 20"
                     fill="none"
                     xmlns="http://www.w3.org/2000/svg"
-                    className={`h-4 w-4 transition ${pairSelectorOpen ? "rotate-180" : ""}`}
+                    className={`h-4 w-4 text-slate-400 transition ${pairSelectorOpen ? "rotate-180" : ""}`}
                   >
                     <path
                       d="M6 8l4 4 4-4"
