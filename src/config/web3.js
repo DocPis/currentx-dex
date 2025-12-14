@@ -362,13 +362,21 @@ export function getInjectedProviderByType(type) {
     return false;
   });
 
-  return match || getInjectedEthereum();
+  return match || null;
 }
 
 export async function getProvider(preferredType) {
-  const eth = preferredType
-    ? getInjectedProviderByType(preferredType)
-    : getInjectedEthereum();
+  let eth;
+  if (preferredType) {
+    eth = getInjectedProviderByType(preferredType);
+    if (!eth) {
+      throw new Error(
+        "Selected wallet not detected. Please install/open the chosen wallet and retry."
+      );
+    }
+  } else {
+    eth = getInjectedEthereum();
+  }
   if (!eth) {
     throw new Error(
       "No wallet found. On mobile, open the site in the MetaMask in-app browser or another injected wallet."
