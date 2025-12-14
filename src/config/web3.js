@@ -338,7 +338,7 @@ export const TOKENS = {
 
 function collectInjectedProviders() {
   if (typeof window === "undefined") return [];
-  const { ethereum, trustwallet } = window;
+  const { ethereum, trustwallet, rabby } = window;
   const out = [];
   const seen = new Set();
   const push = (p) => {
@@ -358,12 +358,18 @@ function collectInjectedProviders() {
   }
   push(ethereum);
   push(trustwallet);
+  push(rabby);
 
   return out;
 }
 
 const isTrust = (p) => p?.isTrustWallet || p?.isTrust || p?.isTrustProvider;
 const isBrave = (p) => p?.isBraveWallet || p?.isBraveWalletProvider;
+const isRabby = (p) =>
+  p?.isRabby ||
+  p?.rabby ||
+  p?.__isRabby ||
+  (typeof p?.isMetaMask !== "undefined" && p?.walletName === "Rabby");
 const isMetaMaskStrict = (p) =>
   p?.isMetaMask && !p?.isRabby && !isTrust(p) && !isBrave(p);
 
@@ -374,10 +380,11 @@ export function getInjectedEthereum() {
   const metamask = candidates.find(isMetaMaskStrict);
   const trust = candidates.find(isTrust);
   const brave = candidates.find(isBrave);
+  const rabbyProvider = candidates.find(isRabby);
   const metaCompat = candidates.find((p) => p?.isMetaMask);
 
-  // Prefer explicit wallets: MetaMask strict > Trust > Brave > any MetaMask flag > first available
-  return metamask || trust || brave || metaCompat || candidates[0];
+  // Prefer explicit wallets: MetaMask strict > Trust > Brave > Rabby > any MetaMask flag > first available
+  return metamask || trust || brave || rabbyProvider || metaCompat || candidates[0];
 }
 
 export function getInjectedProviderByType(type) {
@@ -385,7 +392,7 @@ export function getInjectedProviderByType(type) {
   if (!candidates.length) return null;
 
   const match = candidates.find((p) => {
-    if (type === "rabby") return p.isRabby;
+    if (type === "rabby") return isRabby(p);
     if (type === "trustwallet") return isTrust(p);
     if (type === "metamask") return isMetaMaskStrict(p) || p.isMetaMask;
     return false;
