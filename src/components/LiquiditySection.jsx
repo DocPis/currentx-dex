@@ -126,6 +126,7 @@ export default function LiquiditySection() {
   const [tokenSearch, setTokenSearch] = useState("");
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
+  const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
 
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
@@ -330,6 +331,10 @@ export default function LiquiditySection() {
       return symbols.includes(base) && symbols.includes(pair);
     });
   }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
+
+  useEffect(() => {
+    setSelectionDepositPoolId(null);
+  }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
@@ -545,6 +550,7 @@ export default function LiquiditySection() {
     if (!poolId) return;
     setSelectedPoolId(poolId);
     setPairSelectorOpen(false);
+    setSelectionDepositPoolId(poolId);
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
   };
@@ -1140,7 +1146,224 @@ export default function LiquiditySection() {
               )}
             </div>
 
-            {/* deposit actions removed in pair view per request */}
+            {selectionDepositPoolId && selectedPool && selectedPool.id === selectionDepositPoolId && (
+              <div
+                id="token-selection-deposit"
+                className="mt-6 rounded-3xl border border-slate-800 bg-slate-900/70 shadow-xl shadow-black/40 p-5"
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Active pool
+                    </div>
+                    <div className="text-sm font-semibold text-slate-100">
+                      {getPoolLabel(selectedPool)}
+                    </div>
+                    {!poolSupportsActions && (
+                      <div className="text-[11px] text-amber-200 mt-1">
+                        Interaction disabled: missing on-chain address for at least one token.
+                      </div>
+                    )}
+                    {pairError && (
+                      <div className="text-[11px] text-amber-200 mt-1">
+                        {pairError}
+                      </div>
+                    )}
+                  </div>
+                  {pairInfo?.pairAddress && (
+                    <a
+                      href={`https://sepolia.etherscan.io/address/${pairInfo.pairAddress}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-sky-400 hover:text-sky-300 underline"
+                    >
+                      View pair on SepoliaScan
+                    </a>
+                  )}
+                </div>
+
+                {poolSupportsActions && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                    {[
+                      {
+                        symbol: token0Meta?.symbol || selectedPool?.token0Symbol,
+                        balance: tokenBalances?.token0,
+                        logo: token0Meta?.logo,
+                      },
+                      {
+                        symbol: token1Meta?.symbol || selectedPool?.token1Symbol,
+                        balance: tokenBalances?.token1,
+                        logo: token1Meta?.logo,
+                      },
+                    ].map((t, idx) => (
+                      <div
+                        key={idx}
+                        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-sky-900/40 border border-slate-800/80 px-4 py-3 flex items-center justify-between"
+                      >
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                            Balance
+                          </div>
+                          <div className="text-xl font-semibold text-slate-100 flex items-baseline gap-2">
+                            <span>
+                              {tokenBalanceLoading
+                                ? "Loading..."
+                                : formatTokenBalance(t.balance)}
+                            </span>
+                            <span className="text-sm text-slate-400">{t.symbol}</span>
+                          </div>
+                        </div>
+                        {t.logo && (
+                          <img
+                            src={t.logo}
+                            alt={`${t.symbol || "token"} logo`}
+                            className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain shadow-lg shadow-black/30"
+                          />
+                        )}
+                        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_20%,rgba(94,234,212,0.08),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(14,165,233,0.08),transparent_35%)]" />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {tokenBalanceError && (
+                  <div className="text-[11px] text-amber-200 mb-3">
+                    Token balances: {tokenBalanceError}
+                  </div>
+                )}
+
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input
+                      value={depositToken0}
+                      onChange={(e) => {
+                        setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+                        setDepositToken0(e.target.value);
+                      }}
+                      placeholder={`${token0Meta?.symbol || "Token A"} amount`}
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
+                    />
+                    <input
+                      value={depositToken1}
+                      onChange={(e) => {
+                        setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
+                        setDepositToken1(e.target.value);
+                      }}
+                      placeholder={`${token1Meta?.symbol || "Token B"} amount`}
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
+                    />
+                    <button
+                      disabled={actionLoading || !poolSupportsActions || !!pairError}
+                      onClick={handleDeposit}
+                      className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60 w-full md:w-auto"
+                    >
+                      {actionLoading
+                        ? "Processing..."
+                        : `Deposit ${getPoolLabel(selectedPool)}`}
+                    </button>
+                    <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>Ratio quick-fill:</span>
+                      {[0.25, 0.5, 0.75, 1].map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          disabled={!hasPairInfo || !tokenBalances}
+                          onClick={() => applyDepositRatio(pct)}
+                          className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                        >
+                          {Math.round(pct * 100)}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input
+                      value={withdrawLp}
+                      onChange={(e) => setWithdrawLp(e.target.value)}
+                      placeholder="LP tokens"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
+                    />
+                    {lpBalance !== null && (
+                      <div className="text-xs text-slate-400 self-center">
+                        LP balance: {lpBalance.toFixed(4)}{" "}
+                        <button
+                          type="button"
+                          className="text-sky-400 hover:text-sky-300 underline ml-1"
+                          onClick={() => setLpRefreshTick((t) => t + 1)}
+                        >
+                          Refresh
+                        </button>
+                      </div>
+                    )}
+                    {lpBalanceError && (
+                      <div className="text-xs text-rose-300 self-center">
+                        {lpBalanceError}
+                      </div>
+                    )}
+                    <button
+                      disabled={actionLoading || !poolSupportsActions || !!pairError}
+                      onClick={handleWithdraw}
+                      className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
+                    >
+                      {actionLoading
+                        ? "Processing..."
+                        : `Withdraw ${getPoolLabel(selectedPool)}`}
+                    </button>
+                    <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                      <span>Withdraw:</span>
+                      {[0.25, 0.5, 0.75, 1].map((pct) => (
+                        <button
+                          key={pct}
+                          type="button"
+                          disabled={lpBalance === null || lpBalance <= 0}
+                          onClick={() => applyWithdrawRatio(pct)}
+                          className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
+                        >
+                          {Math.round(pct * 100)}%
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-300">
+                  {depositQuoteError && (
+                    <div className="px-2 py-1.5 rounded border border-rose-500/30 bg-transparent text-rose-200">
+                      {depositQuoteError}
+                    </div>
+                  )}
+                  {actionStatus && (
+                    <div
+                      className={`px-2 py-1.5 rounded border bg-transparent ${
+                        actionStatus.variant === "success"
+                          ? "border-slate-700/60 text-slate-200"
+                          : "border-rose-500/30 text-rose-200"
+                      }`}
+                    >
+                      <div>{actionStatus.message}</div>
+                      {actionStatus.hash && (
+                        <a
+                          href={`https://sepolia.etherscan.io/tx/${actionStatus.hash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-400 hover:text-sky-300 underline"
+                        >
+                          View on SepoliaScan
+                        </a>
+                      )}
+                    </div>
+                  )}
+                  {subgraphError && (
+                    <div className="px-2 py-1.5 rounded border border-slate-700/60 bg-transparent text-slate-200">
+                      Subgraph: {subgraphError}
+                    </div>
+                  )}
+                  {tvlError && (
+                    <div className="px-2 py-1.5 rounded border border-amber-500/30 bg-transparent text-amber-200">
+                      On-chain TVL: {tvlError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div id="pool-actions" />
           </div>
