@@ -951,176 +951,176 @@ export default function LiquiditySection() {
         </div>
       </div>
 
-      {/* controls */}
-      <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
-              Pools ({poolsCount})
-            </span>
-            <button
-              type="button"
-              onClick={() => setShowTokenList(true)}
-              className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-300 hover:border-sky-600/60 hover:text-slate-100"
-            >
-              Tokens ({tokensCount})
-            </button>
-            <span className="hidden sm:inline text-slate-500 text-xs">
-              Sorted by TVL | Live (subgraph + on-chain fallback)
-            </span>
-          </div>
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
-            <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4 text-slate-500"
+      {/* dedicated token deposit flow */}
+      {tokenSelection ? (
+        <div className="w-full flex justify-center px-4 sm:px-6 pb-10">
+          <div className="w-full max-w-4xl rounded-3xl bg-[#0a1024] border border-slate-800 shadow-2xl shadow-black/50 p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <div className="text-xl font-semibold text-slate-50">New deposit</div>
+                <div className="text-sm text-slate-400">Choose your token and the pair to start providing liquidity.</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setTokenSelection(null);
+                  setPairSelectorOpen(false);
+                }}
+                className="px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-200 text-xs hover:border-slate-500"
               >
-                <circle
-                  cx="11"
-                  cy="11"
-                  r="6"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                />
-                <path
-                  d="M15.5 15.5 20 20"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                />
-              </svg>
-              <input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Search pools..."
-                className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
-              />
+                Back to pools
+              </button>
             </div>
-            <button className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30">
-              Launch pool
-            </button>
-          </div>
-        </div>
-        {tokenSelection && (
-          <div className="px-4 sm:px-6 pb-4">
-            <div className="max-w-4xl mx-auto rounded-3xl bg-slate-900/80 border border-slate-800 shadow-2xl shadow-black/40 p-6">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div>
-                  <div className="text-sm font-semibold text-slate-50">New deposit</div>
-                  <div className="text-xs text-slate-500">Select a token and pair to start providing liquidity.</div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-2xl bg-slate-900/80 border border-slate-800 px-4 py-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {baseSelected?.logo && (
+                    <img
+                      src={baseSelected.logo}
+                      alt={`${baseSelected.symbol} logo`}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                    />
+                  )}
+                  <div className="flex flex-col">
+                    <span className="text-xs text-slate-500">Token you want to deposit</span>
+                    <span className="text-sm font-semibold text-slate-100">
+                      {baseSelected?.symbol || tokenSelection.baseSymbol}
+                    </span>
+                  </div>
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    setTokenSelection(null);
-                    setPairSelectorOpen(false);
-                  }}
-                  className="h-9 px-3 rounded-full border border-slate-800 bg-slate-900 text-slate-200 text-xs hover:border-slate-600"
+                  onClick={() => setShowTokenList(true)}
+                  className="h-9 w-9 flex items-center justify-center rounded-full border border-slate-800 text-slate-300 hover:border-slate-600"
+                  aria-label="Change base token"
                 >
-                  Back to pools
+                  ↺
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="rounded-2xl bg-slate-950/60 border border-slate-800 px-4 py-3 flex items-center justify-between">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setPairSelectorOpen((v) => !v)}
+                  className="w-full rounded-2xl bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg shadow-blue-500/30"
+                >
                   <div className="flex items-center gap-3">
-                    {baseSelected?.logo && (
+                    {pairSelected?.logo ? (
                       <img
-                        src={baseSelected.logo}
-                        alt={`${baseSelected.symbol} logo`}
-                        className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                        src={pairSelected.logo}
+                        alt={`${pairSelected.symbol} logo`}
+                        className="h-10 w-10 rounded-full border border-blue-400/40 bg-blue-500/20 object-contain"
                       />
+                    ) : (
+                      <div className="h-10 w-10 rounded-full bg-blue-500/20 border border-blue-400/40" />
                     )}
-                    <div className="flex flex-col">
-                      <span className="text-xs text-slate-500">Token you want to deposit</span>
-                      <span className="text-sm font-semibold text-slate-100">
-                        {baseSelected?.symbol || tokenSelection.baseSymbol}
+                    <div className="flex flex-col text-left">
+                      <span className="text-xs text-blue-100/80">Token you want to pair with</span>
+                      <span className="text-sm font-semibold">
+                        {pairSelected?.symbol || "Select token"}
                       </span>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowTokenList(true)}
-                    className="h-9 w-9 flex items-center justify-center rounded-full border border-slate-800 text-slate-300 hover:border-slate-600"
-                    aria-label="Change base token"
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className={`h-4 w-4 transition ${pairSelectorOpen ? "rotate-180" : ""}`}
                   >
-                    ↺
-                  </button>
-                </div>
-
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setPairSelectorOpen((v) => !v)}
-                    className="w-full rounded-2xl bg-blue-600 text-white px-4 py-3 flex items-center justify-between shadow-lg shadow-blue-500/30"
-                  >
-                    <div className="flex items-center gap-3">
-                      {pairSelected?.logo ? (
+                    <path
+                      d="M6 8l4 4 4-4"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+                {pairSelectorOpen && (
+                  <div className="absolute z-30 mt-2 w-full max-h-72 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                    {pairOptions.map((opt) => (
+                      <button
+                        key={`pair-${opt.symbol}`}
+                        type="button"
+                        onClick={() => {
+                          setTokenSelection((prev) => ({
+                            ...prev,
+                            pairSymbol: opt.symbol,
+                          }));
+                          setPairSelectorOpen(false);
+                        }}
+                        className="w-full px-4 py-3 flex items-center gap-3 text-sm text-slate-100 hover:bg-slate-800/70"
+                      >
                         <img
-                          src={pairSelected.logo}
-                          alt={`${pairSelected.symbol} logo`}
-                          className="h-10 w-10 rounded-full border border-blue-400/40 bg-blue-500/20 object-contain"
+                          src={opt.logo}
+                          alt={`${opt.symbol} logo`}
+                          className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
                         />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-blue-500/20 border border-blue-400/40" />
-                      )}
-                      <div className="flex flex-col text-left">
-                        <span className="text-xs text-blue-100/80">Token you want to pair with</span>
-                        <span className="text-sm font-semibold">
-                          {pairSelected?.symbol || "Select token"}
-                        </span>
-                      </div>
-                    </div>
-                    <svg
-                      viewBox="0 0 20 20"
-                      fill="none"
-                      xmlns="http://www.w3.org/2000/svg"
-                      className={`h-4 w-4 transition ${pairSelectorOpen ? "rotate-180" : ""}`}
-                    >
-                      <path
-                        d="M6 8l4 4 4-4"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  </button>
-                  {pairSelectorOpen && (
-                    <div className="absolute z-30 mt-2 w-full max-h-72 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
-                      {pairOptions.map((opt) => (
-                        <button
-                          key={`pair-${opt.symbol}`}
-                          type="button"
-                          onClick={() => {
-                            setTokenSelection((prev) => ({
-                              ...prev,
-                              pairSymbol: opt.symbol,
-                            }));
-                            setPairSelectorOpen(false);
-                          }}
-                          className="w-full px-4 py-3 flex items-center gap-3 text-sm text-slate-100 hover:bg-slate-800/70"
-                        >
-                          <img
-                            src={opt.logo}
-                            alt={`${opt.symbol} logo`}
-                            className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                          />
-                          <div className="flex flex-col items-start">
-                            <span className="font-semibold">{opt.symbol}</span>
-                            <span className="text-[11px] text-slate-500">{opt.name}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                        <div className="flex flex-col items-start">
+                          <span className="font-semibold">{opt.symbol}</span>
+                          <span className="text-[11px] text-slate-500">{opt.name}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        )}
+        </div>
+      ) : (
+        <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
+                Pools ({poolsCount})
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowTokenList(true)}
+                className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-300 hover:border-sky-600/60 hover:text-slate-100"
+              >
+                Tokens ({tokensCount})
+              </button>
+              <span className="hidden sm:inline text-slate-500 text-xs">
+                Sorted by TVL | Live (subgraph + on-chain fallback)
+              </span>
+            </div>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
+              <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 text-slate-500"
+                >
+                  <circle
+                    cx="11"
+                    cy="11"
+                    r="6"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                  />
+                  <path
+                    d="M15.5 15.5 20 20"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search pools..."
+                  className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
+                />
+              </div>
+              <button className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30">
+                Launch pool
+              </button>
+            </div>
+          </div>
         <div className="hidden md:block px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
           <div className="grid grid-cols-12 py-2">
             <div className="col-span-4">Pools</div>
