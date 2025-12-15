@@ -430,11 +430,19 @@ export function getInjectedProviderByType(type) {
   const match = candidates.find((p) => {
     if (type === "rabby") return isRabby(p);
     if (type === "trustwallet") return isTrust(p);
-    if (type === "metamask") return isMetaMaskStrict(p) || p.isMetaMask;
+    if (type === "metamask") return isMetaMaskStrict(p);
     return false;
   });
 
-  return match || null;
+  if (match) return match;
+  if (type === "metamask") {
+    return (
+      candidates.find((p) => p?.isMetaMask && !isRabby(p) && !isTrust(p)) ||
+      null
+    );
+  }
+
+  return null;
 }
 
 export async function getProvider(preferredType) {
