@@ -1,6 +1,15 @@
 // src/components/Farms.jsx
-import React, { useEffect, useState } from "react";
-import { fetchMasterChefFarms, TOKENS } from "../config/web3";
+import React, { useEffect, useMemo, useState } from "react";
+import { Contract, formatUnits, parseUnits } from "ethers";
+import {
+  ERC20_ABI,
+  MASTER_CHEF_ADDRESS,
+  MASTER_CHEF_ABI,
+  fetchMasterChefFarms,
+  fetchMasterChefUserData,
+  getProvider,
+  TOKENS,
+} from "../config/web3";
 
 function formatNumber(v) {
   const n = Number(v || 0);
@@ -9,6 +18,13 @@ function formatNumber(v) {
   if (n >= 1_000) return `$${(n / 1_000).toFixed(2)}K`;
   return `$${n.toFixed(2)}`;
 }
+
+const formatTokenAmount = (v, decimals = 4) => {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n)) return "0";
+  if (n >= 1) return n.toFixed(Math.min(4, decimals));
+  return n.toFixed(Math.min(6, decimals + 2));
+};
 
 export default function Farms({ address, onConnect }) {
   return (
@@ -31,6 +47,9 @@ function FarmsList({ address, onConnect }) {
   const [farms, setFarms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [userData, setUserData] = useState({});
+  const [action, setAction] = useState({}); // {pid, type, loading, error, hash}
+  const [inputs, setInputs] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +71,26 @@ function FarmsList({ address, onConnect }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadUser = async () => {
+      if (!address || !farms.length) {
+        setUserData({});
+        return;
+      }
+      try {
+        const data = await fetchMasterChefUserData(address, farms);
+        if (!cancelled) setUserData(data);
+      } catch (e) {
+        if (!cancelled) setUserData({});
+      }
+    };
+    loadUser();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, farms]);
 
   if (loading) {
     return (
@@ -143,23 +182,183 @@ function FarmsList({ address, onConnect }) {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="text-xs text-slate-400">
-              Earn {farm.rewardToken?.symbol || "CRX"} with MasterChef rewards.
-            </div>
-            <button
-              type="button"
-              disabled={!address}
-              onClick={() => {
-                if (!address && onConnect) onConnect();
-              }}
-              className="px-4 py-2 rounded-full bg-slate-800 text-slate-300 text-sm font-semibold border border-slate-700 disabled:opacity-70"
-            >
-              {address ? "Deposit LP (soon)" : "Connect to deposit"}
-            </button>
-          </div>
+          <FarmActions
+            farm={farm}
+            address={address}
+            onConnect={onConnect}
+            userData={userData[farm.pid]}
+            inputs={inputs}
+            setInputs={setInputs}
+            action={action}
+            setAction={setAction}
+            refreshUser={async () => {
+              if (!address) return;
+              const data = await fetchMasterChefUserData(address, farms);
+              setUserData(data);
+            }}
+          />
         </div>
       ))}
+    </div>
+  );
+}
+
+function FarmActions({
+  farm,
+  address,
+  onConnect,
+  userData,
+  inputs,
+  setInputs,
+  action,
+  setAction,
+  refreshUser,
+}) {
+  const staked = userData?.staked || 0;
+  const pending = userData?.pending || 0;
+  const amountIn = inputs[farm.pid]?.deposit || "";
+  const amountOut = inputs[farm.pid]?.withdraw || "";
+  const isActing = action.pid === farm.pid && action.loading;
+
+  const setInput = (key, val) => {
+    setInputs((prev) => ({
+      ...prev,
+      [farm.pid]: { ...(prev[farm.pid] || {}), [key]: val },
+    }));
+  };
+
+  const handleAction = async (type) => {
+    if (!address) {
+      if (onConnect) onConnect();
+      return;
+    }
+    try {
+      setAction({ pid: farm.pid, type, loading: true, error: "" });
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, signer);
+      const lp = new Contract(farm.lpToken, ERC20_ABI, signer);
+      const decimals = farm.lpDecimals || 18;
+
+      if (type === "deposit") {
+        const amt = amountIn;
+        if (!amt || Number(amt) <= 0) throw new Error("Enter amount");
+        const parsed = parseUnits(amt, decimals);
+        const allowance = await lp.allowance(address, MASTER_CHEF_ADDRESS);
+        if (allowance < parsed) {
+          await (await lp.approve(MASTER_CHEF_ADDRESS, parsed)).wait();
+        }
+        const tx = await chef.deposit(farm.pid, parsed);
+        const receipt = await tx.wait();
+        setAction({ pid: farm.pid, type, loading: false, hash: receipt.hash });
+        setInput("deposit", "");
+      } else if (type === "withdraw") {
+        const amt = amountOut;
+        if (!amt || Number(amt) <= 0) throw new Error("Enter amount");
+        const parsed = parseUnits(amt, decimals);
+        const tx = await chef.withdraw(farm.pid, parsed);
+        const receipt = await tx.wait();
+        setAction({ pid: farm.pid, type, loading: false, hash: receipt.hash });
+        setInput("withdraw", "");
+      } else if (type === "claim") {
+        const tx = await chef.deposit(farm.pid, 0);
+        const receipt = await tx.wait();
+        setAction({ pid: farm.pid, type, loading: false, hash: receipt.hash });
+      }
+
+      await refreshUser();
+    } catch (e) {
+      setAction({
+        pid: farm.pid,
+        type,
+        loading: false,
+        error:
+          e?.code === 4001 || e?.code === "ACTION_REJECTED"
+            ? "Rejected in wallet"
+            : e?.message || "Failed",
+      });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="text-xs text-slate-400">
+        Earn {farm.rewardToken?.symbol || "CRX"} with MasterChef rewards.
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Deposit</span>
+            <span>LP Decimals: {farm.lpDecimals || 18}</span>
+          </div>
+          <input
+            value={amountIn}
+            onChange={(e) => setInput("deposit", e.target.value)}
+            placeholder="0.0"
+            className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+          />
+          <button
+            type="button"
+            disabled={!address || isActing}
+            onClick={() => handleAction("deposit")}
+            className="px-3 py-2 rounded-xl bg-sky-600 text-white text-sm font-semibold shadow-lg shadow-sky-500/30 disabled:opacity-60"
+          >
+            {address ? (isActing && action.type === "deposit" ? "Depositing..." : "Deposit LP") : "Connect"}
+          </button>
+        </div>
+
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs text-slate-400">
+            <span>Unstake</span>
+            <span>Staked: {formatTokenAmount(staked)}</span>
+          </div>
+          <input
+            value={amountOut}
+            onChange={(e) => setInput("withdraw", e.target.value)}
+            placeholder="0.0"
+            className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+          />
+          <button
+            type="button"
+            disabled={!address || isActing}
+            onClick={() => handleAction("withdraw")}
+            className="px-3 py-2 rounded-xl bg-slate-800 text-white text-sm font-semibold border border-slate-700 shadow-inner shadow-black/30 disabled:opacity-60"
+          >
+            {address ? (isActing && action.type === "withdraw" ? "Unstaking..." : "Unstake LP") : "Connect"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm text-slate-100">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-400">Pending</span>
+          <span className="font-semibold">{formatTokenAmount(pending, 6)} CRX</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={!address || pending <= 0 || isActing}
+            onClick={() => handleAction("claim")}
+            className="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-semibold shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+          >
+            {address ? (isActing && action.type === "claim" ? "Claiming..." : "Claim CRX") : "Connect"}
+          </button>
+          {action.error && action.pid === farm.pid && (
+            <span className="text-[11px] text-amber-300">{action.error}</span>
+          )}
+          {action.hash && action.pid === farm.pid && (
+            <a
+              href={`https://sepolia.etherscan.io/tx/${action.hash}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-sky-400 hover:text-sky-300 underline"
+            >
+              View tx
+            </a>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

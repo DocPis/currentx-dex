@@ -24,7 +24,7 @@ export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
 // Addresses (lowercase to avoid checksum issues)
 export const WETH_ADDRESS =
-  "0xfff9976782d46cc05630d1f6ebab18b2324d6b14";
+  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 export const USDT_ADDRESS =
@@ -250,6 +250,56 @@ export const MASTER_CHEF_ABI = [
     inputs: [],
     name: "currentxPerBlock",
     outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "_pid", type: "uint256" },
+      { internalType: "uint256", name: "_amount", type: "uint256" },
+    ],
+    name: "deposit",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "_pid", type: "uint256" },
+      { internalType: "uint256", name: "_amount", type: "uint256" },
+    ],
+    name: "withdraw",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "_pid", type: "uint256" }],
+    name: "emergencyWithdraw",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "_pid", type: "uint256" },
+      { internalType: "address", name: "_user", type: "address" },
+    ],
+    name: "pendingCurrentX",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "", type: "uint256" },
+      { internalType: "address", name: "", type: "address" },
+    ],
+    name: "userInfo",
+    outputs: [
+      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "uint256", name: "rewardDebt", type: "uint256" },
+    ],
     stateMutability: "view",
     type: "function",
   },
@@ -884,11 +934,13 @@ async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
 async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
   const pair = new Contract(lpAddress, UNIV2_PAIR_ABI, provider);
   const [reserve0, reserve1] = await pair.getReserves();
-  const [token0, token1, totalSupply] = await Promise.all([
+  const [token0, token1, totalSupply, lpDecimalsRaw] = await Promise.all([
     pair.token0(),
     pair.token1(),
     pair.totalSupply(),
+    pair.decimals().catch(() => 18),
   ]);
+  const lpDecimals = Number(lpDecimalsRaw) || 18;
 
   const meta0 = await fetchTokenMeta(provider, token0, metaCache);
   const meta1 = await fetchTokenMeta(provider, token1, metaCache);
@@ -919,6 +971,7 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
     reserve1,
     totalSupply,
     tvlUsd,
+    lpDecimals,
   };
 }
 
@@ -981,6 +1034,7 @@ export async function fetchMasterChefFarms(providerOverride) {
       tvlUsd,
       tokens,
       pairLabel,
+      lpDecimals: Number(lp?.lpDecimals || 18),
     });
   }
 
@@ -989,4 +1043,30 @@ export async function fetchMasterChefFarms(providerOverride) {
     totalAllocPoint: Number(totalAllocPoint),
     pools,
   };
+}
+
+export async function fetchMasterChefUserData(address, pools, providerOverride) {
+  if (!address || !pools?.length) return {};
+  const provider = providerOverride || (await getProvider());
+  const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, provider);
+  const out = {};
+  for (const pool of pools) {
+    try {
+      const [userInfo, pendingRaw] = await Promise.all([
+        chef.userInfo(pool.pid, address),
+        chef.pendingCurrentX(pool.pid, address),
+      ]);
+      const staked =
+        pool.lpDecimals !== undefined
+          ? Number(formatUnits(userInfo.amount || 0n, pool.lpDecimals))
+          : Number(userInfo.amount || 0n);
+      out[pool.pid] = {
+        staked,
+        pending: Number(formatUnits(pendingRaw || 0n, TOKENS.CRX.decimals)),
+      };
+    } catch (e) {
+      out[pool.pid] = { staked: 0, pending: 0 };
+    }
+  }
+  return out;
 }
