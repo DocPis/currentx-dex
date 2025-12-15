@@ -594,6 +594,58 @@ export default function LiquiditySection() {
     setWithdrawLp(target.toFixed(4));
   };
 
+  const addCustomToken = async () => {
+    const addr = (customAddress || "").trim();
+    setCustomTokenStatus("");
+    if (!addr) {
+      setCustomTokenStatus("Inserisci un address ERC20 valido.");
+      return;
+    }
+    if (!addr.startsWith("0x") || addr.length !== 42) {
+      setCustomTokenStatus("Address non valido.");
+      return;
+    }
+    try {
+      setCustomTokenLoading(true);
+      const provider = await getProvider();
+      const contract = new Contract(addr, ERC20_ABI, provider);
+      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+        contract.symbol().catch(() => "TOKEN"),
+        contract.name().catch(() => "Custom token"),
+        contract.decimals().catch(() => 18),
+      ]);
+      const decimals = Number(decimalsRaw) || 18;
+      const baseSymbol = (symbolRaw || "TOKEN").toUpperCase();
+      let key = baseSymbol;
+      let suffix = 1;
+      while (
+        tokenRegistry[key] &&
+        tokenRegistry[key].address?.toLowerCase() !== addr.toLowerCase()
+      ) {
+        key = `${baseSymbol}_${suffix++}`;
+      }
+      const meta = {
+        symbol: key,
+        name: nameRaw || baseSymbol,
+        address: addr,
+        decimals,
+        logo: currentxLogo,
+      };
+      setCustomTokens((prev) => ({
+        ...prev,
+        [key]: meta,
+      }));
+      setCustomTokenStatus(`Token ${key} aggiunto`);
+      if (!tokenSelection) {
+        setTokenSelection({ baseSymbol: key, pairSymbol: null });
+      }
+    } catch (err) {
+      setCustomTokenStatus(err?.message || "Impossibile caricare il token.");
+    } finally {
+      setCustomTokenLoading(false);
+    }
+  };
+
   const handleTokenPick = (token) => {
     if (!token?.symbol) return;
     setTokenSelection({ baseSymbol: token.symbol, pairSymbol: null });
