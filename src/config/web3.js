@@ -31,6 +31,12 @@ export const USDT_ADDRESS =
   "0xaa8e23fb1079ea71e0a56f48a2aa51851d8433d0";
 export const WBTC_ADDRESS =
   "0x29f2d40b0605204364af54ec677bd022da425d03";
+export const CRX_ADDRESS =
+  "0x46bb8cf9f25986201c1d91f095622e37be2463a3";
+export const MASTER_CHEF_ADDRESS =
+  "0x8d29ebbf13786fe6c5439937d5d47e2fb8cc9f9a";
+export const CRX_WETH_LP_ADDRESS =
+  "0x340d63169285e5ae01a722ce762c0e81a7fa3037";
 // Fixed WETH/USDC pair (provided by user)
 export const WETH_USDC_PAIR_ADDRESS =
   "0x92aC66C621832EF02629c10A3Db25C5e92eA33d4";
@@ -212,6 +218,43 @@ export const UNIV2_ROUTER_ABI = [
   },
 ];
 
+// Minimal MasterChef ABI (reward + pool info)
+export const MASTER_CHEF_ABI = [
+  {
+    inputs: [],
+    name: "poolLength",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    name: "poolInfo",
+    outputs: [
+      { internalType: "contract IERC20", name: "lpToken", type: "address" },
+      { internalType: "uint256", name: "allocPoint", type: "uint256" },
+      { internalType: "uint256", name: "lastRewardBlock", type: "uint256" },
+      { internalType: "uint256", name: "accCurrentXPerShare", type: "uint256" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "totalAllocPoint",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "currentxPerBlock",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+];
+
 export const WETH_ABI = [
   ...ERC20_ABI,
   {
@@ -311,6 +354,13 @@ export const TOKENS = {
     decimals: 18,
     logo: wethLogo,
   },
+  CRX: {
+    symbol: "CRX",
+    name: "CurrentX",
+    address: CRX_ADDRESS,
+    decimals: 18,
+    logo: currentxLogo,
+  },
   USDC: {
     symbol: "USDC",
     name: "USD Coin (test)",
@@ -338,13 +388,6 @@ export const TOKENS = {
     address: WBTC_ADDRESS,
     decimals: 8,
     logo: wbtcLogo,
-  },
-  CRX: {
-    symbol: "CRX",
-    name: "CurrentX (native mock)",
-    address: null,
-    decimals: 18,
-    logo: currentxLogo,
   },
 };
 
@@ -737,5 +780,206 @@ export async function getV2PairReserves(
     reserve1,
     token0,
     token1,
+  };
+}
+
+const BLOCKS_PER_YEAR = 2628000n; // ~12s block time
+
+async function fetchTokenMeta(provider, address, cache = {}) {
+  if (!address) return null;
+  const lower = address.toLowerCase();
+  if (cache[lower]) return cache[lower];
+
+  const known = Object.values(TOKENS).find(
+    (t) => t.address && t.address.toLowerCase() === lower
+  );
+  if (known) {
+    cache[lower] = known;
+    return known;
+  }
+
+  const erc = new Contract(address, ERC20_ABI, provider);
+  const [symbol, name, decimals] = await Promise.all([
+    erc.symbol().catch(() => "TOKEN"),
+    erc.name().catch(() => "Token"),
+    erc.decimals().catch(() => 18),
+  ]);
+
+  const meta = {
+    symbol,
+    name,
+    address,
+    decimals: Number(decimals) || 18,
+    logo: currentxLogo,
+  };
+  cache[lower] = meta;
+  return meta;
+}
+
+async function getWethPriceUSD(provider, priceCache) {
+  const key = WETH_ADDRESS.toLowerCase();
+  const cached = priceCache[key];
+  if (typeof cached === "number") return cached;
+  const { reserve0, reserve1, token0 } = await getV2PairReserves(
+    provider,
+    WETH_ADDRESS,
+    USDC_ADDRESS,
+    WETH_USDC_PAIR_ADDRESS
+  );
+  const wethIs0 = token0.toLowerCase() === WETH_ADDRESS.toLowerCase();
+  const wethRes = wethIs0 ? reserve0 : reserve1;
+  const usdcRes = wethIs0 ? reserve1 : reserve0;
+  const price =
+    Number(formatUnits(usdcRes, TOKENS.USDC.decimals)) /
+    Number(formatUnits(wethRes, TOKENS.WETH.decimals));
+  priceCache[key] = price;
+  return price;
+}
+
+async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
+  if (!address) return null;
+  const lower = address.toLowerCase();
+  if (priceCache[lower] !== undefined) return priceCache[lower];
+
+  if (
+    lower === USDC_ADDRESS.toLowerCase() ||
+    lower === USDT_ADDRESS.toLowerCase() ||
+    lower === TOKENS.DAI.address.toLowerCase()
+  ) {
+    priceCache[lower] = 1;
+    return 1;
+  }
+
+  if (lower === WETH_ADDRESS.toLowerCase()) {
+    return getWethPriceUSD(provider, priceCache);
+  }
+
+  if (lower === CRX_ADDRESS.toLowerCase()) {
+    const wethPrice = await getWethPriceUSD(provider, priceCache);
+    const pair = new Contract(CRX_WETH_LP_ADDRESS, UNIV2_PAIR_ABI, provider);
+    const [reserve0, reserve1] = await pair.getReserves();
+    const token0 = await pair.token0();
+    const token1 = await pair.token1();
+    const crxIs0 = token0.toLowerCase() === lower;
+    const crxRes = crxIs0 ? reserve0 : reserve1;
+    const wethRes = crxIs0 ? reserve1 : reserve0;
+    const priceInWeth =
+      Number(formatUnits(wethRes, TOKENS.WETH.decimals)) /
+      Number(formatUnits(crxRes, TOKENS.CRX.decimals));
+    const usd = priceInWeth * wethPrice;
+    priceCache[lower] = usd;
+    return usd;
+  }
+
+  return null;
+}
+
+async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
+  const pair = new Contract(lpAddress, UNIV2_PAIR_ABI, provider);
+  const [reserve0, reserve1] = await pair.getReserves();
+  const [token0, token1, totalSupply] = await Promise.all([
+    pair.token0(),
+    pair.token1(),
+    pair.totalSupply(),
+  ]);
+
+  const meta0 = await fetchTokenMeta(provider, token0, metaCache);
+  const meta1 = await fetchTokenMeta(provider, token1, metaCache);
+  const price0 = await getTokenPriceUSD(provider, token0, priceCache, metaCache);
+  const price1 = await getTokenPriceUSD(provider, token1, priceCache, metaCache);
+
+  let tvlUsd = null;
+  const val0 =
+    price0 !== null
+      ? Number(formatUnits(reserve0, meta0.decimals)) * price0
+      : null;
+  const val1 =
+    price1 !== null
+      ? Number(formatUnits(reserve1, meta1.decimals)) * price1
+      : null;
+  if (val0 !== null && val1 !== null) {
+    tvlUsd = val0 + val1;
+  } else if (val0 !== null) {
+    tvlUsd = val0 * 2;
+  } else if (val1 !== null) {
+    tvlUsd = val1 * 2;
+  }
+
+  return {
+    token0: meta0,
+    token1: meta1,
+    reserve0,
+    reserve1,
+    totalSupply,
+    tvlUsd,
+  };
+}
+
+export async function fetchMasterChefFarms(providerOverride) {
+  const provider = providerOverride || (await getProvider());
+  const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, provider);
+  const [poolLengthRaw, totalAllocPointRaw, perBlockRaw] = await Promise.all([
+    chef.poolLength(),
+    chef.totalAllocPoint(),
+    chef.currentxPerBlock(),
+  ]);
+  const poolLength = Number(poolLengthRaw);
+  const totalAllocPoint = BigInt(totalAllocPointRaw || 0n);
+  const perBlock = BigInt(perBlockRaw || 0n);
+
+  const priceCache = {};
+  const metaCache = {};
+  const crxPriceUsd = await getTokenPriceUSD(
+    provider,
+    CRX_ADDRESS,
+    priceCache,
+    metaCache
+  );
+  const pools = [];
+  for (let pid = 0; pid < poolLength; pid++) {
+    const info = await chef.poolInfo(pid);
+    const allocPoint = BigInt(info.allocPoint || 0n);
+    const lpToken = info.lpToken;
+    const rewardPerBlock =
+      totalAllocPoint > 0n ? (perBlock * allocPoint) / totalAllocPoint : 0n;
+
+    let apr = null;
+    let tvlUsd = null;
+    let tokens = [];
+    let pairLabel = "";
+
+    try {
+      const lp = await getLpSummary(provider, lpToken, priceCache, metaCache);
+      tvlUsd = lp.tvlUsd;
+      tokens = [lp.token0, lp.token1];
+      pairLabel = `${lp.token0.symbol} / ${lp.token1.symbol}`;
+      if (crxPriceUsd !== null && tvlUsd && tvlUsd > 0) {
+        const rewardsPerYear = Number(
+          formatUnits(rewardPerBlock * BLOCKS_PER_YEAR, TOKENS.CRX.decimals)
+        );
+        const rewardUsd = rewardsPerYear * crxPriceUsd;
+        apr = (rewardUsd / tvlUsd) * 100;
+      }
+    } catch (e) {
+      // ignore per-pool errors
+    }
+
+    pools.push({
+      pid,
+      lpToken,
+      allocPoint: Number(allocPoint),
+      rewardPerBlock: Number(formatUnits(rewardPerBlock, TOKENS.CRX.decimals)),
+      rewardToken: TOKENS.CRX,
+      apr,
+      tvlUsd,
+      tokens,
+      pairLabel,
+    });
+  }
+
+  return {
+    emissionPerBlock: Number(formatUnits(perBlock, TOKENS.CRX.decimals)),
+    totalAllocPoint: Number(totalAllocPoint),
+    pools,
   };
 }
