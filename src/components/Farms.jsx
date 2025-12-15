@@ -7,6 +7,7 @@ const farms = [
     id: "weth-usdc",
     name: "WETH / USDC Farm",
     pair: "WETH / USDC",
+    tokens: [TOKENS.WETH, TOKENS.USDC],
     apr: 28.4,
     tvlUsd: 421000,
     emissionToken: TOKENS.CRX,
@@ -16,6 +17,7 @@ const farms = [
     id: "weth-dai",
     name: "WETH / DAI Farm",
     pair: "WETH / DAI",
+    tokens: [TOKENS.WETH, TOKENS.DAI],
     apr: 18.7,
     tvlUsd: 192500,
     emissionToken: TOKENS.CRX,
@@ -55,7 +57,19 @@ export default function Farms({ address, onConnect }) {
                   {farm.name}
                 </div>
                 <div className="text-xs text-slate-500 flex items-center gap-2">
-                  {farm.pair}
+                  <div className="flex items-center gap-2">
+                    <div className="flex -space-x-2">
+                      {(farm.tokens || []).map((token) => (
+                        <img
+                          key={token.symbol}
+                          src={token.logo}
+                          alt={token.symbol}
+                          className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900"
+                        />
+                      ))}
+                    </div>
+                    <span>{farm.pair}</span>
+                  </div>
                   <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
                     {farm.status}
                   </span>

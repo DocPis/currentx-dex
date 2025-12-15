@@ -394,8 +394,21 @@ const isRabby = (p) =>
   p?.rabby ||
   p?.__isRabby ||
   (typeof p?.isMetaMask !== "undefined" && p?.walletName === "Rabby");
+const hasMetaMaskInternal = (p) =>
+  Boolean(p?._metamask && typeof p._metamask.isUnlocked === "function");
+const isMetaMaskCompat = (p) => {
+  const name =
+    (p?.walletName ||
+      p?.name ||
+      p?.providerInfo?.name ||
+      p?.info?.name ||
+      "")?.toLowerCase?.() || "";
+  return hasMetaMaskInternal(p) || p?.isMetaMask || name.includes("metamask");
+};
 const isMetaMaskStrict = (p) =>
-  p?.isMetaMask && !p?.isRabby && !isTrust(p) && !isBrave(p);
+  (hasMetaMaskInternal(p) || (p?.isMetaMask && !isRabby(p))) &&
+  !isTrust(p) &&
+  !isBrave(p);
 
 export function getInjectedEthereum() {
   const candidates = collectInjectedProviders();
@@ -405,7 +418,12 @@ export function getInjectedEthereum() {
   const trust = candidates.find(isTrust);
   const brave = candidates.find(isBrave);
   const rabbyProvider = candidates.find(isRabby);
-  const metaCompat = candidates.find((p) => p?.isMetaMask);
+  const metaCompat = candidates.find(
+    (p) =>
+      (hasMetaMaskInternal(p) || isMetaMaskCompat(p)) &&
+      (!isRabby(p) || hasMetaMaskInternal(p)) &&
+      !isTrust(p)
+  );
 
   // Prefer explicit wallets: MetaMask strict > Trust > Brave > Rabby > any MetaMask flag > first available
   return metamask || trust || brave || rabbyProvider || metaCompat || candidates[0];
@@ -436,10 +454,24 @@ export function getInjectedProviderByType(type) {
 
   if (match) return match;
   if (type === "metamask") {
-    return (
-      candidates.find((p) => p?.isMetaMask && !isRabby(p) && !isTrust(p)) ||
-      null
+    const internal = candidates.find(
+      (p) => hasMetaMaskInternal(p) && !isTrust(p) && !isBrave(p)
     );
+    if (internal && !isRabby(internal)) return internal;
+    const fallback = candidates.find(
+      (p) => isMetaMaskCompat(p) && !isRabby(p) && !isTrust(p)
+    );
+    if (fallback) return fallback;
+    if (internal) return internal;
+    if (
+      typeof window !== "undefined" &&
+      window.ethereum &&
+      ((isMetaMaskCompat(window.ethereum) && !isRabby(window.ethereum)) ||
+        hasMetaMaskInternal(window.ethereum)) &&
+      !isTrust(window.ethereum)
+    ) {
+      return window.ethereum;
+    }
   }
 
   return null;
