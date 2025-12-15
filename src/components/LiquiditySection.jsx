@@ -201,8 +201,8 @@ export default function LiquiditySection() {
           const token0IsA = token0.toLowerCase() === token0Addr.toLowerCase();
           const resA = token0IsA ? reserve0 : reserve1;
           const resB = token0IsA ? reserve1 : reserve0;
-          const metaA = TOKENS[pool.token0Symbol];
-          const metaB = TOKENS[pool.token1Symbol];
+          const metaA = tokenRegistry[pool.token0Symbol];
+          const metaB = tokenRegistry[pool.token1Symbol];
           const stableA =
             metaA?.symbol === "USDC" ||
             metaA?.symbol === "USDT" ||
@@ -245,7 +245,7 @@ export default function LiquiditySection() {
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick]);
+  }, [lpRefreshTick, tokenRegistry]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -1219,7 +1219,7 @@ export default function LiquiditySection() {
                 >
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div className="flex items-center gap-3">
-                      {[TOKENS[p.token0Symbol], TOKENS[p.token1Symbol]].map((t, idx) => (
+                      {[tokenRegistry[p.token0Symbol], tokenRegistry[p.token1Symbol]].map((t, idx) => (
                         <img
                           key={idx}
                           src={t?.logo}
@@ -1741,6 +1741,27 @@ export default function LiquiditySection() {
                 </span>
                 <span className="text-slate-400">Default</span>
               </div>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-5 py-3 border-b border-slate-800">
+              <div className="flex-1 flex items-center gap-2">
+                <input
+                  value={customAddress}
+                  onChange={(e) => setCustomAddress(e.target.value)}
+                  placeholder="Add custom token address (0x...)"
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={addCustomToken}
+                  disabled={customTokenLoading}
+                  className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
+                >
+                  {customTokenLoading ? "Loading..." : "Add token"}
+                </button>
+              </div>
+              {customTokenStatus && (
+                <div className="text-[11px] text-slate-300">{customTokenStatus}</div>
+              )}
             </div>
 
             <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
