@@ -95,7 +95,6 @@ export default function SwapSection({ balances }) {
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
-  const involvesCrx = sellToken === "CRX" || buyToken === "CRX";
   const isSupported =
     Boolean(sellMeta?.address || sellToken === "ETH") &&
     Boolean(buyMeta?.address || buyToken === "ETH");
@@ -181,11 +180,6 @@ export default function SwapSection({ balances }) {
       setQuoteOutRaw(null);
       setPriceImpact(null);
       setApproveNeeded(false);
-
-      if (involvesCrx) {
-        setQuoteError("CRX swaps coming soon (mock token).");
-        return;
-      }
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -324,9 +318,6 @@ export default function SwapSection({ balances }) {
       }
       if (!isSupported) {
         throw new Error("Seleziona token con indirizzo valido.");
-      }
-      if (involvesCrx) {
-        throw new Error("CRX swaps coming soon (mock token).");
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
