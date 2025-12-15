@@ -170,6 +170,7 @@ export default function SwapSection({ balances }) {
     try {
       setCustomLoading(true);
       const provider = await getProvider();
+      const normalized = addr.toLowerCase();
       const contract = new Contract(addr, ERC20_ABI, provider);
       const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
         contract.symbol().catch(() => "TOKEN"),
@@ -182,14 +183,14 @@ export default function SwapSection({ balances }) {
       let suffix = 1;
       while (
         tokenRegistry[key] &&
-        tokenRegistry[key].address?.toLowerCase() !== addr.toLowerCase()
+        tokenRegistry[key].address?.toLowerCase() !== normalized
       ) {
         key = `${baseSymbol}_${suffix++}`;
       }
       const meta = {
         symbol: key,
         name: nameRaw || baseSymbol,
-        address: addr,
+        address: normalized,
         decimals,
         logo: currentxLogo,
       };

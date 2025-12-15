@@ -145,6 +145,12 @@ export default function LiquiditySection() {
     setRegisteredCustomTokens(customTokens);
   }, [customTokens]);
 
+  useEffect(() => {
+    if (showTokenList) {
+      setCustomTokens(getRegisteredCustomTokens());
+    }
+  }, [showTokenList]);
+
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
     const id = setInterval(() => setLpRefreshTick((t) => t + 1), 30000);
@@ -386,6 +392,9 @@ export default function LiquiditySection() {
     (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
   const pairIdOverride = selectedPool?.pairId;
   const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
+  const pairMissing =
+    pairError && pairError.toLowerCase().includes("pair not found");
+  const pairBlockingError = Boolean(pairError && !pairMissing);
 
   useEffect(() => {
     setSelectionDepositPoolId(null);
@@ -446,11 +455,13 @@ export default function LiquiditySection() {
           if (pairMissing && pairIdOverride) {
             setPairError("");
           } else if (pairMissing) {
-            setPairError("Pair not found on Sepolia for this token combination.");
+            setPairError("Pair not found on Sepolia for this token combination. Adding liquidity will deploy it.");
+            setLpBalance(null);
+            setLpBalanceError("");
           } else {
             setPairError(message);
+            setLpBalanceError(err.message || "Failed to load LP balance");
           }
-          setLpBalanceError(err.message || "Failed to load LP balance");
         }
       }
     };
@@ -608,7 +619,8 @@ export default function LiquiditySection() {
     try {
       setCustomTokenLoading(true);
       const provider = await getProvider();
-      const contract = new Contract(addr, ERC20_ABI, provider);
+      const normalized = addr.toLowerCase();
+      const contract = new Contract(normalized, ERC20_ABI, provider);
       const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
         contract.symbol().catch(() => "TOKEN"),
         contract.name().catch(() => "Custom token"),
@@ -620,14 +632,14 @@ export default function LiquiditySection() {
       let suffix = 1;
       while (
         tokenRegistry[key] &&
-        tokenRegistry[key].address?.toLowerCase() !== addr.toLowerCase()
+        tokenRegistry[key].address?.toLowerCase() !== normalized
       ) {
         key = `${baseSymbol}_${suffix++}`;
       }
       const meta = {
         symbol: key,
         name: nameRaw || baseSymbol,
-        address: addr,
+        address: normalized,
         decimals,
         logo: currentxLogo,
       };
@@ -1372,7 +1384,7 @@ export default function LiquiditySection() {
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
                     />
                     <button
-                      disabled={actionLoading || !poolSupportsActions || !!pairError}
+                      disabled={actionLoading || !poolSupportsActions || pairBlockingError}
                       onClick={handleDeposit}
                       className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60 w-full md:w-auto"
                     >
@@ -1420,7 +1432,7 @@ export default function LiquiditySection() {
                       </div>
                     )}
                     <button
-                      disabled={actionLoading || !poolSupportsActions || !!pairError}
+                      disabled={actionLoading || !poolSupportsActions || pairBlockingError}
                       onClick={handleWithdraw}
                       className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
                     >
@@ -1535,7 +1547,14 @@ export default function LiquiditySection() {
                   className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
                 />
               </div>
-              <button className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30">
+              <button
+                type="button"
+                onClick={() => {
+                  setTokenSelection((prev) => prev || { baseSymbol: null, pairSymbol: null });
+                  setShowTokenList(true);
+                }}
+                className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30"
+              >
                 Launch pool
               </button>
             </div>
