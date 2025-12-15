@@ -17,87 +17,14 @@ import currentxLogo from "../assets/currentx.png";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 
-function TokenSelector({ side, selected, onSelect, balances, tokenRegistry, tokenOptions }) {
-  const [open, setOpen] = useState(false);
-  const meta = tokenRegistry[selected] || {};
-  const logo = meta.logo;
-  const balanceDisplay = balances?.[selected] ?? 0;
-  return (
-    <div className="relative w-full sm:w-auto">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[120px] hover:border-sky-500/60 transition"
-      >
-        {logo ? (
-          <img
-            src={logo}
-            alt={`${meta.symbol || selected} logo`}
-            className="h-6 w-6 rounded-full object-contain"
-          />
-        ) : (
-          <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-            {(meta.symbol || selected || "?").slice(0, 2)}
-          </div>
-        )}
-        <span className="text-sm font-semibold">{meta.symbol || selected}</span>
-        <svg
-          className="ml-auto h-3.5 w-3.5 text-slate-400"
-          viewBox="0 0 20 20"
-          fill="none"
-          xmlns="http://www.w3.org/2000/svg"
-        >
-          <path
-            d="M6 8l4 4 4-4"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </button>
-      {open && (
-        <div className="absolute z-20 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl shadow-xl shadow-black/50 overflow-hidden">
-          {tokenOptions.map((symbol) => {
-            const optionMeta = tokenRegistry[symbol] || {};
-            const optLogo = optionMeta.logo;
-            return (
-            <button
-              key={`${side}-${symbol}`}
-              onClick={() => {
-                onSelect(symbol);
-                setOpen(false);
-              }}
-              className={`w-full px-3 py-2 flex items-center gap-2 text-sm transition ${
-                symbol === selected
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-200 hover:bg-slate-800/80"
-              }`}
-            >
-              {optLogo ? (
-                <img
-                  src={optLogo}
-                  alt={`${optionMeta.symbol || symbol} logo`}
-                  className="h-6 w-6 rounded-full object-contain"
-                />
-              ) : (
-                <div className="h-6 w-6 rounded-full bg-slate-800 text-[10px] font-semibold flex items-center justify-center text-white border border-slate-700">
-                  {(optionMeta.symbol || symbol).slice(0, 2)}
-                </div>
-              )}
-              <div className="flex flex-col items-start">
-                <span className="font-medium">{optionMeta.symbol || symbol}</span>
-              </div>
-              <span className="ml-auto text-[11px] text-slate-400">
-                {(balances[symbol] || 0).toFixed(3)}
-              </span>
-            </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
+const shortenAddress = (addr) =>
+  !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+const formatBalance = (v) => {
+  const n = Number(v || 0);
+  if (!Number.isFinite(n)) return "0";
+  if (n >= 1) return n.toFixed(4);
+  return n.toFixed(6);
+};
 
 export default function SwapSection({ balances }) {
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
@@ -121,6 +48,8 @@ export default function SwapSection({ balances }) {
   const [customAddress, setCustomAddress] = useState("");
   const [customStatus, setCustomStatus] = useState("");
   const [customLoading, setCustomLoading] = useState(false);
+  const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
+  const [tokenSearch, setTokenSearch] = useState("");
 
   useEffect(() => {
     setRegisteredCustomTokens(customTokens);
@@ -132,6 +61,21 @@ export default function SwapSection({ balances }) {
     const extras = customKeys.filter((k) => !orderedBase.includes(k));
     return [...orderedBase, ...extras];
   }, [customTokens]);
+  const filteredTokens = useMemo(() => {
+    const q = tokenSearch.trim().toLowerCase();
+    const all = tokenOptions
+      .map((sym) => tokenRegistry[sym])
+      .filter(Boolean);
+    if (!q) return all;
+    return all.filter((t) => {
+      const addr = (t.address || "").toLowerCase();
+      return (
+        t.symbol.toLowerCase().includes(q) ||
+        (t.name || "").toLowerCase().includes(q) ||
+        addr.includes(q)
+      );
+    });
+  }, [tokenOptions, tokenRegistry, tokenSearch]);
   const sellBalance = balances?.[sellToken] || 0;
   const handleQuickPercent = (pct) => {
     const bal = balances?.[sellToken] || 0;
@@ -155,6 +99,26 @@ export default function SwapSection({ balances }) {
   const isSupported =
     Boolean(sellMeta?.address || sellToken === "ETH") &&
     Boolean(buyMeta?.address || buyToken === "ETH");
+
+  const handleSelectToken = (symbol) => {
+    if (!symbol) return;
+    if (selectorOpen === "sell") {
+      if (symbol === buyToken) setBuyToken(sellToken);
+      setSellToken(symbol);
+    } else if (selectorOpen === "buy") {
+      if (symbol === sellToken) setSellToken(buyToken);
+      setBuyToken(symbol);
+    }
+    setCustomStatus("");
+    setSelectorOpen(null);
+    setTokenSearch("");
+  };
+
+  const closeSelector = () => {
+    setSelectorOpen(null);
+    setTokenSearch("");
+    setCustomStatus("");
+  };
 
   const loadCustomToken = async (address, target) => {
     const addr = (address || "").trim();
@@ -200,6 +164,7 @@ export default function SwapSection({ balances }) {
       }));
       if (target === "sell") setSellToken(key);
       if (target === "buy") setBuyToken(key);
+      if (target) setSelectorOpen(null);
       setCustomStatus(`Token ${key} aggiunto`);
     } catch (err) {
       setCustomStatus(err?.message || "Impossibile caricare il token");
@@ -492,17 +457,49 @@ export default function SwapSection({ balances }) {
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <TokenSelector
-              side="sell"
-              selected={sellToken}
-              onSelect={(sym) => {
-                if (sym === buyToken) setBuyToken(sellToken);
-                setSellToken(sym);
+            <button
+              type="button"
+              onClick={() => {
+                setSelectorOpen("sell");
+                setTokenSearch("");
+                setCustomStatus("");
               }}
-              tokenRegistry={tokenRegistry}
-              tokenOptions={tokenOptions}
-              balances={balances}
-            />
+              className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
+            >
+              {sellMeta?.logo ? (
+                <img
+                  src={sellMeta.logo}
+                  alt={`${sellMeta.symbol} logo`}
+                  className="h-6 w-6 rounded-full object-contain"
+                />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
+                  {(sellMeta?.symbol || sellToken || "?").slice(0, 2)}
+                </div>
+              )}
+              <div className="flex flex-col items-start">
+                <span className="text-sm font-semibold">
+                  {sellMeta?.symbol || sellToken}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {sellMeta?.address ? shortenAddress(sellMeta.address) : "Native"}
+                </span>
+              </div>
+              <svg
+                className="ml-auto h-3.5 w-3.5 text-slate-400"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M6 8l4 4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
             <input
               value={amountIn}
               onChange={(e) => setAmountIn(e.target.value)}
@@ -558,17 +555,49 @@ export default function SwapSection({ balances }) {
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <TokenSelector
-              side="buy"
-              selected={buyToken}
-              onSelect={(sym) => {
-                if (sym === sellToken) setSellToken(buyToken);
-                setBuyToken(sym);
+            <button
+              type="button"
+              onClick={() => {
+                setSelectorOpen("buy");
+                setTokenSearch("");
+                setCustomStatus("");
               }}
-              tokenRegistry={tokenRegistry}
-              tokenOptions={tokenOptions}
-              balances={balances}
-            />
+              className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
+            >
+              {buyMeta?.logo ? (
+                <img
+                  src={buyMeta.logo}
+                  alt={`${buyMeta.symbol} logo`}
+                  className="h-6 w-6 rounded-full object-contain"
+                />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
+                  {(buyMeta?.symbol || buyToken || "?").slice(0, 2)}
+                </div>
+              )}
+              <div className="flex flex-col items-start">
+                <span className="text-sm font-semibold">
+                  {buyMeta?.symbol || buyToken}
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  {buyMeta?.address ? shortenAddress(buyMeta.address) : "Native"}
+                </span>
+              </div>
+              <svg
+                className="ml-auto h-3.5 w-3.5 text-slate-400"
+                viewBox="0 0 20 20"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M6 8l4 4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
             <div className="flex-1 text-right w-full">
               <div className="text-2xl sm:text-3xl font-semibold text-slate-50">
                 {quoteOut !== null ? Number(quoteOut).toFixed(6) : "0.00"}
@@ -585,39 +614,6 @@ export default function SwapSection({ balances }) {
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="mt-3 rounded-2xl bg-slate-900 border border-slate-800 p-3">
-          <div className="text-xs text-slate-400 mb-2">Custom token address (ERC20)</div>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <input
-              value={customAddress}
-              onChange={(e) => setCustomAddress(e.target.value)}
-              placeholder="0x... token address"
-              className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-sm text-slate-100"
-            />
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => loadCustomToken(customAddress, "sell")}
-                disabled={customLoading}
-                className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
-              >
-                {customLoading ? "Loading..." : "Use for Sell"}
-              </button>
-              <button
-                type="button"
-                onClick={() => loadCustomToken(customAddress, "buy")}
-                disabled={customLoading}
-                className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
-              >
-                {customLoading ? "Loading..." : "Use for Buy"}
-              </button>
-            </div>
-          </div>
-          {customStatus && (
-            <div className="mt-2 text-[11px] text-slate-300">{customStatus}</div>
-          )}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
@@ -732,6 +728,123 @@ export default function SwapSection({ balances }) {
         )}
       </div>
 
+      {selectorOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-8">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={closeSelector} />
+          <div className="relative w-full max-w-2xl bg-[#0a0f24] border border-slate-800 rounded-3xl shadow-2xl shadow-black/50 overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+              <div>
+                <div className="text-sm font-semibold text-slate-100">Select token</div>
+                <div className="text-xs text-slate-400">Pick from list or paste an address</div>
+              </div>
+              <button
+                onClick={closeSelector}
+                className="h-9 w-9 rounded-full bg-slate-900 text-slate-200 flex items-center justify-center border border-slate-800 hover:border-slate-600"
+                aria-label="Close token select"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M6 6l12 12M6 18L18 6"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="px-4 py-3 flex flex-col gap-3">
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 text-slate-500"
+                >
+                  <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <input
+                  value={tokenSearch}
+                  onChange={(e) => setTokenSearch(e.target.value)}
+                  placeholder="WETH, USDC, 0x..."
+                  className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500"
+                />
+              </div>
+
+              <div className="flex flex-col md:flex-row gap-2">
+                <input
+                  value={customAddress}
+                  onChange={(e) => setCustomAddress(e.target.value)}
+                  placeholder="Paste token address (0x...)"
+                  className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => loadCustomToken(customAddress, selectorOpen)}
+                  disabled={customLoading}
+                  className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
+                >
+                  {customLoading ? "Loading..." : "Add token"}
+                </button>
+              </div>
+              {customStatus && (
+                <div className="text-[11px] text-slate-300">{customStatus}</div>
+              )}
+            </div>
+
+            <div className="max-h-[480px] overflow-y-auto divide-y divide-slate-800">
+              {filteredTokens.map((t) => (
+                <button
+                  key={`${selectorOpen}-${t.symbol}`}
+                  type="button"
+                  onClick={() => handleSelectToken(t.symbol)}
+                  className="w-full px-4 py-3 flex items-center gap-3 bg-slate-950/50 hover:bg-slate-900/70 transition text-left"
+                >
+                  {t.logo ? (
+                    <img
+                      src={t.logo}
+                      alt={`${t.symbol} logo`}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center">
+                      {t.symbol.slice(0, 3)}
+                    </div>
+                  )}
+                  <div className="flex flex-col min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
+                      {t.symbol}
+                      {!t.address && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
+                          Native
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-500 truncate">
+                      {t.address ? shortenAddress(t.address) : t.name || "Token"}
+                    </div>
+                  </div>
+                  <div className="ml-auto text-right text-sm text-slate-200">
+                    <div>{formatBalance(balances[t.symbol])}</div>
+                    <div className="text-[11px] text-slate-500">Balance</div>
+                  </div>
+                </button>
+              ))}
+              {!filteredTokens.length && (
+                <div className="px-4 py-6 text-center text-sm text-slate-400">
+                  Nessun token trovato. Incolla un indirizzo per aggiungerlo.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
