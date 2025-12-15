@@ -8,6 +8,18 @@ import wbtcLogo from "../tokens/wbtc.png";
 import wethLogo from "../tokens/weth.png";
 import currentxLogo from "../assets/currentx.png";
 
+const CUSTOM_TOKEN_STORE_KEY = "__CX_CUSTOM_TOKENS__";
+
+export function getRegisteredCustomTokens() {
+  if (typeof globalThis === "undefined") return {};
+  return globalThis[CUSTOM_TOKEN_STORE_KEY] || {};
+}
+
+export function setRegisteredCustomTokens(tokens) {
+  if (typeof globalThis === "undefined") return;
+  globalThis[CUSTOM_TOKEN_STORE_KEY] = tokens || {};
+}
+
 export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
 // Addresses (lowercase to avoid checksum issues)
@@ -601,6 +613,11 @@ export async function getV2Quote(provider, amountIn, path) {
 function findTokenMeta(address) {
   if (!address) return null;
   const lower = address.toLowerCase();
+  const registered = getRegisteredCustomTokens();
+  const customMatch = Object.values(registered || {}).find(
+    (t) => t.address && t.address.toLowerCase() === lower
+  );
+  if (customMatch) return customMatch;
   return Object.values(TOKENS).find(
     (t) => t.address && t.address.toLowerCase() === lower
   );

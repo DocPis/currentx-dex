@@ -10,8 +10,11 @@ import {
   ERC20_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
+  getRegisteredCustomTokens,
+  setRegisteredCustomTokens,
 } from "../config/web3";
 import { fetchV2PairData } from "../config/subgraph";
+import currentxLogo from "../assets/currentx.png";
 
 const basePools = [
   {
@@ -86,10 +89,10 @@ const formatTokenBalance = (v) => {
   return num.toFixed(6);
 };
 
-const resolveTokenAddress = (symbol) => {
+const resolveTokenAddress = (symbol, registry = TOKENS) => {
   if (!symbol) return null;
   if (symbol === "ETH") return WETH_ADDRESS;
-  const token = TOKENS[symbol];
+  const token = registry[symbol];
   return token?.address || null;
 };
 
@@ -102,6 +105,9 @@ const shortenAddress = (addr) => {
 };
 
 export default function LiquiditySection() {
+  const [customTokens, setCustomTokens] = useState(() =>
+    getRegisteredCustomTokens()
+  );
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
   const [poolStats, setPoolStats] = useState({});
@@ -127,6 +133,17 @@ export default function LiquiditySection() {
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [customAddress, setCustomAddress] = useState("");
+  const [customTokenStatus, setCustomTokenStatus] = useState("");
+  const [customTokenLoading, setCustomTokenLoading] = useState(false);
+  const tokenRegistry = useMemo(
+    () => ({ ...TOKENS, ...customTokens }),
+    [customTokens]
+  );
+
+  useEffect(() => {
+    setRegisteredCustomTokens(customTokens);
+  }, [customTokens]);
 
   // Auto refresh LP/tvl every 30s
   useEffect(() => {
@@ -142,8 +159,14 @@ export default function LiquiditySection() {
       setSubgraphError("");
       setTvlError("");
       for (const pool of basePools) {
-        const token0Addr = resolveTokenAddress(pool.token0Symbol);
-        const token1Addr = resolveTokenAddress(pool.token1Symbol);
+        const token0Addr = resolveTokenAddress(
+          pool.token0Symbol,
+          tokenRegistry
+        );
+        const token1Addr = resolveTokenAddress(
+          pool.token1Symbol,
+          tokenRegistry
+        );
         if (!token0Addr || !token1Addr) continue;
 
         try {
@@ -246,26 +269,6 @@ export default function LiquiditySection() {
     }));
   }, [poolStats]);
 
-  const selectedPool = useMemo(() => {
-    const found = pools.find((p) => p.id === selectedPoolId);
-    return found || pools[0];
-  }, [pools, selectedPoolId]);
-
-  const token0Meta = selectedPool ? TOKENS[selectedPool.token0Symbol] : null;
-  const token1Meta = selectedPool ? TOKENS[selectedPool.token1Symbol] : null;
-  const token0Address = resolveTokenAddress(selectedPool?.token0Symbol);
-  const token1Address = resolveTokenAddress(selectedPool?.token1Symbol);
-  const poolSupportsActions = Boolean(token0Address && token1Address);
-  const usesNativeEth =
-    selectedPool &&
-    (selectedPool.token0Symbol === "ETH" || selectedPool.token1Symbol === "ETH");
-  const usesWethWithToken =
-    selectedPool &&
-    !usesNativeEth &&
-    (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
-  const pairIdOverride = selectedPool?.pairId;
-  const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
-
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
     const q = searchTerm.toLowerCase();
@@ -288,11 +291,11 @@ export default function LiquiditySection() {
       }
     });
 
-    return Object.values(TOKENS).map((t) => ({
+    return Object.values(tokenRegistry).map((t) => ({
       ...t,
       tvlUsd: tvlMap[t.symbol] || 0,
     }));
-  }, [pools]);
+  }, [pools, tokenRegistry]);
 
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
@@ -310,27 +313,79 @@ export default function LiquiditySection() {
   const poolsCount = pools.length;
   const tokensCount = tokenEntries.length;
   const baseSelected = tokenSelection?.baseSymbol
-    ? TOKENS[tokenSelection.baseSymbol]
+    ? tokenRegistry[tokenSelection.baseSymbol]
     : null;
   const pairSelected = tokenSelection?.pairSymbol
-    ? TOKENS[tokenSelection.pairSymbol]
+    ? tokenRegistry[tokenSelection.pairSymbol]
     : null;
   const pairOptions = useMemo(() => {
     if (!tokenSelection?.baseSymbol) return [];
-    return Object.values(TOKENS).filter(
+    return Object.values(tokenRegistry).filter(
       (t) => t.symbol !== tokenSelection.baseSymbol
     );
-  }, [tokenSelection?.baseSymbol]);
+  }, [tokenSelection?.baseSymbol, tokenRegistry]);
 
   const selectionPools = useMemo(() => {
     const base = tokenSelection?.baseSymbol;
     const pair = tokenSelection?.pairSymbol;
     if (!base || !pair) return [];
-    return pools.filter((p) => {
+    const matched = pools.filter((p) => {
       const symbols = [p.token0Symbol, p.token1Symbol];
       return symbols.includes(base) && symbols.includes(pair);
     });
-  }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
+    if (matched.length) return matched;
+    const baseMeta = tokenRegistry[base];
+    const pairMeta = tokenRegistry[pair];
+    if (!baseMeta || !pairMeta) return [];
+    return [
+      {
+        id: `custom-${base}-${pair}`,
+        token0Symbol: base,
+        token1Symbol: pair,
+        poolType: "volatile",
+        tvlUsd: 0,
+        volume24hUsd: 0,
+        fees24hUsd: 0,
+      },
+    ];
+  }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol, tokenRegistry]);
+
+  const allPools = useMemo(() => {
+    const extras = selectionPools.filter(
+      (p) => !pools.find((base) => base.id === p.id)
+    );
+    return [...pools, ...extras];
+  }, [pools, selectionPools]);
+
+  const selectedPool = useMemo(() => {
+    const found = allPools.find((p) => p.id === selectedPoolId);
+    return found || allPools[0];
+  }, [allPools, selectedPoolId]);
+
+  const token0Meta = selectedPool
+    ? tokenRegistry[selectedPool.token0Symbol]
+    : null;
+  const token1Meta = selectedPool
+    ? tokenRegistry[selectedPool.token1Symbol]
+    : null;
+  const token0Address = resolveTokenAddress(
+    selectedPool?.token0Symbol,
+    tokenRegistry
+  );
+  const token1Address = resolveTokenAddress(
+    selectedPool?.token1Symbol,
+    tokenRegistry
+  );
+  const poolSupportsActions = Boolean(token0Address && token1Address);
+  const usesNativeEth =
+    selectedPool &&
+    (selectedPool.token0Symbol === "ETH" || selectedPool.token1Symbol === "ETH");
+  const usesWethWithToken =
+    selectedPool &&
+    !usesNativeEth &&
+    (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
+  const pairIdOverride = selectedPool?.pairId;
+  const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
 
   useEffect(() => {
     setSelectionDepositPoolId(null);
@@ -1446,12 +1501,12 @@ export default function LiquiditySection() {
 
         <div className="px-2 sm:px-4 pb-3">
           {filteredPools.map((p) => {
-            const token0 = TOKENS[p.token0Symbol];
-            const token1 = TOKENS[p.token1Symbol];
+            const token0 = tokenRegistry[p.token0Symbol];
+            const token1 = tokenRegistry[p.token1Symbol];
             const isSelected = selectedPoolId === p.id;
             const rowSupports =
-              resolveTokenAddress(p.token0Symbol) &&
-              resolveTokenAddress(p.token1Symbol);
+              resolveTokenAddress(p.token0Symbol, tokenRegistry) &&
+              resolveTokenAddress(p.token1Symbol, tokenRegistry);
 
             return (
               <button

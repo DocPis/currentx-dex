@@ -1,5 +1,5 @@
 // src/components/SwapSection.jsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -10,24 +10,36 @@ import {
   WETH_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
+  getRegisteredCustomTokens,
+  setRegisteredCustomTokens,
 } from "../config/web3";
+import currentxLogo from "../assets/currentx.png";
 
-const TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 
-function TokenSelector({ side, selected, onSelect, balances }) {
+function TokenSelector({ side, selected, onSelect, balances, tokenRegistry, tokenOptions }) {
   const [open, setOpen] = useState(false);
+  const meta = tokenRegistry[selected] || {};
+  const logo = meta.logo;
+  const balanceDisplay = balances?.[selected] ?? 0;
   return (
     <div className="relative w-full sm:w-auto">
       <button
         onClick={() => setOpen((v) => !v)}
         className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[120px] hover:border-sky-500/60 transition"
       >
-        <img
-          src={TOKENS[selected].logo}
-          alt={`${selected} logo`}
-          className="h-6 w-6 rounded-full object-contain"
-        />
-        <span className="text-sm font-semibold">{selected}</span>
+        {logo ? (
+          <img
+            src={logo}
+            alt={`${meta.symbol || selected} logo`}
+            className="h-6 w-6 rounded-full object-contain"
+          />
+        ) : (
+          <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
+            {(meta.symbol || selected || "?").slice(0, 2)}
+          </div>
+        )}
+        <span className="text-sm font-semibold">{meta.symbol || selected}</span>
         <svg
           className="ml-auto h-3.5 w-3.5 text-slate-400"
           viewBox="0 0 20 20"
@@ -45,7 +57,10 @@ function TokenSelector({ side, selected, onSelect, balances }) {
       </button>
       {open && (
         <div className="absolute z-20 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl shadow-xl shadow-black/50 overflow-hidden">
-          {TOKEN_OPTIONS.map((symbol) => (
+          {tokenOptions.map((symbol) => {
+            const optionMeta = tokenRegistry[symbol] || {};
+            const optLogo = optionMeta.logo;
+            return (
             <button
               key={`${side}-${symbol}`}
               onClick={() => {
@@ -58,19 +73,26 @@ function TokenSelector({ side, selected, onSelect, balances }) {
                   : "text-slate-200 hover:bg-slate-800/80"
               }`}
             >
-              <img
-                src={TOKENS[symbol].logo}
-                alt={`${symbol} logo`}
-                className="h-6 w-6 rounded-full object-contain"
-              />
+              {optLogo ? (
+                <img
+                  src={optLogo}
+                  alt={`${optionMeta.symbol || symbol} logo`}
+                  className="h-6 w-6 rounded-full object-contain"
+                />
+              ) : (
+                <div className="h-6 w-6 rounded-full bg-slate-800 text-[10px] font-semibold flex items-center justify-center text-white border border-slate-700">
+                  {(optionMeta.symbol || symbol).slice(0, 2)}
+                </div>
+              )}
               <div className="flex flex-col items-start">
-                <span className="font-medium">{symbol}</span>
+                <span className="font-medium">{optionMeta.symbol || symbol}</span>
               </div>
               <span className="ml-auto text-[11px] text-slate-400">
                 {(balances[symbol] || 0).toFixed(3)}
               </span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -78,6 +100,11 @@ function TokenSelector({ side, selected, onSelect, balances }) {
 }
 
 export default function SwapSection({ balances }) {
+  const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
+  const tokenRegistry = useMemo(
+    () => ({ ...TOKENS, ...customTokens }),
+    [customTokens]
+  );
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("USDC");
   const [amountIn, setAmountIn] = useState("");
@@ -91,10 +118,24 @@ export default function SwapSection({ balances }) {
   const [swapLoading, setSwapLoading] = useState(false);
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
+  const [customAddress, setCustomAddress] = useState("");
+  const [customStatus, setCustomStatus] = useState("");
+  const [customLoading, setCustomLoading] = useState(false);
+
+  useEffect(() => {
+    setRegisteredCustomTokens(customTokens);
+  }, [customTokens]);
+
+  const tokenOptions = useMemo(() => {
+    const customKeys = Object.keys(customTokens || {});
+    const orderedBase = BASE_TOKEN_OPTIONS;
+    const extras = customKeys.filter((k) => !orderedBase.includes(k));
+    return [...orderedBase, ...extras];
+  }, [customTokens]);
   const sellBalance = balances?.[sellToken] || 0;
   const handleQuickPercent = (pct) => {
     const bal = balances?.[sellToken] || 0;
-    const decimals = Math.min(6, TOKENS[sellKey]?.decimals ?? 6);
+    const decimals = Math.min(6, tokenRegistry[sellKey]?.decimals ?? 6);
     if (!bal) {
       setAmountIn("");
       return;
@@ -103,49 +144,68 @@ export default function SwapSection({ balances }) {
     setAmountIn(val);
   };
 
-  const isEthUsdc =
-    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDC";
-  const isUsdcEth =
-    sellToken === "USDC" && (buyToken === "ETH" || buyToken === "WETH");
-  const isEthUsdt =
-    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "USDT";
-  const isUsdtEth =
-    sellToken === "USDT" && (buyToken === "ETH" || buyToken === "WETH");
-  const isUsdcDai =
-    (sellToken === "USDC" && buyToken === "DAI") ||
-    (sellToken === "DAI" && buyToken === "USDC");
-  const isUsdcUsdt =
-    (sellToken === "USDC" && buyToken === "USDT") ||
-    (sellToken === "USDT" && buyToken === "USDC");
-  const isUsdcWbtc =
-    (sellToken === "USDC" && buyToken === "WBTC") ||
-    (sellToken === "WBTC" && buyToken === "USDC");
-  const isEthDai =
-    (sellToken === "ETH" || sellToken === "WETH") && buyToken === "DAI";
-  const isDaiEth =
-    sellToken === "DAI" && (buyToken === "ETH" || buyToken === "WETH");
-  const isWethDai =
-    (sellToken === "WETH" && buyToken === "DAI") ||
-    (sellToken === "DAI" && buyToken === "WETH");
+  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
+  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
+  const sellMeta = tokenRegistry[sellKey];
+  const buyMeta = tokenRegistry[buyKey];
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
   const involvesCrx = sellToken === "CRX" || buyToken === "CRX";
   const isSupported =
-    isEthUsdc ||
-    isUsdcEth ||
-    isEthUsdt ||
-    isUsdtEth ||
-    isEthDai ||
-    isDaiEth ||
-    isUsdcDai ||
-    isUsdcUsdt ||
-    isWethDai ||
-    isUsdcWbtc ||
-    isDirectEthWeth;
+    Boolean(sellMeta?.address || sellToken === "ETH") &&
+    Boolean(buyMeta?.address || buyToken === "ETH");
 
-  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
-  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
+  const loadCustomToken = async (address, target) => {
+    const addr = (address || "").trim();
+    setCustomStatus("");
+    if (!addr) {
+      setCustomStatus("Inserisci un address valido (0x...).");
+      return;
+    }
+    if (!addr.startsWith("0x") || addr.length !== 42) {
+      setCustomStatus("Indirizzo non valido.");
+      return;
+    }
+    try {
+      setCustomLoading(true);
+      const provider = await getProvider();
+      const contract = new Contract(addr, ERC20_ABI, provider);
+      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+        contract.symbol().catch(() => "TOKEN"),
+        contract.name().catch(() => "Custom token"),
+        contract.decimals().catch(() => 18),
+      ]);
+      const decimals = Number(decimalsRaw) || 18;
+      const baseSymbol = (symbolRaw || "TOKEN").toUpperCase();
+      let key = baseSymbol;
+      let suffix = 1;
+      while (
+        tokenRegistry[key] &&
+        tokenRegistry[key].address?.toLowerCase() !== addr.toLowerCase()
+      ) {
+        key = `${baseSymbol}_${suffix++}`;
+      }
+      const meta = {
+        symbol: key,
+        name: nameRaw || baseSymbol,
+        address: addr,
+        decimals,
+        logo: currentxLogo,
+      };
+      setCustomTokens((prev) => ({
+        ...prev,
+        [key]: meta,
+      }));
+      if (target === "sell") setSellToken(key);
+      if (target === "buy") setBuyToken(key);
+      setCustomStatus(`Token ${key} aggiunto`);
+    } catch (err) {
+      setCustomStatus(err?.message || "Impossibile caricare il token");
+    } finally {
+      setCustomLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -163,14 +223,12 @@ export default function SwapSection({ balances }) {
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
-        setQuoteError(
-          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT/WBTC, WETH <-> DAI, USDC <-> WBTC"
-        );
+        setQuoteError("Seleziona token con indirizzo valido.");
         return;
       }
 
       if (isDirectEthWeth) {
-        const directWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        const directWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
         setQuoteOut(amountIn);
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
@@ -180,9 +238,9 @@ export default function SwapSection({ balances }) {
       try {
         setQuoteLoading(true);
         const provider = await getProvider();
-        const sellAddress = TOKENS[sellKey].address;
-        const buyAddress = TOKENS[buyKey].address;
-        const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+        const sellAddress = sellMeta?.address;
+        const buyAddress = buyMeta?.address;
+        const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
         const meta = await getV2QuoteWithMeta(
           provider,
@@ -204,7 +262,7 @@ export default function SwapSection({ balances }) {
           );
         }
 
-        const formatted = formatUnits(meta.amountOut, TOKENS[buyKey].decimals);
+        const formatted = formatUnits(meta.amountOut, buyMeta?.decimals ?? 18);
         setQuoteOut(formatted);
         setQuoteOutRaw(meta.amountOut);
         setPriceImpact(meta.priceImpactPct);
@@ -260,8 +318,8 @@ export default function SwapSection({ balances }) {
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
-      const sellAddress = TOKENS[sellKey].address;
-      const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
+      const sellAddress = sellMeta?.address;
+      const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
       const token = new Contract(sellAddress, ERC20_ABI, signer);
       const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
       if (allowance >= amountWei) {
@@ -299,9 +357,7 @@ export default function SwapSection({ balances }) {
         throw new Error("Enter a valid amount");
       }
       if (!isSupported) {
-        throw new Error(
-          "Swap support: ETH/WETH <-> USDC/USDT/DAI, ETH <-> WETH, USDC <-> DAI/USDT/WBTC, WETH <-> DAI, USDC <-> WBTC"
-        );
+        throw new Error("Seleziona token con indirizzo valido.");
       }
       if (involvesCrx) {
         throw new Error("CRX swaps coming soon (mock token).");
@@ -314,9 +370,11 @@ export default function SwapSection({ balances }) {
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
+      const sellAddress = sellMeta?.address;
+      const buyAddress = buyMeta?.address;
+      const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
       if (isDirectEthWeth) {
-        const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
         const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
         let tx;
         if (sellToken === "ETH") {
@@ -328,7 +386,7 @@ export default function SwapSection({ balances }) {
         setSwapStatus({
           message: `Swap executed (wrap/unwrap). Received ${formatUnits(
             amountWei,
-            TOKENS[buyKey].decimals
+            buyMeta?.decimals ?? 18
           )} ${buyToken}`,
           hash: receipt.hash,
           variant: "success",
@@ -336,16 +394,19 @@ export default function SwapSection({ balances }) {
         return;
       }
 
-      const sellAddress = TOKENS[sellKey].address;
-      const buyAddress = TOKENS[buyKey].address;
-      const amountWei = parseUnits(amountIn, TOKENS[sellKey].decimals);
-
-      const { amountOut } = await getV2QuoteWithMeta(
-        provider,
-        amountWei,
-        sellAddress,
-        buyAddress
-      );
+      let amountOut = quoteOutRaw;
+      if (!amountOut) {
+        const res = await getV2QuoteWithMeta(
+          provider,
+          amountWei,
+          sellAddress,
+          buyAddress
+        );
+        amountOut = res?.amountOut;
+      }
+      if (!amountOut) {
+        throw new Error("Impossibile calcolare l'output minimo.");
+      }
 
       const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
       const router = new Contract(
@@ -356,18 +417,8 @@ export default function SwapSection({ balances }) {
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
 
       let tx;
-      if (
-        sellToken === "ETH" &&
-        (buyToken === "USDC" || buyToken === "USDT" || buyToken === "DAI")
-      ) {
-        const path = [
-          WETH_ADDRESS,
-          buyToken === "USDC"
-            ? TOKENS.USDC.address
-            : buyToken === "USDT"
-              ? TOKENS.USDT.address
-              : TOKENS.DAI.address,
-        ];
+      if (sellToken === "ETH") {
+        const path = [WETH_ADDRESS, buyAddress];
         tx = await router.swapExactETHForTokens(
           minOut,
           path,
@@ -375,18 +426,8 @@ export default function SwapSection({ balances }) {
           deadline,
           { value: amountWei }
         );
-      } else if (
-        (sellToken === "USDC" || sellToken === "USDT" || sellToken === "DAI") &&
-        buyToken === "ETH"
-      ) {
-        const path = [
-          sellToken === "USDC"
-            ? TOKENS.USDC.address
-            : sellToken === "USDT"
-              ? TOKENS.USDT.address
-              : TOKENS.DAI.address,
-          WETH_ADDRESS,
-        ];
+      } else if (buyToken === "ETH") {
+        const path = [sellAddress, WETH_ADDRESS];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -400,50 +441,7 @@ export default function SwapSection({ balances }) {
           deadline
         );
       } else {
-        // ERC20 -> ERC20 paths
-        let path = [];
-        if (
-          (sellToken === "WETH" && buyToken === "USDC") ||
-          (sellToken === "USDC" && buyToken === "WETH")
-        ) {
-          path =
-            sellToken === "WETH"
-              ? [WETH_ADDRESS, TOKENS.USDC.address]
-              : [TOKENS.USDC.address, WETH_ADDRESS];
-        } else if (
-          (sellToken === "WETH" && buyToken === "USDT") ||
-          (sellToken === "USDT" && buyToken === "WETH")
-        ) {
-          path =
-            sellToken === "WETH"
-              ? [WETH_ADDRESS, TOKENS.USDT.address]
-              : [TOKENS.USDT.address, WETH_ADDRESS];
-        } else if (isUsdcDai) {
-          path =
-            sellToken === "USDC"
-              ? [TOKENS.USDC.address, TOKENS.DAI.address]
-              : [TOKENS.DAI.address, TOKENS.USDC.address];
-        } else if (isUsdcUsdt) {
-          path =
-            sellToken === "USDC"
-              ? [TOKENS.USDC.address, TOKENS.USDT.address]
-              : [TOKENS.USDT.address, TOKENS.USDC.address];
-        } else if (isUsdcWbtc) {
-          path =
-            sellToken === "USDC"
-              ? [TOKENS.USDC.address, TOKENS.WBTC.address]
-              : [TOKENS.WBTC.address, TOKENS.USDC.address];
-        } else if (isWethDai) {
-          path =
-            sellToken === "WETH"
-              ? [WETH_ADDRESS, TOKENS.DAI.address]
-              : [TOKENS.DAI.address, WETH_ADDRESS];
-        }
-
-        if (!path.length) {
-          throw new Error("Unsupported path for tokens");
-        }
-
+        const path = [sellAddress, buyAddress];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -463,7 +461,7 @@ export default function SwapSection({ balances }) {
       setSwapStatus({
         message: `Swap executed. Min received: ${formatUnits(
           minOut,
-          TOKENS[buyKey].decimals
+          buyMeta?.decimals ?? 18
         )} ${buyToken}`,
         hash: receipt.hash,
         variant: "success",
@@ -500,6 +498,8 @@ export default function SwapSection({ balances }) {
                 if (sym === buyToken) setBuyToken(sellToken);
                 setSellToken(sym);
               }}
+              tokenRegistry={tokenRegistry}
+              tokenOptions={tokenOptions}
               balances={balances}
             />
             <input
@@ -564,6 +564,8 @@ export default function SwapSection({ balances }) {
                 if (sym === sellToken) setSellToken(buyToken);
                 setBuyToken(sym);
               }}
+              tokenRegistry={tokenRegistry}
+              tokenOptions={tokenOptions}
               balances={balances}
             />
             <div className="flex-1 text-right w-full">
@@ -582,6 +584,39 @@ export default function SwapSection({ balances }) {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="mt-3 rounded-2xl bg-slate-900 border border-slate-800 p-3">
+          <div className="text-xs text-slate-400 mb-2">Custom token address (ERC20)</div>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              value={customAddress}
+              onChange={(e) => setCustomAddress(e.target.value)}
+              placeholder="0x... token address"
+              className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-sm text-slate-100"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => loadCustomToken(customAddress, "sell")}
+                disabled={customLoading}
+                className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
+              >
+                {customLoading ? "Loading..." : "Use for Sell"}
+              </button>
+              <button
+                type="button"
+                onClick={() => loadCustomToken(customAddress, "buy")}
+                disabled={customLoading}
+                className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
+              >
+                {customLoading ? "Loading..." : "Use for Buy"}
+              </button>
+            </div>
+          </div>
+          {customStatus && (
+            <div className="mt-2 text-[11px] text-slate-300">{customStatus}</div>
+          )}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
@@ -615,7 +650,7 @@ export default function SwapSection({ balances }) {
               <span className="text-slate-100">
                 {minReceivedRaw
                   ? `${Number(
-                      formatUnits(minReceivedRaw, TOKENS[buyKey].decimals)
+                      formatUnits(minReceivedRaw, buyMeta?.decimals ?? 18)
                     ).toFixed(6)} ${buyToken}`
                   : "--"}
               </span>
