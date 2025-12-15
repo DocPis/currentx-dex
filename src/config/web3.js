@@ -264,6 +264,13 @@ export const WETH_ABI = [
     stateMutability: "payable",
     type: "function",
   },
+  {
+    inputs: [{ internalType: "uint256", name: "wad", type: "uint256" }],
+    name: "withdraw",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
 ];
 
 // Minimal Uniswap V2 ABI

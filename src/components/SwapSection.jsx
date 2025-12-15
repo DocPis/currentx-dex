@@ -33,7 +33,7 @@ export default function SwapSection({ balances }) {
     [customTokens]
   );
   const [sellToken, setSellToken] = useState("ETH");
-  const [buyToken, setBuyToken] = useState("USDC");
+  const [buyToken, setBuyToken] = useState("CRX");
   const [amountIn, setAmountIn] = useState("");
   const [quoteOut, setQuoteOut] = useState(null);
   const [quoteOutRaw, setQuoteOutRaw] = useState(null);
