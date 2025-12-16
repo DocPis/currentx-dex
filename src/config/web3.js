@@ -1053,20 +1053,27 @@ export async function fetchMasterChefUserData(address, pools, providerOverride) 
   const out = {};
   for (const pool of pools) {
     try {
-      const [userInfo, pendingRaw] = await Promise.all([
+      const lpContract = new Contract(pool.lpToken, ERC20_ABI, provider);
+      const [userInfo, pendingRaw, walletBalRaw] = await Promise.all([
         chef.userInfo(pool.pid, address),
         chef.pendingCurrentX(pool.pid, address),
+        lpContract.balanceOf(address).catch(() => 0n),
       ]);
       const staked =
         pool.lpDecimals !== undefined
           ? Number(formatUnits(userInfo.amount || 0n, pool.lpDecimals))
           : Number(userInfo.amount || 0n);
+      const lpBalance =
+        pool.lpDecimals !== undefined
+          ? Number(formatUnits(walletBalRaw || 0n, pool.lpDecimals))
+          : Number(walletBalRaw || 0n);
       out[pool.pid] = {
         staked,
+        lpBalance,
         pending: Number(formatUnits(pendingRaw || 0n, TOKENS.CRX.decimals)),
       };
     } catch (e) {
-      out[pool.pid] = { staked: 0, pending: 0 };
+      out[pool.pid] = { staked: 0, pending: 0, lpBalance: 0 };
     }
   }
   return out;

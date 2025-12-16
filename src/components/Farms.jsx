@@ -130,27 +130,27 @@ function FarmsList({ address, onConnect }) {
           className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-5 flex flex-col gap-4"
         >
           <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-100">
-                {farm.pairLabel || "LP Farm"} (PID {farm.pid})
+            <div className="flex items-center gap-3">
+              <div className="flex -space-x-2">
+                {(farm.tokens || []).map((token) => (
+                  <img
+                    key={token.address || token.symbol}
+                    src={token.logo || TOKENS.CRX.logo}
+                    alt={token.symbol}
+                    className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
+                  />
+                ))}
               </div>
-              <div className="text-xs text-slate-500 flex items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="flex -space-x-2">
-                    {(farm.tokens || []).map((token) => (
-                      <img
-                        key={token.address || token.symbol}
-                        src={token.logo || TOKENS.CRX.logo}
-                        alt={token.symbol}
-                        className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900"
-                      />
-                    ))}
-                  </div>
-                  <span>{farm.pairLabel || farm.lpToken}</span>
+              <div className="flex flex-col">
+                <div className="text-sm font-semibold text-slate-100">
+                  {farm.pairLabel || farm.lpToken}
                 </div>
-                <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                  Active
-                </span>
+                <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                  PID {farm.pid}
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                    Active
+                  </span>
+                </div>
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -216,6 +216,7 @@ function FarmActions({
 }) {
   const staked = userData?.staked || 0;
   const pending = userData?.pending || 0;
+  const walletLp = userData?.lpBalance || 0;
   const amountIn = inputs[farm.pid]?.deposit || "";
   const amountOut = inputs[farm.pid]?.withdraw || "";
   const isActing = action.pid === farm.pid && action.loading;
@@ -225,6 +226,10 @@ function FarmActions({
       ...prev,
       [farm.pid]: { ...(prev[farm.pid] || {}), [key]: val },
     }));
+  };
+
+  const quickFill = (key, value) => {
+    setInput(key, value);
   };
 
   const handleAction = async (type) => {
@@ -290,7 +295,7 @@ function FarmActions({
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3 flex flex-col gap-2">
           <div className="flex items-center justify-between text-xs text-slate-400">
             <span>Deposit</span>
-            <span>LP Decimals: {farm.lpDecimals || 18}</span>
+            <span>Wallet: {formatTokenAmount(walletLp)}</span>
           </div>
           <input
             value={amountIn}
@@ -298,6 +303,22 @@ function FarmActions({
             placeholder="0.0"
             className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
           />
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <button
+              type="button"
+              onClick={() => quickFill("deposit", "0")}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              Min
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("deposit", walletLp.toString())}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              Max
+            </button>
+          </div>
           <button
             type="button"
             disabled={!address || isActing}
@@ -319,6 +340,22 @@ function FarmActions({
             placeholder="0.0"
             className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
           />
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <button
+              type="button"
+              onClick={() => quickFill("withdraw", "0")}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              Min
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("withdraw", staked.toString())}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              Max
+            </button>
+          </div>
           <button
             type="button"
             disabled={!address || isActing}
