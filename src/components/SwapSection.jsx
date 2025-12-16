@@ -12,6 +12,7 @@ import {
   UNIV2_ROUTER_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
+  getReadOnlyProvider,
 } from "../config/web3";
 import currentxLogo from "../assets/currentx.png";
 
@@ -199,42 +200,55 @@ export default function SwapSection({ balances }) {
 
       try {
         setQuoteLoading(true);
-        const provider = await getProvider();
+        const provider = getReadOnlyProvider();
         const sellAddress = sellMeta?.address;
         const buyAddress = buyMeta?.address;
+        if (!sellAddress || !buyAddress) {
+          setQuoteError("Seleziona token con indirizzo valido.");
+          return;
+        }
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-        const meta = await getV2QuoteWithMeta(
-          provider,
-          amountWei,
-          sellAddress,
-          buyAddress
+        const router = new Contract(
+          UNIV2_ROUTER_ADDRESS,
+          UNIV2_ROUTER_ABI,
+          provider
         );
-        if (cancelled) return;
+        const path =
+          sellToken === "ETH"
+            ? [WETH_ADDRESS, buyAddress]
+            : buyToken === "ETH"
+              ? [sellAddress, WETH_ADDRESS]
+              : [sellAddress, buyAddress];
 
-        const tokensLower = [meta.token0, meta.token1].map((t) =>
-          t.toLowerCase()
-        );
-        if (
-          !tokensLower.includes(sellAddress.toLowerCase()) ||
-          !tokensLower.includes(buyAddress.toLowerCase())
-        ) {
-          throw new Error(
-            "Resolved pair tokens do not match the selected assets"
+        const amounts = await router.getAmountsOut(amountWei, path);
+        if (cancelled) return;
+        const amountOut = amounts[amounts.length - 1];
+
+        const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
+        setQuoteOut(formatted);
+        setQuoteOutRaw(amountOut);
+
+        // price impact (best-effort single hop)
+        try {
+          const meta = await getV2QuoteWithMeta(
+            provider,
+            amountWei,
+            path[0],
+            path[path.length - 1]
           );
+          if (!cancelled) setPriceImpact(meta.priceImpactPct);
+        } catch {
+          setPriceImpact(null);
         }
 
-        const formatted = formatUnits(meta.amountOut, buyMeta?.decimals ?? 18);
-        setQuoteOut(formatted);
-        setQuoteOutRaw(meta.amountOut);
-        setPriceImpact(meta.priceImpactPct);
-
-        // Precompute allowance requirement for ERC20 sells
+        // Precompute allowance requirement for ERC20 sells (needs signer)
         if (sellToken !== "ETH" && sellAddress) {
           try {
-            const signer = await provider.getSigner();
-            const user = await signer.getAddress();
-            const token = new Contract(sellAddress, ERC20_ABI, signer);
+            const signer = await getProvider();
+            const s = await signer.getSigner();
+            const user = await s.getAddress();
+            const token = new Contract(sellAddress, ERC20_ABI, s);
             const allowance = await token.allowance(
               user,
               UNIV2_ROUTER_ADDRESS

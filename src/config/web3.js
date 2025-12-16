@@ -14,7 +14,7 @@ const DEFAULT_RPC_URL =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     import.meta.env.VITE_SEPOLIA_RPC) ||
-  "https://rpc.sepolia.org";
+  "https://sepolia.drpc.org/";
 
 export function getRegisteredCustomTokens() {
   if (typeof globalThis === "undefined") return {};
