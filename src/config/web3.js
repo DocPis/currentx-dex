@@ -1265,6 +1265,23 @@ export async function fetchMasterChefFarms(providerOverride) {
       // ignore per-pool errors
     }
 
+    // Fallback: even if TVL/APR failed, try to at least get token symbols/logos
+    if (!tokens.length) {
+      try {
+        const pair = new Contract(lpToken, UNIV2_PAIR_ABI, provider);
+        const [token0, token1] = await Promise.all([
+          pair.token0(),
+          pair.token1(),
+        ]);
+        const meta0 = await fetchTokenMeta(provider, token0, metaCache);
+        const meta1 = await fetchTokenMeta(provider, token1, metaCache);
+        tokens = [meta0, meta1];
+        pairLabel = `${meta0.symbol} / ${meta1.symbol}`;
+      } catch (_err) {
+        // leave tokens empty if still failing
+      }
+    }
+
     pools.push({
       pid,
       lpToken,

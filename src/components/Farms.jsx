@@ -208,6 +208,11 @@ function FarmsList({ address, onConnect }) {
                     : farm.allocPoint
                       ? `${farm.allocPoint}x`
                       : "N/A";
+                const poolName =
+                  farm.pairLabel ||
+                  (farm.tokens?.length === 2
+                    ? `${farm.tokens[0].symbol} / ${farm.tokens[1].symbol}`
+                    : farm.lpToken);
 
                 return (
                   <div key={`${farm.lpToken}-${farm.pid}`} className="px-4 py-3">
@@ -225,7 +230,7 @@ function FarmsList({ address, onConnect }) {
                         </div>
                         <div className="flex flex-col">
                           <div className="text-sm font-semibold text-slate-100">
-                            {farm.pairLabel || farm.lpToken}
+                            {poolName}
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-2">
                             PID {farm.pid}
