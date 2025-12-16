@@ -333,6 +333,11 @@ function FarmActions({
 
   const quickFill = (key, value) => {
     setInput(key, value);
+    setAction((prev) =>
+      prev.pid === farm.pid
+        ? { ...prev, error: "", hash: undefined, loading: prev.loading && prev.type !== key }
+        : prev
+    );
   };
 
   const multiplier =
@@ -423,17 +428,31 @@ function FarmActions({
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <button
               type="button"
-              onClick={() => quickFill("deposit", "0")}
+              onClick={() => quickFill("deposit", (walletLp * 0.25).toFixed(6))}
               className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
             >
-              Min
+              25%
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("deposit", (walletLp * 0.5).toFixed(6))}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              50%
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("deposit", (walletLp * 0.75).toFixed(6))}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              75%
             </button>
             <button
               type="button"
               onClick={() => quickFill("deposit", walletLp.toString())}
               className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
             >
-              Max
+              100%
             </button>
           </div>
           <button
@@ -460,17 +479,31 @@ function FarmActions({
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <button
               type="button"
-              onClick={() => quickFill("withdraw", "0")}
+              onClick={() => quickFill("withdraw", (staked * 0.25).toFixed(6))}
               className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
             >
-              Min
+              25%
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("withdraw", (staked * 0.5).toFixed(6))}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              50%
+            </button>
+            <button
+              type="button"
+              onClick={() => quickFill("withdraw", (staked * 0.75).toFixed(6))}
+              className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
+            >
+              75%
             </button>
             <button
               type="button"
               onClick={() => quickFill("withdraw", staked.toString())}
               className="px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-slate-200 hover:border-sky-500/60"
             >
-              Max
+              100%
             </button>
           </div>
           <button
