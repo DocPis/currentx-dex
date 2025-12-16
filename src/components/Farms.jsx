@@ -33,7 +33,7 @@ export default function Farms({ address, onConnect }) {
         <div>
           <h2 className="text-2xl font-semibold text-white">Farms</h2>
           <p className="text-sm text-slate-400">
-            Deposit your LP tokens and earn our native token (CRX).
+            Deposit you LP tokens and earn CRX.
           </p>
         </div>
       </div>
