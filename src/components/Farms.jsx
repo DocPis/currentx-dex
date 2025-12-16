@@ -50,6 +50,7 @@ function FarmsList({ address, onConnect }) {
   const [userData, setUserData] = useState({});
   const [action, setAction] = useState({}); // {pid, type, loading, error, hash}
   const [inputs, setInputs] = useState({});
+  const [meta, setMeta] = useState({ totalAllocPoint: 0, emissionPerBlock: 0 });
 
   useEffect(() => {
     let cancelled = false;
@@ -60,6 +61,10 @@ function FarmsList({ address, onConnect }) {
         const data = await fetchMasterChefFarms();
         if (cancelled) return;
         setFarms(data.pools || []);
+        setMeta({
+          totalAllocPoint: data.totalAllocPoint || 0,
+          emissionPerBlock: data.emissionPerBlock || 0,
+        });
       } catch (e) {
         if (!cancelled) setError(e?.message || "Unable to load farms");
       } finally {
@@ -200,6 +205,7 @@ function FarmsList({ address, onConnect }) {
               const data = await fetchMasterChefUserData(address, farms);
               setUserData(data);
             }}
+            farmMeta={meta}
           />
         </div>
       ))}
@@ -217,6 +223,7 @@ function FarmActions({
   action,
   setAction,
   refreshUser,
+  farmMeta,
 }) {
   const staked = userData?.staked || 0;
   const pending = userData?.pending || 0;
@@ -235,6 +242,17 @@ function FarmActions({
   const quickFill = (key, value) => {
     setInput(key, value);
   };
+
+  const multiplier =
+    farm.allocPoint && farmMeta?.totalAllocPoint
+      ? `${(farm.allocPoint / 100).toFixed(2)}x`
+      : farm.allocPoint
+        ? `${farm.allocPoint}x`
+        : "N/A";
+  const sharePct =
+    farm.allocPoint && farmMeta?.totalAllocPoint
+      ? `${((farm.allocPoint / farmMeta.totalAllocPoint) * 100).toFixed(2)}%`
+      : null;
 
   const handleAction = async (type) => {
     if (!address) {
@@ -293,6 +311,13 @@ function FarmActions({
     <div className="space-y-3">
       <div className="text-xs text-slate-400">
         Earn {farm.rewardToken?.symbol || "CRX"} with MasterChef rewards.
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        <MetricCard label="APR" value={farm.apr !== null && farm.apr !== undefined ? `${farm.apr.toFixed(2)}%` : "N/A"} />
+        <MetricCard label="Liquidity" value={farm.tvlUsd !== null && farm.tvlUsd !== undefined ? formatNumber(farm.tvlUsd) : "N/A"} />
+        <MetricCard label="Multiplier" value={multiplier} />
+        <MetricCard label="Pool share" value={sharePct || "N/A"} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -388,11 +413,11 @@ function FarmActions({
           {action.error && action.pid === farm.pid && (
             <span className="text-[11px] text-amber-300">{action.error}</span>
           )}
-          {action.hash && action.pid === farm.pid && (
-            <a
-              href={`https://sepolia.etherscan.io/tx/${action.hash}`}
-              target="_blank"
-              rel="noreferrer"
+      {action.hash && action.pid === farm.pid && (
+        <a
+          href={`https://sepolia.etherscan.io/tx/${action.hash}`}
+          target="_blank"
+          rel="noreferrer"
               className="text-[11px] text-sky-400 hover:text-sky-300 underline"
             >
               View tx
@@ -400,6 +425,17 @@ function FarmActions({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3">
+      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <div className="text-lg font-semibold text-slate-100">{value}</div>
     </div>
   );
 }
