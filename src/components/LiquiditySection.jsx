@@ -603,6 +603,7 @@ export default function LiquiditySection() {
     if (base <= 0) return;
     const target = base * percentage;
     setWithdrawLp(target.toFixed(4));
+    if (actionStatus) setActionStatus("");
   };
 
   const addCustomToken = async () => {
@@ -1412,7 +1413,10 @@ export default function LiquiditySection() {
                   <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
                     <input
                       value={withdrawLp}
-                      onChange={(e) => setWithdrawLp(e.target.value)}
+                      onChange={(e) => {
+                        setWithdrawLp(e.target.value);
+                        if (actionStatus) setActionStatus("");
+                      }}
                       placeholder="LP tokens"
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
                     />
