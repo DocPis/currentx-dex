@@ -89,11 +89,13 @@ export default function SwapSection({ balances }) {
     if (!bal) {
       setAmountIn("");
       setQuoteError("");
+      setSwapStatus(null);
       return;
     }
     const val = (bal * pct).toFixed(decimals);
     setAmountIn(val);
     setQuoteError("");
+    setSwapStatus(null);
   };
 
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
@@ -530,6 +532,7 @@ export default function SwapSection({ balances }) {
               onChange={(e) => {
                 setAmountIn(e.target.value);
                 if (quoteError) setQuoteError("");
+                if (swapStatus) setSwapStatus(null);
               }}
               placeholder="0.00"
               className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full"
