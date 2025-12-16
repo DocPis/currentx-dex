@@ -1,5 +1,5 @@
 // src/components/Farms.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Contract, parseUnits } from "ethers";
 import {
   MASTER_CHEF_ADDRESS,
@@ -52,12 +52,13 @@ function FarmsList({ address, onConnect }) {
   const [meta, setMeta] = useState({ totalAllocPoint: 0, emissionPerBlock: 0 });
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
+  const firstLoadRef = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        setLoading(true);
+        if (firstLoadRef.current) setLoading(true);
         setError("");
         const data = await fetchMasterChefFarms();
         if (cancelled) return;
@@ -69,7 +70,10 @@ function FarmsList({ address, onConnect }) {
       } catch (e) {
         if (!cancelled) setError(e?.message || "Unable to load farms");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && firstLoadRef.current) {
+          setLoading(false);
+          firstLoadRef.current = false;
+        }
       }
     };
     load();
