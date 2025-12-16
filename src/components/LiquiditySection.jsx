@@ -1396,7 +1396,6 @@ export default function LiquiditySection() {
                         : `Deposit ${getPoolLabel(selectedPool)}`}
                     </button>
                     <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      <span>Ratio quick-fill:</span>
                       {[0.25, 0.5, 0.75, 1].map((pct) => (
                         <button
                           key={pct}
@@ -1447,7 +1446,6 @@ export default function LiquiditySection() {
                         : `Withdraw ${getPoolLabel(selectedPool)}`}
                     </button>
                     <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      <span>Withdraw:</span>
                       {[0.25, 0.5, 0.75, 1].map((pct) => (
                         <button
                           key={pct}
