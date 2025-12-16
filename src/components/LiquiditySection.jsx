@@ -554,6 +554,7 @@ export default function LiquiditySection() {
 
   const applyDepositRatio = (percentage) => {
     if (!hasPairInfo || !tokenBalances) return;
+    if (actionStatus) setActionStatus("");
     try {
       const decimals0 = token0Meta?.decimals ?? 18;
       const decimals1 = token1Meta?.decimals ?? 18;
