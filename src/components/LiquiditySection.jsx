@@ -7,12 +7,11 @@ import {
   getV2PairReserves,
   WETH_ADDRESS,
   USDC_ADDRESS,
-  ERC20_ABI,
-  UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
 } from "../config/web3";
+import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../config/abis";
 import { fetchV2PairData } from "../config/subgraph";
 import currentxLogo from "../assets/currentx.png";
 

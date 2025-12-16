@@ -2,14 +2,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Contract, parseUnits } from "ethers";
 import {
-  ERC20_ABI,
   MASTER_CHEF_ADDRESS,
-  MASTER_CHEF_ABI,
   fetchMasterChefFarms,
   fetchMasterChefUserData,
   getProvider,
   TOKENS,
 } from "../config/web3";
+import { ERC20_ABI, MASTER_CHEF_ABI } from "../config/abis";
 
 function formatNumber(v) {
   const n = Number(v || 0);

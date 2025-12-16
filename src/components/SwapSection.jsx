@@ -7,16 +7,18 @@ import {
   getV2QuoteWithMeta,
   getV2Quote,
   WETH_ADDRESS,
-  ERC20_ABI,
-  WETH_ABI,
-  UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
-  UNIV2_FACTORY_ABI,
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
   getReadOnlyProvider,
 } from "../config/web3";
+import {
+  ERC20_ABI,
+  WETH_ABI,
+  UNIV2_ROUTER_ABI,
+  UNIV2_FACTORY_ABI,
+} from "../config/abis";
 import currentxLogo from "../assets/currentx.png";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
