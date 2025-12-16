@@ -1,6 +1,6 @@
 // src/components/Farms.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Contract, formatUnits, parseUnits } from "ethers";
+import { Contract, parseUnits } from "ethers";
 import {
   ERC20_ABI,
   MASTER_CHEF_ADDRESS,
@@ -91,7 +91,7 @@ function FarmsList({ address, onConnect }) {
       try {
         const data = await fetchMasterChefUserData(address, farms);
         if (!cancelled) setUserData(data);
-      } catch (e) {
+      } catch (_err) {
         if (!cancelled) setUserData({});
       }
     };
@@ -103,35 +103,7 @@ function FarmsList({ address, onConnect }) {
     };
   }, [address, farms]);
 
-  if (loading) {
-    return (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {[0, 1].map((i) => (
-          <div key={i} className="rounded-3xl bg-slate-900/70 border border-slate-800 p-5 animate-pulse space-y-3">
-            <div className="h-5 bg-slate-800/80 rounded w-1/3" />
-            <div className="h-4 bg-slate-800/70 rounded w-1/2" />
-            <div className="h-20 bg-slate-800/60 rounded-xl" />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-100">
-        {error}
-      </div>
-    );
-  }
-
-  if (!farms.length) {
-    return (
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 text-sm text-slate-400">
-        No farms available on-chain.
-      </div>
-    );
-  }
+  const isEmpty = !farms.length && !loading && !error;
 
   const filtered = useMemo(() => {
     if (!search) return farms;
@@ -194,110 +166,136 @@ function FarmsList({ address, onConnect }) {
           </div>
         </div>
 
-        <div className="hidden md:grid grid-cols-12 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800/70">
-          <div className="col-span-5">Pool</div>
-          <div className="col-span-2 text-right">Earned</div>
-          <div className="col-span-2 text-right">APR</div>
-          <div className="col-span-2 text-right">Liquidity</div>
-          <div className="col-span-1 text-right">Multiplier</div>
-        </div>
+        {loading && (
+          <div className="p-4 space-y-3">
+            {[0, 1].map((i) => (
+              <div key={i} className="h-14 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse" />
+            ))}
+          </div>
+        )}
 
-        <div className="divide-y divide-slate-800/70">
-          {filtered.map((farm) => {
-            const isOpen = expanded === farm.pid;
-            const pending = userData[farm.pid]?.pending || 0;
-            const multiplier =
-              farm.allocPoint && meta.totalAllocPoint
-                ? `${(farm.allocPoint / 100).toFixed(2)}x`
-                : farm.allocPoint
-                  ? `${farm.allocPoint}x`
-                  : "N/A";
+        {error && !loading && (
+          <div className="p-4 text-sm text-amber-100 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+            {error}
+          </div>
+        )}
 
-            return (
-              <div key={`${farm.lpToken}-${farm.pid}`} className="px-4 py-3">
-                <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
-                  <div className="col-span-5 flex items-center gap-3">
-                    <div className="flex -space-x-2">
-                      {(farm.tokens || []).map((token) => (
-                        <img
-                          key={token.address || token.symbol}
-                          src={token.logo || TOKENS.CRX.logo}
-                          alt={token.symbol}
-                          className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
+        {isEmpty && !loading && !error && (
+          <div className="p-4 text-sm text-slate-400">No farms available on-chain.</div>
+        )}
+
+        {!loading && !error && farms.length > 0 && filtered.length === 0 && (
+          <div className="p-4 text-sm text-slate-400">No farms match your search.</div>
+        )}
+
+        {!loading && !error && filtered.length > 0 && (
+          <>
+            <div className="hidden md:grid grid-cols-12 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800/70">
+              <div className="col-span-5">Pool</div>
+              <div className="col-span-2 text-right">Earned</div>
+              <div className="col-span-2 text-right">APR</div>
+              <div className="col-span-2 text-right">Liquidity</div>
+              <div className="col-span-1 text-right">Multiplier</div>
+            </div>
+
+            <div className="divide-y divide-slate-800/70">
+              {filtered.map((farm) => {
+                const isOpen = expanded === farm.pid;
+                const pending = userData[farm.pid]?.pending || 0;
+                const multiplier =
+                  farm.allocPoint && meta.totalAllocPoint
+                    ? `${(farm.allocPoint / 100).toFixed(2)}x`
+                    : farm.allocPoint
+                      ? `${farm.allocPoint}x`
+                      : "N/A";
+
+                return (
+                  <div key={`${farm.lpToken}-${farm.pid}`} className="px-4 py-3">
+                    <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
+                      <div className="col-span-5 flex items-center gap-3">
+                        <div className="flex -space-x-2">
+                          {(farm.tokens || []).map((token) => (
+                            <img
+                              key={token.address || token.symbol}
+                              src={token.logo || TOKENS.CRX.logo}
+                              alt={token.symbol}
+                              className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
+                            />
+                          ))}
+                        </div>
+                        <div className="flex flex-col">
+                          <div className="text-sm font-semibold text-slate-100">
+                            {farm.pairLabel || farm.lpToken}
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                            PID {farm.pid}
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                              Active
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-span-2 text-right text-sm text-slate-200">
+                        {formatTokenAmount(pending, 6)} {farm.rewardToken?.symbol || "CRX"}
+                      </div>
+                      <div className="col-span-2 text-right text-sm text-slate-200">
+                        {farm.apr !== null && farm.apr !== undefined
+                          ? `${farm.apr.toFixed(2)}%`
+                          : "N/A"}
+                      </div>
+                      <div className="col-span-2 text-right text-sm text-slate-200">
+                        {farm.tvlUsd !== null && farm.tvlUsd !== undefined
+                          ? formatNumber(farm.tvlUsd)
+                          : "N/A"}
+                      </div>
+                      <div className="col-span-1 text-right text-sm text-slate-200">
+                        {multiplier}
+                      </div>
+                      <div className="md:hidden flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setExpanded(isOpen ? null : farm.pid)}
+                          className="text-xs text-sky-400"
+                        >
+                          {isOpen ? "Hide" : "Details"}
+                        </button>
+                      </div>
+                      <div className="hidden md:flex items-center justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setExpanded(isOpen ? null : farm.pid)}
+                          className="text-xs text-sky-400"
+                        >
+                          {isOpen ? "Hide" : "Details"}
+                        </button>
+                      </div>
+                    </div>
+                    {isOpen && (
+                      <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                        <FarmActions
+                          farm={farm}
+                          address={address}
+                          onConnect={onConnect}
+                          userData={userData[farm.pid]}
+                          inputs={inputs}
+                          setInputs={setInputs}
+                          action={action}
+                          setAction={setAction}
+                          refreshUser={async () => {
+                            if (!address) return;
+                            const data = await fetchMasterChefUserData(address, farms);
+                            setUserData(data);
+                          }}
+                          farmMeta={meta}
                         />
-                      ))}
-                    </div>
-                    <div className="flex flex-col">
-                      <div className="text-sm font-semibold text-slate-100">
-                        {farm.pairLabel || farm.lpToken}
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                        PID {farm.pid}
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                          Active
-                        </span>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                  <div className="col-span-2 text-right text-sm text-slate-200">
-                    {formatTokenAmount(pending, 6)} {farm.rewardToken?.symbol || "CRX"}
-                  </div>
-                  <div className="col-span-2 text-right text-sm text-slate-200">
-                    {farm.apr !== null && farm.apr !== undefined
-                      ? `${farm.apr.toFixed(2)}%`
-                      : "N/A"}
-                  </div>
-                  <div className="col-span-2 text-right text-sm text-slate-200">
-                    {farm.tvlUsd !== null && farm.tvlUsd !== undefined
-                      ? formatNumber(farm.tvlUsd)
-                      : "N/A"}
-                  </div>
-                  <div className="col-span-1 text-right text-sm text-slate-200">
-                    {multiplier}
-                  </div>
-                  <div className="md:hidden flex items-center justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setExpanded(isOpen ? null : farm.pid)}
-                      className="text-xs text-sky-400"
-                    >
-                      {isOpen ? "Hide" : "Details"}
-                    </button>
-                  </div>
-                  <div className="hidden md:flex items-center justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setExpanded(isOpen ? null : farm.pid)}
-                      className="text-xs text-sky-400"
-                    >
-                      {isOpen ? "Hide" : "Details"}
-                    </button>
-                  </div>
-                </div>
-                {isOpen && (
-                  <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                    <FarmActions
-                      farm={farm}
-                      address={address}
-                      onConnect={onConnect}
-                      userData={userData[farm.pid]}
-                      inputs={inputs}
-                      setInputs={setInputs}
-                      action={action}
-                      setAction={setAction}
-                      refreshUser={async () => {
-                        if (!address) return;
-                        const data = await fetchMasterChefUserData(address, farms);
-                        setUserData(data);
-                      }}
-                      farmMeta={meta}
-                    />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -503,11 +501,11 @@ function FarmActions({
           {action.error && action.pid === farm.pid && (
             <span className="text-[11px] text-amber-300">{action.error}</span>
           )}
-      {action.hash && action.pid === farm.pid && (
-        <a
-          href={`https://sepolia.etherscan.io/tx/${action.hash}`}
-          target="_blank"
-          rel="noreferrer"
+          {action.hash && action.pid === farm.pid && (
+            <a
+              href={`https://sepolia.etherscan.io/tx/${action.hash}`}
+              target="_blank"
+              rel="noreferrer"
               className="text-[11px] text-sky-400 hover:text-sky-300 underline"
             >
               View tx

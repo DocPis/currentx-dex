@@ -600,6 +600,27 @@ export const UNIV2_PAIR_ABI = [
     stateMutability: "nonpayable",
     type: "function",
   },
+  {
+    inputs: [],
+    name: "totalSupply",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "balanceOf",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "decimals",
+    outputs: [{ internalType: "uint8", name: "", type: "uint8" }],
+    stateMutability: "view",
+    type: "function",
+  },
 ];
 
 // Registry dei token che usiamo nello swap
@@ -1142,13 +1163,15 @@ async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
 async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
   const pair = new Contract(lpAddress, UNIV2_PAIR_ABI, provider);
   const [reserve0, reserve1] = await pair.getReserves();
+  const hasTotalSupply = typeof pair.totalSupply === "function";
+  const hasDecimals = typeof pair.decimals === "function";
   const [token0, token1, totalSupply, lpDecimalsRaw] = await Promise.all([
     pair.token0(),
     pair.token1(),
-    pair.totalSupply(),
-    pair.decimals().catch(() => 18),
+    hasTotalSupply ? pair.totalSupply().catch(() => 0n) : Promise.resolve(0n),
+    hasDecimals ? pair.decimals().catch(() => 18) : Promise.resolve(18),
   ]);
-  const lpDecimals = Number(lpDecimalsRaw) || 18;
+  const lpDecimals = Number(lpDecimalsRaw || 18) || 18;
 
   const meta0 = await fetchTokenMeta(provider, token0, metaCache);
   const meta1 = await fetchTokenMeta(provider, token1, metaCache);
