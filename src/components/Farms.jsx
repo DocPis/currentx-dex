@@ -51,6 +51,8 @@ function FarmsList({ address, onConnect }) {
   const [action, setAction] = useState({}); // {pid, type, loading, error, hash}
   const [inputs, setInputs] = useState({});
   const [meta, setMeta] = useState({ totalAllocPoint: 0, emissionPerBlock: 0 });
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,84 +133,172 @@ function FarmsList({ address, onConnect }) {
     );
   }
 
+  const filtered = useMemo(() => {
+    if (!search) return farms;
+    const q = search.toLowerCase();
+    return farms.filter(
+      (f) =>
+        (f.pairLabel || "").toLowerCase().includes(q) ||
+        (f.lpToken || "").toLowerCase().includes(q)
+    );
+  }, [farms, search]);
+
+  const totalTvl = useMemo(
+    () =>
+      farms.reduce(
+        (acc, f) => acc + (Number.isFinite(f.tvlUsd) ? Number(f.tvlUsd) : 0),
+        0
+      ),
+    [farms]
+  );
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {farms.map((farm) => (
-        <div
-          key={`${farm.lpToken}-${farm.pid}`}
-          className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-5 flex flex-col gap-4"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex -space-x-2">
-                {(farm.tokens || []).map((token) => (
-                  <img
-                    key={token.address || token.symbol}
-                    src={token.logo || TOKENS.CRX.logo}
-                    alt={token.symbol}
-                    className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
-                  />
-                ))}
-              </div>
-              <div className="flex flex-col">
-                <div className="text-sm font-semibold text-slate-100">
-                  {farm.pairLabel || farm.lpToken}
-                </div>
-                <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                  PID {farm.pid}
-                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
-                    Active
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-sky-400" />
-              {farm.rewardToken?.symbol} emissions
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 px-3 py-3">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                APR
-              </div>
-              <div className="text-xl font-semibold">
-                {farm.apr !== null && farm.apr !== undefined
-                  ? `${farm.apr.toFixed(2)}%`
-                  : "N/A"}
-              </div>
-            </div>
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 px-3 py-3 text-right">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                TVL
-              </div>
-              <div className="text-xl font-semibold">
-                {farm.tvlUsd !== null && farm.tvlUsd !== undefined
-                  ? formatNumber(farm.tvlUsd)
-                  : "N/A"}
-              </div>
-            </div>
-          </div>
-
-          <FarmActions
-            farm={farm}
-            address={address}
-            onConnect={onConnect}
-            userData={userData[farm.pid]}
-            inputs={inputs}
-            setInputs={setInputs}
-            action={action}
-            setAction={setAction}
-            refreshUser={async () => {
-              if (!address) return;
-              const data = await fetchMasterChefUserData(address, farms);
-              setUserData(data);
-            }}
-            farmMeta={meta}
-          />
+    <div className="space-y-4">
+      <div className="rounded-3xl bg-slate-900/80 border border-slate-800 shadow-lg shadow-black/30 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <div className="text-sm text-slate-300">Stake liquidity pool (LP) tokens and earn CRX</div>
+          <div className="text-xs text-slate-500">Live</div>
         </div>
-      ))}
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-slate-400">TVL</div>
+          <div className="text-lg font-semibold text-slate-100">{formatNumber(totalTvl)}</div>
+        </div>
+      </div>
+
+      <div className="rounded-3xl bg-slate-950/70 border border-slate-800 shadow-lg shadow-black/30">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 py-3 border-b border-slate-800/70">
+          <div className="flex items-center gap-2 text-sm text-slate-200">
+            <button
+              type="button"
+              className="px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 text-xs"
+            >
+              Live
+            </button>
+          </div>
+          <div className="flex-1 flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-full px-3 py-2 text-sm text-slate-200 max-w-xl">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-4 w-4 text-slate-500"
+            >
+              <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search farms"
+              className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-600"
+            />
+          </div>
+        </div>
+
+        <div className="hidden md:grid grid-cols-12 px-4 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800/70">
+          <div className="col-span-5">Pool</div>
+          <div className="col-span-2 text-right">Earned</div>
+          <div className="col-span-2 text-right">APR</div>
+          <div className="col-span-2 text-right">Liquidity</div>
+          <div className="col-span-1 text-right">Multiplier</div>
+        </div>
+
+        <div className="divide-y divide-slate-800/70">
+          {filtered.map((farm) => {
+            const isOpen = expanded === farm.pid;
+            const pending = userData[farm.pid]?.pending || 0;
+            const multiplier =
+              farm.allocPoint && meta.totalAllocPoint
+                ? `${(farm.allocPoint / 100).toFixed(2)}x`
+                : farm.allocPoint
+                  ? `${farm.allocPoint}x`
+                  : "N/A";
+
+            return (
+              <div key={`${farm.lpToken}-${farm.pid}`} className="px-4 py-3">
+                <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
+                  <div className="col-span-5 flex items-center gap-3">
+                    <div className="flex -space-x-2">
+                      {(farm.tokens || []).map((token) => (
+                        <img
+                          key={token.address || token.symbol}
+                          src={token.logo || TOKENS.CRX.logo}
+                          alt={token.symbol}
+                          className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
+                        />
+                      ))}
+                    </div>
+                    <div className="flex flex-col">
+                      <div className="text-sm font-semibold text-slate-100">
+                        {farm.pairLabel || farm.lpToken}
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                        PID {farm.pid}
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                          Active
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="col-span-2 text-right text-sm text-slate-200">
+                    {formatTokenAmount(pending, 6)} {farm.rewardToken?.symbol || "CRX"}
+                  </div>
+                  <div className="col-span-2 text-right text-sm text-slate-200">
+                    {farm.apr !== null && farm.apr !== undefined
+                      ? `${farm.apr.toFixed(2)}%`
+                      : "N/A"}
+                  </div>
+                  <div className="col-span-2 text-right text-sm text-slate-200">
+                    {farm.tvlUsd !== null && farm.tvlUsd !== undefined
+                      ? formatNumber(farm.tvlUsd)
+                      : "N/A"}
+                  </div>
+                  <div className="col-span-1 text-right text-sm text-slate-200">
+                    {multiplier}
+                  </div>
+                  <div className="md:hidden flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(isOpen ? null : farm.pid)}
+                      className="text-xs text-sky-400"
+                    >
+                      {isOpen ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                  <div className="hidden md:flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(isOpen ? null : farm.pid)}
+                      className="text-xs text-sky-400"
+                    >
+                      {isOpen ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                    <FarmActions
+                      farm={farm}
+                      address={address}
+                      onConnect={onConnect}
+                      userData={userData[farm.pid]}
+                      inputs={inputs}
+                      setInputs={setInputs}
+                      action={action}
+                      setAction={setAction}
+                      refreshUser={async () => {
+                        if (!address) return;
+                        const data = await fetchMasterChefUserData(address, farms);
+                        setUserData(data);
+                      }}
+                      farmMeta={meta}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
