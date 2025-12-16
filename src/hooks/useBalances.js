@@ -15,6 +15,7 @@ export function useBalances(address) {
     USDT: 0,
     DAI: 0,
     WBTC: 0,
+    CRX: 0,
   });
   const [loading, setLoading] = useState(false);
   const isRefreshing = useRef(false);
@@ -51,6 +52,7 @@ export function useBalances(address) {
         const usdt = await getErc20Balance("USDT");
         const dai = await getErc20Balance("DAI");
         const wbtc = await getErc20Balance("WBTC");
+        const crx = await getErc20Balance("CRX");
 
         setBalances({
           ETH: eth,
@@ -59,6 +61,7 @@ export function useBalances(address) {
           USDT: usdt,
           DAI: dai,
           WBTC: wbtc,
+          CRX: crx,
         });
       } catch (e) {
         console.error("Error loading balances:", e);
@@ -79,7 +82,7 @@ export function useBalances(address) {
     if (address) {
       refresh(address);
     } else {
-      setBalances({ ETH: 0, WETH: 0, USDC: 0, DAI: 0, WBTC: 0 });
+      setBalances({ ETH: 0, WETH: 0, USDC: 0, USDT: 0, DAI: 0, WBTC: 0, CRX: 0 });
     }
   }, [address, refresh]);
 
