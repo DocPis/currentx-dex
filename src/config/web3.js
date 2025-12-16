@@ -1007,12 +1007,13 @@ export async function fetchMasterChefFarms(providerOverride) {
     let tvlUsd = null;
     let tokens = [];
     let pairLabel = "";
+    let lpSummary = null;
 
     try {
-      const lp = await getLpSummary(provider, lpToken, priceCache, metaCache);
-      tvlUsd = lp.tvlUsd;
-      tokens = [lp.token0, lp.token1];
-      pairLabel = `${lp.token0.symbol} / ${lp.token1.symbol}`;
+      lpSummary = await getLpSummary(provider, lpToken, priceCache, metaCache);
+      tvlUsd = lpSummary.tvlUsd;
+      tokens = [lpSummary.token0, lpSummary.token1];
+      pairLabel = `${lpSummary.token0.symbol} / ${lpSummary.token1.symbol}`;
       if (crxPriceUsd !== null && tvlUsd && tvlUsd > 0) {
         const rewardsPerYear = Number(
           formatUnits(rewardPerBlock * BLOCKS_PER_YEAR, TOKENS.CRX.decimals)
@@ -1034,7 +1035,7 @@ export async function fetchMasterChefFarms(providerOverride) {
       tvlUsd,
       tokens,
       pairLabel,
-      lpDecimals: Number(lp?.lpDecimals || 18),
+      lpDecimals: Number(lpSummary?.lpDecimals || 18),
     });
   }
 
