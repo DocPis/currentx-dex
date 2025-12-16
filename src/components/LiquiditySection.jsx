@@ -1370,6 +1370,7 @@ export default function LiquiditySection() {
                       onChange={(e) => {
                         setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
                         setDepositToken0(e.target.value);
+                        if (actionStatus) setActionStatus("");
                       }}
                       placeholder={`${token0Meta?.symbol || "Token A"} amount`}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
@@ -1379,6 +1380,7 @@ export default function LiquiditySection() {
                       onChange={(e) => {
                         setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
                         setDepositToken1(e.target.value);
+                        if (actionStatus) setActionStatus("");
                       }}
                       placeholder={`${token1Meta?.symbol || "Token B"} amount`}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
