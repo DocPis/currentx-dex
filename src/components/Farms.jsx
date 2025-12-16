@@ -401,10 +401,6 @@ function FarmActions({
 
   return (
     <div className="space-y-3">
-      <div className="text-xs text-slate-400">
-        Earn {farm.rewardToken?.symbol || "CRX"} with MasterChef rewards.
-      </div>
-
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
         <MetricCard label="APR" value={farm.apr !== null && farm.apr !== undefined ? `${farm.apr.toFixed(2)}%` : "N/A"} />
         <MetricCard label="Liquidity" value={farm.tvlUsd !== null && farm.tvlUsd !== undefined ? formatNumber(farm.tvlUsd) : "N/A"} />
