@@ -623,7 +623,7 @@ export const TOKENS = {
     symbol: "CRX",
     name: "CurrentX",
     address: CRX_ADDRESS,
-    decimals: 18,
+    decimals: 6,
     logo: currentxLogo,
   },
   USDC: {

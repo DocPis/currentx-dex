@@ -5,11 +5,14 @@ import {
   TOKENS,
   getProvider,
   getV2QuoteWithMeta,
+  getV2Quote,
   WETH_ADDRESS,
   ERC20_ABI,
   WETH_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_ROUTER_ADDRESS,
+  UNIV2_FACTORY_ABI,
+  UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
   getReadOnlyProvider,
@@ -95,6 +98,27 @@ export default function SwapSection({ balances }) {
   const buyMeta = tokenRegistry[buyKey];
   const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
   const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  const buildPath = async () => {
+    const provider = getReadOnlyProvider();
+    const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
+    const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+    const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+    if (!a || !b) throw new Error("Seleziona token con indirizzo valido.");
+
+    const direct = await factory.getPair(a, b);
+    if (direct && direct !== ZERO_ADDRESS) return [a, b];
+
+    // try hop through WETH
+    const hopA = await factory.getPair(a, WETH_ADDRESS);
+    const hopB = await factory.getPair(WETH_ADDRESS, b);
+    if (hopA && hopA !== ZERO_ADDRESS && hopB && hopB !== ZERO_ADDRESS) {
+      return [a, WETH_ADDRESS, b];
+    }
+
+    throw new Error("Nessun percorso disponibile per questa coppia.");
+  };
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
@@ -201,35 +225,23 @@ export default function SwapSection({ balances }) {
       try {
         setQuoteLoading(true);
         const provider = getReadOnlyProvider();
-        const sellAddress = sellMeta?.address;
-        const buyAddress = buyMeta?.address;
+        const sellAddress = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+        const buyAddress = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
         if (!sellAddress || !buyAddress) {
           setQuoteError("Seleziona token con indirizzo valido.");
           return;
         }
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-        const router = new Contract(
-          UNIV2_ROUTER_ADDRESS,
-          UNIV2_ROUTER_ABI,
-          provider
-        );
-        const path =
-          sellToken === "ETH"
-            ? [WETH_ADDRESS, buyAddress]
-            : buyToken === "ETH"
-              ? [sellAddress, WETH_ADDRESS]
-              : [sellAddress, buyAddress];
-
-        const amounts = await router.getAmountsOut(amountWei, path);
+        const path = await buildPath();
+        const amountOut = await getV2Quote(provider, amountWei, path);
         if (cancelled) return;
-        const amountOut = amounts[amounts.length - 1];
 
         const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
         setQuoteOut(formatted);
         setQuoteOutRaw(amountOut);
 
-        // price impact (best-effort single hop)
+        // price impact (best-effort using reserves of first/last hop)
         try {
           const meta = await getV2QuoteWithMeta(
             provider,
@@ -245,10 +257,10 @@ export default function SwapSection({ balances }) {
         // Precompute allowance requirement for ERC20 sells (needs signer)
         if (sellToken !== "ETH" && sellAddress) {
           try {
-            const signer = await getProvider();
-            const s = await signer.getSigner();
-            const user = await s.getAddress();
-            const token = new Contract(sellAddress, ERC20_ABI, s);
+            const signerProvider = await getProvider();
+            const signer = await signerProvider.getSigner();
+            const user = await signer.getAddress();
+            const token = new Contract(sellAddress, ERC20_ABI, signer);
             const allowance = await token.allowance(
               user,
               UNIV2_ROUTER_ADDRESS
