@@ -67,8 +67,10 @@ function FarmsList({ address, onConnect }) {
       }
     };
     load();
+    const id = setInterval(load, 30000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
@@ -87,8 +89,10 @@ function FarmsList({ address, onConnect }) {
       }
     };
     loadUser();
+    const id = setInterval(loadUser, 20000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, [address, farms]);
 

@@ -1,5 +1,6 @@
 // src/config/web3.js
-import { BrowserProvider, Contract, formatUnits } from "ethers";
+import { BrowserProvider, Contract, JsonRpcProvider, formatUnits } from "ethers";
+import { fetchV2PairData } from "./subgraph";
 import daiLogo from "../tokens/dai.png";
 import ethLogo from "../tokens/eth.png";
 import tetherLogo from "../tokens/tether.png";
@@ -9,6 +10,11 @@ import wethLogo from "../tokens/weth.png";
 import currentxLogo from "../assets/currentx.png";
 
 const CUSTOM_TOKEN_STORE_KEY = "__CX_CUSTOM_TOKENS__";
+const DEFAULT_RPC_URL =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_SEPOLIA_RPC) ||
+  "https://rpc.sepolia.org";
 
 export function getRegisteredCustomTokens() {
   if (typeof globalThis === "undefined") return {};
@@ -18,6 +24,10 @@ export function getRegisteredCustomTokens() {
 export function setRegisteredCustomTokens(tokens) {
   if (typeof globalThis === "undefined") return;
   globalThis[CUSTOM_TOKEN_STORE_KEY] = tokens || {};
+}
+
+export function getReadOnlyProvider() {
+  return new JsonRpcProvider(DEFAULT_RPC_URL);
 }
 
 export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
@@ -964,6 +974,15 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
     tvlUsd = val1 * 2;
   }
 
+  if (tvlUsd === null || Number.isNaN(tvlUsd)) {
+    try {
+      const sub = await fetchV2PairData(token0, token1);
+      if (sub?.tvlUsd !== undefined) tvlUsd = Number(sub.tvlUsd);
+    } catch (e) {
+      // ignore subgraph issues
+    }
+  }
+
   return {
     token0: meta0,
     token1: meta1,
@@ -976,7 +995,7 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
 }
 
 export async function fetchMasterChefFarms(providerOverride) {
-  const provider = providerOverride || (await getProvider());
+  const provider = providerOverride || getReadOnlyProvider();
   const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, provider);
   const [poolLengthRaw, totalAllocPointRaw, perBlockRaw] = await Promise.all([
     chef.poolLength(),
@@ -1048,7 +1067,7 @@ export async function fetchMasterChefFarms(providerOverride) {
 
 export async function fetchMasterChefUserData(address, pools, providerOverride) {
   if (!address || !pools?.length) return {};
-  const provider = providerOverride || (await getProvider());
+  const provider = providerOverride || getReadOnlyProvider();
   const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, provider);
   const out = {};
   for (const pool of pools) {
