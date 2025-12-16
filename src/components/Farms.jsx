@@ -11,8 +11,9 @@ import {
 import { ERC20_ABI, MASTER_CHEF_ABI } from "../config/abis";
 
 function formatNumber(v) {
-  const n = Number(v || 0);
-  if (!Number.isFinite(n)) return "$0";
+  if (v === null || v === undefined) return "N/A";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return "N/A";
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(2)}K`;
   return `$${n.toFixed(2)}`;

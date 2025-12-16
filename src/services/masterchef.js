@@ -76,33 +76,37 @@ async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
   const lower = address.toLowerCase();
   if (priceCache[lower] !== undefined) return priceCache[lower];
 
-  if (
-    lower === USDC_ADDRESS.toLowerCase() ||
-    lower === USDT_ADDRESS.toLowerCase() ||
-    lower === TOKENS.DAI.address.toLowerCase()
-  ) {
-    priceCache[lower] = 1;
-    return 1;
-  }
+  try {
+    if (
+      lower === USDC_ADDRESS.toLowerCase() ||
+      lower === USDT_ADDRESS.toLowerCase() ||
+      lower === TOKENS.DAI.address.toLowerCase()
+    ) {
+      priceCache[lower] = 1;
+      return 1;
+    }
 
-  if (lower === WETH_ADDRESS.toLowerCase()) {
-    return getWethPriceUSD(provider, priceCache);
-  }
+    if (lower === WETH_ADDRESS.toLowerCase()) {
+      return getWethPriceUSD(provider, priceCache);
+    }
 
-  if (lower === CRX_ADDRESS.toLowerCase()) {
-    const wethPrice = await getWethPriceUSD(provider, priceCache);
-    const pair = new Contract(CRX_WETH_LP_ADDRESS, UNIV2_PAIR_ABI, provider);
-    const [reserve0, reserve1] = await pair.getReserves();
-    const token0 = await pair.token0();
-    const crxIs0 = token0.toLowerCase() === lower;
-    const crxRes = crxIs0 ? reserve0 : reserve1;
-    const wethRes = crxIs0 ? reserve1 : reserve0;
-    const priceInWeth =
-      Number(formatUnits(wethRes, TOKENS.WETH.decimals)) /
-      Number(formatUnits(crxRes, TOKENS.CRX.decimals));
-    const usd = priceInWeth * wethPrice;
-    priceCache[lower] = usd;
-    return usd;
+    if (lower === CRX_ADDRESS.toLowerCase()) {
+      const wethPrice = await getWethPriceUSD(provider, priceCache);
+      const pair = new Contract(CRX_WETH_LP_ADDRESS, UNIV2_PAIR_ABI, provider);
+      const [reserve0, reserve1] = await pair.getReserves();
+      const token0 = await pair.token0();
+      const crxIs0 = token0.toLowerCase() === lower;
+      const crxRes = crxIs0 ? reserve0 : reserve1;
+      const wethRes = crxIs0 ? reserve1 : reserve0;
+      const priceInWeth =
+        Number(formatUnits(wethRes, TOKENS.WETH.decimals)) /
+        Number(formatUnits(crxRes, TOKENS.CRX.decimals));
+      const usd = priceInWeth * wethPrice;
+      priceCache[lower] = usd;
+      return usd;
+    }
+  } catch (_err) {
+    return null;
   }
 
   return null;
