@@ -459,23 +459,25 @@ export default function SwapSection({ balances }) {
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >
-              {sellMeta?.logo ? (
+              {displaySellMeta?.logo ? (
                 <img
-                  src={sellMeta.logo}
-                  alt={`${sellMeta.symbol} logo`}
+                  src={displaySellMeta.logo}
+                  alt={`${displaySellMeta.symbol} logo`}
                   className="h-6 w-6 rounded-full object-contain"
                 />
               ) : (
                 <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(sellMeta?.symbol || sellToken || "?").slice(0, 2)}
+                  {(displaySellMeta?.symbol || sellToken || "?").slice(0, 2)}
                 </div>
               )}
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
-                  {sellMeta?.symbol || sellToken}
+                  {displaySellMeta?.symbol || sellToken}
                 </span>
                 <span className="text-[10px] text-slate-400">
-                  {sellMeta?.address ? shortenAddress(sellMeta.address) : "Native"}
+                  {displaySellMeta?.address
+                    ? shortenAddress(displaySellMeta.address)
+                    : "Native"}
                 </span>
               </div>
               <svg
@@ -557,23 +559,25 @@ export default function SwapSection({ balances }) {
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >
-              {buyMeta?.logo ? (
+              {displayBuyMeta?.logo ? (
                 <img
-                  src={buyMeta.logo}
-                  alt={`${buyMeta.symbol} logo`}
+                  src={displayBuyMeta.logo}
+                  alt={`${displayBuyMeta.symbol} logo`}
                   className="h-6 w-6 rounded-full object-contain"
                 />
               ) : (
                 <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(buyMeta?.symbol || buyToken || "?").slice(0, 2)}
+                  {(displayBuyMeta?.symbol || buyToken || "?").slice(0, 2)}
                 </div>
               )}
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
-                  {buyMeta?.symbol || buyToken}
+                  {displayBuyMeta?.symbol || buyToken}
                 </span>
                 <span className="text-[10px] text-slate-400">
-                  {buyMeta?.address ? shortenAddress(buyMeta.address) : "Native"}
+                  {displayBuyMeta?.address
+                    ? shortenAddress(displayBuyMeta.address)
+                    : "Native"}
                 </span>
               </div>
               <svg
