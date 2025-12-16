@@ -233,9 +233,7 @@ export async function getErc20(address, provider) {
 
 // Wrappers to preserve existing API while delegating to services
 export const fetchMasterChefFarms = (providerOverride) =>
-  fetchMasterChefFarmsService(
-    providerOverride || getReadOnlyProvider()
-  );
+  fetchMasterChefFarmsService(providerOverride || getReadOnlyProvider());
 
 export const fetchMasterChefUserData = (address, pools, providerOverride) =>
   fetchMasterChefUserDataService(
