@@ -88,10 +88,12 @@ export default function SwapSection({ balances }) {
     const decimals = Math.min(6, tokenRegistry[sellKey]?.decimals ?? 6);
     if (!bal) {
       setAmountIn("");
+      setQuoteError("");
       return;
     }
     const val = (bal * pct).toFixed(decimals);
     setAmountIn(val);
+    setQuoteError("");
   };
 
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
@@ -525,7 +527,10 @@ export default function SwapSection({ balances }) {
             </button>
             <input
               value={amountIn}
-              onChange={(e) => setAmountIn(e.target.value)}
+              onChange={(e) => {
+                setAmountIn(e.target.value);
+                if (quoteError) setQuoteError("");
+              }}
               placeholder="0.00"
               className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full"
             />
