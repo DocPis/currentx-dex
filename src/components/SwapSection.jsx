@@ -92,6 +92,8 @@ export default function SwapSection({ balances }) {
   const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
   const sellMeta = tokenRegistry[sellKey];
   const buyMeta = tokenRegistry[buyKey];
+  const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
+  const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
