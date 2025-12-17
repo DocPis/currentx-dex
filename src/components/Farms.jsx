@@ -237,7 +237,6 @@ function FarmsList({ address, onConnect }) {
                             {poolName}
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                            PID {farm.pid}
                             <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
                               Active
                             </span>
