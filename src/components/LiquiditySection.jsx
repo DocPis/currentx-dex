@@ -10,6 +10,7 @@ import {
   UNIV2_ROUTER_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
+  fetchMasterChefFarms,
 } from "../config/web3";
 import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../config/abis";
 import { fetchV2PairData } from "../config/subgraph";
@@ -159,6 +160,26 @@ export default function LiquiditySection() {
       const updates = {};
       setSubgraphError("");
       setTvlError("");
+
+      // Map farm emissions by pair (normalized symbol key)
+      const farmAprMap = {};
+      try {
+        const farms = await fetchMasterChefFarms();
+        (farms?.pools || []).forEach((farm) => {
+          const symbols = (farm.tokens || [])
+            .map((t) => (t?.symbol || "").toUpperCase())
+            .filter(Boolean)
+            .map((s) => (s === "ETH" ? "WETH" : s));
+          if (symbols.length !== 2) return;
+          const key = symbols.sort().join("-");
+          if (farm.apr !== null && farm.apr !== undefined) {
+            farmAprMap[key] = farm.apr;
+          }
+        });
+      } catch (_err) {
+        // silently ignore farm fetch errors to avoid blocking pool stats
+      }
+
       for (const pool of basePools) {
         const token0Addr = resolveTokenAddress(
           pool.token0Symbol,
@@ -169,6 +190,7 @@ export default function LiquiditySection() {
           tokenRegistry
         );
         if (!token0Addr || !token1Addr) continue;
+        if (!updates[pool.id]) updates[pool.id] = {};
 
         try {
           const live = await fetchV2PairData(token0Addr, token1Addr);
@@ -239,6 +261,18 @@ export default function LiquiditySection() {
       }
 
       if (!cancelled && Object.keys(updates).length) {
+        // attach farm emission APR if available
+        Object.entries(updates).forEach(([id, data]) => {
+          const pool = basePools.find((p) => p.id === id);
+          if (!pool) return;
+          const normA = pool.token0Symbol === "ETH" ? "WETH" : pool.token0Symbol;
+          const normB = pool.token1Symbol === "ETH" ? "WETH" : pool.token1Symbol;
+          const key = [normA, normB].sort().join("-");
+          const emissionApr = farmAprMap[key];
+          if (emissionApr !== undefined) {
+            updates[id] = { ...data, emissionApr };
+          }
+        });
         setPoolStats((prev) => ({ ...prev, ...updates }));
       }
     };
