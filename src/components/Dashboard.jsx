@@ -320,9 +320,6 @@ export default function Dashboard() {
             <div className="text-sm text-slate-400">Protocol metrics (last {history.length} days)</div>
             <div className="text-lg font-semibold text-slate-50">Sepolia Uniswap V2</div>
           </div>
-            <div className="text-xs text-slate-500">
-              Subgraph endpoint: {import.meta.env.VITE_UNIV2_SUBGRAPH ? "configured" : "missing VITE_UNIV2_SUBGRAPH"}
-            </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm text-left">
