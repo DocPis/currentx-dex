@@ -163,9 +163,14 @@ export default function LiquiditySection() {
 
       // Map farm emissions by pair (normalized symbol key)
       const farmAprMap = {};
+      const farmAprByLp = {};
       try {
         const farms = await fetchMasterChefFarms();
         (farms?.pools || []).forEach((farm) => {
+          const lpAddr = (farm.lpToken || "").toLowerCase();
+          if (lpAddr && farm.apr !== null && farm.apr !== undefined) {
+            farmAprByLp[lpAddr] = farm.apr;
+          }
           const symbols = (farm.tokens || [])
             .map((t) => (t?.symbol || "").toUpperCase())
             .filter(Boolean)
@@ -215,7 +220,7 @@ export default function LiquiditySection() {
         try {
           const provider = await getProvider();
           const pairIdOverride = updates[pool.id]?.pairId;
-          const { reserve0, reserve1, token0 } = await getV2PairReserves(
+          const { reserve0, reserve1, token0, pairAddress } = await getV2PairReserves(
             provider,
             token0Addr,
             token1Addr,
@@ -235,6 +240,7 @@ export default function LiquiditySection() {
             metaB?.symbol === "USDT" ||
             metaB?.symbol === "DAI";
           let tvlUsd;
+          let finalPairAddress = pairAddress;
           if (stableA) {
             const usd = Number(formatUnits(resA, metaA.decimals));
             tvlUsd = usd * 2;
@@ -242,10 +248,13 @@ export default function LiquiditySection() {
             const usd = Number(formatUnits(resB, metaB.decimals));
             tvlUsd = usd * 2;
           }
-          if (!cancelled && tvlUsd !== undefined) {
+          if (!cancelled) {
             updates[pool.id] = {
               ...updates[pool.id],
-              tvlUsd: updates[pool.id]?.tvlUsd ?? tvlUsd,
+              ...(tvlUsd !== undefined
+                ? { tvlUsd: updates[pool.id]?.tvlUsd ?? tvlUsd }
+                : {}),
+              pairAddress: finalPairAddress || updates[pool.id]?.pairAddress,
             };
           }
         } catch (chainErr) {
@@ -268,7 +277,11 @@ export default function LiquiditySection() {
           const normA = pool.token0Symbol === "ETH" ? "WETH" : pool.token0Symbol;
           const normB = pool.token1Symbol === "ETH" ? "WETH" : pool.token1Symbol;
           const key = [normA, normB].sort().join("-");
-          const emissionApr = farmAprMap[key];
+          const lpKey = (data?.pairAddress || data?.pairId || "").toLowerCase();
+          const emissionApr =
+            (lpKey && farmAprByLp[lpKey] !== undefined
+              ? farmAprByLp[lpKey]
+              : farmAprMap[key]);
           if (emissionApr !== undefined) {
             updates[id] = { ...data, emissionApr };
           }
