@@ -2,9 +2,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   fetchDashboardStats,
-  fetchPairHistory,
+  fetchProtocolHistory,
 } from "../config/subgraph";
-import { TOKENS, WETH_ADDRESS, USDC_ADDRESS } from "../config/web3";
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
@@ -91,7 +90,7 @@ export default function Dashboard() {
 
         const [s, h] = await Promise.all([
           fetchDashboardStats(),
-          fetchPairHistory(WETH_ADDRESS, USDC_ADDRESS, 10),
+          fetchProtocolHistory(7),
         ]);
 
         if (cancelled) return;
@@ -134,7 +133,7 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
           <p className="text-sm text-slate-400">
-            Live TVL, volume, and activity from the Sepolia subgraph (WETH/USDC focus).
+            Live protocol TVL and volume from the Sepolia subgraph (last 7 days).
           </p>
         </div>
         {error && (
@@ -163,9 +162,9 @@ export default function Dashboard() {
         <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="text-sm text-slate-400">TVL WETH/USDC</div>
+              <div className="text-sm text-slate-400">Protocol TVL</div>
               <div className="text-xl font-semibold">
-                ${formatNumber(history[0]?.tvlUsd || 0)}
+                ${formatNumber(history[0]?.tvlUsd || stats?.totalLiquidityUsd || 0)}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -187,16 +186,16 @@ export default function Dashboard() {
             )}
           </div>
           <div className="mt-3 text-xs text-slate-500">
-            Data from pairDayDatas on the subgraph (Sepolia Uniswap V2).
+            Data from uniswapDayDatas (protocol-level TVL, Sepolia Uniswap V2).
           </div>
         </div>
 
         <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <div className="text-sm text-slate-400">24h Volume WETH/USDC</div>
+              <div className="text-sm text-slate-400">Protocol volume (24h)</div>
               <div className="text-xl font-semibold">
-                ${formatNumber(history[0]?.volumeUsd || 0)}
+                ${formatNumber(history[0]?.volumeUsd || stats?.totalVolumeUsd || 0)}
               </div>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -218,7 +217,7 @@ export default function Dashboard() {
             )}
           </div>
           <div className="mt-3 text-xs text-slate-500">
-            Data from pairDayDatas (dailyVolumeUSD).
+            Data from uniswapDayDatas (dailyVolumeUSD, protocol-wide).
           </div>
         </div>
       </div>
@@ -226,10 +225,8 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm text-slate-400">Monitored pool</div>
-            <div className="text-lg font-semibold text-slate-50">
-              {TOKENS.WETH.symbol} / {TOKENS.USDC.symbol} (Sepolia)
-            </div>
+            <div className="text-sm text-slate-400">Protocol metrics (last {history.length} days)</div>
+            <div className="text-lg font-semibold text-slate-50">Sepolia Uniswap V2</div>
           </div>
             <div className="text-xs text-slate-500">
               Subgraph endpoint: {import.meta.env.VITE_UNIV2_SUBGRAPH ? "configured" : "missing VITE_UNIV2_SUBGRAPH"}

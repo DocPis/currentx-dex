@@ -217,6 +217,43 @@ export async function fetchDashboardStats() {
   }
 }
 
+// Fetch protocol-level daily history (TVL + volume) for the last `days`
+export async function fetchProtocolHistory(days = 7) {
+  const historyQuery = `
+    query ProtocolHistory($days: Int!) {
+      uniswapDayDatas(
+        first: $days
+        orderBy: date
+        orderDirection: desc
+      ) {
+        date
+        totalLiquidityUSD
+        dailyVolumeUSD
+      }
+    }
+  `;
+
+  try {
+    const res = await postSubgraph(historyQuery, { days });
+    const history = res?.uniswapDayDatas || [];
+    return history.map((d) => ({
+      date: Number(d.date) * 1000,
+      tvlUsd: Number(d.totalLiquidityUSD || 0),
+      volumeUsd: Number(d.dailyVolumeUSD || 0),
+    }));
+  } catch (err) {
+    const message = err?.message || "";
+    const noDayField =
+      message.includes("Type `Query` has no field `uniswapDayDatas`") ||
+      message.includes('Cannot query field "uniswapDayDatas"');
+
+    if (noDayField) {
+      return [];
+    }
+    throw err;
+  }
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();
