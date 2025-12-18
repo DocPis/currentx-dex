@@ -26,7 +26,18 @@ function StatCard({ label, value, prefix = "$" }) {
   );
 }
 
-function Sparkline({ data, height = 80, color = "#38bdf8", label }) {
+const formatDateLabel = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+};
+
+function LineGlowChart({
+  data,
+  height = 220,
+  color = "#4ade80",
+  label = "line",
+}) {
   if (!data || data.length < 2) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-slate-500">
@@ -39,39 +50,126 @@ function Sparkline({ data, height = 80, color = "#38bdf8", label }) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const width = 280;
+  const width = 520;
 
   const points = values.map((v, i) => {
-    const x = (i / (values.length - 1)) * width;
+    const x = (i / (values.length - 1 || 1)) * width;
     const y = height - ((v - min) / range) * height;
     return `${x},${y}`;
   });
 
-  const gradientId = `spark-${label}`;
+  const gradientId = `line-grad-${label}`;
+  const glowId = `line-glow-${label}`;
+  const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
+    (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
+  );
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      className="w-full h-full"
-      preserveAspectRatio="none"
-    >
-      <defs>
-        <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.4" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polyline
-        fill="none"
-        stroke={color}
-        strokeWidth="2"
-        points={points.join(" ")}
-      />
-      <polygon
-        fill={`url(#${gradientId})`}
-        points={`${points.join(" ")} ${width},${height} 0,${height}`}
-      />
-    </svg>
+    <div className="relative h-full">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-full"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.4" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.05" />
+          </linearGradient>
+          <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <polygon
+          fill={`url(#${gradientId})`}
+          points={`${points.join(" ")} ${width},${height} 0,${height}`}
+          opacity="0.9"
+        />
+        <polyline
+          fill="none"
+          stroke={color}
+          strokeWidth="3"
+          points={points.join(" ")}
+          filter={`url(#${glowId})`}
+        />
+      </svg>
+      <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
+        {ticks.map((i) => (
+          <span key={i}>{data[i]?.label || ""}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BarGlowChart({
+  data,
+  height = 220,
+  color = "#4ade80",
+  label = "bars",
+}) {
+  if (!data || data.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-xs text-slate-500">
+        No data
+      </div>
+    );
+  }
+
+  const values = data.map((d) => d.value);
+  const max = Math.max(...values, 1);
+  const minWidth = 520;
+  const barWidth = Math.max(4, Math.floor(minWidth / (values.length * 1.6)));
+  const width = Math.max(minWidth, (barWidth + 2) * values.length);
+
+  const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
+    (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
+  );
+
+  return (
+    <div className="relative h-full">
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="w-full h-full"
+        preserveAspectRatio="none"
+      >
+        <defs>
+          <filter id={`bar-glow-${label}`} x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        {values.map((v, i) => {
+          const x = i * (barWidth + 2);
+          const h = (v / max) * (height - 10);
+          const y = height - h;
+          return (
+            <rect
+              key={`${label}-${i}`}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={h}
+              fill={color}
+              opacity="0.9"
+              filter={`url(#bar-glow-${label})`}
+            />
+          );
+        })}
+      </svg>
+      <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
+        {ticks.map((i) => (
+          <span key={i}>{data[i]?.label || ""}</span>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -114,7 +212,7 @@ export default function Dashboard() {
       history
         .slice()
         .reverse()
-        .map((d) => ({ label: d.date, value: d.tvlUsd })),
+        .map((d) => ({ label: formatDateLabel(d.date), value: d.tvlUsd })),
     [history]
   );
 
@@ -123,7 +221,7 @@ export default function Dashboard() {
       history
         .slice()
         .reverse()
-        .map((d) => ({ label: d.date, value: d.volumeUsd })),
+        .map((d) => ({ label: formatDateLabel(d.date), value: d.volumeUsd })),
     [history]
   );
 
@@ -172,21 +270,18 @@ export default function Dashboard() {
               Last {history.length} days
             </div>
           </div>
-          <div className="h-40">
+          <div className="h-56">
             {loading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
               </div>
             ) : (
-              <Sparkline
+              <LineGlowChart
                 data={tvlSeries}
-                color="#38bdf8"
+                color="#4ade80"
                 label="tvl"
               />
             )}
-          </div>
-          <div className="mt-3 text-xs text-slate-500">
-            Data from uniswapDayDatas (protocol-level TVL, Sepolia Uniswap V2).
           </div>
         </div>
 
@@ -203,21 +298,18 @@ export default function Dashboard() {
           Last {history.length} days
         </div>
           </div>
-          <div className="h-40">
+          <div className="h-56">
             {loading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
               </div>
             ) : (
-              <Sparkline
+              <BarGlowChart
                 data={volumeSeries}
-                color="#34d399"
+                color="#4ade80"
                 label="volume"
               />
             )}
-          </div>
-          <div className="mt-3 text-xs text-slate-500">
-            Data from uniswapDayDatas (dailyVolumeUSD, protocol-wide).
           </div>
         </div>
       </div>
