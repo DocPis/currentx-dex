@@ -13,7 +13,6 @@ import {
 } from "../config/web3";
 import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../config/abis";
 import { fetchV2PairData } from "../config/subgraph";
-import currentxLogo from "../assets/currentx.png";
 
 const basePools = [
   {
@@ -132,9 +131,6 @@ export default function LiquiditySection() {
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
-  const [customAddress, setCustomAddress] = useState("");
-  const [customTokenStatus, setCustomTokenStatus] = useState("");
-  const [customTokenLoading, setCustomTokenLoading] = useState(false);
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
@@ -604,59 +600,6 @@ export default function LiquiditySection() {
     const target = base * percentage;
     setWithdrawLp(target.toFixed(4));
     if (actionStatus) setActionStatus("");
-  };
-
-  const addCustomToken = async () => {
-    const addr = (customAddress || "").trim();
-    setCustomTokenStatus("");
-    if (!addr) {
-      setCustomTokenStatus("Inserisci un address ERC20 valido.");
-      return;
-    }
-    if (!addr.startsWith("0x") || addr.length !== 42) {
-      setCustomTokenStatus("Address non valido.");
-      return;
-    }
-    try {
-      setCustomTokenLoading(true);
-      const provider = await getProvider();
-      const normalized = addr.toLowerCase();
-      const contract = new Contract(normalized, ERC20_ABI, provider);
-      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
-        contract.symbol().catch(() => "TOKEN"),
-        contract.name().catch(() => "Custom token"),
-        contract.decimals().catch(() => 18),
-      ]);
-      const decimals = Number(decimalsRaw) || 18;
-      const baseSymbol = (symbolRaw || "TOKEN").toUpperCase();
-      let key = baseSymbol;
-      let suffix = 1;
-      while (
-        tokenRegistry[key] &&
-        tokenRegistry[key].address?.toLowerCase() !== normalized
-      ) {
-        key = `${baseSymbol}_${suffix++}`;
-      }
-      const meta = {
-        symbol: key,
-        name: nameRaw || baseSymbol,
-        address: normalized,
-        decimals,
-        logo: currentxLogo,
-      };
-      setCustomTokens((prev) => ({
-        ...prev,
-        [key]: meta,
-      }));
-      setCustomTokenStatus(`Token ${key} aggiunto`);
-      if (!tokenSelection) {
-        setTokenSelection({ baseSymbol: key, pairSymbol: null });
-      }
-    } catch (err) {
-      setCustomTokenStatus(err?.message || "Impossibile caricare il token.");
-    } finally {
-      setCustomTokenLoading(false);
-    }
   };
 
   const handleTokenPick = (token) => {
@@ -1764,27 +1707,6 @@ export default function LiquiditySection() {
                 </span>
                 <span className="text-slate-400">Default</span>
               </div>
-            </div>
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-5 py-3 border-b border-slate-800">
-              <div className="flex-1 flex items-center gap-2">
-                <input
-                  value={customAddress}
-                  onChange={(e) => setCustomAddress(e.target.value)}
-                  placeholder="Add custom token address (0x...)"
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-100"
-                />
-                <button
-                  type="button"
-                  onClick={addCustomToken}
-                  disabled={customTokenLoading}
-                  className="px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
-                >
-                  {customTokenLoading ? "Loading..." : "Add token"}
-                </button>
-              </div>
-              {customTokenStatus && (
-                <div className="text-[11px] text-slate-300">{customTokenStatus}</div>
-              )}
             </div>
 
             <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">

@@ -10,7 +10,6 @@ import {
   UNIV2_ROUTER_ADDRESS,
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
-  setRegisteredCustomTokens,
   getReadOnlyProvider,
 } from "../config/web3";
 import {
@@ -19,7 +18,6 @@ import {
   UNIV2_ROUTER_ABI,
   UNIV2_FACTORY_ABI,
 } from "../config/abis";
-import currentxLogo from "../assets/currentx.png";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 
@@ -33,7 +31,7 @@ const formatBalance = (v) => {
 };
 
 export default function SwapSection({ balances }) {
-  const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
+  const [customTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
@@ -51,15 +49,8 @@ export default function SwapSection({ balances }) {
   const [swapLoading, setSwapLoading] = useState(false);
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
-  const [customAddress, setCustomAddress] = useState("");
-  const [customStatus, setCustomStatus] = useState("");
-  const [customLoading, setCustomLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
-
-  useEffect(() => {
-    setRegisteredCustomTokens(customTokens);
-  }, [customTokens]);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -141,7 +132,6 @@ export default function SwapSection({ balances }) {
       if (symbol === sellToken) setSellToken(buyToken);
       setBuyToken(symbol);
     }
-    setCustomStatus("");
     setSelectorOpen(null);
     setTokenSearch("");
   };
@@ -149,60 +139,6 @@ export default function SwapSection({ balances }) {
   const closeSelector = () => {
     setSelectorOpen(null);
     setTokenSearch("");
-    setCustomStatus("");
-  };
-
-  const loadCustomToken = async (address, target) => {
-    const addr = (address || "").trim();
-    setCustomStatus("");
-    if (!addr) {
-      setCustomStatus("Inserisci un address valido (0x...).");
-      return;
-    }
-    if (!addr.startsWith("0x") || addr.length !== 42) {
-      setCustomStatus("Indirizzo non valido.");
-      return;
-    }
-    try {
-      setCustomLoading(true);
-      const provider = await getProvider();
-      const normalized = addr.toLowerCase();
-      const contract = new Contract(addr, ERC20_ABI, provider);
-      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
-        contract.symbol().catch(() => "TOKEN"),
-        contract.name().catch(() => "Custom token"),
-        contract.decimals().catch(() => 18),
-      ]);
-      const decimals = Number(decimalsRaw) || 18;
-      const baseSymbol = (symbolRaw || "TOKEN").toUpperCase();
-      let key = baseSymbol;
-      let suffix = 1;
-      while (
-        tokenRegistry[key] &&
-        tokenRegistry[key].address?.toLowerCase() !== normalized
-      ) {
-        key = `${baseSymbol}_${suffix++}`;
-      }
-      const meta = {
-        symbol: key,
-        name: nameRaw || baseSymbol,
-        address: normalized,
-        decimals,
-        logo: currentxLogo,
-      };
-      setCustomTokens((prev) => ({
-        ...prev,
-        [key]: meta,
-      }));
-      if (target === "sell") setSellToken(key);
-      if (target === "buy") setBuyToken(key);
-      if (target) setSelectorOpen(null);
-      setCustomStatus(`Token ${key} aggiunto`);
-    } catch (err) {
-      setCustomStatus(err?.message || "Impossibile caricare il token");
-    } finally {
-      setCustomLoading(false);
-    }
   };
 
   useEffect(() => {
@@ -768,7 +704,7 @@ export default function SwapSection({ balances }) {
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
               <div>
                 <div className="text-sm font-semibold text-slate-100">Select token</div>
-                <div className="text-xs text-slate-400">Pick from list or paste an address</div>
+                <div className="text-xs text-slate-400">Pick from list</div>
               </div>
               <button
                 onClick={closeSelector}
@@ -809,26 +745,6 @@ export default function SwapSection({ balances }) {
                   className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500"
                 />
               </div>
-
-              <div className="flex flex-col md:flex-row gap-2">
-                <input
-                  value={customAddress}
-                  onChange={(e) => setCustomAddress(e.target.value)}
-                  placeholder="Paste token address (0x...)"
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-100"
-                />
-                <button
-                  type="button"
-                  onClick={() => loadCustomToken(customAddress, selectorOpen)}
-                  disabled={customLoading}
-                  className="px-4 py-2 rounded-xl bg-slate-800 border border-slate-700 text-slate-100 text-sm hover:border-sky-500/60 disabled:opacity-60"
-                >
-                  {customLoading ? "Loading..." : "Add token"}
-                </button>
-              </div>
-              {customStatus && (
-                <div className="text-[11px] text-slate-300">{customStatus}</div>
-              )}
             </div>
 
             <div className="max-h-[480px] overflow-y-auto divide-y divide-slate-800">
@@ -871,7 +787,7 @@ export default function SwapSection({ balances }) {
               ))}
               {!filteredTokens.length && (
                 <div className="px-4 py-6 text-center text-sm text-slate-400">
-                  Nessun token trovato. Incolla un indirizzo per aggiungerlo.
+                  Nessun token trovato.
                 </div>
               )}
             </div>
