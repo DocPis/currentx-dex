@@ -5,7 +5,7 @@ import tetherLogo from "../tokens/tether.png";
 import usdcLogo from "../tokens/usdc.png";
 import wbtcLogo from "../tokens/wbtc.png";
 import wethLogo from "../tokens/weth.png";
-import currentxLogo from "../assets/currentxlogo.png";
+import currentxLogo from "../assets/currentx.png";
 import {
   CRX_ADDRESS,
   USDC_ADDRESS,
