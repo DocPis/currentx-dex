@@ -229,6 +229,7 @@ export async function fetchProtocolHistory(days = 7) {
         date
         totalLiquidityUSD
         dailyVolumeUSD
+        totalVolumeUSD
       }
     }
   `;
@@ -240,6 +241,7 @@ export async function fetchProtocolHistory(days = 7) {
       date: Number(d.date) * 1000,
       tvlUsd: Number(d.totalLiquidityUSD || 0),
       volumeUsd: Number(d.dailyVolumeUSD || 0),
+      cumulativeVolumeUsd: Number(d.totalVolumeUSD || 0),
     }));
   } catch (err) {
     const message = err?.message || "";

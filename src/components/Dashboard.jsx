@@ -252,6 +252,32 @@ export default function Dashboard() {
     [history]
   );
 
+  const latestDay = history?.[0];
+  const todayVolume =
+    stats?.totalVolumeUsd !== undefined &&
+    latestDay?.cumulativeVolumeUsd !== undefined
+      ? Math.max(0, stats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
+      : null;
+  const liveTvl = stats?.totalLiquidityUsd;
+
+  const tvlSeriesWithToday = useMemo(() => {
+    if (!tvlSeries.length) return [];
+    const livePoint =
+      liveTvl !== undefined
+        ? { label: "Today", value: liveTvl }
+        : null;
+    return livePoint ? [...tvlSeries, livePoint] : tvlSeries;
+  }, [tvlSeries, liveTvl]);
+
+  const volumeSeriesWithToday = useMemo(() => {
+    if (!volumeSeries.length) return [];
+    const todayPoint =
+      todayVolume !== null
+        ? { label: "Today", value: todayVolume }
+        : null;
+    return todayPoint ? [...volumeSeries, todayPoint] : volumeSeries;
+  }, [volumeSeries, todayVolume]);
+
   const calcChange = (series) => {
     if (!series?.length || series.length < 2) return null;
     const first = series[0]?.value ?? 0;
@@ -261,8 +287,8 @@ export default function Dashboard() {
     return { diff, pct };
   };
 
-  const tvlChange = calcChange(tvlSeries);
-  const volumeChange = calcChange(volumeSeries);
+  const tvlChange = calcChange(tvlSeriesWithToday);
+  const volumeChange = calcChange(volumeSeriesWithToday);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
@@ -328,7 +354,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <LineGlowChart
-                data={tvlSeries}
+                data={tvlSeriesWithToday}
                 color="#4ade80"
                 label="tvl"
               />
@@ -368,7 +394,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <BarGlowChart
-                data={volumeSeries}
+                data={volumeSeriesWithToday}
                 color="#4ade80"
                 label="volume"
               />
