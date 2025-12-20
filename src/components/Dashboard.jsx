@@ -50,19 +50,21 @@ function LineGlowChart({
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const width = 520;
+  const width = Math.max(520, values.length * 44);
 
-  const points = values.map((v, i) => {
+  const pointPairs = values.map((v, i) => {
     const x = (i / (values.length - 1 || 1)) * width;
     const y = height - ((v - min) / range) * height;
-    return `${x},${y}`;
+    return { x, y };
   });
+  const points = pointPairs.map(({ x, y }) => `${x},${y}`);
 
   const gradientId = `line-grad-${label}`;
   const glowId = `line-glow-${label}`;
   const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
     (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
   );
+  const last = pointPairs[pointPairs.length - 1];
 
   return (
     <div className="relative h-full">
@@ -73,9 +75,12 @@ function LineGlowChart({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.4" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.05" />
+            <stop offset="0%" stopColor={color} stopOpacity="0.45" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.08" />
           </linearGradient>
+          <pattern id={`${label}-grid`} width="36" height="18" patternUnits="userSpaceOnUse">
+            <path d="M 36 0 L 0 0 0 18" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+          </pattern>
           <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
             <feGaussianBlur stdDeviation="4" result="coloredBlur" />
             <feMerge>
@@ -84,6 +89,13 @@ function LineGlowChart({
             </feMerge>
           </filter>
         </defs>
+        <rect width="100%" height="100%" fill={`url(#${label}-grid)`} opacity="0.6" />
+        <rect
+          width="100%"
+          height="100%"
+          fill={`url(#${gradientId})`}
+          opacity="0.25"
+        />
         <polygon
           fill={`url(#${gradientId})`}
           points={`${points.join(" ")} ${width},${height} 0,${height}`}
@@ -96,6 +108,12 @@ function LineGlowChart({
           points={points.join(" ")}
           filter={`url(#${glowId})`}
         />
+        {last && (
+          <>
+            <circle cx={last.x} cy={last.y} r="4.5" fill={color} opacity="0.9" />
+            <circle cx={last.x} cy={last.y} r="9" fill={color} opacity="0.15" />
+          </>
+        )}
       </svg>
       <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
         {ticks.map((i) => (
@@ -123,8 +141,8 @@ function BarGlowChart({
   const values = data.map((d) => d.value);
   const max = Math.max(...values, 1);
   const minWidth = 520;
-  const barWidth = Math.max(4, Math.floor(minWidth / (values.length * 1.6)));
-  const width = Math.max(minWidth, (barWidth + 2) * values.length);
+  const barWidth = Math.max(6, Math.floor(minWidth / (values.length * 1.5)));
+  const width = Math.max(minWidth, (barWidth + 3) * values.length);
 
   const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
     (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
@@ -145,7 +163,16 @@ function BarGlowChart({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <linearGradient id={`bar-grad-${label}`} x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.9" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.35" />
+          </linearGradient>
+          <pattern id={`bar-grid-${label}`} width="36" height="18" patternUnits="userSpaceOnUse">
+            <path d="M 36 0 L 0 0 0 18" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+          </pattern>
         </defs>
+        <rect width="100%" height="100%" fill={`url(#bar-grid-${label})`} opacity="0.6" />
+        <rect width="100%" height="100%" fill={`url(#bar-grad-${label})`} opacity="0.12" />
         {values.map((v, i) => {
           const x = i * (barWidth + 2);
           const h = (v / max) * (height - 10);
@@ -157,8 +184,8 @@ function BarGlowChart({
               y={y}
               width={barWidth}
               height={h}
-              fill={color}
-              opacity="0.9"
+              fill={`url(#bar-grad-${label})`}
+              opacity="1"
               filter={`url(#bar-glow-${label})`}
             />
           );
@@ -225,6 +252,18 @@ export default function Dashboard() {
     [history]
   );
 
+  const calcChange = (series) => {
+    if (!series?.length || series.length < 2) return null;
+    const first = series[0]?.value ?? 0;
+    const last = series[series.length - 1]?.value ?? 0;
+    const diff = last - first;
+    const pct = first ? (diff / first) * 100 : null;
+    return { diff, pct };
+  };
+
+  const tvlChange = calcChange(tvlSeries);
+  const volumeChange = calcChange(volumeSeries);
+
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
@@ -268,6 +307,18 @@ export default function Dashboard() {
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-sky-400" />
               Last {history.length} days
+              {tvlChange && (
+                <span
+                  className={`px-2 py-1 rounded-full border text-[11px] ${
+                    tvlChange.diff >= 0
+                      ? "border-emerald-400/40 text-emerald-200 bg-emerald-400/10"
+                      : "border-rose-400/40 text-rose-200 bg-rose-400/10"
+                  }`}
+                >
+                  {tvlChange.diff >= 0 ? "+" : ""}
+                  {formatNumber(Math.abs(tvlChange.diff))} ({tvlChange.pct ? tvlChange.pct.toFixed(1) : "0"}%)
+                </span>
+              )}
             </div>
           </div>
           <div className="h-56">
@@ -292,11 +343,23 @@ export default function Dashboard() {
               <div className="text-xl font-semibold">
                 ${formatNumber(history[0]?.volumeUsd || stats?.totalVolumeUsd || 0)}
               </div>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          Last {history.length} days
-        </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              Last {history.length} days
+              {volumeChange && (
+                <span
+                  className={`px-2 py-1 rounded-full border text-[11px] ${
+                    volumeChange.diff >= 0
+                      ? "border-emerald-400/40 text-emerald-200 bg-emerald-400/10"
+                      : "border-rose-400/40 text-rose-200 bg-rose-400/10"
+                  }`}
+                >
+                  {volumeChange.diff >= 0 ? "+" : ""}
+                  {formatNumber(Math.abs(volumeChange.diff))} ({volumeChange.pct ? volumeChange.pct.toFixed(1) : "0"}%)
+                </span>
+              )}
+            </div>
           </div>
           <div className="h-56">
             {loading ? (
