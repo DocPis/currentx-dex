@@ -1,6 +1,6 @@
 // src/components/Header.jsx
 import React, { useEffect, useRef, useState } from "react";
-import currentxLogo from "../assets/currentx.png";
+import currentxLogo from "../assets/currentxlogo.png";
 
 export default function Header({
   address,
