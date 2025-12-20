@@ -38,7 +38,7 @@ export default function Header({
           className="h-20 w-20 object-contain"
         />
         <div className="flex flex-col">
-          <span className="font-semibold text-slate-50">
+          <span className="font-inter font-semibold italic tracking-[-0.02em] text-slate-50">
             CurrentX
           </span>
           <span className="text-xs text-slate-400">
