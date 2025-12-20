@@ -445,6 +445,7 @@ export default function LiquiditySection() {
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
+  const autopilotPool = pools.find((p) => p.id === "crx-weth") || pools[0];
 
   useEffect(() => {
     let cancelled = false;
@@ -1070,14 +1071,19 @@ export default function LiquiditySection() {
               CURRENTX LIQUIDITY
             </div>
             <div className="text-3xl font-bold leading-tight mb-2 drop-shadow">
-              Autopilot Mode
+              Autopilot CRX/WETH
             </div>
             <p className="text-sm text-white/80 mb-4 max-w-sm">
-              Deploy liquidity with a balanced ETH/USDC mix and track live TVL
-              from the subgraph.
+              One-click deposit into the CRX/WETH (V2) pool and jump straight
+              into the liquidity provision flow.
             </p>
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 text-sm font-semibold text-white border border-white/30 w-fit shadow-lg shadow-black/30">
-              Start providing
+            <button
+              type="button"
+              disabled={!autopilotPool}
+              onClick={() => autopilotPool && handleOpenPoolDepositFromRow(autopilotPool)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 text-sm font-semibold text-white border border-white/30 w-fit shadow-lg shadow-black/30 disabled:opacity-60"
+            >
+              Start CRX/WETH deposit
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
