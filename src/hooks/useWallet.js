@@ -104,9 +104,27 @@ export function useWallet() {
     }
     const provider = new BrowserProvider(injected);
     const requester = injected.request ? injected : provider;
-    const accounts = await (requester.request
-      ? requester.request({ method: "eth_requestAccounts", params: [] })
-      : provider.send("eth_requestAccounts", []));
+    let accounts;
+    try {
+      accounts = await (requester.request
+        ? requester.request({ method: "eth_requestAccounts", params: [] })
+        : provider.send("eth_requestAccounts", []));
+    } catch (err) {
+      const rpcCode =
+        err?.info?.error?.code ??
+        err?.error?.code ??
+        err?.code ??
+        err?.data?.code;
+      if (rpcCode === -32002) {
+        throw new Error(
+          "A connection request is already pending in your wallet. Open your wallet, finish/cancel it, then try again."
+        );
+      }
+      if (rpcCode === 4001 || err?.code === "ACTION_REJECTED") {
+        throw new Error("Connection request was rejected in the wallet.");
+      }
+      throw err;
+    }
     if (!accounts || !accounts.length) {
       throw new Error(
         "No account returned. Please unlock the selected wallet and approve the connection."
