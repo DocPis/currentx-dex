@@ -271,6 +271,9 @@ export default function Dashboard() {
     latestDay?.cumulativeVolumeUsd !== undefined
       ? Math.max(0, stats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
       : null;
+  const dayVolume = latestDay?.volumeUsd ?? null;
+  const dailyVolumeUsd = todayVolume !== null ? todayVolume : dayVolume;
+  const dailyFees = dailyVolumeUsd !== null ? dailyVolumeUsd * 0.003 : null;
   const liveTvl = stats?.totalLiquidityUsd;
 
   const tvlSeriesWithToday = useMemo(() => {
@@ -323,14 +326,12 @@ export default function Dashboard() {
         <StatCard label="Total TVL" value={stats?.totalLiquidityUsd} />
         <StatCard label="Total Volume" value={stats?.totalVolumeUsd} />
         <StatCard
-          label="Pairs"
-          value={stats?.pairCount}
-          prefix=""
+          label="24h Volume"
+          value={dailyVolumeUsd}
         />
         <StatCard
-          label="Tx count"
-          value={stats?.txCount}
-          prefix=""
+          label="24h Fees (0.3%)"
+          value={dailyFees}
         />
       </div>
 
