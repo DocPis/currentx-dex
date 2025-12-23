@@ -256,6 +256,120 @@ export async function fetchProtocolHistory(days = 7) {
   }
 }
 
+// Fetch latest on-chain activity (swaps, mints, burns) sorted by timestamp desc
+export async function fetchRecentTransactions(limit = 12) {
+  const pairLabel = (pair) => {
+    const t0 = pair?.token0?.symbol || "Token0";
+    const t1 = pair?.token1?.symbol || "Token1";
+    return `${t0}/${t1}`;
+  };
+
+  const parseHash = (id = "") => id.split("-")[0] || id;
+  const toNumber = (v) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const mapSwap = (s) => ({
+    type: "Swap",
+    pair: pairLabel(s?.pair),
+    amountUsd: toNumber(s?.amountUSD),
+    timestamp: Number(s?.timestamp || 0) * 1000,
+    txHash: s?.transaction?.id ? parseHash(s.transaction.id) : parseHash(s?.id),
+    account: s?.to || s?.sender || null,
+  });
+
+  const mapMint = (m) => ({
+    type: "Mint",
+    pair: pairLabel(m?.pair),
+    amountUsd: toNumber(m?.amountUSD),
+    timestamp: Number(m?.timestamp || 0) * 1000,
+    txHash: m?.transaction?.id ? parseHash(m.transaction.id) : parseHash(m?.id),
+    account: m?.to || m?.sender || null,
+  });
+
+  const mapBurn = (b) => ({
+    type: "Burn",
+    pair: pairLabel(b?.pair),
+    amountUsd: toNumber(b?.amountUSD),
+    timestamp: Number(b?.timestamp || 0) * 1000,
+    txHash: b?.transaction?.id ? parseHash(b.transaction.id) : parseHash(b?.id),
+    account: b?.to || b?.sender || null,
+  });
+
+  const safeQuery = async (query, field) => {
+    try {
+      const res = await postSubgraph(query, { limit });
+      return res?.[field] || [];
+    } catch (err) {
+      const message = err?.message || "";
+      const noField =
+        message.includes(`Cannot query field \"${field}\"`) ||
+        message.includes(`Type \`Query\` has no field \`${field}\``);
+      if (noField) return [];
+      throw err;
+    }
+  };
+
+  const swapQuery = `
+    query RecentSwaps($limit: Int!) {
+      swaps(first: $limit, orderBy: timestamp, orderDirection: desc) {
+        id
+        timestamp
+        amountUSD
+        to
+        sender
+        transaction { id }
+        pair { token0 { symbol } token1 { symbol } }
+      }
+    }
+  `;
+
+  const mintQuery = `
+    query RecentMints($limit: Int!) {
+      mints(first: $limit, orderBy: timestamp, orderDirection: desc) {
+        id
+        timestamp
+        amountUSD
+        sender
+        to
+        transaction { id }
+        pair { token0 { symbol } token1 { symbol } }
+      }
+    }
+  `;
+
+  const burnQuery = `
+    query RecentBurns($limit: Int!) {
+      burns(first: $limit, orderBy: timestamp, orderDirection: desc) {
+        id
+        timestamp
+        amountUSD
+        sender
+        to
+        transaction { id }
+        pair { token0 { symbol } token1 { symbol } }
+      }
+    }
+  `;
+
+  const [swaps, mints, burns] = await Promise.all([
+    safeQuery(swapQuery, "swaps"),
+    safeQuery(mintQuery, "mints"),
+    safeQuery(burnQuery, "burns"),
+  ]);
+
+  const events = [
+    ...swaps.map(mapSwap),
+    ...mints.map(mapMint),
+    ...burns.map(mapBurn),
+  ]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, limit);
+
+  return events;
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();

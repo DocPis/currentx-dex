@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   fetchDashboardStats,
   fetchProtocolHistory,
+  fetchRecentTransactions,
 } from "../config/subgraph";
 
 function formatNumber(num) {
@@ -25,6 +26,15 @@ function StatCard({ label, value, prefix = "$" }) {
     </div>
   );
 }
+
+const TYPE_BADGE = {
+  Swap: "bg-sky-500/15 text-sky-100 border border-sky-500/30",
+  Mint: "bg-emerald-500/15 text-emerald-100 border border-emerald-500/30",
+  Burn: "bg-rose-500/15 text-rose-100 border border-rose-500/30",
+};
+
+const shortenHash = (hash = "") =>
+  hash ? `${hash.slice(0, 6)}...${hash.slice(-4)}` : "--";
 
 const formatDateLabel = (ts) => {
   if (!ts) return "";
@@ -203,6 +213,7 @@ function BarGlowChart({
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
+  const [recentTxs, setRecentTxs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -213,14 +224,16 @@ export default function Dashboard() {
         setError("");
         setLoading(true);
 
-        const [s, h] = await Promise.all([
+        const [s, h, txs] = await Promise.all([
           fetchDashboardStats(),
           fetchProtocolHistory(7),
+          fetchRecentTransactions(15),
         ]);
 
         if (cancelled) return;
         setStats(s);
         setHistory(h);
+        setRecentTxs(txs || []);
       } catch (e) {
         if (!cancelled) setError(e.message || "Failed to load dashboard");
       } finally {
@@ -406,42 +419,73 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm text-slate-400">Protocol metrics (last {history.length} days)</div>
-            <div className="text-lg font-semibold text-slate-50">Sepolia Uniswap V2</div>
+            <div className="text-sm text-slate-400">Latest transactions from the subgraph</div>
+            <div className="text-lg font-semibold text-slate-50">Recent on-chain activity</div>
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm text-left">
-            <thead className="text-slate-400 text-xs uppercase">
-              <tr>
-                <th className="py-2 pr-4">Date</th>
-                <th className="py-2 pr-4 text-right">TVL</th>
-                <th className="py-2 pr-4 text-right">Volume 24h</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800 text-slate-100">
-              {history.map((d) => (
-                <tr key={d.date}>
-                  <td className="py-2 pr-4">
-                    {new Date(d.date).toLocaleDateString()}
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    ${formatNumber(d.tvlUsd)}
-                  </td>
-                  <td className="py-2 pr-4 text-right">
-                    ${formatNumber(d.volumeUsd)}
-                  </td>
-                </tr>
-              ))}
-              {!history.length && !loading && (
+          {loading ? (
+            <div className="py-6 text-center text-sm text-slate-500">Loading...</div>
+          ) : (
+            <table className="min-w-full text-sm text-left">
+              <thead className="text-slate-400 text-xs uppercase">
                 <tr>
-                  <td colSpan={3} className="py-3 text-center text-slate-500">
-                    No data available
-                  </td>
+                  <th className="py-2 pr-4 whitespace-nowrap">Time</th>
+                  <th className="py-2 pr-4">Type</th>
+                  <th className="py-2 pr-4">Pair</th>
+                  <th className="py-2 pr-4 text-right">Value (USD)</th>
+                  <th className="py-2 pr-4 text-right">Account</th>
+                  <th className="py-2 pl-4 text-right">Tx</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-800 text-slate-100">
+                {recentTxs.map((tx) => (
+                  <tr key={`${tx.txHash || tx.timestamp}-${tx.type}`}>
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {tx.timestamp ? new Date(tx.timestamp).toLocaleString() : "--"}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${TYPE_BADGE[tx.type] || "bg-slate-800 text-slate-200 border border-slate-700"}`}
+                      >
+                        {tx.type || "--"}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4">{tx.pair || "--"}</td>
+                    <td className="py-2 pr-4 text-right">
+                      {tx.amountUsd === null || tx.amountUsd === undefined
+                        ? "N/A"
+                        : `$${formatNumber(tx.amountUsd)}`}
+                    </td>
+                    <td className="py-2 pr-4 text-right">
+                      {tx.account ? shortenHash(tx.account) : "--"}
+                    </td>
+                    <td className="py-2 pl-4 text-right">
+                      {tx.txHash ? (
+                        <a
+                          href={`https://sepolia.etherscan.io/tx/${tx.txHash}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-sky-400 hover:text-sky-300 underline"
+                        >
+                          {shortenHash(tx.txHash)}
+                        </a>
+                      ) : (
+                        "--"
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {!recentTxs.length && !loading && (
+                  <tr>
+                    <td colSpan={6} className="py-3 text-center text-slate-500">
+                      No transactions found in the subgraph.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>
