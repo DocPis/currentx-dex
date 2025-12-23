@@ -419,8 +419,7 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm text-slate-400">Latest transactions from the subgraph</div>
-            <div className="text-lg font-semibold text-slate-50">Recent on-chain activity</div>
+            <div className="text-lg font-semibold text-slate-50">Latest transactions</div>
           </div>
         </div>
         <div className="overflow-x-auto">
