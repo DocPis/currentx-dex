@@ -30,6 +30,27 @@ const formatBalance = (v) => {
   return n.toFixed(6);
 };
 
+const friendlySwapError = (e) => {
+  const raw = e?.message || "";
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("insufficient output amount") ||
+    lower.includes("uniswapv2router: insufficient_output_amount")
+  ) {
+    return "Slippage too tight or not enough liquidity for this route.";
+  }
+  if (lower.includes("transfer amount exceeds balance")) {
+    return "Insufficient token balance for this swap.";
+  }
+  if (lower.includes("insufficient funds")) {
+    return "Not enough native ETH to cover the swap + gas.";
+  }
+  if (lower.includes("missing revert data") || lower.includes("estimategas")) {
+    return "Swap simulation failed (no revert data). Try a smaller size, a different route, or a higher slippage.";
+  }
+  return raw || "Swap failed";
+};
+
 export default function SwapSection({ balances }) {
   const [customTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(
@@ -400,7 +421,7 @@ export default function SwapSection({ balances }) {
         (e?.message || "").toLowerCase().includes("user denied");
       const message = userRejected
         ? "Transaction was rejected in wallet."
-        : e.message || "Swap failed";
+        : friendlySwapError(e);
       setSwapStatus({ message, variant: "error" });
     } finally {
       setSwapLoading(false);
