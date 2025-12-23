@@ -218,6 +218,9 @@ function FarmsList({ address, onConnect }) {
                     ? `${farm.tokens[0].symbol} / ${farm.tokens[1].symbol}`
                     : farm.lpToken);
 
+                const detailsButtonClasses =
+                  "px-3 py-1.5 text-xs font-semibold rounded-full border border-sky-500/60 text-sky-100 bg-sky-500/10 hover:bg-sky-500/20 hover:border-sky-300 transition-colors shadow-sm shadow-sky-500/30";
+
                 return (
                   <div key={`${farm.lpToken}-${farm.pid}`} className="px-4 py-3">
                     <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
@@ -263,7 +266,7 @@ function FarmsList({ address, onConnect }) {
                         <button
                           type="button"
                           onClick={() => setExpanded(isOpen ? null : farm.pid)}
-                          className="text-xs text-sky-400"
+                          className={detailsButtonClasses}
                         >
                           {isOpen ? "Hide" : "Details"}
                         </button>
@@ -272,7 +275,7 @@ function FarmsList({ address, onConnect }) {
                         <button
                           type="button"
                           onClick={() => setExpanded(isOpen ? null : farm.pid)}
-                          className="text-xs text-sky-400"
+                          className={detailsButtonClasses}
                         >
                           {isOpen ? "Hide" : "Details"}
                         </button>
