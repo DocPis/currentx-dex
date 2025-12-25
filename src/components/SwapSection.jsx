@@ -66,6 +66,7 @@ export default function SwapSection({ balances }) {
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
+  const [quoteRoute, setQuoteRoute] = useState([]);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [approveNeeded, setApproveNeeded] = useState(false);
@@ -170,6 +171,7 @@ export default function SwapSection({ balances }) {
       setQuoteOutRaw(null);
       setPriceImpact(null);
       setApproveNeeded(false);
+      setQuoteRoute([]);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -182,6 +184,7 @@ export default function SwapSection({ balances }) {
         setQuoteOut(amountIn);
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
+        setQuoteRoute([sellToken, buyToken]);
         return;
       }
 
@@ -197,6 +200,7 @@ export default function SwapSection({ balances }) {
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
         const path = await buildPath();
+        setQuoteRoute(path);
         const amountOut = await getV2Quote(provider, amountWei, path);
         if (cancelled) return;
 
@@ -352,7 +356,7 @@ export default function SwapSection({ balances }) {
         return;
       }
 
-      const path = await buildPath();
+      const path = quoteRoute.length ? quoteRoute : await buildPath();
       let amountOut = quoteOutRaw;
       if (!amountOut) {
         const readProvider = getReadOnlyProvider();
@@ -596,15 +600,60 @@ export default function SwapSection({ balances }) {
               <div className="text-[11px] text-slate-500">
                 {quoteLoading
                   ? "Loading quote..."
-                  : quoteError ||
-                    (amountIn
-                      ? isDirectEthWeth
-                        ? "Direct wrap/unwrap (no fee)"
-                        : "Live quote via Uniswap V2 (Sepolia)"
-                      : "Enter an amount to fetch a quote")}
-              </div>
+              : quoteError ||
+                (amountIn
+                  ? isDirectEthWeth
+                    ? "Direct wrap/unwrap (no fee)"
+                    : "Live quote via Uniswap V2 (Sepolia)"
+                  : "Enter an amount to fetch a quote")}
             </div>
+            {!quoteError && quoteRoute.length > 1 && (
+              <div className="mt-2 flex flex-wrap justify-end gap-2 text-[11px]">
+                <span className="px-2 py-1 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-300 uppercase tracking-wide">
+                  Route
+                </span>
+                <div className="flex items-center gap-2">
+                  {quoteRoute.map((addrOrSymbol, idx) => {
+                    const lower = (addrOrSymbol || "").toLowerCase();
+                    const metaByAddr =
+                      typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
+                        ? Object.values(tokenRegistry).find(
+                            (t) => t.address && t.address.toLowerCase() === lower
+                          )
+                        : null;
+                    const label =
+                      typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
+                        ? metaByAddr?.symbol || "Token"
+                        : addrOrSymbol;
+                    return (
+                      <React.Fragment key={`${addrOrSymbol}-${idx}`}>
+                        <span className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-100">
+                          {label}
+                        </span>
+                        {idx < quoteRoute.length - 1 && (
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-3 w-3 text-slate-500"
+                          >
+                            <path
+                              d="M7 5l5 5-5 5"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
+        </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
