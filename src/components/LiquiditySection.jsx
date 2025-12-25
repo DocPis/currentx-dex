@@ -974,7 +974,8 @@ export default function LiquiditySection() {
 
       const pairErc20 = new Contract(resolvedPair.pairAddress, ERC20_ABI, signer);
       const lpDecimals = await pairErc20.decimals();
-      const lpValue = parseUnits(lpAmount.toString(), lpDecimals);
+      const safeLpAmountStr = lpAmount.toFixed(Math.min(Number(lpDecimals) || 18, 18));
+      const lpValue = parseUnits(safeLpAmountStr, lpDecimals);
 
       // Approve router to spend LP
       const lpAllowance = await pairErc20.allowance(
