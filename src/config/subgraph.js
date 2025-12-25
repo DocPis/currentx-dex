@@ -304,7 +304,7 @@ export async function fetchRecentTransactions(limit = 12) {
     } catch (err) {
       const message = err?.message || "";
       const noField =
-        message.includes(`Cannot query field \"${field}\"`) ||
+        message.includes(`Cannot query field "${field}"`) ||
         message.includes(`Type \`Query\` has no field \`${field}\``);
       if (noField) return [];
       throw err;

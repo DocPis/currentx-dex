@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
   SEPOLIA_CHAIN_ID_HEX,
-  getProvider,
   getInjectedEthereum,
   getInjectedProviderByType,
 } from "../config/web3";
@@ -17,7 +16,7 @@ export function useWallet() {
     if (typeof window === "undefined") return false;
     try {
       return sessionStorage.getItem(SESSION_KEY) === "1";
-    } catch (e) {
+    } catch {
       return false;
     }
   });
@@ -137,7 +136,7 @@ export function useWallet() {
     try {
       sessionStorage.setItem(SESSION_KEY, "1");
       setSessionConnected(true);
-    } catch (e) {
+    } catch {
       // ignore
     }
     return primaryAccount;
@@ -149,7 +148,7 @@ export function useWallet() {
     try {
       sessionStorage.removeItem(SESSION_KEY);
       setSessionConnected(false);
-    } catch (e) {
+    } catch {
       // ignore
     }
   };

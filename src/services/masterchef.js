@@ -71,7 +71,7 @@ async function getWethPriceUSD(provider, priceCache) {
   return price;
 }
 
-async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
+async function getTokenPriceUSD(provider, address, priceCache) {
   if (!address) return null;
   const lower = address.toLowerCase();
   if (priceCache[lower] !== undefined) return priceCache[lower];
@@ -105,7 +105,7 @@ async function getTokenPriceUSD(provider, address, priceCache, metaCache) {
       priceCache[lower] = usd;
       return usd;
     }
-  } catch (_err) {
+  } catch {
     return null;
   }
 
@@ -129,8 +129,8 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
 
   const meta0 = await fetchTokenMeta(provider, token0, metaCache);
   const meta1 = await fetchTokenMeta(provider, token1, metaCache);
-  const price0 = await getTokenPriceUSD(provider, token0, priceCache, metaCache);
-  const price1 = await getTokenPriceUSD(provider, token1, priceCache, metaCache);
+  const price0 = await getTokenPriceUSD(provider, token0, priceCache);
+  const price1 = await getTokenPriceUSD(provider, token1, priceCache);
 
   let tvlUsd = null;
   const val0 =
@@ -153,7 +153,7 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
     try {
       const sub = await fetchV2PairData(token0, token1);
       if (sub?.tvlUsd !== undefined) tvlUsd = Number(sub.tvlUsd);
-    } catch (e) {
+    } catch {
       // ignore subgraph issues
     }
   }
@@ -186,8 +186,7 @@ export async function fetchMasterChefFarms(provider) {
   const crxPriceUsd = await getTokenPriceUSD(
     chefProvider,
     CRX_ADDRESS,
-    priceCache,
-    metaCache
+    priceCache
   );
   const pools = [];
   for (let pid = 0; pid < poolLength; pid++) {
@@ -215,7 +214,7 @@ export async function fetchMasterChefFarms(provider) {
         const rewardUsd = rewardsPerYear * crxPriceUsd;
         apr = (rewardUsd / tvlUsd) * 100;
       }
-    } catch (e) {
+    } catch {
       // ignore per-pool errors
     }
 
@@ -230,7 +229,7 @@ export async function fetchMasterChefFarms(provider) {
         const meta1 = await fetchTokenMeta(chefProvider, token1, metaCache);
         tokens = [meta0, meta1];
         pairLabel = `${meta0.symbol} / ${meta1.symbol}`;
-      } catch (_err) {
+      } catch {
         // leave tokens empty if still failing
       }
     }
@@ -281,7 +280,7 @@ export async function fetchMasterChefUserData(address, pools, provider) {
         lpBalance,
         pending: Number(formatUnits(pendingRaw || 0n, TOKENS.CRX.decimals)),
       };
-    } catch (e) {
+    } catch {
       out[pool.pid] = { staked: 0, pending: 0, lpBalance: 0 };
     }
   }

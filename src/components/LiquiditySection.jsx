@@ -181,7 +181,7 @@ export default function LiquiditySection() {
             farmAprMap[key] = farm.apr;
           }
         });
-      } catch (_err) {
+      } catch {
         // silently ignore farm fetch errors to avoid blocking pool stats
       }
 
@@ -217,9 +217,9 @@ export default function LiquiditySection() {
         }
 
         // On-chain TVL fallback (only if stable side present to avoid wrong USD calc)
+        const pairIdOverride = updates[pool.id]?.pairId;
         try {
           const provider = await getProvider();
-          const pairIdOverride = updates[pool.id]?.pairId;
           const { reserve0, reserve1, token0, pairAddress } = await getV2PairReserves(
             provider,
             token0Addr,
@@ -293,7 +293,7 @@ export default function LiquiditySection() {
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick, tokenRegistry]);
+  }, [lpRefreshTick, subgraphError, tokenRegistry, tvlError]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -514,6 +514,8 @@ export default function LiquiditySection() {
       cancelled = true;
     };
   }, [
+    pairIdOverride,
+    selectedPool,
     selectedPoolId,
     poolSupportsActions,
     token0Address,
@@ -594,6 +596,8 @@ export default function LiquiditySection() {
     token1Address,
     token0Meta?.symbol,
     token1Meta?.symbol,
+    token0Meta?.decimals,
+    token1Meta?.decimals,
   ]);
 
   const applyDepositRatio = (percentage) => {
@@ -736,7 +740,9 @@ export default function LiquiditySection() {
     token1Address,
     selectedPool?.token0Symbol,
     selectedPool?.token1Symbol,
+    token0Meta,
     token0Meta?.decimals,
+    token1Meta,
     token1Meta?.decimals,
   ]);
 

@@ -8,7 +8,6 @@ export default function Header({
   onConnect,
   onSwitchWallet,
   onDisconnect,
-  balances,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);

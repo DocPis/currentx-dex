@@ -1,5 +1,5 @@
 // src/components/SwapSection.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -118,7 +118,7 @@ export default function SwapSection({ balances }) {
   const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
-  const buildPath = async () => {
+  const buildPath = useCallback(async () => {
     const provider = getReadOnlyProvider();
     const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
     const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
@@ -136,7 +136,7 @@ export default function SwapSection({ balances }) {
     }
 
     throw new Error("Nessun percorso disponibile per questa coppia.");
-  };
+  }, [buyMeta?.address, buyToken, sellMeta?.address, sellToken]);
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
@@ -246,7 +246,18 @@ export default function SwapSection({ balances }) {
     return () => {
       cancelled = true;
     };
-  }, [amountIn, sellToken, buyToken, isSupported]);
+  }, [
+    amountIn,
+    buyMeta?.address,
+    buyMeta?.decimals,
+    buyToken,
+    buildPath,
+    isDirectEthWeth,
+    isSupported,
+    sellMeta?.address,
+    sellMeta?.decimals,
+    sellToken,
+  ]);
 
   const slippageBps = (() => {
     const val = Number(slippage);
@@ -319,7 +330,6 @@ export default function SwapSection({ balances }) {
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
       const sellAddress = sellMeta?.address;
-      const buyAddress = buyMeta?.address;
       const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
       if (isDirectEthWeth) {
@@ -342,15 +352,11 @@ export default function SwapSection({ balances }) {
         return;
       }
 
+      const path = await buildPath();
       let amountOut = quoteOutRaw;
       if (!amountOut) {
-        const res = await getV2QuoteWithMeta(
-          provider,
-          amountWei,
-          sellAddress,
-          buyAddress
-        );
-        amountOut = res?.amountOut;
+        const readProvider = getReadOnlyProvider();
+        amountOut = await getV2Quote(readProvider, amountWei, path);
       }
       if (!amountOut) {
         throw new Error("Impossibile calcolare l'output minimo.");
@@ -366,7 +372,6 @@ export default function SwapSection({ balances }) {
 
       let tx;
       if (sellToken === "ETH") {
-        const path = [WETH_ADDRESS, buyAddress];
         tx = await router.swapExactETHForTokens(
           minOut,
           path,
@@ -375,7 +380,6 @@ export default function SwapSection({ balances }) {
           { value: amountWei }
         );
       } else if (buyToken === "ETH") {
-        const path = [sellAddress, WETH_ADDRESS];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -389,7 +393,6 @@ export default function SwapSection({ balances }) {
           deadline
         );
       } else {
-        const path = [sellAddress, buyAddress];
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -444,7 +447,6 @@ export default function SwapSection({ balances }) {
               onClick={() => {
                 setSelectorOpen("sell");
                 setTokenSearch("");
-                setCustomStatus("");
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >
@@ -548,7 +550,6 @@ export default function SwapSection({ balances }) {
               onClick={() => {
                 setSelectorOpen("buy");
                 setTokenSearch("");
-                setCustomStatus("");
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >

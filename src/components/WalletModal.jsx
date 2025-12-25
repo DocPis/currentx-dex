@@ -1,5 +1,5 @@
 // src/components/WalletModal.jsx
-import React, { useEffect, useState } from "react";
+import React, { useMemo } from "react";
 
 import metamaskIcon from "../assets/wallets/metamask.png";
 import rabbyIcon from "../assets/wallets/rabby.png";
@@ -22,19 +22,17 @@ export default function WalletModal({
   onClose,
   onSelectWallet,
 }) {
-  const [detected, setDetected] = useState({});
-
-  useEffect(() => {
-    if (!open) return;
+  const detected = useMemo(() => {
+    if (!open) return {};
     const map = {};
     ["metamask", "rabby", "trustwallet"].forEach((id) => {
       try {
         map[id] = Boolean(getInjectedProviderByType(id));
-      } catch (e) {
+      } catch {
         map[id] = false;
       }
     });
-    setDetected(map);
+    return map;
   }, [open]);
 
   if (!open) return null;

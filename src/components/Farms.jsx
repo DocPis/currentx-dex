@@ -95,7 +95,7 @@ function FarmsList({ address, onConnect }) {
       try {
         const data = await fetchMasterChefUserData(address, farms);
         if (!cancelled) setUserData(data);
-      } catch (_err) {
+      } catch {
         if (!cancelled) setUserData({});
       }
     };

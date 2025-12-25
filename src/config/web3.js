@@ -1,5 +1,5 @@
 // src/config/web3.js
-import { BrowserProvider, Contract, JsonRpcProvider, formatUnits } from "ethers";
+import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
 import {
   ERC20_ABI,
   MASTER_CHEF_ABI,
@@ -8,16 +8,6 @@ import {
   WETH_ABI,
 } from "./abis";
 import { TOKENS } from "./tokens";
-import {
-  getRegisteredCustomTokens,
-  setRegisteredCustomTokens,
-} from "./customTokens";
-import {
-  computePriceImpact,
-  getV2PairReserves,
-  getV2Quote,
-  getV2QuoteWithMeta,
-} from "../services/amm";
 import {
   fetchMasterChefFarms as fetchMasterChefFarmsService,
   fetchMasterChefUserData as fetchMasterChefUserDataService,
