@@ -97,6 +97,7 @@ const resolveTokenAddress = (symbol, registry = TOKENS) => {
 
 const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
+const MIN_LP_THRESHOLD = 1e-6;
 
 const shortenAddress = (addr) => {
   if (!addr) return "Native asset";
@@ -437,7 +438,7 @@ export default function LiquiditySection() {
   const pairMissing =
     pairError && pairError.toLowerCase().includes("pair not found");
   const pairBlockingError = Boolean(pairError && !pairMissing);
-  const hasLpBalance = lpBalance !== null && lpBalance > 0;
+  const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
 
   useEffect(() => {
     setSelectionDepositPoolId(null);
@@ -649,9 +650,13 @@ export default function LiquiditySection() {
 
   const applyWithdrawRatio = (percentage) => {
     const base = lpBalance ?? 0;
-    if (base <= 0) return;
+    if (base <= MIN_LP_THRESHOLD) return;
     const target = base * percentage;
-    setWithdrawLp(target.toFixed(4));
+    if (target <= MIN_LP_THRESHOLD) {
+      setWithdrawLp("");
+      return;
+    }
+    setWithdrawLp(target.toFixed(6));
     if (actionStatus) setActionStatus("");
   };
 
@@ -1419,12 +1424,12 @@ export default function LiquiditySection() {
                         if (actionStatus) setActionStatus("");
                       }}
                       disabled={!hasLpBalance}
-                      placeholder="LP tokens"
+                      placeholder={hasLpBalance ? "LP tokens" : "No LP to withdraw"}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50"
                     />
                     {lpBalance !== null && (
                       <div className="text-xs text-slate-400 self-center">
-                        LP balance: {lpBalance.toFixed(4)}{" "}
+                        LP balance: {lpBalance.toFixed(6)}{" "}
                         <button
                           type="button"
                           className="text-sky-400 hover:text-sky-300 underline ml-1 disabled:opacity-50"
