@@ -444,15 +444,6 @@ export default function LiquiditySection() {
     setSelectionDepositPoolId(null);
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
-  useEffect(() => {
-    fetchLpBalance();
-  }, [fetchLpBalance, lpRefreshTick]);
-
-  const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
-  const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
-  const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
-  const autopilotPool = pools.find((p) => p.id === "crx-weth") || pools[0];
-
   const fetchLpBalance = useCallback(async () => {
     if (!poolSupportsActions || !selectedPool) return;
     try {
@@ -483,6 +474,15 @@ export default function LiquiditySection() {
     token0Address,
     token1Address,
   ]);
+
+  useEffect(() => {
+    fetchLpBalance();
+  }, [fetchLpBalance, lpRefreshTick]);
+
+  const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
+  const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
+  const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
+  const autopilotPool = pools.find((p) => p.id === "crx-weth") || pools[0];
 
   useEffect(() => {
     let cancelled = false;
