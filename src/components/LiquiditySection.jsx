@@ -1,5 +1,5 @@
 // src/components/LiquiditySection.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -444,10 +444,45 @@ export default function LiquiditySection() {
     setSelectionDepositPoolId(null);
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
+  useEffect(() => {
+    fetchLpBalance();
+  }, [fetchLpBalance, lpRefreshTick]);
+
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
   const autopilotPool = pools.find((p) => p.id === "crx-weth") || pools[0];
+
+  const fetchLpBalance = useCallback(async () => {
+    if (!poolSupportsActions || !selectedPool) return;
+    try {
+      setLpBalanceError("");
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+
+      const resolved =
+        pairInfo ||
+        (await getV2PairReserves(provider, token0Address, token1Address, pairIdOverride));
+
+      const pairErc20 = new Contract(resolved.pairAddress, ERC20_ABI, provider);
+      const decimals =
+        typeof pairErc20.decimals === "function"
+          ? await pairErc20.decimals().catch(() => 18)
+          : 18;
+      const balance = await pairErc20.balanceOf(user);
+      setLpBalance(Number(formatUnits(balance, decimals)));
+    } catch (err) {
+      setLpBalanceError(err?.message || "Failed to refresh LP balance");
+    }
+  }, [
+    pairIdOverride,
+    pairInfo,
+    poolSupportsActions,
+    selectedPool,
+    token0Address,
+    token1Address,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
