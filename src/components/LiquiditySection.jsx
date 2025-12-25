@@ -1077,11 +1077,10 @@ export default function LiquiditySection() {
               CURRENTX LIQUIDITY
             </div>
             <div className="text-3xl font-bold leading-tight mb-2 drop-shadow">
-              Autopilot CRX/WETH
+              Quickstart CRX/WETH
             </div>
             <p className="text-sm text-white/80 mb-4 max-w-sm">
-              One-click deposit into the CRX/WETH (V2) pool and jump straight
-              into the liquidity provision flow.
+              Fast-track into the CRX/WETH (V2) pool with a single click so you can provide liquidity immediately.
             </p>
             <button
               type="button"
@@ -1089,7 +1088,7 @@ export default function LiquiditySection() {
               onClick={() => autopilotPool && handleOpenPoolDepositFromRow(autopilotPool)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 text-sm font-semibold text-white border border-white/30 w-fit shadow-lg shadow-black/30 disabled:opacity-60"
             >
-              Start CRX/WETH deposit
+              Start quick deposit
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
