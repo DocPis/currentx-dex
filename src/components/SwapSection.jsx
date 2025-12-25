@@ -163,6 +163,24 @@ export default function SwapSection({ balances }) {
     setTokenSearch("");
   };
 
+  const displayRoute = useMemo(() => {
+    if (!quoteRoute.length) return [];
+    return quoteRoute.map((addrOrSymbol) => {
+      const lower = (addrOrSymbol || "").toLowerCase();
+      const metaByAddr =
+        typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
+          ? Object.values(tokenRegistry).find(
+              (t) => t.address && t.address.toLowerCase() === lower
+            )
+          : null;
+      const label =
+        typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
+          ? metaByAddr?.symbol || "Token"
+          : addrOrSymbol;
+      return label || "Token";
+    });
+  }, [quoteRoute, tokenRegistry]);
+
   useEffect(() => {
     let cancelled = false;
     const fetchQuote = async () => {
@@ -232,7 +250,8 @@ export default function SwapSection({ balances }) {
               user,
               UNIV2_ROUTER_ADDRESS
             );
-            setApproveNeeded(allowance < amountWei);
+            const desiredAllowance = amountWei + BigInt("1000000000000000000000000000"); // 1e27 buffer
+            setApproveNeeded(allowance < desiredAllowance);
           } catch {
             setApproveNeeded(false);
           }
@@ -275,6 +294,7 @@ export default function SwapSection({ balances }) {
 
   const handleApprove = async () => {
     if (sellToken === "ETH") return;
+    const APPROVE_BUFFER = BigInt("1000000000000000000000000000"); // 1e27 buffer to reduce repeated approvals
     try {
       setApproveLoading(true);
       setSwapStatus(null);
@@ -288,16 +308,17 @@ export default function SwapSection({ balances }) {
       const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
       const token = new Contract(sellAddress, ERC20_ABI, signer);
       const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-      if (allowance >= amountWei) {
+      const desiredAllowance = amountWei + APPROVE_BUFFER;
+      if (allowance >= desiredAllowance) {
         setApproveNeeded(false);
         return;
       }
-      const tx = await token.approve(UNIV2_ROUTER_ADDRESS, amountWei);
+      const tx = await token.approve(UNIV2_ROUTER_ADDRESS, desiredAllowance);
       await tx.wait();
       setApproveNeeded(false);
       setSwapStatus({
         variant: "success",
-        message: "Approval successful",
+        message: `Approval successful (${formatUnits(desiredAllowance, sellMeta?.decimals ?? 18)} ${sellToken})`,
       });
     } catch (e) {
       const userRejected =
@@ -607,48 +628,35 @@ export default function SwapSection({ balances }) {
                     : "Live quote via Uniswap V2 (Sepolia)"
                   : "Enter an amount to fetch a quote")}
             </div>
-            {!quoteError && quoteRoute.length > 1 && (
+            {!quoteError && displayRoute.length > 1 && (
               <div className="mt-2 flex flex-wrap justify-end gap-2 text-[11px]">
                 <span className="px-2 py-1 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-300 uppercase tracking-wide">
                   Route
                 </span>
                 <div className="flex items-center gap-2">
-                  {quoteRoute.map((addrOrSymbol, idx) => {
-                    const lower = (addrOrSymbol || "").toLowerCase();
-                    const metaByAddr =
-                      typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
-                        ? Object.values(tokenRegistry).find(
-                            (t) => t.address && t.address.toLowerCase() === lower
-                          )
-                        : null;
-                    const label =
-                      typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
-                        ? metaByAddr?.symbol || "Token"
-                        : addrOrSymbol;
-                    return (
-                      <React.Fragment key={`${addrOrSymbol}-${idx}`}>
-                        <span className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-100">
-                          {label}
-                        </span>
-                        {idx < quoteRoute.length - 1 && (
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-3 w-3 text-slate-500"
-                          >
-                            <path
-                              d="M7 5l5 5-5 5"
-                              stroke="currentColor"
-                              strokeWidth="1.4"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
+                  {displayRoute.map((label, idx) => (
+                    <React.Fragment key={`${label}-${idx}`}>
+                      <span className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-100">
+                        {label}
+                      </span>
+                      {idx < displayRoute.length - 1 && (
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-3 w-3 text-slate-500"
+                        >
+                          <path
+                            d="M7 5l5 5-5 5"
+                            stroke="currentColor"
+                            strokeWidth="1.4"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </React.Fragment>
+                  ))}
                 </div>
               </div>
             )}
