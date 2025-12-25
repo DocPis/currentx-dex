@@ -437,6 +437,7 @@ export default function LiquiditySection() {
   const pairMissing =
     pairError && pairError.toLowerCase().includes("pair not found");
   const pairBlockingError = Boolean(pairError && !pairMissing);
+  const hasLpBalance = lpBalance !== null && lpBalance > 0;
 
   useEffect(() => {
     setSelectionDepositPoolId(null);
@@ -1417,16 +1418,18 @@ export default function LiquiditySection() {
                         setWithdrawLp(e.target.value);
                         if (actionStatus) setActionStatus("");
                       }}
+                      disabled={!hasLpBalance}
                       placeholder="LP tokens"
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50"
                     />
                     {lpBalance !== null && (
                       <div className="text-xs text-slate-400 self-center">
                         LP balance: {lpBalance.toFixed(4)}{" "}
                         <button
                           type="button"
-                          className="text-sky-400 hover:text-sky-300 underline ml-1"
+                          className="text-sky-400 hover:text-sky-300 underline ml-1 disabled:opacity-50"
                           onClick={() => setLpRefreshTick((t) => t + 1)}
+                          disabled={actionLoading}
                         >
                           Refresh
                         </button>
@@ -1437,8 +1440,18 @@ export default function LiquiditySection() {
                         {lpBalanceError}
                       </div>
                     )}
+                    {!hasLpBalance && !lpBalanceError && (
+                      <div className="text-xs text-slate-400 self-center">
+                        You need LP tokens in this pool before withdrawing.
+                      </div>
+                    )}
                     <button
-                      disabled={actionLoading || !poolSupportsActions || pairBlockingError}
+                      disabled={
+                        actionLoading ||
+                        !poolSupportsActions ||
+                        pairBlockingError ||
+                        !hasLpBalance
+                      }
                       onClick={handleWithdraw}
                       className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
                     >
@@ -1451,7 +1464,7 @@ export default function LiquiditySection() {
                         <button
                           key={pct}
                           type="button"
-                          disabled={lpBalance === null || lpBalance <= 0}
+                          disabled={!hasLpBalance}
                           onClick={() => applyWithdrawRatio(pct)}
                           className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                         >
