@@ -20,6 +20,7 @@ import {
 } from "../config/abis";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
+const APPROVE_BUFFER = BigInt("1000000000000000000000000000"); // 1e27 buffer to reduce repeated approvals
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -250,7 +251,8 @@ export default function SwapSection({ balances }) {
               user,
               UNIV2_ROUTER_ADDRESS
             );
-            const desiredAllowance = amountWei + BigInt("1000000000000000000000000000"); // 1e27 buffer
+            const desiredAllowance =
+              amountWei > APPROVE_BUFFER ? amountWei : APPROVE_BUFFER;
             setApproveNeeded(allowance < desiredAllowance);
           } catch {
             setApproveNeeded(false);
@@ -308,7 +310,8 @@ export default function SwapSection({ balances }) {
       const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
       const token = new Contract(sellAddress, ERC20_ABI, signer);
       const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-      const desiredAllowance = amountWei + APPROVE_BUFFER;
+      const desiredAllowance =
+        amountWei > APPROVE_BUFFER ? amountWei : APPROVE_BUFFER;
       if (allowance >= desiredAllowance) {
         setApproveNeeded(false);
         return;
@@ -318,7 +321,7 @@ export default function SwapSection({ balances }) {
       setApproveNeeded(false);
       setSwapStatus({
         variant: "success",
-        message: `Approval successful (${formatUnits(desiredAllowance, sellMeta?.decimals ?? 18)} ${sellToken})`,
+        message: "Approval updated for this token.",
       });
     } catch (e) {
       const userRejected =
