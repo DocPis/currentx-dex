@@ -629,34 +629,34 @@ export default function SwapSection({ balances }) {
                   : "Enter an amount to fetch a quote")}
             </div>
             {!quoteError && displayRoute.length > 1 && (
-              <div className="mt-2 flex flex-wrap justify-end gap-2 text-[11px]">
-                <span className="px-2 py-1 rounded-lg bg-slate-800/70 border border-slate-700 text-slate-300 uppercase tracking-wide">
-                  Route
-                </span>
-                <div className="flex items-center gap-2">
-                  {displayRoute.map((label, idx) => (
-                    <React.Fragment key={`${label}-${idx}`}>
-                      <span className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-100">
-                        {label}
-                      </span>
-                      {idx < displayRoute.length - 1 && (
-                        <svg
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-3 w-3 text-slate-500"
-                        >
-                          <path
-                            d="M7 5l5 5-5 5"
-                            stroke="currentColor"
-                            strokeWidth="1.4"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      )}
-                    </React.Fragment>
-                  ))}
+              <div className="mt-3 flex justify-end">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 border border-sky-500/30 text-[11px] shadow-[0_10px_30px_-18px_rgba(56,189,248,0.8)]">
+                  <span className="text-slate-200 uppercase tracking-wide">Route</span>
+                  <div className="flex items-center gap-2">
+                    {displayRoute.map((label, idx) => (
+                      <React.Fragment key={`${label}-${idx}`}>
+                        <span className="px-2 py-1 rounded-lg bg-slate-900/80 border border-slate-700 text-slate-50">
+                          {label}
+                        </span>
+                        {idx < displayRoute.length - 1 && (
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-3 w-3 text-sky-400"
+                          >
+                            <path
+                              d="M7 5l5 5-5 5"
+                              stroke="currentColor"
+                              strokeWidth="1.4"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
