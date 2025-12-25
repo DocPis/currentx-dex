@@ -97,7 +97,7 @@ const resolveTokenAddress = (symbol, registry = TOKENS) => {
 
 const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
-const MIN_LP_THRESHOLD = 1e-6;
+const MIN_LP_THRESHOLD = 1e-12;
 
 const shortenAddress = (addr) => {
   if (!addr) return "Native asset";
@@ -687,11 +687,7 @@ export default function LiquiditySection() {
     const base = lpBalance ?? 0;
     if (base <= MIN_LP_THRESHOLD) return;
     const target = base * percentage;
-    if (target <= MIN_LP_THRESHOLD) {
-      setWithdrawLp("");
-      return;
-    }
-    setWithdrawLp(target.toFixed(6));
+    setWithdrawLp(target.toFixed(8));
     if (actionStatus) setActionStatus("");
   };
 
@@ -1464,7 +1460,7 @@ export default function LiquiditySection() {
                     />
                     {lpBalance !== null && (
                       <div className="text-xs text-slate-400 self-center">
-                        LP balance: {lpBalance.toFixed(6)}{" "}
+                        LP balance: {lpBalance.toFixed(8)}{" "}
                         <button
                           type="button"
                           className="text-sky-400 hover:text-sky-300 underline ml-1 disabled:opacity-50"
