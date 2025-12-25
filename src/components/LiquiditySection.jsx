@@ -99,6 +99,15 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
 
+const friendlyActionError = (e, actionLabel = "Action") => {
+  const raw = e?.message || "";
+  const lower = raw.toLowerCase();
+  if (lower.includes("missing revert data") || lower.includes("estimategas")) {
+    return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
+  }
+  return raw || `${actionLabel} failed`;
+};
+
 const shortenAddress = (addr) => {
   if (!addr) return "Native asset";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -118,6 +127,8 @@ export default function LiquiditySection() {
   const [depositToken0, setDepositToken0] = useState("");
   const [depositToken1, setDepositToken1] = useState("");
   const [withdrawLp, setWithdrawLp] = useState("");
+  const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
+  const [lpDecimalsState, setLpDecimalsState] = useState(18);
   const [actionStatus, setActionStatus] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [depositQuoteError, setDepositQuoteError] = useState("");
@@ -462,6 +473,8 @@ export default function LiquiditySection() {
           ? await pairErc20.decimals().catch(() => 18)
           : 18;
       const balance = await pairErc20.balanceOf(user);
+      setLpDecimalsState(Number(decimals) || 18);
+      setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
       setLpBalanceError(err?.message || "Failed to refresh LP balance");
@@ -684,10 +697,14 @@ export default function LiquiditySection() {
   };
 
   const applyWithdrawRatio = (percentage) => {
-    const base = lpBalance ?? 0;
-    if (base <= MIN_LP_THRESHOLD) return;
-    const target = base * percentage;
-    setWithdrawLp(target.toFixed(8));
+    if (!lpBalanceRaw || lpBalanceRaw <= 0n) return;
+    const pct = Math.round(percentage * 10000);
+    const targetRaw = (lpBalanceRaw * BigInt(pct)) / 10000n;
+    if (targetRaw <= 0n) {
+      setWithdrawLp("");
+      return;
+    }
+    setWithdrawLp(formatUnits(targetRaw, lpDecimalsState || 18));
     if (actionStatus) setActionStatus("");
   };
 
@@ -941,7 +958,7 @@ export default function LiquiditySection() {
         variant: "error",
         message: userRejected
           ? "Transaction was rejected in wallet."
-          : e.message || "Deposit failed",
+          : friendlyActionError(e, "Deposit"),
       });
     } finally {
       setActionLoading(false);
@@ -973,9 +990,15 @@ export default function LiquiditySection() {
         (await getV2PairReserves(provider, token0Address, token1Address));
 
       const pairErc20 = new Contract(resolvedPair.pairAddress, ERC20_ABI, signer);
-      const lpDecimals = await pairErc20.decimals();
-      const safeLpAmountStr = lpAmount.toFixed(Math.min(Number(lpDecimals) || 18, 18));
-      const lpValue = parseUnits(safeLpAmountStr, lpDecimals);
+      const lpDecimals =
+        lpDecimalsState ||
+        (await pairErc20.decimals().catch(() => 18)) ||
+        18;
+      const normalized = lpAmount.toFixed(Math.min(lpDecimals, 18));
+      const lpValue = parseUnits(normalized, lpDecimals);
+      if (lpBalanceRaw && lpValue > lpBalanceRaw) {
+        throw new Error("Amount exceeds LP balance");
+      }
 
       // Approve router to spend LP
       const lpAllowance = await pairErc20.allowance(
@@ -1035,7 +1058,7 @@ export default function LiquiditySection() {
         variant: "error",
         message: userRejected
           ? "Transaction was rejected in wallet."
-          : e.message || "Withdraw failed",
+          : friendlyActionError(e, "Withdraw"),
       });
     } finally {
       setActionLoading(false);
