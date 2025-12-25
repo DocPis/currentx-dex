@@ -124,7 +124,7 @@ export default function SwapSection({ balances }) {
     const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
     const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
     const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
-    if (!a || !b) throw new Error("Seleziona token con indirizzo valido.");
+    if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
     const direct = await factory.getPair(a, b);
     if (direct && direct !== ZERO_ADDRESS) return [a, b];
@@ -136,7 +136,7 @@ export default function SwapSection({ balances }) {
       return [a, WETH_ADDRESS, b];
     }
 
-    throw new Error("Nessun percorso disponibile per questa coppia.");
+    throw new Error("No route available for this pair.");
   }, [buyMeta?.address, buyToken, sellMeta?.address, sellToken]);
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
@@ -175,7 +175,7 @@ export default function SwapSection({ balances }) {
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
-        setQuoteError("Seleziona token con indirizzo valido.");
+        setQuoteError("Select tokens with valid addresses.");
         return;
       }
 
@@ -194,7 +194,7 @@ export default function SwapSection({ balances }) {
         const sellAddress = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
         const buyAddress = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
         if (!sellAddress || !buyAddress) {
-          setQuoteError("Seleziona token con indirizzo valido.");
+          setQuoteError("Select tokens with valid addresses.");
           return;
         }
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
@@ -323,7 +323,7 @@ export default function SwapSection({ balances }) {
         throw new Error("Enter a valid amount");
       }
       if (!isSupported) {
-        throw new Error("Seleziona token con indirizzo valido.");
+        throw new Error("Select tokens with valid addresses.");
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
@@ -363,7 +363,7 @@ export default function SwapSection({ balances }) {
         amountOut = await getV2Quote(readProvider, amountWei, path);
       }
       if (!amountOut) {
-        throw new Error("Impossibile calcolare l'output minimo.");
+        throw new Error("Unable to compute minimum output.");
       }
 
       const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
@@ -513,7 +513,7 @@ export default function SwapSection({ balances }) {
               </button>
             ))}
             <div className="px-2 py-1 text-slate-400">
-              {(sellBalance || 0).toFixed(4)} {sellToken} disponibili
+              {(sellBalance || 0).toFixed(4)} {sellToken} available
             </div>
           </div>
         </div>
@@ -858,7 +858,7 @@ export default function SwapSection({ balances }) {
               ))}
               {!filteredTokens.length && (
                 <div className="px-4 py-6 text-center text-sm text-slate-400">
-                  Nessun token trovato.
+                  No tokens found.
                 </div>
               )}
             </div>
