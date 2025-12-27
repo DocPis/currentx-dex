@@ -722,15 +722,15 @@ export default function SwapSection({ balances }) {
 
           <div className="flex flex-col gap-2 w-full sm:w-44">
             {sellToken !== "ETH" ? (
-              <div className="rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900/80 to-slate-950 border border-slate-800 px-3 py-3 text-[11px] text-slate-300 flex flex-col gap-2 shadow-[0_12px_30px_-18px_rgba(56,189,248,0.5)]">
+              <div className="rounded-2xl bg-gradient-to-br from-slate-800/80 via-slate-800/90 to-slate-900 border border-slate-700 px-3 py-3 text-[11px] text-slate-100 flex flex-col gap-2 shadow-[0_12px_30px_-18px_rgba(56,189,248,0.5)]">
                 <div className="flex items-center justify-between gap-3">
                   <div className="inline-flex items-center gap-2 text-slate-50 text-xs font-semibold">
-                    <span className="h-7 w-7 inline-flex items-center justify-center rounded-xl bg-sky-500/15 border border-sky-500/30 text-sky-200 text-[10px] shadow-[0_0_18px_rgba(56,189,248,0.35)]">
+                    <span className="h-7 w-7 inline-flex items-center justify-center rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-100 text-[10px] shadow-[0_0_18px_rgba(56,189,248,0.35)]">
                       ALW
                     </span>
                     Approval mode
                   </div>
-                  <div className="inline-flex rounded-xl bg-slate-800/80 border border-slate-700 overflow-hidden">
+                  <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-700 overflow-hidden">
                     {[
                       { id: "unlimited", label: "Unlimited" },
                       { id: "exact", label: "Exact" },
@@ -742,7 +742,7 @@ export default function SwapSection({ balances }) {
                         className={`px-3 py-1.5 font-semibold transition ${
                           approvalMode === opt.id
                             ? "bg-sky-500/20 text-sky-100"
-                            : "text-slate-300 hover:text-sky-100"
+                            : "text-slate-200 hover:text-sky-100"
                         }`}
                       >
                         {opt.label}
@@ -750,18 +750,18 @@ export default function SwapSection({ balances }) {
                     ))}
                   </div>
                 </div>
-                <div className="flex flex-col gap-1 text-slate-400">
-                  <span className="text-[11px]">
+                <div className="flex flex-col gap-1 text-slate-200">
+                  <span className="text-[11px] text-slate-100">
                     {approvalMode === "unlimited"
                       ? "One-time approval for this token (fewer prompts)."
                       : "Approve only what you swap (stricter control)."}
                   </span>
                   {approveNeeded && amountIn ? (
-                    <span className="text-slate-200 font-semibold">
+                    <span className="text-slate-100 font-semibold">
                       Needs approval: {amountIn} {sellToken} to Uniswap router.
                     </span>
                   ) : (
-                    <span className="text-slate-500">
+                    <span className="text-slate-400">
                       No approval required for the current selection.
                     </span>
                   )}
