@@ -455,7 +455,7 @@ export default function SwapSection({ balances }) {
         UNIV2_ROUTER_ABI,
         signer
       );
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minuti
+      const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       let tx;
       if (sellToken === "ETH") {

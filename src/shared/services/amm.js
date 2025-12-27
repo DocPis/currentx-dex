@@ -116,7 +116,7 @@ export async function getV2Quote(provider, amountIn, path) {
   return amount;
 }
 
-// Quote + meta (single hop) per price impact e swap
+// Quote + meta (single hop) for price impact and swaps
 export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) {
   if (!provider) throw new Error("Missing provider");
 
