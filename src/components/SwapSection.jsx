@@ -70,6 +70,7 @@ export default function SwapSection({ balances }) {
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
+  const [swapPulse, setSwapPulse] = useState(false);
   const [approvalMode, setApprovalMode] = useState("unlimited"); // "unlimited" | "exact"
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance }
@@ -552,26 +553,35 @@ export default function SwapSection({ balances }) {
         </div>
 
         <div className="flex justify-center my-2">
-          <button
-            onClick={() => {
-              setSellToken(buyToken);
-              setBuyToken(sellToken);
-            }}
-            className="h-10 w-10 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/30 hover:border-sky-500/60 transition"
-            aria-label="Invert tokens"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5"
+          <div className="relative group">
+            <div className="absolute inset-0 blur-lg bg-gradient-to-r from-sky-500/30 via-indigo-500/30 to-purple-600/30 opacity-0 group-hover:opacity-70 transition duration-500" />
+            <button
+              onClick={() => {
+                setSwapPulse(true);
+                setSellToken(buyToken);
+                setBuyToken(sellToken);
+                setTimeout(() => setSwapPulse(false), 320);
+              }}
+              className="relative h-11 w-11 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/40 hover:border-sky-500/60 transition-transform duration-300 hover:rotate-6 active:scale-95"
+              aria-label="Invert tokens"
             >
-              <path
-                d="M12 4l3 3h-2v7h-2V7H9l3-3ZM12 20l-3-3h2v-7h2v7h2l-3 3Z"
-                fill="currentColor"
-              />
-            </svg>
-          </button>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-5 w-5 text-slate-100"
+                style={{
+                  transform: swapPulse ? "rotate(180deg)" : "rotate(0deg)",
+                  transition: "transform 300ms ease",
+                }}
+              >
+                <path
+                  d="M12 4l3 3h-2v7h-2V7H9l3-3ZM12 20l-3-3h2v-7h2v7h2l-3 3Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </div>
         </div>
 
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
