@@ -723,14 +723,14 @@ export default function SwapSection({ balances }) {
           <div className="flex flex-col gap-2 w-full sm:w-44">
             {sellToken !== "ETH" ? (
               <div className="rounded-2xl bg-gradient-to-br from-slate-800/80 via-slate-800/90 to-slate-900 border border-slate-700 px-3 py-3 text-[11px] text-slate-100 flex flex-col gap-2 shadow-[0_12px_30px_-18px_rgba(56,189,248,0.5)]">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="inline-flex items-center gap-2 text-slate-50 text-xs font-semibold">
                     <span className="h-7 w-7 inline-flex items-center justify-center rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-100 text-[10px] shadow-[0_0_18px_rgba(56,189,248,0.35)]">
                       ALW
                     </span>
                     Approval mode
                   </div>
-                  <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-700 overflow-hidden">
+                  <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-700 overflow-hidden shrink-0">
                     {[
                       { id: "unlimited", label: "Unlimited" },
                       { id: "exact", label: "Exact" },
