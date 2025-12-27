@@ -565,14 +565,25 @@ export default function SwapSection({ balances }) {
               className="relative h-11 w-11 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/40 hover:border-sky-500/60 transition-transform duration-300 hover:rotate-6 active:scale-95"
               aria-label="Invert tokens"
             >
+              <span
+                className="absolute inset-0 rounded-full bg-gradient-to-br from-sky-500/25 via-indigo-500/20 to-purple-500/25 opacity-0 group-hover:opacity-100 transition duration-300"
+                style={{
+                  transform: swapPulse ? "scale(1.1)" : "scale(0.9)",
+                  filter: swapPulse ? "blur(6px)" : "blur(10px)",
+                }}
+              />
               <svg
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 text-slate-100"
+                className="h-5 w-5 text-slate-100 transition duration-300 ease-out"
                 style={{
-                  transform: swapPulse ? "rotate(180deg)" : "rotate(0deg)",
-                  transition: "transform 300ms ease",
+                  transform: swapPulse
+                    ? "rotate(210deg) scale(1.1)"
+                    : "rotate(0deg) scale(1)",
+                  filter: swapPulse
+                    ? "drop-shadow(0 0 12px rgba(56,189,248,0.8))"
+                    : "drop-shadow(0 0 2px rgba(148,163,184,0.35))",
                 }}
               >
                 <path
