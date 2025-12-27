@@ -123,6 +123,49 @@ export default function SwapSection({ balances }) {
   const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
+  const computeRoutePriceImpact = useCallback(
+    async (provider, amountInWei, path) => {
+      if (!provider || !Array.isArray(path) || path.length < 2) return null;
+      let amountIn = amountInWei;
+      let midPrice = 1;
+      let firstDecimals = null;
+      let lastDecimals = null;
+
+      for (let i = 0; i < path.length - 1; i += 1) {
+        const a = path[i];
+        const b = path[i + 1];
+        const meta = await getV2QuoteWithMeta(provider, amountIn, a, b);
+        const decIn = meta.decimalsIn ?? 18;
+        const decOut = meta.decimalsOut ?? 18;
+        if (i === 0) firstDecimals = decIn;
+        if (i === path.length - 2) lastDecimals = decOut;
+
+        const reserveInNorm = Number(formatUnits(meta.reserveIn, decIn));
+        const reserveOutNorm = Number(formatUnits(meta.reserveOut, decOut));
+        if (
+          !reserveInNorm ||
+          !reserveOutNorm ||
+          !Number.isFinite(reserveInNorm) ||
+          !Number.isFinite(reserveOutNorm)
+        ) {
+          return null;
+        }
+        midPrice *= reserveOutNorm / reserveInNorm;
+
+        amountIn = meta.amountOut;
+      }
+
+      if (!midPrice || !Number.isFinite(midPrice)) return null;
+      const execPrice =
+        Number(formatUnits(amountIn, lastDecimals ?? 18)) /
+        Number(formatUnits(amountInWei, firstDecimals ?? 18));
+      if (!execPrice || !Number.isFinite(execPrice)) return null;
+      const impact = ((midPrice - execPrice) / midPrice) * 100;
+      return impact >= 0 ? impact : 0;
+    },
+    []
+  );
+
   const buildPath = useCallback(async () => {
     const provider = getReadOnlyProvider();
     const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
@@ -231,15 +274,10 @@ export default function SwapSection({ balances }) {
         setQuoteOut(formatted);
         setQuoteOutRaw(amountOut);
 
-        // price impact (best-effort using reserves of first/last hop)
+        // price impact across full route (multi-hop aware)
         try {
-          const meta = await getV2QuoteWithMeta(
-            provider,
-            amountWei,
-            path[0],
-            path[path.length - 1]
-          );
-          if (!cancelled) setPriceImpact(meta.priceImpactPct);
+          const impact = await computeRoutePriceImpact(provider, amountWei, path);
+          if (!cancelled) setPriceImpact(impact);
         } catch {
           setPriceImpact(null);
         }
@@ -296,6 +334,7 @@ export default function SwapSection({ balances }) {
     buyMeta?.decimals,
     buyToken,
     buildPath,
+    computeRoutePriceImpact,
     isDirectEthWeth,
     isSupported,
     approvalMode,

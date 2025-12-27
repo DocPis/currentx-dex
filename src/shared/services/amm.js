@@ -180,6 +180,8 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
     token1,
     reserve0,
     reserve1,
+    decimalsIn: metaIn?.decimals ?? 18,
+    decimalsOut: metaOut?.decimals ?? 18,
     priceImpactPct,
   };
 }
