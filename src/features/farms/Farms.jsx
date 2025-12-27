@@ -1,4 +1,4 @@
-// src/components/Farms.jsx
+// src/features/farms/Farms.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Contract, parseUnits } from "ethers";
 import {
@@ -7,8 +7,8 @@ import {
   fetchMasterChefUserData,
   getProvider,
   TOKENS,
-} from "../config/web3";
-import { ERC20_ABI, MASTER_CHEF_ABI } from "../config/abis";
+} from "../../shared/config/web3";
+import { ERC20_ABI, MASTER_CHEF_ABI } from "../../shared/config/abis";
 
 function formatNumber(v) {
   if (v === null || v === undefined) return "N/A";

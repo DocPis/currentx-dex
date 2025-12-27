@@ -1,10 +1,10 @@
-// src/components/WalletModal.jsx
+// src/features/wallet/WalletModal.jsx
 import React, { useMemo } from "react";
 
-import metamaskIcon from "../assets/wallets/metamask.png";
-import rabbyIcon from "../assets/wallets/rabby.png";
-import trustIcon from "../assets/wallets/trustwallet.png";
-import { getInjectedProviderByType } from "../config/web3";
+import metamaskIcon from "../../assets/wallets/metamask.png";
+import rabbyIcon from "../../assets/wallets/rabby.png";
+import trustIcon from "../../assets/wallets/trustwallet.png";
+import { getInjectedProviderByType } from "../../shared/config/web3";
 
 const wallets = [
   {

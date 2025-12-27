@@ -1,4 +1,4 @@
-// src/hooks/useBalances.js
+// src/shared/hooks/useBalances.js
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   TOKENS,

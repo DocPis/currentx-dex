@@ -1,13 +1,13 @@
 // src/App.jsx
 import React, { useEffect, useState } from "react";
-import Header from "./components/Header";
-import SwapSection from "./components/SwapSection";
-import LiquiditySection from "./components/LiquiditySection";
-import Dashboard from "./components/Dashboard";
-import Farms from "./components/Farms";
-import { useWallet } from "./hooks/useWallet";
-import { useBalances } from "./hooks/useBalances";
-import WalletModal from "./components/WalletModal";
+import Header from "./shared/ui/Header";
+import SwapSection from "./features/swap/SwapSection";
+import LiquiditySection from "./features/liquidity/LiquiditySection";
+import Dashboard from "./features/dashboard/Dashboard";
+import Farms from "./features/farms/Farms";
+import { useWallet } from "./shared/hooks/useWallet";
+import { useBalances } from "./shared/hooks/useBalances";
+import WalletModal from "./features/wallet/WalletModal";
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");

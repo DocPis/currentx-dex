@@ -1,4 +1,4 @@
-// src/components/LiquiditySection.jsx
+// src/features/liquidity/LiquiditySection.jsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
@@ -11,9 +11,9 @@ import {
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
   fetchMasterChefFarms,
-} from "../config/web3";
-import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../config/abis";
-import { fetchV2PairData } from "../config/subgraph";
+} from "../../shared/config/web3";
+import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../../shared/config/abis";
+import { fetchV2PairData } from "../../shared/config/subgraph";
 
 const basePools = [
   {

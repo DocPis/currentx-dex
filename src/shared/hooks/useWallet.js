@@ -1,4 +1,4 @@
-// src/hooks/useWallet.js
+// src/shared/hooks/useWallet.js
 import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {

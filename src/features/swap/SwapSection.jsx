@@ -1,4 +1,4 @@
-// src/components/SwapSection.jsx
+// src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
@@ -11,13 +11,13 @@ import {
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   getReadOnlyProvider,
-} from "../config/web3";
+} from "../../shared/config/web3";
 import {
   ERC20_ABI,
   WETH_ABI,
   UNIV2_ROUTER_ABI,
   UNIV2_FACTORY_ABI,
-} from "../config/abis";
+} from "../../shared/config/abis";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 const MAX_UINT256 = (1n << 256n) - 1n;

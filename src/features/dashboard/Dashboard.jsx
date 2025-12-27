@@ -1,10 +1,10 @@
-// src/components/Dashboard.jsx
+// src/features/dashboard/Dashboard.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   fetchDashboardStats,
   fetchProtocolHistory,
   fetchRecentTransactions,
-} from "../config/subgraph";
+} from "../../shared/config/subgraph";
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
