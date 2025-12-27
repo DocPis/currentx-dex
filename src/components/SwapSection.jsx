@@ -20,7 +20,7 @@ import {
 } from "../config/abis";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
-const APPROVE_BUFFER = BigInt("1000000000000000000000000000"); // 1e27 buffer to reduce repeated approvals
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -70,7 +70,9 @@ export default function SwapSection({ balances }) {
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
+  const [approvalMode, setApprovalMode] = useState("unlimited"); // "unlimited" | "exact"
   const [approveNeeded, setApproveNeeded] = useState(false);
+  const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance }
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
@@ -190,6 +192,7 @@ export default function SwapSection({ balances }) {
       setQuoteOutRaw(null);
       setPriceImpact(null);
       setApproveNeeded(false);
+      setApprovalTarget(null);
       setQuoteRoute([]);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
@@ -252,13 +255,28 @@ export default function SwapSection({ balances }) {
               UNIV2_ROUTER_ADDRESS
             );
             const desiredAllowance =
-              amountWei > APPROVE_BUFFER ? amountWei : APPROVE_BUFFER;
-            setApproveNeeded(allowance < desiredAllowance);
+              approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+            if (cancelled) return;
+            const needsApproval = allowance < amountWei;
+            setApproveNeeded(needsApproval);
+            setApprovalTarget(
+              needsApproval
+                ? {
+                    symbol: sellToken,
+                    address: sellAddress,
+                    desiredAllowance,
+                  }
+                : null
+            );
           } catch {
+            if (cancelled) return;
             setApproveNeeded(false);
+            setApprovalTarget(null);
           }
         } else {
+          if (cancelled) return;
           setApproveNeeded(false);
+          setApprovalTarget(null);
         }
       } catch (e) {
         if (cancelled) return;
@@ -279,6 +297,7 @@ export default function SwapSection({ balances }) {
     buildPath,
     isDirectEthWeth,
     isSupported,
+    approvalMode,
     sellMeta?.address,
     sellMeta?.decimals,
     sellToken,
@@ -295,33 +314,23 @@ export default function SwapSection({ balances }) {
     : null;
 
   const handleApprove = async () => {
-    if (sellToken === "ETH") return;
-    const APPROVE_BUFFER = BigInt("1000000000000000000000000000"); // 1e27 buffer to reduce repeated approvals
+    if (!approvalTarget || approvalTarget.symbol !== sellToken) return;
     try {
       setApproveLoading(true);
       setSwapStatus(null);
-      if (!amountIn || Number.isNaN(Number(amountIn))) {
-        throw new Error("Enter a valid amount");
-      }
       const provider = await getProvider();
       const signer = await provider.getSigner();
-      const user = await signer.getAddress();
-      const sellAddress = sellMeta?.address;
-      const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
-      const token = new Contract(sellAddress, ERC20_ABI, signer);
-      const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-      const desiredAllowance =
-        amountWei > APPROVE_BUFFER ? amountWei : APPROVE_BUFFER;
-      if (allowance >= desiredAllowance) {
-        setApproveNeeded(false);
-        return;
-      }
-      const tx = await token.approve(UNIV2_ROUTER_ADDRESS, desiredAllowance);
+      const token = new Contract(approvalTarget.address, ERC20_ABI, signer);
+      const tx = await token.approve(
+        UNIV2_ROUTER_ADDRESS,
+        approvalTarget.desiredAllowance
+      );
       await tx.wait();
       setApproveNeeded(false);
+      setApprovalTarget(null);
       setSwapStatus({
         variant: "success",
-        message: "Approval updated for this token.",
+        message: `Approval updated for ${approvalTarget.symbol}.`,
       });
     } catch (e) {
       const userRejected =
@@ -359,6 +368,16 @@ export default function SwapSection({ balances }) {
       const user = await signer.getAddress();
       const sellAddress = sellMeta?.address;
       const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
+
+      if (sellToken !== "ETH") {
+        const token = new Contract(sellAddress, ERC20_ABI, signer);
+        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+        if (allowance < amountWei) {
+          throw new Error(
+            `Approval required for ${sellToken}. Please approve the token before swapping.`
+          );
+        }
+      }
 
       if (isDirectEthWeth) {
         const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
@@ -408,11 +427,6 @@ export default function SwapSection({ balances }) {
           { value: amountWei }
         );
       } else if (buyToken === "ETH") {
-        const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-        if (allowance < amountWei) {
-          await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
-        }
         tx = await router.swapExactTokensForETH(
           amountWei,
           minOut,
@@ -421,11 +435,6 @@ export default function SwapSection({ balances }) {
           deadline
         );
       } else {
-        const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-        if (allowance < amountWei) {
-          await (await token.approve(UNIV2_ROUTER_ADDRESS, amountWei)).wait();
-        }
         tx = await router.swapExactTokensForTokens(
           amountWei,
           minOut,
@@ -712,13 +721,39 @@ export default function SwapSection({ balances }) {
           </div>
 
           <div className="flex flex-col gap-2 w-full sm:w-44">
-            {approveNeeded && sellToken !== "ETH" ? (
+            {sellToken !== "ETH" ? (
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 px-3 py-2 text-[11px] text-slate-300 flex items-center justify-between">
+                <span className="text-slate-400">Approval</span>
+                <div className="inline-flex rounded-xl bg-slate-800 border border-slate-700 overflow-hidden">
+                  {[
+                    { id: "unlimited", label: "Unlimited" },
+                    { id: "exact", label: "Exact" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => setApprovalMode(opt.id)}
+                      className={`px-2 py-1 font-semibold ${
+                        approvalMode === opt.id
+                          ? "bg-sky-500/20 text-sky-100"
+                          : "text-slate-300 hover:text-sky-100"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {approveNeeded && approvalTarget?.symbol === sellToken && sellToken !== "ETH" ? (
               <button
                 onClick={handleApprove}
                 disabled={approveLoading || quoteLoading}
                 className="w-full py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm font-semibold text-white hover:border-sky-500/60 transition disabled:opacity-60"
               >
-                {approveLoading ? "Approving..." : `Approve ${sellToken}`}
+                {approveLoading
+                  ? "Approving..."
+                  : `Approve ${approvalTarget?.symbol || sellToken}`}
               </button>
             ) : null}
             <button
