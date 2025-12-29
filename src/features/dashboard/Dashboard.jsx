@@ -223,10 +223,11 @@ function BarGlowChart({
   const values = data.map((d) => d.value);
   const max = Math.max(...values, 1);
   const minWidth = 520;
-  const barWidth = Math.max(6, Math.floor(minWidth / (values.length * 1.5)));
-  const width = Math.max(minWidth, (barWidth + 3) * values.length);
+  const gap = 6;
+  const width = Math.max(minWidth, values.length * 28);
+  const barWidth = Math.max(6, (width - gap * (values.length - 1)) / values.length);
   const barPositions = values.map((v, i) => {
-    const x = i * (barWidth + 2);
+    const x = i * (barWidth + gap);
     const h = (v / max) * (height - 10);
     const y = height - h;
     return { x, y, h };
