@@ -1,5 +1,5 @@
 // src/features/dashboard/Dashboard.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchDashboardStats,
   fetchProtocolHistory,
@@ -48,6 +48,9 @@ function LineGlowChart({
   color = "#4ade80",
   label = "line",
 }) {
+  const containerRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(null);
+
   if (!data || data.length < 2) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-slate-500">
@@ -68,6 +71,13 @@ function LineGlowChart({
     return { x, y };
   });
   const points = pointPairs.map(({ x, y }) => `${x},${y}`);
+  const activePoint =
+    activeIndex !== null && pointPairs[activeIndex]
+      ? {
+          ...data[activeIndex],
+          ...pointPairs[activeIndex],
+        }
+      : null;
 
   const gradientId = `line-grad-${label}`;
   const glowId = `line-glow-${label}`;
@@ -76,8 +86,29 @@ function LineGlowChart({
   );
   const last = pointPairs[pointPairs.length - 1];
 
+  const handleMove = (clientX) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relativeX = clientX - rect.left;
+    const ratio = Math.min(Math.max(relativeX / rect.width, 0), 1);
+    const idx = Math.round(ratio * (values.length - 1));
+    setActiveIndex(idx);
+  };
+
+  const clearActive = () => setActiveIndex(null);
+
   return (
-    <div className="relative h-full">
+    <div
+      ref={containerRef}
+      className="relative h-full"
+      onMouseMove={(e) => handleMove(e.clientX)}
+      onMouseLeave={clearActive}
+      onTouchMove={(e) => {
+        if (e.touches?.[0]) handleMove(e.touches[0].clientX);
+      }}
+      onTouchEnd={clearActive}
+      onTouchCancel={clearActive}
+    >
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full h-full"
@@ -124,7 +155,45 @@ function LineGlowChart({
             <circle cx={last.x} cy={last.y} r="9" fill={color} opacity="0.15" />
           </>
         )}
+        {activePoint && (
+          <>
+            <line
+              x1={activePoint.x}
+              x2={activePoint.x}
+              y1={0}
+              y2={height}
+              stroke={color}
+              strokeOpacity="0.35"
+              strokeDasharray="4 3"
+            />
+            <circle cx={activePoint.x} cy={activePoint.y} r="5" fill="#0f172a" stroke={color} strokeWidth="2" />
+          </>
+        )}
       </svg>
+      {activePoint && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ left: 0, top: 0 }}
+        >
+          <div
+            className="absolute -translate-x-1/2"
+            style={{
+              left: `${(activePoint.x / width) * 100}%`,
+              top: Math.max(0, (activePoint.y / height) * 100 - 8) + "%",
+            }}
+          >
+            <div className="mb-2 whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900/95 px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/40">
+              <div className="font-semibold text-slate-100">{activePoint.fullLabel || activePoint.label}</div>
+              <div className="text-slate-300">
+                {label === "tvl" ? "TVL" : "Value"}: ${formatNumber(activePoint.value || 0)}
+              </div>
+              {activePoint.isLive && (
+                <div className="text-[10px] uppercase tracking-wide text-emerald-300/80">Live</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
         {ticks.map((i) => (
           <span key={i}>{data[i]?.label || ""}</span>
@@ -140,6 +209,9 @@ function BarGlowChart({
   color = "#4ade80",
   label = "bars",
 }) {
+  const containerRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(null);
+
   if (!data || data.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-slate-500">
@@ -153,13 +225,47 @@ function BarGlowChart({
   const minWidth = 520;
   const barWidth = Math.max(6, Math.floor(minWidth / (values.length * 1.5)));
   const width = Math.max(minWidth, (barWidth + 3) * values.length);
+  const barPositions = values.map((v, i) => {
+    const x = i * (barWidth + 2);
+    const h = (v / max) * (height - 10);
+    const y = height - h;
+    return { x, y, h };
+  });
+  const activeBar =
+    activeIndex !== null && barPositions[activeIndex]
+      ? {
+          ...data[activeIndex],
+          ...barPositions[activeIndex],
+        }
+      : null;
 
   const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
     (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
   );
 
+  const handleMove = (clientX) => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relativeX = clientX - rect.left;
+    const ratio = Math.min(Math.max(relativeX / rect.width, 0), 1);
+    const idx = Math.round(ratio * (values.length - 1));
+    setActiveIndex(idx);
+  };
+
+  const clearActive = () => setActiveIndex(null);
+
   return (
-    <div className="relative h-full">
+    <div
+      ref={containerRef}
+      className="relative h-full"
+      onMouseMove={(e) => handleMove(e.clientX)}
+      onMouseLeave={clearActive}
+      onTouchMove={(e) => {
+        if (e.touches?.[0]) handleMove(e.touches[0].clientX);
+      }}
+      onTouchEnd={clearActive}
+      onTouchCancel={clearActive}
+    >
       <svg
         viewBox={`0 0 ${width} ${height}`}
         className="w-full h-full"
@@ -183,24 +289,53 @@ function BarGlowChart({
         </defs>
         <rect width="100%" height="100%" fill={`url(#bar-grid-${label})`} opacity="0.6" />
         <rect width="100%" height="100%" fill={`url(#bar-grad-${label})`} opacity="0.12" />
-        {values.map((v, i) => {
-          const x = i * (barWidth + 2);
-          const h = (v / max) * (height - 10);
-          const y = height - h;
-          return (
-            <rect
-              key={`${label}-${i}`}
-              x={x}
-              y={y}
-              width={barWidth}
-              height={h}
-              fill={`url(#bar-grad-${label})`}
-              opacity="1"
-              filter={`url(#bar-glow-${label})`}
-            />
-          );
-        })}
+        {barPositions.map(({ x, y, h }, i) => (
+          <rect
+            key={`${label}-${i}`}
+            x={x}
+            y={y}
+            width={barWidth}
+            height={h}
+            fill={`url(#bar-grad-${label})`}
+            opacity="1"
+            filter={`url(#bar-glow-${label})`}
+          />
+        ))}
+        {activeBar && (
+          <rect
+            x={activeBar.x - 1}
+            y={0}
+            width={barWidth + 2}
+            height={height}
+            fill={color}
+            opacity="0.08"
+          />
+        )}
       </svg>
+      {activeBar && (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{ left: 0, top: 0 }}
+        >
+          <div
+            className="absolute -translate-x-1/2"
+            style={{
+              left: `${((activeBar.x + barWidth / 2) / width) * 100}%`,
+              top: `${Math.max(0, (activeBar.y / height) * 100 - 8)}%`,
+            }}
+          >
+            <div className="mb-2 whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900/95 px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/40">
+              <div className="font-semibold text-slate-100">{activeBar.fullLabel || activeBar.label}</div>
+              <div className="text-slate-300">
+                {label === "volume" ? "Volume" : "Value"}: ${formatNumber(activeBar.value || 0)}
+              </div>
+              {activeBar.isLive && (
+                <div className="text-[10px] uppercase tracking-wide text-emerald-300/80">Live</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
         {ticks.map((i) => (
           <span key={i}>{data[i]?.label || ""}</span>
@@ -252,7 +387,12 @@ export default function Dashboard() {
       history
         .slice()
         .reverse()
-        .map((d) => ({ label: formatDateLabel(d.date), value: d.tvlUsd })),
+        .map((d) => ({
+          label: formatDateLabel(d.date),
+          fullLabel: new Date(d.date).toLocaleString(),
+          value: d.tvlUsd,
+          rawDate: d.date,
+        })),
     [history]
   );
 
@@ -261,7 +401,12 @@ export default function Dashboard() {
       history
         .slice()
         .reverse()
-        .map((d) => ({ label: formatDateLabel(d.date), value: d.volumeUsd })),
+        .map((d) => ({
+          label: formatDateLabel(d.date),
+          fullLabel: new Date(d.date).toLocaleString(),
+          value: d.volumeUsd,
+          rawDate: d.date,
+        })),
     [history]
   );
 
@@ -285,7 +430,13 @@ export default function Dashboard() {
     if (!tvlSeries.length) return [];
     const livePoint =
       liveTvl !== undefined
-        ? { label: "Today", value: liveTvl }
+        ? {
+            label: "Today",
+            fullLabel: new Date().toLocaleString(),
+            value: liveTvl,
+            rawDate: Date.now(),
+            isLive: true,
+          }
         : null;
     return livePoint ? [...tvlSeries, livePoint] : tvlSeries;
   }, [tvlSeries, liveTvl]);
@@ -294,7 +445,13 @@ export default function Dashboard() {
     if (!volumeSeries.length) return [];
     const todayPoint =
       todayVolume !== null
-        ? { label: "Today", value: todayVolume }
+        ? {
+            label: "Today",
+            fullLabel: new Date().toLocaleString(),
+            value: todayVolume,
+            rawDate: Date.now(),
+            isLive: true,
+          }
         : null;
     return todayPoint ? [...volumeSeries, todayPoint] : volumeSeries;
   }, [volumeSeries, todayVolume]);

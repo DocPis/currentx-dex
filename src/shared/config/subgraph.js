@@ -219,6 +219,9 @@ export async function fetchDashboardStats() {
 
 // Fetch protocol-level daily history (TVL + volume) for the last `days`
 export async function fetchProtocolHistory(days = 7) {
+  // Fetch extra days to cover gaps on testnets where some dates may be missing
+  const fetchCount = Math.max(days * 3, days + 5);
+
   const historyQuery = `
     query ProtocolHistory($days: Int!) {
       uniswapDayDatas(
@@ -235,14 +238,45 @@ export async function fetchProtocolHistory(days = 7) {
   `;
 
   try {
-    const res = await postSubgraph(historyQuery, { days });
+    const res = await postSubgraph(historyQuery, { days: fetchCount });
     const history = res?.uniswapDayDatas || [];
-    return history.map((d) => ({
+
+    const normalized = history.map((d) => ({
       date: Number(d.date) * 1000,
+      dayId: Math.floor(Number(d.date) / 86400), // UTC day id
       tvlUsd: Number(d.totalLiquidityUSD || 0),
       volumeUsd: Number(d.dailyVolumeUSD || 0),
       cumulativeVolumeUsd: Number(d.totalVolumeUSD || 0),
     }));
+
+    const byDayId = new Map(normalized.map((d) => [d.dayId, d]));
+    const todayDayId = Math.floor(Date.now() / 86400000);
+    const result = [];
+    let lastKnownTvl = null;
+
+    for (let i = 0; i < days; i += 1) {
+      const dayId = todayDayId - i;
+      const entry = byDayId.get(dayId);
+
+      if (entry) {
+        lastKnownTvl = entry.tvlUsd;
+        result.push({
+          date: entry.date,
+          tvlUsd: entry.tvlUsd,
+          volumeUsd: entry.volumeUsd,
+          cumulativeVolumeUsd: entry.cumulativeVolumeUsd,
+        });
+      } else {
+        result.push({
+          date: dayId * 86400000,
+          tvlUsd: lastKnownTvl !== null ? lastKnownTvl : 0,
+          volumeUsd: 0,
+          cumulativeVolumeUsd: null,
+        });
+      }
+    }
+
+    return result;
   } catch (err) {
     const message = err?.message || "";
     const noDayField =
