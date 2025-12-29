@@ -355,10 +355,14 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    let loadingInFlight = false;
+
+    const load = async (isBackground = false) => {
+      if (loadingInFlight) return;
+      loadingInFlight = true;
       try {
         setError("");
-        setLoading(true);
+        if (!isBackground) setLoading(true);
 
         const [s, h, txs] = await Promise.all([
           fetchDashboardStats(),
@@ -373,13 +377,17 @@ export default function Dashboard() {
       } catch (e) {
         if (!cancelled) setError(e.message || "Failed to load dashboard");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && !isBackground) setLoading(false);
+        loadingInFlight = false;
       }
     };
 
-    load();
+    load(false);
+    const interval = setInterval(() => load(true), 5 * 60 * 1000); // refresh every 5m
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, []);
 
