@@ -266,13 +266,18 @@ export default function Dashboard() {
   );
 
   const latestDay = history?.[0];
-  const todayVolume =
-    stats?.totalVolumeUsd !== undefined &&
-    latestDay?.cumulativeVolumeUsd !== undefined
-      ? Math.max(0, stats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
-      : null;
   const dayVolume = latestDay?.volumeUsd ?? null;
-  const dailyVolumeUsd = todayVolume !== null ? todayVolume : dayVolume;
+
+  const hasCumulativeVolume =
+    typeof latestDay?.cumulativeVolumeUsd === "number" &&
+    latestDay.cumulativeVolumeUsd > 0 &&
+    typeof stats?.totalVolumeUsd === "number";
+
+  const todayVolume = hasCumulativeVolume
+    ? Math.max(0, stats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
+    : null;
+
+  const dailyVolumeUsd = dayVolume ?? todayVolume;
   const dailyFees = dailyVolumeUsd !== null ? dailyVolumeUsd * 0.003 : null;
   const liveTvl = stats?.totalLiquidityUsd;
 
