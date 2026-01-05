@@ -11,6 +11,8 @@ const FOOTER_LINKS = {
 };
 
 export default function Footer() {
+  const iconSize = "h-5 w-5 object-contain";
+
   const LinkItem = ({ href, children }) => (
     <a
       href={href}
@@ -46,13 +48,13 @@ export default function Footer() {
 
         <div className="flex items-center gap-2">
           <IconButton href={FOOTER_LINKS.discord} label="Discord">
-            <img src={discordIcon} alt="Discord" className="h-4 w-4 object-contain" />
+            <img src={discordIcon} alt="Discord" className={iconSize} />
           </IconButton>
           <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
-            <img src={twitterIcon} alt="Twitter / X" className="h-4 w-4 object-contain" />
+            <img src={twitterIcon} alt="Twitter / X" className={iconSize} />
           </IconButton>
           <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
-            <img src={telegramIcon} alt="Telegram" className="h-4 w-4 object-contain" />
+            <img src={telegramIcon} alt="Telegram" className={iconSize} />
           </IconButton>
         </div>
       </div>
