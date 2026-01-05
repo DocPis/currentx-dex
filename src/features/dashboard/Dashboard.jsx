@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchDashboardStats,
   fetchProtocolHistory,
-  fetchRecentTransactions,
+  fetchTopPairsBreakdown,
 } from "../../shared/config/subgraph";
 
 function formatNumber(num) {
@@ -26,15 +26,6 @@ function StatCard({ label, value, prefix = "$" }) {
     </div>
   );
 }
-
-const TYPE_BADGE = {
-  Swap: "bg-sky-500/15 text-sky-100 border border-sky-500/30",
-  Mint: "bg-emerald-500/15 text-emerald-100 border border-emerald-500/30",
-  Burn: "bg-rose-500/15 text-rose-100 border border-rose-500/30",
-};
-
-const shortenHash = (hash = "") =>
-  hash ? `${hash.slice(0, 6)}...${hash.slice(-4)}` : "--";
 
 const formatDateLabel = (ts) => {
   if (!ts) return "";
@@ -349,7 +340,7 @@ function BarGlowChart({
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
-  const [recentTxs, setRecentTxs] = useState([]);
+  const [topPairs, setTopPairs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -364,16 +355,16 @@ export default function Dashboard() {
         setError("");
         if (!isBackground) setLoading(true);
 
-        const [s, h, txs] = await Promise.all([
+        const [s, h, pairs] = await Promise.all([
           fetchDashboardStats(),
           fetchProtocolHistory(7),
-          fetchRecentTransactions(15),
+          fetchTopPairsBreakdown(4),
         ]);
 
         if (cancelled) return;
         setStats(s);
         setHistory(h);
-        setRecentTxs(txs || []);
+        setTopPairs(pairs || []);
       } catch (e) {
         if (!cancelled) setError(e.message || "Failed to load dashboard");
       } finally {
@@ -591,71 +582,72 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-lg font-semibold text-slate-50">Latest transactions</div>
+            <div className="text-lg font-semibold text-slate-50">Top pairs breakdown</div>
+            <div className="text-xs text-slate-400">
+              Volume dominance across the latest indexed day (24h).
+            </div>
+          </div>
+          <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 uppercase tracking-wide">
+            <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.8)]" />
+            24h volume
           </div>
         </div>
-        <div className="overflow-x-auto">
+        <div className="space-y-4">
           {loading ? (
-            <div className="py-6 text-center text-sm text-slate-500">Loading...</div>
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="h-4 w-32 rounded bg-slate-800 animate-pulse" />
+                  <div className="h-4 w-10 rounded bg-slate-800 animate-pulse" />
+                </div>
+                <div className="h-3 w-full rounded-full bg-slate-800 animate-pulse" />
+              </div>
+            ))
+          ) : topPairs.length ? (
+            topPairs.map((pair) => {
+              const width =
+                pair.share > 0
+                  ? Math.min(100, Math.max(pair.share || 0, 6))
+                  : 0;
+              return (
+                <div key={pair.id} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-baseline gap-2">
+                      <div className="text-sm font-semibold text-white">
+                        {pair.label}
+                      </div>
+                      <div className="text-[11px] uppercase text-slate-500 tracking-wide">
+                        24h volume
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-rose-300">
+                      {Math.round(pair.share || 0)}%
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-slate-400">
+                    <span>Volume (USD)</span>
+                    <span className="text-slate-200">
+                      ${formatNumber(pair.volumeUsd || 0)}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 h-3 w-full rounded-full bg-slate-800/80 overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${width}%`,
+                        background:
+                          "linear-gradient(90deg, #fb7185 0%, #ec4899 45%, #c084fc 100%)",
+                        boxShadow: "0 0 18px rgba(236, 72, 153, 0.35)",
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })
           ) : (
-            <table className="min-w-full text-sm text-left">
-              <thead className="text-slate-400 text-xs uppercase">
-                <tr>
-                  <th className="py-2 pr-4 whitespace-nowrap">Time</th>
-                  <th className="py-2 pr-4">Type</th>
-                  <th className="py-2 pr-4">Pair</th>
-                  <th className="py-2 pr-4 text-right">Value (USD)</th>
-                  <th className="py-2 pr-4 text-right">Account</th>
-                  <th className="py-2 pl-4 text-right">Tx</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800 text-slate-100">
-                {recentTxs.map((tx) => (
-                  <tr key={`${tx.txHash || tx.timestamp}-${tx.type}`}>
-                    <td className="py-2 pr-4 whitespace-nowrap">
-                      {tx.timestamp ? new Date(tx.timestamp).toLocaleString() : "--"}
-                    </td>
-                    <td className="py-2 pr-4">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${TYPE_BADGE[tx.type] || "bg-slate-800 text-slate-200 border border-slate-700"}`}
-                      >
-                        {tx.type || "--"}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-4">{tx.pair || "--"}</td>
-                    <td className="py-2 pr-4 text-right">
-                      {tx.amountUsd === null || tx.amountUsd === undefined
-                        ? "N/A"
-                        : `$${formatNumber(tx.amountUsd)}`}
-                    </td>
-                    <td className="py-2 pr-4 text-right">
-                      {tx.account ? shortenHash(tx.account) : "--"}
-                    </td>
-                    <td className="py-2 pl-4 text-right">
-                      {tx.txHash ? (
-                        <a
-                          href={`https://sepolia.etherscan.io/tx/${tx.txHash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sky-400 hover:text-sky-300 underline"
-                        >
-                          {shortenHash(tx.txHash)}
-                        </a>
-                      ) : (
-                        "--"
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {!recentTxs.length && !loading && (
-                  <tr>
-                    <td colSpan={6} className="py-3 text-center text-slate-500">
-                      No transactions found in the subgraph.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <div className="py-4 text-center text-sm text-slate-500">
+              No pair data found in the subgraph for the latest day.
+            </div>
           )}
         </div>
       </div>

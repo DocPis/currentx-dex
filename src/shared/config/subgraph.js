@@ -404,6 +404,95 @@ export async function fetchRecentTransactions(limit = 12) {
   return events;
 }
 
+// Fetch top pairs by daily volume for the latest indexed day
+export async function fetchTopPairsBreakdown(limit = 4) {
+  const safeQuery = async (query, field, variables = {}) => {
+    try {
+      const res = await postSubgraph(query, variables);
+      return res?.[field] || [];
+    } catch (err) {
+      const message = err?.message || "";
+      const noField =
+        message.includes(`Cannot query field "${field}"`) ||
+        message.includes(`Type \`Query\` has no field \`${field}\``);
+      if (noField) return [];
+      throw err;
+    }
+  };
+
+  // Get the most recent day that has pair day data to avoid empty "today" gaps on testnets.
+  const latestDayRes = await safeQuery(
+    `
+      query LatestPairDay {
+        pairDayDatas(first: 1, orderBy: date, orderDirection: desc) {
+          date
+        }
+      }
+    `,
+    "pairDayDatas"
+  );
+
+  const latestDay = Number(latestDayRes?.[0]?.date || 0);
+  if (!latestDay) return [];
+
+  const topPairsRes = await safeQuery(
+    `
+      query TopPairs($day: Int!, $limit: Int!) {
+        pairDayDatas(
+          first: $limit
+          where: { date: $day }
+          orderBy: dailyVolumeUSD
+          orderDirection: desc
+        ) {
+          date
+          pairAddress
+          dailyVolumeUSD
+          reserveUSD
+          pair {
+            id
+            token0 { symbol }
+            token1 { symbol }
+          }
+        }
+      }
+    `,
+    "pairDayDatas",
+    { day: latestDay, limit: Math.max(limit, 6) }
+  );
+
+  const mapped = topPairsRes.map((p, idx) => {
+    const t0 = p?.pair?.token0?.symbol || "Token0";
+    const t1 = p?.pair?.token1?.symbol || "Token1";
+    const label = `${t0}-${t1}`;
+    const volumeUsd = Number(p?.dailyVolumeUSD || 0);
+    const tvlUsd = Number(p?.reserveUSD || 0);
+    return {
+      id: p?.pairAddress || p?.pair?.id || `${label}-${idx}`,
+      label,
+      volumeUsd,
+      tvlUsd,
+    };
+  });
+
+  const filtered = mapped.filter((p) => p.volumeUsd > 0 || p.tvlUsd > 0);
+  if (!filtered.length) return [];
+
+  const top = filtered.slice(0, limit);
+  const totalVolume = top.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
+  const fallbackTotal = totalVolume === 0 ? top.reduce((sum, p) => sum + (p.tvlUsd || 0), 0) : totalVolume;
+  const baseIsTvl = totalVolume === 0;
+
+  return top.map((p, idx) => {
+    const baseValue = baseIsTvl ? p.tvlUsd : p.volumeUsd;
+    const share = fallbackTotal ? (baseValue / fallbackTotal) * 100 : 0;
+    return {
+      ...p,
+      share,
+      rank: idx + 1,
+    };
+  });
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();
