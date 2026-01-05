@@ -6,7 +6,7 @@ import {
   fetchTopPairsBreakdown,
 } from "../../shared/config/subgraph";
 
-const HISTORY_DAYS = 365;
+const TVL_START_DATE = Date.UTC(2025, 11, 22); // 22/12/2025 UTC
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
@@ -341,7 +341,8 @@ function BarGlowChart({
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [tvlHistory, setTvlHistory] = useState([]);
+  const [volumeHistory, setVolumeHistory] = useState([]);
   const [topPairs, setTopPairs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -357,15 +358,22 @@ export default function Dashboard() {
         setError("");
         if (!isBackground) setLoading(true);
 
-        const [s, h, pairs] = await Promise.all([
+        const tvlDays = Math.min(
+          1000,
+          Math.max(30, Math.ceil((Date.now() - TVL_START_DATE) / 86400000) + 2)
+        );
+
+        const [s, tvlHist, volHist, pairs] = await Promise.all([
           fetchDashboardStats(),
-          fetchProtocolHistory(HISTORY_DAYS),
+          fetchProtocolHistory(tvlDays),
+          fetchProtocolHistory(7),
           fetchTopPairsBreakdown(4),
         ]);
 
         if (cancelled) return;
         setStats(s);
-        setHistory(h);
+        setTvlHistory(tvlHist);
+        setVolumeHistory(volHist);
         setTopPairs(pairs || []);
       } catch (e) {
         if (!cancelled) setError(e.message || "Failed to load dashboard");
@@ -384,23 +392,22 @@ export default function Dashboard() {
     };
   }, []);
 
-  const tvlSeries = useMemo(
-    () =>
-      history
-        .slice()
-        .reverse()
-        .map((d) => ({
-          label: formatDateLabel(d.date),
-          fullLabel: new Date(d.date).toLocaleString(),
-          value: d.tvlUsd,
-          rawDate: d.date,
-        })),
-    [history]
-  );
+  const tvlSeries = useMemo(() => {
+    const filtered = tvlHistory.filter((d) => d.date >= TVL_START_DATE);
+    return filtered
+      .slice()
+      .reverse()
+      .map((d) => ({
+        label: formatDateLabel(d.date),
+        fullLabel: new Date(d.date).toLocaleString(),
+        value: d.tvlUsd,
+        rawDate: d.date,
+      }));
+  }, [tvlHistory]);
 
   const volumeSeries = useMemo(
     () =>
-      history
+      volumeHistory
         .slice()
         .reverse()
         .map((d) => ({
@@ -409,10 +416,10 @@ export default function Dashboard() {
           value: d.volumeUsd,
           rawDate: d.date,
         })),
-    [history]
+    [volumeHistory]
   );
 
-  const latestDay = history?.[0];
+  const latestDay = volumeHistory?.[0];
   const dayVolume = latestDay?.volumeUsd ?? null;
 
   const hasCumulativeVolume =
@@ -476,7 +483,7 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
           <p className="text-sm text-slate-400">
-            Live protocol TVL and volume from the Sepolia subgraph (full history view).
+            TVL since 22/12 and 24h volume (last 7 days) from the Sepolia subgraph.
           </p>
         </div>
         {error && (
@@ -505,12 +512,12 @@ export default function Dashboard() {
             <div>
               <div className="text-sm text-slate-400">Protocol TVL</div>
               <div className="text-xl font-semibold">
-                ${formatNumber(history[0]?.tvlUsd || stats?.totalLiquidityUsd || 0)}
+                ${formatNumber(tvlHistory[0]?.tvlUsd || stats?.totalLiquidityUsd || 0)}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-sky-400" />
-              Last {history.length} days
+              Since 22/12
               {tvlChange && (
                 <span
                   className={`px-2 py-1 rounded-full border text-[11px] ${
@@ -545,12 +552,12 @@ export default function Dashboard() {
             <div>
               <div className="text-sm text-slate-400">Protocol volume (24h)</div>
               <div className="text-xl font-semibold">
-                ${formatNumber(history[0]?.volumeUsd || stats?.totalVolumeUsd || 0)}
+                ${formatNumber(volumeHistory[0]?.volumeUsd || stats?.totalVolumeUsd || 0)}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Last {history.length} days
+              Last {volumeHistory.length} days
               {volumeChange && (
                 <span
                   className={`px-2 py-1 rounded-full border text-[11px] ${
