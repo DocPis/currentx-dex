@@ -11,7 +11,7 @@ const FOOTER_LINKS = {
 };
 
 export default function Footer() {
-  const iconSize = "h-6 w-6 object-contain";
+  const iconSize = "h-8 w-8 object-contain";
 
   const LinkItem = ({ href, children }) => (
     <a
