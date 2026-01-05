@@ -11,8 +11,6 @@ const FOOTER_LINKS = {
 };
 
 export default function Footer() {
-  const iconSize = "h-8 w-8 object-contain";
-
   const LinkItem = ({ href, children }) => (
     <a
       href={href}
@@ -29,7 +27,7 @@ export default function Footer() {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all"
+      className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all overflow-hidden"
       aria-label={label}
       title={label}
     >
@@ -48,13 +46,13 @@ export default function Footer() {
 
         <div className="flex items-center gap-2">
           <IconButton href={FOOTER_LINKS.discord} label="Discord">
-            <img src={discordIcon} alt="Discord" className={iconSize} />
+            <img src={discordIcon} alt="Discord" className="h-full w-full object-contain" />
           </IconButton>
           <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
-            <img src={twitterIcon} alt="Twitter / X" className={iconSize} />
+            <img src={twitterIcon} alt="Twitter / X" className="h-full w-full object-contain" />
           </IconButton>
           <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
-            <img src={telegramIcon} alt="Telegram" className={iconSize} />
+            <img src={telegramIcon} alt="Telegram" className="h-full w-full object-contain" />
           </IconButton>
         </div>
       </div>
