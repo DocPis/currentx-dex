@@ -49,7 +49,7 @@ export default function Footer() {
             <img
               src={discordIcon}
               alt="Discord"
-              className="h-full w-full object-cover scale-110"
+              className="h-full w-full object-cover scale-125"
             />
           </IconButton>
           <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
