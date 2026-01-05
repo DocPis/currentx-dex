@@ -11,7 +11,7 @@ const FOOTER_LINKS = {
 };
 
 export default function Footer() {
-  const iconSize = "h-5 w-5 object-contain";
+  const iconSize = "h-6 w-6 object-contain";
 
   const LinkItem = ({ href, children }) => (
     <a
@@ -29,7 +29,7 @@ export default function Footer() {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="group h-9 w-9 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all"
+      className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all"
       aria-label={label}
       title={label}
     >
