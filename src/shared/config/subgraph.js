@@ -220,7 +220,7 @@ export async function fetchDashboardStats() {
 // Fetch protocol-level daily history (TVL + volume) for the last `days`
 export async function fetchProtocolHistory(days = 7) {
   // Fetch extra days to cover gaps on testnets where some dates may be missing
-  const fetchCount = Math.max(days * 3, days + 5);
+  const fetchCount = Math.min(1000, Math.max(days * 3, days + 5)); // subgraph first cap is 1000
 
   const historyQuery = `
     query ProtocolHistory($days: Int!) {
