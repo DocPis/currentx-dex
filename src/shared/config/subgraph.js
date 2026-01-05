@@ -448,11 +448,6 @@ export async function fetchTopPairsBreakdown(limit = 4) {
           pairAddress
           dailyVolumeUSD
           reserveUSD
-          pair {
-            id
-            token0 { symbol }
-            token1 { symbol }
-          }
         }
       }
     `,
@@ -460,14 +455,44 @@ export async function fetchTopPairsBreakdown(limit = 4) {
     { day: latestDay, limit: Math.max(limit, 6) }
   );
 
+  const pairIds = topPairsRes
+    .map((p) => p?.pairAddress)
+    .filter(Boolean);
+
+  let pairMetaById = {};
+  if (pairIds.length) {
+    try {
+      const pairMeta = await safeQuery(
+        `
+          query PairMeta($ids: [Bytes!]!) {
+            pairs(where: { id_in: $ids }) {
+              id
+              token0 { symbol }
+              token1 { symbol }
+            }
+          }
+        `,
+        "pairs",
+        { ids: pairIds }
+      );
+      pairMetaById = Object.fromEntries(
+        (pairMeta || []).map((p) => [p.id?.toLowerCase(), p])
+      );
+    } catch (err) {
+      pairMetaById = {};
+    }
+  }
+
   const mapped = topPairsRes.map((p, idx) => {
-    const t0 = p?.pair?.token0?.symbol || "Token0";
-    const t1 = p?.pair?.token1?.symbol || "Token1";
-    const label = `${t0}-${t1}`;
+    const pairId = (p?.pairAddress || "").toLowerCase();
+    const meta = pairMetaById[pairId];
+    const t0 = meta?.token0?.symbol || "Token0";
+    const t1 = meta?.token1?.symbol || "Token1";
+    const label = meta ? `${t0}-${t1}` : (pairId ? `${pairId.slice(0, 6)}...${pairId.slice(-4)}` : "Pair");
     const volumeUsd = Number(p?.dailyVolumeUSD || 0);
     const tvlUsd = Number(p?.reserveUSD || 0);
     return {
-      id: p?.pairAddress || p?.pair?.id || `${label}-${idx}`,
+      id: pairId || `${label}-${idx}`,
       label,
       volumeUsd,
       tvlUsd,
