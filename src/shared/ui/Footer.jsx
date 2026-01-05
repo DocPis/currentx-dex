@@ -4,7 +4,7 @@ import twitterIcon from "../../assets/social/x.png";
 import telegramIcon from "../../assets/social/telegram.png";
 
 const FOOTER_LINKS = {
-  docs: "https://currentx-dex.vercel.app/docs/intro",
+  docs: "https://currentx-docs.vercel.app/",
   twitter: "https://x.com/currentxdex",
   discord: "https://discord.gg/g33rC3RT",
   telegram: "https://t.co/VLEkH8Z2fD",
