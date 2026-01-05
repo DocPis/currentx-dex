@@ -531,7 +531,7 @@ export default function Dashboard() {
             ) : (
               <LineGlowChart
                 data={tvlSeriesWithToday}
-                color="#4ade80"
+                color="#38bdf8"
                 label="tvl"
               />
             )}
@@ -571,7 +571,7 @@ export default function Dashboard() {
             ) : (
               <BarGlowChart
                 data={volumeSeriesWithToday}
-                color="#4ade80"
+                color="#38bdf8"
                 label="volume"
               />
             )}
