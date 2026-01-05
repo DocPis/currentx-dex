@@ -7,7 +7,7 @@ const FOOTER_LINKS = {
   docs: "#",
   twitter: "https://x.com/currentxdex",
   discord: "https://discord.gg/g33rC3RT",
-  telegram: "t.me/currentxdex",
+  telegram: "https://t.co/VLEkH8Z2fD",
 };
 
 export default function Footer() {
