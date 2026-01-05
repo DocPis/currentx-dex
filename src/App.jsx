@@ -8,6 +8,7 @@ import Farms from "./features/farms/Farms";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
+import Footer from "./shared/ui/Footer";
 
 export default function App() {
   const [tab, setTab] = useState("dashboard");
@@ -108,6 +109,8 @@ export default function App() {
           <Farms address={address} onConnect={handleConnect} />
         )}
       </main>
+
+      <Footer />
 
       <WalletModal
         open={showWalletModal}
