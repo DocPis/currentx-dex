@@ -517,7 +517,6 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-sky-400" />
-              Since 22/12
               {tvlChange && (
                 <span
                   className={`px-2 py-1 rounded-full border text-[11px] ${
