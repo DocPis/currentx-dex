@@ -6,6 +6,8 @@ import {
   fetchTopPairsBreakdown,
 } from "../../shared/config/subgraph";
 
+const HISTORY_DAYS = 365;
+
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
   if (num >= 1_000_000_000) return `${(num / 1_000_000_000).toFixed(2)}B`;
@@ -357,7 +359,7 @@ export default function Dashboard() {
 
         const [s, h, pairs] = await Promise.all([
           fetchDashboardStats(),
-          fetchProtocolHistory(7),
+          fetchProtocolHistory(HISTORY_DAYS),
           fetchTopPairsBreakdown(4),
         ]);
 
@@ -474,7 +476,7 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
           <p className="text-sm text-slate-400">
-            Live protocol TVL and volume from the Sepolia subgraph (last 7 days).
+            Live protocol TVL and volume from the Sepolia subgraph (full history view).
           </p>
         </div>
         {error && (
