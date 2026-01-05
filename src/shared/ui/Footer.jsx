@@ -46,13 +46,21 @@ export default function Footer() {
 
         <div className="flex items-center gap-2">
           <IconButton href={FOOTER_LINKS.discord} label="Discord">
-            <img src={discordIcon} alt="Discord" className="h-full w-full object-contain" />
+            <img
+              src={discordIcon}
+              alt="Discord"
+              className="h-full w-full object-cover scale-110"
+            />
           </IconButton>
           <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
             <img src={twitterIcon} alt="Twitter / X" className="h-full w-full object-contain" />
           </IconButton>
           <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
-            <img src={telegramIcon} alt="Telegram" className="h-full w-full object-contain" />
+            <img
+              src={telegramIcon}
+              alt="Telegram"
+              className="h-full w-full object-cover scale-115"
+            />
           </IconButton>
         </div>
       </div>
