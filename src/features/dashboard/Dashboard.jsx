@@ -588,7 +588,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 uppercase tracking-wide">
-            <span className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_10px_rgba(251,113,133,0.8)]" />
+            <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
             24h volume
           </div>
         </div>
@@ -620,7 +620,7 @@ export default function Dashboard() {
                         24h volume
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-rose-300">
+                    <div className="text-sm font-semibold text-sky-200">
                       {Math.round(pair.share || 0)}%
                     </div>
                   </div>
@@ -636,8 +636,8 @@ export default function Dashboard() {
                       style={{
                         width: `${width}%`,
                         background:
-                          "linear-gradient(90deg, #fb7185 0%, #ec4899 45%, #c084fc 100%)",
-                        boxShadow: "0 0 18px rgba(236, 72, 153, 0.35)",
+                          "linear-gradient(90deg, #38bdf8 0%, #0ea5e9 45%, #06b6d4 100%)",
+                        boxShadow: "0 0 18px rgba(14, 165, 233, 0.35)",
                       }}
                     />
                   </div>
