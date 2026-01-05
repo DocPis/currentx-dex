@@ -636,8 +636,8 @@ export default function Dashboard() {
                       style={{
                         width: `${width}%`,
                         background:
-                          "linear-gradient(90deg, #38bdf8 0%, #0ea5e9 45%, #06b6d4 100%)",
-                        boxShadow: "0 0 18px rgba(14, 165, 233, 0.35)",
+                          "linear-gradient(90deg, #0e7490 0%, #0ea5e9 45%, #38bdf8 100%)",
+                        boxShadow: "0 0 18px rgba(14, 165, 233, 0.32)",
                       }}
                     />
                   </div>
