@@ -4,7 +4,7 @@ export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
 
 // Tokens
 export const WETH_ADDRESS =
-  "0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14";
+  "0x4200000000000000000000000000000000000006";
 export const USDC_ADDRESS =
   "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238";
 export const USDT_ADDRESS =
@@ -12,7 +12,7 @@ export const USDT_ADDRESS =
 export const WBTC_ADDRESS =
   "0x29f2d40b0605204364af54ec677bd022da425d03";
 export const CRX_ADDRESS =
-  "0x46bb8cf9f25986201c1d91f095622e37be2463a3";
+  "0xDEdDFD6F6fD2eDa3B0bC01c3Dfa03F2eA6f40504";
 
 // Protocol contracts
 export const MASTER_CHEF_ADDRESS =
@@ -24,6 +24,6 @@ export const WETH_USDC_PAIR_ADDRESS =
 
 // Uniswap V2 factory/router
 export const UNIV2_FACTORY_ADDRESS =
-  "0xb70112d72da5d6df0bb2b26a2307e4ba27cfe042";
+  "0x1F49127E87A1B925694a67C437dd2252641B3875";
 export const UNIV2_ROUTER_ADDRESS =
-  "0xf9ac1ee27a2db3a471e1f590cd689dee6a2c391d";
+  "0x40276Cff28774FaFaF758992415cFA03b6E4689c";

@@ -482,9 +482,6 @@ export default function Dashboard() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
-          <p className="text-sm text-slate-400">
-            TVL since 22/12 and 24h volume (last 7 days) from the Sepolia subgraph.
-          </p>
         </div>
         {error && (
           <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs">
