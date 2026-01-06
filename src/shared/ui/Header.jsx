@@ -4,7 +4,7 @@ import currentxLogo from "../../assets/currentx.png";
 
 export default function Header({
   address,
-  isOnSepolia,
+  isOnMegaeth,
   onConnect,
   onSwitchWallet,
   onDisconnect,
@@ -26,7 +26,7 @@ export default function Header({
   const shortAddress = address
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : "";
-  const isWrongNetwork = Boolean(address && !isOnSepolia);
+  const isWrongNetwork = Boolean(address && !isOnMegaeth);
 
   return (
     <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617] relative z-20">
@@ -55,7 +55,7 @@ export default function Header({
                 : "border-emerald-500/50 bg-emerald-500/10 text-emerald-300"
             }`}
           >
-            {isWrongNetwork ? "Wrong network" : "Sepolia Testnet"}
+            {isWrongNetwork ? "Wrong network" : "MegaETH"}
           </div>
         )}
 

@@ -11,6 +11,8 @@ import {
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   getReadOnlyProvider,
+  EXPLORER_BASE_URL,
+  NETWORK_NAME,
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
@@ -21,6 +23,7 @@ import {
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
 const MAX_UINT256 = (1n << 256n) - 1n;
+const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -697,7 +700,7 @@ export default function SwapSection({ balances }) {
                 (amountIn
                   ? isDirectEthWeth
                     ? "Direct wrap/unwrap (no fee)"
-                    : "Live quote via Uniswap V2 (Sepolia)"
+                    : "Live quote via Uniswap V2 (MegaETH)"
                   : "Enter an amount to fetch a quote")}
             </div>
             {!quoteError && displayRoute.length > 1 && (
@@ -885,12 +888,12 @@ export default function SwapSection({ balances }) {
             </div>
             {swapStatus.hash && (
               <a
-                href={`https://sepolia.etherscan.io/tx/${swapStatus.hash}`}
+                href={`${EXPLORER_BASE_URL}/tx/${swapStatus.hash}`}
                 target="_blank"
                 rel="noreferrer"
                 className="text-sky-400 hover:text-sky-300 underline mt-1 inline-block"
               >
-                Open on SepoliaScan
+                Open on {EXPLORER_LABEL}
               </a>
             )}
           </div>

@@ -39,7 +39,7 @@ export default function Footer() {
     <footer className="mt-10 border-t border-slate-800 bg-[#050915]">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
-          <span className="text-slate-300">Built on Sepolia Testnet</span>
+          <span className="text-slate-300">Built on MegaETH</span>
           <span className="text-slate-700">•</span>
           <LinkItem href={FOOTER_LINKS.docs}>Docs</LinkItem>
         </div>

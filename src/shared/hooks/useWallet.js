@@ -2,14 +2,14 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
-  SEPOLIA_CHAIN_ID_HEX,
+  MEGAETH_CHAIN_ID_HEX,
   getInjectedEthereum,
   getInjectedProviderByType,
   setActiveInjectedProvider,
 } from "../config/web3";
 
 const SESSION_KEY = "cx_session_connected";
-const NORMALIZED_SEPOLIA_CHAIN_ID = SEPOLIA_CHAIN_ID_HEX.toLowerCase();
+const NORMALIZED_MEGAETH_CHAIN_ID = MEGAETH_CHAIN_ID_HEX.toLowerCase();
 
 const normalizeChainId = (value) => {
   if (value === null || value === undefined) return null;
@@ -170,7 +170,7 @@ export function useWallet() {
     }
   };
 
-  const isOnSepolia = chainId === NORMALIZED_SEPOLIA_CHAIN_ID;
+  const isOnMegaeth = chainId === NORMALIZED_MEGAETH_CHAIN_ID;
 
-  return { address, chainId, isOnSepolia, connect, disconnect };
+  return { address, chainId, isOnMegaeth, connect, disconnect };
 }

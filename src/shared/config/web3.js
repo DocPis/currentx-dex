@@ -16,7 +16,7 @@ import {
   CRX_ADDRESS,
   CRX_WETH_LP_ADDRESS,
   MASTER_CHEF_ADDRESS,
-  SEPOLIA_CHAIN_ID_HEX,
+  MEGAETH_CHAIN_ID_HEX,
   UNIV2_FACTORY_ADDRESS,
   UNIV2_ROUTER_ADDRESS,
   USDC_ADDRESS,
@@ -29,8 +29,9 @@ import {
 const DEFAULT_RPC_URL =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
-    import.meta.env.VITE_SEPOLIA_RPC) ||
-  "https://1rpc.io/sepolia";
+    (import.meta.env.VITE_RPC_URL ||
+      import.meta.env.VITE_MEGAETH_RPC)) ||
+  "https://mainnet.megaeth.com/rpc";
 
 export function getReadOnlyProvider() {
   return new JsonRpcProvider(DEFAULT_RPC_URL);

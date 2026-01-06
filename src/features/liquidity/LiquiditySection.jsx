@@ -11,6 +11,8 @@ import {
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
   fetchMasterChefFarms,
+  EXPLORER_BASE_URL,
+  NETWORK_NAME,
 } from "../../shared/config/web3";
 import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../../shared/config/abis";
 import { fetchV2PairData } from "../../shared/config/subgraph";
@@ -65,6 +67,8 @@ const basePools = [
     poolType: "volatile",
   },
 ];
+
+const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 
 const formatNumber = (v) => {
   const num = Number(v || 0);
@@ -273,7 +277,7 @@ export default function LiquiditySection() {
           // ignore per-pool chain errors to avoid breaking the whole list
           const msg = chainErr?.message || "Failed to load TVL";
           const pairMissing =
-            msg.toLowerCase().includes("pair not found on sepolia") &&
+            msg.toLowerCase().includes("pair not found on megaeth") &&
             Boolean(pairIdOverride);
           if (!cancelled && !tvlError && !pairMissing) {
             setTvlError(msg);
@@ -544,11 +548,11 @@ export default function LiquiditySection() {
       } catch (err) {
         if (!cancelled) {
           const message = err?.message || "Failed to load pool data";
-          const pairMissing = message.toLowerCase().includes("pair not found on sepolia");
+          const pairMissing = message.toLowerCase().includes("pair not found on megaeth");
           if (pairMissing && pairIdOverride) {
             setPairError("");
           } else if (pairMissing) {
-            setPairError("Pair not found on Sepolia for this token combination. Adding liquidity will deploy it.");
+            setPairError("Pair not found on MegaETH for this token combination. Adding liquidity will deploy it.");
             setLpBalance(null);
             setLpBalanceError("");
           } else {
@@ -1080,7 +1084,7 @@ export default function LiquiditySection() {
                   Live data
                 </span>
                 <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                  Sepolia V2
+                  MegaETH V2
                 </span>
               </div>
             </div>
@@ -1349,12 +1353,12 @@ export default function LiquiditySection() {
                   </div>
                   {pairInfo?.pairAddress && (
                     <a
-                      href={`https://sepolia.etherscan.io/address/${pairInfo.pairAddress}`}
+                      href={`${EXPLORER_BASE_URL}/address/${pairInfo.pairAddress}`}
                       target="_blank"
                       rel="noreferrer"
                       className="text-xs text-sky-400 hover:text-sky-300 underline"
                     >
-                      View pair on SepoliaScan
+                      View pair on {EXPLORER_LABEL}
                     </a>
                   )}
                 </div>
@@ -1533,12 +1537,12 @@ export default function LiquiditySection() {
                       <div>{actionStatus.message}</div>
                       {actionStatus.hash && (
                         <a
-                          href={`https://sepolia.etherscan.io/tx/${actionStatus.hash}`}
+                          href={`${EXPLORER_BASE_URL}/tx/${actionStatus.hash}`}
                           target="_blank"
                           rel="noreferrer"
                           className="text-sky-400 hover:text-sky-300 underline"
                         >
-                          View on SepoliaScan
+                          View on {EXPLORER_LABEL}
                         </a>
                       )}
                     </div>

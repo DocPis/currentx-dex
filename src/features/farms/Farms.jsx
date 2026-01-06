@@ -7,8 +7,12 @@ import {
   fetchMasterChefUserData,
   getProvider,
   TOKENS,
+  EXPLORER_BASE_URL,
+  NETWORK_NAME,
 } from "../../shared/config/web3";
 import { ERC20_ABI, MASTER_CHEF_ABI } from "../../shared/config/abis";
+
+const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 
 function formatNumber(v) {
   if (v === null || v === undefined) return "N/A";
@@ -543,12 +547,12 @@ function FarmActions({
           )}
           {action.hash && action.pid === farm.pid && (
             <a
-              href={`https://sepolia.etherscan.io/tx/${action.hash}`}
+              href={`${EXPLORER_BASE_URL}/tx/${action.hash}`}
               target="_blank"
               rel="noreferrer"
               className="text-[11px] text-sky-400 hover:text-sky-300 underline"
             >
-              View tx
+              View tx on {EXPLORER_LABEL}
             </a>
           )}
         </div>

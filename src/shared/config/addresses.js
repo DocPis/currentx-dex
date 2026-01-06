@@ -1,6 +1,12 @@
 // src/config/addresses.js
 // Central place for chain IDs and on-chain addresses
-export const SEPOLIA_CHAIN_ID_HEX = "0xaa36a7";
+export const MEGAETH_CHAIN_ID_HEX = "0x10e6"; // Chain 4326 (MegaETH)
+export const NETWORK_NAME = "MegaETH";
+export const EXPLORER_BASE_URL =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    (import.meta.env.VITE_EXPLORER_BASE || import.meta.env.VITE_MEGAETH_EXPLORER)) ||
+  "https://explorer.megaeth.com";
 
 // Tokens
 export const WETH_ADDRESS =

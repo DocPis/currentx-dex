@@ -95,7 +95,7 @@ export async function getV2Quote(provider, amountIn, path) {
       ? WETH_USDC_PAIR_ADDRESS
       : await factory.getPair(tokenIn, tokenOut);
     if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-      throw new Error("Pair not found on Sepolia");
+      throw new Error("Pair not found on MegaETH");
     }
 
     const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
@@ -142,7 +142,7 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
     ? WETH_USDC_PAIR_ADDRESS
     : await factory.getPair(tokenIn, tokenOut);
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-    throw new Error("Pair not found on Sepolia");
+    throw new Error("Pair not found on MegaETH");
   }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
@@ -218,7 +218,7 @@ export async function getV2PairReserves(
       ? WETH_USDC_PAIR_ADDRESS
       : await factory.getPair(tokenA, tokenB));
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-    throw new Error("Pair not found on Sepolia");
+    throw new Error("Pair not found on MegaETH");
   }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
