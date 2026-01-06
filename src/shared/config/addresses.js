@@ -8,6 +8,9 @@ export const EXPLORER_BASE_URL =
     (import.meta.env.VITE_EXPLORER_BASE || import.meta.env.VITE_MEGAETH_EXPLORER)) ||
   "https://explorer.megaeth.com";
 
+// Infra
+export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
+
 // Tokens
 export const WETH_ADDRESS =
   "0x4200000000000000000000000000000000000006";
