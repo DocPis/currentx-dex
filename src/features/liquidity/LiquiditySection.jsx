@@ -1072,21 +1072,6 @@ export default function LiquiditySection() {
         <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
           <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-6">
             <div className="flex items-start gap-3">
-              <div className="h-11 w-11 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-300">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                >
-                  <path
-                    d="M5 6h14M5 12h14M5 18h14"
-                    stroke="currentColor"
-                    strokeWidth="1.6"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </div>
               <div>
                 <p className="text-sm text-slate-300/90">
                   Provide liquidity to enable low-slippage swaps and earn
