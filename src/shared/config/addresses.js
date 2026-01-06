@@ -6,7 +6,7 @@ export const EXPLORER_BASE_URL =
   (typeof import.meta !== "undefined" &&
     import.meta.env &&
     (import.meta.env.VITE_EXPLORER_BASE || import.meta.env.VITE_MEGAETH_EXPLORER)) ||
-  "https://explorer.megaeth.com";
+  "https://megaeth.blockscout.com";
 
 // Infra
 export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
