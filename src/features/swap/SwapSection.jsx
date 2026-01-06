@@ -80,6 +80,7 @@ export default function SwapSection({ balances }) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
+  const [toastTimer, setToastTimer] = useState(null);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -355,6 +356,23 @@ export default function SwapSection({ balances }) {
   const minReceivedRaw = quoteOutRaw
     ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
     : null;
+
+  useEffect(() => {
+    if (!swapStatus) return undefined;
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      setToastTimer(null);
+    }
+    const id = setTimeout(() => {
+      setSwapStatus(null);
+      setToastTimer(null);
+    }, 15000);
+    setToastTimer(id);
+    return () => {
+      clearTimeout(id);
+      setToastTimer(null);
+    };
+  }, [swapStatus]);
 
   const handleApprove = async () => {
     if (!approvalTarget || approvalTarget.symbol !== sellToken) return;
@@ -868,36 +886,6 @@ export default function SwapSection({ balances }) {
           </div>
         </div>
 
-        {swapStatus && (
-          <div
-            className={`mt-2 text-xs rounded-xl px-3 py-2 border backdrop-blur-sm ${
-              swapStatus.variant === "success"
-                ? "bg-slate-900/80 border-slate-700 text-slate-100"
-                : "bg-rose-500/10 border-rose-500/40 text-rose-100"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={`h-2 w-2 rounded-full ${
-                  swapStatus.variant === "success"
-                    ? "bg-emerald-400"
-                    : "bg-rose-400"
-                }`}
-              />
-              <span>{swapStatus.message}</span>
-            </div>
-            {swapStatus.hash && (
-              <a
-                href={`${EXPLORER_BASE_URL}/tx/${swapStatus.hash}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sky-400 hover:text-sky-300 underline mt-1 inline-block"
-              >
-                Open on {EXPLORER_LABEL}
-              </a>
-            )}
-          </div>
-        )}
       </div>
 
       {selectorOpen && (
@@ -994,6 +982,98 @@ export default function SwapSection({ balances }) {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {swapStatus && (
+        <div className="fixed left-4 bottom-4 z-50 max-w-sm">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (swapStatus?.hash) {
+                window.open(`${EXPLORER_BASE_URL}/tx/${swapStatus.hash}`, "_blank", "noopener,noreferrer");
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                if (swapStatus?.hash) {
+                  window.open(`${EXPLORER_BASE_URL}/tx/${swapStatus.hash}`, "_blank", "noopener,noreferrer");
+                }
+              }
+            }}
+            className={`group relative flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-sm cursor-pointer transition ${
+              swapStatus.variant === "success"
+                ? "bg-emerald-900/80 border-emerald-500/50 text-emerald-50 hover:border-emerald-400/70"
+                : "bg-rose-900/80 border-rose-500/50 text-rose-50 hover:border-rose-400/70"
+            }`}
+          >
+            <div
+              className={`mt-0.5 h-8 w-8 rounded-xl flex items-center justify-center shadow-inner shadow-black/30 ${
+                swapStatus.variant === "success"
+                  ? "bg-emerald-600/50 text-emerald-100"
+                  : "bg-rose-600/50 text-rose-100"
+              }`}
+            >
+              {swapStatus.variant === "success" ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M5 13l4 4L19 7"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M6 6l12 12M6 18L18 6"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              )}
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold">
+                {swapStatus.variant === "success"
+                  ? "Transaction confirmed"
+                  : "Transaction failed"}
+              </div>
+              <div className="text-xs text-slate-200/90 mt-0.5">
+                {swapStatus.message}
+              </div>
+              {swapStatus.hash && (
+                <div className="text-[11px] text-sky-200 underline mt-1">
+                  Open on {EXPLORER_LABEL}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSwapStatus(null);
+              }}
+              className="ml-2 text-sm text-slate-300 hover:text-white"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
           </div>
         </div>
       )}
