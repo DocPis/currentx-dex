@@ -42,9 +42,17 @@ export function useBalances(address) {
         const getErc20Balance = async (tokenKey) => {
           const token = TOKENS[tokenKey];
           if (!token?.address) return 0;
-          const contract = await getErc20(token.address, provider);
-          const raw = await contract.balanceOf(walletAddress);
-          return Number(formatUnits(raw, token.decimals));
+          try {
+            const contract = await getErc20(token.address, provider);
+            const raw = await contract.balanceOf(walletAddress);
+            return Number(formatUnits(raw, token.decimals));
+          } catch (err) {
+            console.warn(
+              `Balance lookup failed for ${tokenKey} at ${token.address}:`,
+              err?.message || err
+            );
+            return 0;
+          }
         };
 
         const weth = await getErc20Balance("WETH");
@@ -64,7 +72,7 @@ export function useBalances(address) {
           CRX: crx,
         });
       } catch (e) {
-        console.error("Error loading balances:", e);
+        console.error("Error loading balances:", e?.message || e);
       } finally {
         setLoading(false);
         isRefreshing.current = false;
