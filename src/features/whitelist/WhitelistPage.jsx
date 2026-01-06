@@ -32,13 +32,13 @@ export default function WhitelistPage() {
           </div>
           <div className="flex flex-col">
             <span className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
-              Whitelist access
+              Presale whitelist
             </span>
             <h1 className="text-2xl sm:text-3xl font-semibold text-white leading-tight">
-              CurrentX Genesis Whitelist
+              CurrentX Token Presale Access
             </h1>
             <p className="text-sm text-slate-400">
-              Lock in your spot for early trading perks and community drops.
+              Blocca il tuo posto per la presale di CurrentX e per i drop dedicati alla community.
             </p>
           </div>
         </div>
@@ -60,14 +60,14 @@ export default function WhitelistPage() {
                   Limited allocation
                 </div>
                 <p className="text-lg font-semibold text-slate-50">
-                  Be first in line for fee-free routes, early LP incentives, and gated feature drops as we launch.
+                  Un posto prioritario per acquistare il token CurrentX in presale, prima dell&apos;apertura pubblica.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
                   {[
-                    "Priority access to upcoming pairs and pools.",
-                    "Early user rewards and XP for the genesis cohort.",
-                    "Direct comms via Discord / Telegram for drops.",
-                    "Design language synced with the CurrentX DEX UI.",
+                    "Allocazione prioritaria per la presale del token CurrentX.",
+                    "Aggiornamenti su prezzo, fase e finestra temporale della presale.",
+                    "Canali diretti (Discord/Telegram) per conferma e claim.",
+                    "Benefici futuri su DEX: fee ridotte e accesso anticipato a nuove pool.",
                   ].map((item) => (
                     <div
                       key={item}
@@ -89,11 +89,11 @@ export default function WhitelistPage() {
             <div className="absolute inset-x-0 top-0 h-[1px] bg-gradient-to-r from-transparent via-sky-500/60 to-transparent opacity-70" />
             <div className="mb-8 space-y-1.5">
               <div className="text-[11px] uppercase tracking-[0.28em] text-slate-400">
-                Whitelist registration
+                Whitelist presale
               </div>
               <p className="text-sm text-slate-300 leading-relaxed">
-                Register early to secure your spot in CurrentX and unlock access to what comes next. We&apos;ll reach out
-                through Discord or Telegram when your slot is confirmed.
+                Inserisci i tuoi dati per essere contattato sulla presale del token CurrentX. Ti avviseremo su Discord o
+                Telegram quando la tua allocazione viene confermata.
               </p>
             </div>
 
@@ -142,13 +142,13 @@ export default function WhitelistPage() {
 
             <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-xs text-slate-400">
-                Slots are limited. Submission does not guarantee entry until confirmed.
+                Slot limitati. L&apos;inserimento non garantisce l&apos;allocazione finché non ricevi conferma.
               </div>
               <button
                 type="submit"
                 className="inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 shadow-[0_12px_40px_-18px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition"
               >
-                Register
+                Registrati
               </button>
             </div>
 
