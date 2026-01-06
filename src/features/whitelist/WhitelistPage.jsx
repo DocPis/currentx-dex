@@ -38,7 +38,7 @@ export default function WhitelistPage() {
               CurrentX Token Presale Access
             </h1>
             <p className="text-sm text-slate-400">
-              Blocca il tuo posto per la presale di CurrentX e per i drop dedicati alla community.
+              Lock in your spot for the CurrentX token presale and for community-only drops.
             </p>
           </div>
         </div>
@@ -60,14 +60,14 @@ export default function WhitelistPage() {
                   Limited allocation
                 </div>
                 <p className="text-lg font-semibold text-slate-50">
-                  Un posto prioritario per acquistare il token CurrentX in presale, prima dell&apos;apertura pubblica.
+                  Priority allocation to buy the CurrentX token in presale, before the public window opens.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
                   {[
-                    "Allocazione prioritaria per la presale del token CurrentX.",
-                    "Aggiornamenti su prezzo, fase e finestra temporale della presale.",
-                    "Canali diretti (Discord/Telegram) per conferma e claim.",
-                    "Benefici futuri su DEX: fee ridotte e accesso anticipato a nuove pool.",
+                    "Priority allocation for the CurrentX token presale.",
+                    "Updates on price, phase, and presale time windows.",
+                    "Direct channels (Discord/Telegram) for confirmation and claim.",
+                    "Future DEX perks: lower fees and early access to new pools.",
                   ].map((item) => (
                     <div
                       key={item}
@@ -92,8 +92,8 @@ export default function WhitelistPage() {
                 Whitelist presale
               </div>
               <p className="text-sm text-slate-300 leading-relaxed">
-                Inserisci i tuoi dati per essere contattato sulla presale del token CurrentX. Ti avviseremo su Discord o
-                Telegram quando la tua allocazione viene confermata.
+                Enter your details to be contacted about the CurrentX token presale. We&apos;ll ping you on Discord or
+                Telegram when your allocation is confirmed.
               </p>
             </div>
 
@@ -142,13 +142,13 @@ export default function WhitelistPage() {
 
             <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-xs text-slate-400">
-                Slot limitati. L&apos;inserimento non garantisce l&apos;allocazione finché non ricevi conferma.
+                Slots are limited. Submission does not guarantee allocation until you receive confirmation.
               </div>
               <button
                 type="submit"
                 className="inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 shadow-[0_12px_40px_-18px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition"
               >
-                Registrati
+                Register
               </button>
             </div>
 
