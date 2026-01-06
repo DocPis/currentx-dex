@@ -28,8 +28,6 @@ export const MASTER_CHEF_ADDRESS =
   "0x8d29ebbf13786fe6c5439937d5d47e2fb8cc9f9a";
 export const CRX_WETH_LP_ADDRESS =
   "0x340d63169285e5ae01a722ce762c0e81a7fa3037";
-export const WETH_USDC_PAIR_ADDRESS =
-  "0x92aC66C621832EF02629c10A3Db25C5e92eA33d4";
 
 // Uniswap V2 factory/router
 export const UNIV2_FACTORY_ADDRESS =

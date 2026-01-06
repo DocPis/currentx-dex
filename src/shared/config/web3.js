@@ -23,7 +23,6 @@ import {
   USDT_ADDRESS,
   WBTC_ADDRESS,
   WETH_ADDRESS,
-  WETH_USDC_PAIR_ADDRESS,
 } from "./addresses";
 
 const DEFAULT_RPC_URL =

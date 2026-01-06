@@ -12,7 +12,6 @@ import {
   USDC_ADDRESS,
   USDT_ADDRESS,
   WETH_ADDRESS,
-  WETH_USDC_PAIR_ADDRESS,
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";
 import { fetchV2PairData } from "../config/subgraph";
@@ -58,8 +57,7 @@ async function getWethPriceUSD(provider, priceCache) {
   const { reserve0, reserve1, token0 } = await getV2PairReserves(
     provider,
     WETH_ADDRESS,
-    USDC_ADDRESS,
-    WETH_USDC_PAIR_ADDRESS
+    USDC_ADDRESS
   );
   const wethIs0 = token0.toLowerCase() === WETH_ADDRESS.toLowerCase();
   const wethRes = wethIs0 ? reserve0 : reserve1;
