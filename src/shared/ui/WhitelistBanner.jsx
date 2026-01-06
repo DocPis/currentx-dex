@@ -13,7 +13,7 @@ export default function WhitelistBanner({ href = DEFAULT_WHITELIST_URL }) {
       <div className="w-full bg-[#0ff5ff] text-slate-900 px-4 py-2 flex items-center justify-center gap-2 sm:gap-3 text-[11px] sm:text-sm font-semibold tracking-[0.18em] uppercase shadow-[0_1px_0_rgba(0,0,0,0.25)] hover:brightness-[1.05] transition">
         <span className="font-black">Join the whitelist</span>
         <span className="hidden sm:inline text-slate-900/90 tracking-normal normal-case font-medium">
-          → Register early to secure your spot
+          → Register early to secure your spot in CurrentX genesis
         </span>
       </div>
     </a>
