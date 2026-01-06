@@ -23,13 +23,6 @@ export default function WhitelistPage() {
 
       <div className="relative max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 lg:py-16">
         <div className="flex items-center gap-3 mb-10">
-          <div className="h-14 w-14 rounded-2xl bg-slate-900/80 border border-slate-800 p-2 shadow-lg shadow-black/30">
-            <img
-              src={currentxLogo}
-              alt="CurrentX logo"
-              className="h-full w-full object-contain"
-            />
-          </div>
           <div className="flex flex-col">
             <span className="text-[11px] uppercase tracking-[0.22em] text-slate-400">
               Presale whitelist
