@@ -49,18 +49,24 @@ export default function Footer() {
             <img
               src={discordIcon}
               alt="Discord"
-              className="h-full w-full object-cover scale-125"
+              className="h-full w-full object-contain"
+              style={{ transform: "scale(1.3)" }}
             />
           </IconButton>
           <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
-            <img src={twitterIcon} alt="Twitter / X" className="h-full w-full object-contain" />
+            <img
+              src={twitterIcon}
+              alt="Twitter / X"
+              className="h-full w-full object-contain"
+              style={{ transform: "scale(1.35)" }}
+            />
           </IconButton>
           <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
             <img
               src={telegramIcon}
               alt="Telegram"
-              className="h-full w-full object-cover"
-              style={{ transform: "scale(1.85)" }}
+              className="h-full w-full object-contain"
+              style={{ transform: "scale(1.7)" }}
             />
           </IconButton>
         </div>
