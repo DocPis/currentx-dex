@@ -1070,24 +1070,21 @@ export default function LiquiditySection() {
       {/* hero / stats */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
         <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
-          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-6">
-            <div className="flex items-start gap-3">
-              <div>
-                <p className="text-sm text-slate-300/90">
-                  Provide liquidity to enable low-slippage swaps and earn
-                  emissions.
-                </p>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
-                    Live data
-                  </span>
-                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                    Sepolia V2
-                  </span>
-                </div>
+          <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
+            <div className="flex flex-col items-center gap-3 max-w-3xl">
+              <p className="text-base sm:text-lg text-slate-200">
+                Provide liquidity to enable low-slippage swaps and earn emissions.
+              </p>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
+                  Live data
+                </span>
+                <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                  Sepolia V2
+                </span>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-4 min-w-[280px] text-right">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl text-center">
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
                   Volume 24h
