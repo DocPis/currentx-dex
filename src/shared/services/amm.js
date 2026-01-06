@@ -95,12 +95,19 @@ export async function getV2Quote(provider, amountIn, path) {
       ? WETH_USDC_PAIR_ADDRESS
       : await factory.getPair(tokenIn, tokenOut);
     if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-      throw new Error("Pair not found on MegaETH");
+      throw new Error("Pair not found on MegaETH (not deployed yet)");
     }
 
     const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
-    const [reserve0, reserve1] = await pair.getReserves();
-    const token0 = await pair.token0();
+    let reserve0;
+    let reserve1;
+    let token0;
+    try {
+      [reserve0, reserve1] = await pair.getReserves();
+      token0 = await pair.token0();
+    } catch {
+      throw new Error("Pair not found on MegaETH (not deployed yet)");
+    }
 
     const tokenInIs0 = token0.toLowerCase() === tokenIn.toLowerCase();
     const reserveIn = tokenInIs0 ? reserve0 : reserve1;
@@ -138,17 +145,25 @@ export async function getV2QuoteWithMeta(provider, amountIn, tokenIn, tokenOut) 
       tokenOutLower
     );
 
-  const pairAddress = isWethUsdc
-    ? WETH_USDC_PAIR_ADDRESS
-    : await factory.getPair(tokenIn, tokenOut);
-  if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-    throw new Error("Pair not found on MegaETH");
-  }
+    const pairAddress = isWethUsdc
+      ? WETH_USDC_PAIR_ADDRESS
+      : await factory.getPair(tokenIn, tokenOut);
+    if (!pairAddress || pairAddress === ZERO_ADDRESS) {
+      throw new Error("Pair not found on MegaETH (not deployed yet)");
+    }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
-  const [reserve0, reserve1] = await pair.getReserves();
-  const token0 = await pair.token0();
-  const token1 = await pair.token1();
+  let reserve0;
+  let reserve1;
+  let token0;
+  let token1;
+  try {
+    [reserve0, reserve1] = await pair.getReserves();
+    token0 = await pair.token0();
+    token1 = await pair.token1();
+  } catch {
+    throw new Error("Pair not found on MegaETH (not deployed yet)");
+  }
 
   const tokenInIs0 = token0.toLowerCase() === tokenIn.toLowerCase();
   const reserveIn = tokenInIs0 ? reserve0 : reserve1;
@@ -212,19 +227,27 @@ export async function getV2PairReserves(
       tokenBLower
     );
 
-  const pairAddress =
-    pairAddressOverride ||
-    (isWethUsdc
-      ? WETH_USDC_PAIR_ADDRESS
-      : await factory.getPair(tokenA, tokenB));
-  if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-    throw new Error("Pair not found on MegaETH");
-  }
+    const pairAddress =
+      pairAddressOverride ||
+      (isWethUsdc
+        ? WETH_USDC_PAIR_ADDRESS
+        : await factory.getPair(tokenA, tokenB));
+    if (!pairAddress || pairAddress === ZERO_ADDRESS) {
+      throw new Error("Pair not found on MegaETH (not deployed yet)");
+    }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
-  const [reserve0, reserve1] = await pair.getReserves();
-  const token0 = await pair.token0();
-  const token1 = await pair.token1();
+  let reserve0;
+  let reserve1;
+  let token0;
+  let token1;
+  try {
+    [reserve0, reserve1] = await pair.getReserves();
+    token0 = await pair.token0();
+    token1 = await pair.token1();
+  } catch {
+    throw new Error("Pair not found on MegaETH (not deployed yet)");
+  }
 
   return {
     pairAddress,
