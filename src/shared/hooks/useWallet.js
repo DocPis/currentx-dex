@@ -8,6 +8,19 @@ import {
 } from "../config/web3";
 
 const SESSION_KEY = "cx_session_connected";
+const NORMALIZED_SEPOLIA_CHAIN_ID = SEPOLIA_CHAIN_ID_HEX.toLowerCase();
+
+const normalizeChainId = (value) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "bigint") return `0x${value.toString(16)}`.toLowerCase();
+  const str = String(value).trim();
+  if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase();
+  const asNumber = Number(str);
+  if (Number.isFinite(asNumber)) {
+    return `0x${asNumber.toString(16)}`.toLowerCase();
+  }
+  return str.toLowerCase();
+};
 
 export function useWallet() {
   const [address, setAddress] = useState(null);
@@ -33,7 +46,7 @@ export function useWallet() {
       };
 
       const handleChainChanged = (chainIdHex) => {
-        setChainId(chainIdHex);
+        setChainId(normalizeChainId(chainIdHex));
       };
 
       eth
@@ -45,7 +58,7 @@ export function useWallet() {
 
       eth
         .request({ method: "eth_chainId" })
-        .then(setChainId)
+        .then((cid) => setChainId(normalizeChainId(cid)))
         .catch(() => {});
 
       eth.on("accountsChanged", handleAccountsChanged);
@@ -132,7 +145,7 @@ export function useWallet() {
     const primaryAccount = accounts[0] || null;
     setAddress(primaryAccount);
     const cid = await provider.send("eth_chainId", []);
-    setChainId(cid);
+    setChainId(normalizeChainId(cid));
     try {
       sessionStorage.setItem(SESSION_KEY, "1");
       setSessionConnected(true);
@@ -153,7 +166,7 @@ export function useWallet() {
     }
   };
 
-  const isOnSepolia = chainId === SEPOLIA_CHAIN_ID_HEX;
+  const isOnSepolia = chainId === NORMALIZED_SEPOLIA_CHAIN_ID;
 
   return { address, chainId, isOnSepolia, connect, disconnect };
 }
