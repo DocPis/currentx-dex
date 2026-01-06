@@ -5,6 +5,7 @@ import {
   SEPOLIA_CHAIN_ID_HEX,
   getInjectedEthereum,
   getInjectedProviderByType,
+  setActiveInjectedProvider,
 } from "../config/web3";
 
 const SESSION_KEY = "cx_session_connected";
@@ -40,6 +41,7 @@ export function useWallet() {
 
     const initWithProvider = (eth) => {
       if (!eth) return;
+      setActiveInjectedProvider(eth);
 
       const handleAccountsChanged = (accounts) => {
         setAddress(accounts[0] || null);
@@ -146,6 +148,7 @@ export function useWallet() {
     setAddress(primaryAccount);
     const cid = await provider.send("eth_chainId", []);
     setChainId(normalizeChainId(cid));
+    setActiveInjectedProvider(injected);
     try {
       sessionStorage.setItem(SESSION_KEY, "1");
       setSessionConnected(true);
@@ -158,6 +161,7 @@ export function useWallet() {
   const disconnect = () => {
     setAddress(null);
     setChainId(null);
+    setActiveInjectedProvider(null);
     try {
       sessionStorage.removeItem(SESSION_KEY);
       setSessionConnected(false);

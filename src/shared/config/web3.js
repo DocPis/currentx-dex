@@ -67,6 +67,11 @@ function collectInjectedProviders() {
     out.push(p);
   };
 
+  // Some wallets expose a selected provider when multiple are present
+  if (ethereum?.selectedProvider) {
+    push(ethereum.selectedProvider);
+  }
+
   if (Array.isArray(ethereum?.providers)) ethereum.providers.forEach(push);
   if (Array.isArray(ethereum?.detected)) ethereum.detected.forEach(push);
   if (ethereum?.providerMap) {
@@ -87,6 +92,18 @@ function collectInjectedProviders() {
 
   return out;
 }
+
+let activeInjectedProvider = null;
+
+export const setActiveInjectedProvider = (provider) => {
+  activeInjectedProvider = provider || null;
+};
+
+const resolveActiveProvider = (candidates) => {
+  if (!activeInjectedProvider) return null;
+  const match = candidates.find((p) => p === activeInjectedProvider);
+  return match || null;
+};
 
 const isTrust = (p) => {
   const name =
@@ -133,6 +150,9 @@ const isMetaMaskStrict = (p) =>
 export function getInjectedEthereum() {
   const candidates = collectInjectedProviders();
   if (!candidates.length) return null;
+
+  const active = resolveActiveProvider(candidates);
+  if (active) return active;
 
   const metamask = candidates.find(isMetaMaskStrict);
   const trust = candidates.find(isTrust);
@@ -207,7 +227,7 @@ export async function getProvider(preferredType) {
       );
     }
   } else {
-    eth = getInjectedEthereum();
+    eth = resolveActiveProvider(collectInjectedProviders()) || getInjectedEthereum();
   }
   if (!eth) {
     throw new Error(
