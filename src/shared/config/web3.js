@@ -33,6 +33,8 @@ const DEFAULT_RPC_URL =
       import.meta.env.VITE_MEGAETH_RPC)) ||
   "https://mainnet.megaeth.com/rpc";
 
+export const RPC_URL = DEFAULT_RPC_URL;
+
 export function getReadOnlyProvider() {
   return new JsonRpcProvider(DEFAULT_RPC_URL);
 }

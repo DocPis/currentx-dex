@@ -3,6 +3,9 @@ import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
   MEGAETH_CHAIN_ID_HEX,
+  EXPLORER_BASE_URL,
+  NETWORK_NAME,
+  RPC_URL,
   getInjectedEthereum,
   getInjectedProviderByType,
   setActiveInjectedProvider,
@@ -116,6 +119,70 @@ export function useWallet() {
         "Selected wallet not detected. Please install/open the chosen wallet and retry."
       );
     }
+    const ensureCorrectNetwork = async () => {
+      try {
+        const current = normalizeChainId(
+          await injected.request({ method: "eth_chainId" })
+        );
+        if (current === NORMALIZED_MEGAETH_CHAIN_ID) return current;
+      } catch {
+        // ignore
+      }
+      try {
+        await injected.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: MEGAETH_CHAIN_ID_HEX }],
+        });
+        return NORMALIZED_MEGAETH_CHAIN_ID;
+      } catch (err) {
+        const code =
+          err?.info?.error?.code ??
+          err?.error?.code ??
+          err?.code ??
+          err?.data?.code;
+        const msg = (err?.message || "").toLowerCase();
+        if (code === 4902 || msg.includes("unrecognized chain")) {
+          try {
+            await injected.request({
+              method: "wallet_addEthereumChain",
+              params: [
+                {
+                  chainId: MEGAETH_CHAIN_ID_HEX,
+                  chainName: NETWORK_NAME || "MegaETH",
+                  nativeCurrency: {
+                    name: "Ether",
+                    symbol: "ETH",
+                    decimals: 18,
+                  },
+                  rpcUrls: [RPC_URL],
+                  blockExplorerUrls: EXPLORER_BASE_URL ? [EXPLORER_BASE_URL] : [],
+                },
+              ],
+            });
+            return NORMALIZED_MEGAETH_CHAIN_ID;
+          } catch (addErr) {
+            if (
+              addErr?.code === 4001 ||
+              (addErr?.message || "").toLowerCase().includes("rejected")
+            ) {
+              throw new Error("Please approve the network add/switch to MegaETH in your wallet.");
+            }
+            throw new Error(
+              addErr?.message || "Could not add MegaETH network to your wallet."
+            );
+          }
+        }
+        if (code === 4001 || msg.includes("rejected")) {
+          throw new Error("Please switch your wallet to the MegaETH network to continue.");
+        }
+        throw new Error(
+          err?.message || "Failed to switch to the MegaETH network in your wallet."
+        );
+      }
+    };
+
+    await ensureCorrectNetwork();
+
     const provider = new BrowserProvider(injected);
     const requester = injected.request ? injected : provider;
     let accounts;
@@ -146,6 +213,7 @@ export function useWallet() {
     }
     const primaryAccount = accounts[0] || null;
     setAddress(primaryAccount);
+
     const cid = await provider.send("eth_chainId", []);
     setChainId(normalizeChainId(cid));
     setActiveInjectedProvider(injected);
