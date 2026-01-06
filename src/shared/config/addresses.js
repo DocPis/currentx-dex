@@ -25,7 +25,7 @@ export const CRX_ADDRESS =
 
 // Protocol contracts
 export const MASTER_CHEF_ADDRESS =
-  "0x8d29ebbf13786fe6c5439937d5d47e2fb8cc9f9a";
+  "0x0e59533B28df0537bc28D05618a2c4f20EBE07a0";
 export const CRX_WETH_LP_ADDRESS =
   "0x340d63169285e5ae01a722ce762c0e81a7fa3037";
 
