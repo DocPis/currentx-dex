@@ -60,7 +60,7 @@ export default function Footer() {
               src={telegramIcon}
               alt="Telegram"
               className="h-full w-full object-cover"
-              style={{ transform: "scale(1.6)" }}
+              style={{ transform: "scale(1.85)" }}
             />
           </IconButton>
         </div>
