@@ -6,11 +6,48 @@ export default function WhitelistPage() {
   const [discord, setDiscord] = useState("");
   const [telegram, setTelegram] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setSubmitted(true);
-    setTimeout(() => setSubmitted(false), 3500);
+    setSubmitError("");
+
+    if (!discord.trim() && !telegram.trim()) {
+      setSubmitError("Please provide at least a Discord or Telegram handle.");
+      return;
+    }
+
+    const payload = {
+      wallet: wallet.trim(),
+      discord: discord.trim(),
+      telegram: telegram.trim(),
+      source: "currentx-presale",
+      ts: Date.now(),
+    };
+
+    const submit = async () => {
+      if (!PRESALE_ENDPOINT) return;
+      await fetch(PRESALE_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    };
+
+    try {
+      setSubmitting(true);
+      await submit();
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 15000);
+    } catch (err) {
+      setSubmitError(
+        err?.message ||
+          "Submission failed. Please try again or contact us on Discord."
+      );
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -99,17 +136,16 @@ export default function WhitelistPage() {
                   required
                   value={wallet}
                   onChange={(e) => setWallet(e.target.value)}
-                  placeholder="0x44Ae6939BEDD4F59E0C4Efa9Bc948b83Bcc0564F"
+                  placeholder="0x0000000000000000000000000000000000000000"
                   className="w-full rounded-xl bg-slate-950/70 border border-slate-800 px-3.5 py-3 text-sm text-slate-50 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:border-sky-500/60 transition"
                 />
               </label>
 
               <label className="flex flex-col gap-2">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400 font-semibold">
-                  Discord username <span className="text-rose-300">*</span>
+                  Discord username
                 </div>
                 <input
-                  required
                   value={discord}
                   onChange={(e) => setDiscord(e.target.value)}
                   placeholder="username"
@@ -119,7 +155,7 @@ export default function WhitelistPage() {
 
               <label className="flex flex-col gap-2">
                 <div className="text-[11px] uppercase tracking-[0.16em] text-slate-400 font-semibold">
-                  Telegram username (optional)
+                  Telegram username
                 </div>
                 <input
                   value={telegram}
@@ -139,12 +175,18 @@ export default function WhitelistPage() {
               </div>
               <button
                 type="submit"
-                className="inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 shadow-[0_12px_40px_-18px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition"
+                disabled={submitting}
+                className="inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold text-white bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 shadow-[0_12px_40px_-18px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60"
               >
-                Register
+                {submitting ? "Submitting..." : "Register"}
               </button>
             </div>
 
+            {submitError && (
+              <div className="mt-4 rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-100 shadow-[0_0_20px_rgba(248,113,113,0.25)]">
+                {submitError}
+              </div>
+            )}
             {submitted && (
               <div className="mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.25)]">
                 Received. We&apos;ll review and follow up through your contact handle.
