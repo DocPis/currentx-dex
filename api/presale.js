@@ -8,7 +8,8 @@ export default async function handler(req, res) {
     const { wallet, discord, telegram, source, ts } = req.body || {};
     const webhookUrl = process.env.DISCORD_WEBHOOK_URL || "";
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN || "";
-    const telegramChatId = process.env.TELEGRAM_CHAT_ID || "";
+    const telegramChatId =
+      process.env.TELEGRAM_WHITELIST_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "";
 
     if (!wallet) {
       res.status(400).json({ error: "Missing wallet" });
@@ -51,7 +52,7 @@ export default async function handler(req, res) {
     // Optional: forward to Telegram if configured
     if (telegramToken && telegramChatId) {
       const tgContent = [
-        "New CurrentX presale lead",
+        "New CurrentX whitelist submission",
         `Wallet: ${wallet}`,
         discord ? `Discord: ${discord}` : "Discord: (none)",
         telegram ? `Telegram: ${telegram}` : "Telegram: (none)",
