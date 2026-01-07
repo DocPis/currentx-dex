@@ -31,12 +31,6 @@ const basePools = [
     poolType: "volatile",
   },
   {
-    id: "dai-usdc",
-    token0Symbol: "DAI",
-    token1Symbol: "USDC",
-    poolType: "stable",
-  },
-  {
     id: "eth-usdc",
     token0Symbol: "ETH",
     token1Symbol: "USDC",
@@ -224,13 +218,9 @@ export default function LiquiditySection() {
           const metaA = tokenRegistry[pool.token0Symbol];
           const metaB = tokenRegistry[pool.token1Symbol];
           const stableA =
-            metaA?.symbol === "USDC" ||
-            metaA?.symbol === "USDT" ||
-            metaA?.symbol === "DAI";
+            metaA?.symbol === "USDC";
           const stableB =
-            metaB?.symbol === "USDC" ||
-            metaB?.symbol === "USDT" ||
-            metaB?.symbol === "DAI";
+            metaB?.symbol === "USDC";
           let tvlUsd;
           let finalPairAddress = pairAddress;
           if (stableA) {

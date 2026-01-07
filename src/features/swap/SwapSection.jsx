@@ -21,7 +21,7 @@ import {
   UNIV2_FACTORY_ABI,
 } from "../../shared/config/abis";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDT", "DAI", "WBTC", "CRX"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CRX"];
 const MAX_UINT256 = (1n << 256n) - 1n;
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 

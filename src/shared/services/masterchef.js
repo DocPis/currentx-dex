@@ -10,7 +10,6 @@ import {
   CRX_WETH_LP_ADDRESS,
   MASTER_CHEF_ADDRESS,
   USDC_ADDRESS,
-  USDT_ADDRESS,
   WETH_ADDRESS,
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";
@@ -76,9 +75,7 @@ async function getTokenPriceUSD(provider, address, priceCache) {
 
   try {
     if (
-      lower === USDC_ADDRESS.toLowerCase() ||
-      lower === USDT_ADDRESS.toLowerCase() ||
-      lower === TOKENS.DAI.address.toLowerCase()
+      lower === USDC_ADDRESS.toLowerCase()
     ) {
       priceCache[lower] = 1;
       return 1;
