@@ -1,6 +1,12 @@
 import React, { useState } from "react";
 import currentxLogo from "../../assets/currentxlogo.png";
 
+const PRESALE_ENDPOINT =
+  (typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    import.meta.env.VITE_PRESALE_ENDPOINT) ||
+  "";
+
 export default function WhitelistPage() {
   const [wallet, setWallet] = useState("");
   const [discord, setDiscord] = useState("");
