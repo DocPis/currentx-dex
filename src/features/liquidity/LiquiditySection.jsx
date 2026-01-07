@@ -31,32 +31,8 @@ const basePools = [
     poolType: "volatile",
   },
   {
-    id: "weth-dai",
-    token0Symbol: "WETH",
-    token1Symbol: "DAI",
-    poolType: "volatile",
-  },
-  {
-    id: "weth-usdt",
-    token0Symbol: "WETH",
-    token1Symbol: "USDT",
-    poolType: "volatile",
-  },
-  {
-    id: "wbtc-usdc",
-    token0Symbol: "WBTC",
-    token1Symbol: "USDC",
-    poolType: "volatile",
-  },
-  {
     id: "dai-usdc",
     token0Symbol: "DAI",
-    token1Symbol: "USDC",
-    poolType: "stable",
-  },
-  {
-    id: "usdt-usdc",
-    token0Symbol: "USDT",
     token1Symbol: "USDC",
     poolType: "stable",
   },
