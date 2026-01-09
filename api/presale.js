@@ -6,9 +6,10 @@ const submittedWallets =
 const normalizeWallet = (wallet) =>
   (wallet || "").toString().trim().toLowerCase();
 
-const kvEnabled = Boolean(
-  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
-);
+// Only enable KV when explicitly allowed (FORCE_KV=1) and credentials are present.
+const kvEnabled =
+  process.env.FORCE_KV === "1" &&
+  Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 let kvAvailable = kvEnabled;
 
 const handleKvError = (e) => {
