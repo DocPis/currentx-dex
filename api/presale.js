@@ -1,8 +1,55 @@
+import { kv } from "@vercel/kv";
+
 const submittedWallets =
   globalThis.__cxSubmittedWallets || (globalThis.__cxSubmittedWallets = new Set());
 
 const normalizeWallet = (wallet) =>
   (wallet || "").toString().trim().toLowerCase();
+
+const kvEnabled = Boolean(
+  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+);
+
+const isDuplicateWallet = async (wallet) => {
+  if (!wallet) return false;
+  if (kvEnabled) {
+    try {
+      const existing = await kv.get(wallet);
+      return Boolean(existing);
+    } catch (e) {
+      console.error("KV get error", e);
+    }
+  }
+  return submittedWallets.has(wallet);
+};
+
+const storeWallet = async ({ wallet, discord, telegram, source, ts }) => {
+  if (!wallet) return;
+  if (kvEnabled) {
+    try {
+      const result = await kv.set(
+        wallet,
+        {
+          wallet,
+          discord: discord || null,
+          telegram: telegram || null,
+          source: source || "currentx-presale",
+          ts: ts || Date.now(),
+        },
+        { nx: true }
+      );
+      // If nx:true and key exists, result will be null -> treat as duplicate
+      if (result === null) {
+        return { duplicate: true };
+      }
+      return { duplicate: false };
+    } catch (e) {
+      console.error("KV set error", e);
+    }
+  }
+  submittedWallets.add(wallet);
+  return { duplicate: false };
+};
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -27,13 +74,27 @@ export default async function handler(req, res) {
       return;
     }
 
-    if (submittedWallets.has(normalizedWallet)) {
+    const alreadySubmitted = await isDuplicateWallet(normalizedWallet);
+    if (alreadySubmitted) {
       res
         .status(409)
         .json({ error: "This wallet is already registered for the presale." });
       return;
     }
-    submittedWallets.add(normalizedWallet);
+
+    const storeResult = await storeWallet({
+      wallet: normalizedWallet,
+      discord,
+      telegram,
+      source,
+      ts,
+    });
+    if (storeResult?.duplicate) {
+      res
+        .status(409)
+        .json({ error: "This wallet is already registered for the presale." });
+      return;
+    }
 
     console.log("Presale lead", {
       wallet: normalizedWallet,
