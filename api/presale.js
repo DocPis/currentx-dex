@@ -9,15 +9,26 @@ const normalizeWallet = (wallet) =>
 const kvEnabled = Boolean(
   process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
 );
+let kvAvailable = kvEnabled;
+
+const handleKvError = (e) => {
+  const msg = e?.message || "";
+  const lower = msg.toLowerCase();
+  // Upstash/Vercel KV can return 402 when free tier is exhausted; disable KV to avoid spamming errors
+  if (lower.includes("payment required")) {
+    kvAvailable = false;
+  }
+  console.error("KV error", msg);
+};
 
 const isDuplicateWallet = async (wallet) => {
   if (!wallet) return false;
-  if (kvEnabled) {
+  if (kvAvailable) {
     try {
       const existing = await kv.get(wallet);
       return Boolean(existing);
     } catch (e) {
-      console.error("KV get error", e);
+      handleKvError(e);
     }
   }
   return submittedWallets.has(wallet);
@@ -25,7 +36,7 @@ const isDuplicateWallet = async (wallet) => {
 
 const storeWallet = async ({ wallet, discord, telegram, source, ts }) => {
   if (!wallet) return;
-  if (kvEnabled) {
+  if (kvAvailable) {
     try {
       const result = await kv.set(
         wallet,
@@ -44,7 +55,7 @@ const storeWallet = async ({ wallet, discord, telegram, source, ts }) => {
       }
       return { duplicate: false };
     } catch (e) {
-      console.error("KV set error", e);
+      handleKvError(e);
     }
   }
   submittedWallets.add(wallet);
