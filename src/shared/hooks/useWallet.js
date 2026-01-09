@@ -141,7 +141,15 @@ export function useWallet() {
           err?.code ??
           err?.data?.code;
         const msg = (err?.message || "").toLowerCase();
-        if (code === 4902 || msg.includes("unrecognized chain")) {
+        if (
+          code === 4902 ||
+          code === -32603 ||
+          msg.includes("unrecognized chain") ||
+          msg.includes("unknown chain") ||
+          msg.includes("chain not added") ||
+          msg.includes("not supported") ||
+          msg.includes("wallet_switchethereumchain")
+        ) {
           try {
             await injected.request({
               method: "wallet_addEthereumChain",
@@ -176,7 +184,8 @@ export function useWallet() {
           throw new Error("Please switch your wallet to the MegaETH network to continue.");
         }
         throw new Error(
-          err?.message || "Failed to switch to the MegaETH network in your wallet."
+          err?.message ||
+            "Failed to switch to the MegaETH network in your wallet. If you are on Trust Wallet (mobile), open this page inside the Trust Wallet browser and accept the network add/switch prompt."
         );
       }
     };
