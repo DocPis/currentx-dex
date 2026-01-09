@@ -14,6 +14,8 @@ export default function WhitelistPage() {
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  const [lastSubmitAt, setLastSubmitAt] = useState(0);
+  const COOLDOWN_MS = 10_000;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -52,9 +54,17 @@ export default function WhitelistPage() {
     };
 
     try {
+      const now = Date.now();
+      if (now - lastSubmitAt < COOLDOWN_MS) {
+        const waitSec = Math.ceil((COOLDOWN_MS - (now - lastSubmitAt)) / 1000);
+        setSubmitError(`Please wait ${waitSec}s before submitting again.`);
+        return;
+      }
+
       setSubmitting(true);
       await submit();
       setSubmitted(true);
+      setLastSubmitAt(Date.now());
       setTimeout(() => setSubmitted(false), 15000);
     } catch (err) {
       setSubmitError(
