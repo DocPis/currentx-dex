@@ -73,13 +73,43 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
 
+const compactRpcMessage = (raw, fallback) => {
+  if (!raw) return fallback;
+  const stripped = raw
+    .replace(/\{.*$/s, "")
+    .replace(/\(error=.*$/i, "")
+    .trim();
+  const lower = stripped.toLowerCase();
+  if (lower.includes("eth_requestaccounts")) {
+    return "Open your wallet and approve the connection.";
+  }
+  if (
+    lower.includes("could not decode result data") ||
+    lower.includes("bad_data") ||
+    lower.includes("decode result")
+  ) {
+    return "Pool data not available right now. Please retry.";
+  }
+  if (lower.includes("unknown error")) {
+    return "Wallet RPC error. Please retry.";
+  }
+  const trimmed =
+    stripped.length > 140 ? `${stripped.slice(0, 140).trim()}...` : stripped;
+  return trimmed || fallback;
+};
+
 const friendlyActionError = (e, actionLabel = "Action") => {
-  const raw = e?.message || "";
+  const raw =
+    e?.reason ||
+    e?.info?.error?.message ||
+    e?.message ||
+    e?.error?.message ||
+    "";
   const lower = raw.toLowerCase();
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
-  return raw || `${actionLabel} failed`;
+  return compactRpcMessage(raw, `${actionLabel} failed`);
 };
 
 const shortenAddress = (addr) => {
@@ -447,7 +477,9 @@ export default function LiquiditySection() {
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
-      setLpBalanceError(err?.message || "Failed to refresh LP balance");
+      setLpBalanceError(
+        compactRpcMessage(err?.message, "Failed to refresh LP balance")
+      );
     }
   }, [
     pairIdOverride,
@@ -522,8 +554,10 @@ export default function LiquiditySection() {
             setLpBalance(null);
             setLpBalanceError("");
           } else {
-            setPairError(message);
-            setLpBalanceError(err.message || "Failed to load LP balance");
+            setPairError(compactRpcMessage(message, "Failed to load pool data"));
+            setLpBalanceError(
+              compactRpcMessage(err.message, "Failed to load LP balance")
+            );
           }
         }
       }
@@ -599,7 +633,9 @@ export default function LiquiditySection() {
         }
       } catch (err) {
         if (!cancelled)
-          setDepositQuoteError(err.message || "Quote balance failed");
+          setDepositQuoteError(
+            compactRpcMessage(err.message, "Quote balance failed")
+          );
       }
     };
     fetchQuote();
@@ -662,7 +698,9 @@ export default function LiquiditySection() {
       setDepositToken0(next0.toFixed(4));
       setDepositToken1(next1.toFixed(4));
     } catch (err) {
-      setDepositQuoteError(err.message || "Quote balance failed");
+      setDepositQuoteError(
+        compactRpcMessage(err.message, "Quote balance failed")
+      );
     }
   };
 
@@ -746,7 +784,9 @@ export default function LiquiditySection() {
         }
       } catch (err) {
         if (!cancelled) {
-          setTokenBalanceError(err.message || "Failed to load token balances");
+          setTokenBalanceError(
+            compactRpcMessage(err.message, "Failed to load token balances")
+          );
         }
       } finally {
         if (!cancelled) setTokenBalanceLoading(false);
