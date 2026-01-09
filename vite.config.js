@@ -12,4 +12,7 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 4173,
   },
+  build: {
+    chunkSizeWarningLimit: 1024, // raise limit to 1 MB to avoid noisy warnings
+  },
 })
