@@ -1,3 +1,4 @@
+import { kv } from "@vercel/kv";
 // In-memory deduplication fallback (KV temporarily disabled)
 const submittedWallets =
   globalThis.__cxSubmittedWallets || (globalThis.__cxSubmittedWallets = new Set());
@@ -11,6 +12,12 @@ const MAX_WALLET_LENGTH = 120;
 const RATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_REQUESTS_PER_IP = 30;
 
+// KV opt-in: use if creds are present; fallback to in-memory on error.
+const kvEnabled = Boolean(
+  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+);
+let kvAvailable = kvEnabled;
+
 const sanitizeString = (val, max) => {
   if (typeof val !== "string") return "";
   return val.trim().slice(0, max);
@@ -18,11 +25,36 @@ const sanitizeString = (val, max) => {
 
 const isDuplicateWallet = async (wallet) => {
   if (!wallet) return false;
+  if (kvAvailable) {
+    try {
+      const existing = await kv.get(wallet);
+      if (existing) return true;
+    } catch (e) {
+      const msg = (e?.message || "").toLowerCase();
+      if (msg.includes("payment required")) kvAvailable = false;
+      console.error("KV get error", e?.message || e);
+    }
+  }
   return submittedWallets.has(wallet);
 };
 
 const storeWallet = async ({ wallet }) => {
   if (!wallet) return { duplicate: false };
+  if (kvAvailable) {
+    try {
+      const result = await kv.set(
+        wallet,
+        { wallet, ts: Date.now() },
+        { nx: true }
+      );
+      if (result === null) return { duplicate: true };
+      return { duplicate: false };
+    } catch (e) {
+      const msg = (e?.message || "").toLowerCase();
+      if (msg.includes("payment required")) kvAvailable = false;
+      console.error("KV set error", e?.message || e);
+    }
+  }
   submittedWallets.add(wallet);
   return { duplicate: false };
 };
