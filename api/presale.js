@@ -1,3 +1,9 @@
+const submittedWallets =
+  globalThis.__cxSubmittedWallets || (globalThis.__cxSubmittedWallets = new Set());
+
+const normalizeWallet = (wallet) =>
+  (wallet || "").toString().trim().toLowerCase();
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -6,12 +12,13 @@ export default async function handler(req, res) {
 
   try {
     const { wallet, discord, telegram, source, ts } = req.body || {};
+    const normalizedWallet = normalizeWallet(wallet);
     const webhookUrl = process.env.DISCORD_WEBHOOK_URL || "";
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN || "";
     const telegramChatId =
       process.env.TELEGRAM_WHITELIST_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "";
 
-    if (!wallet) {
+    if (!normalizedWallet) {
       res.status(400).json({ error: "Missing wallet" });
       return;
     }
@@ -20,8 +27,16 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (submittedWallets.has(normalizedWallet)) {
+      res
+        .status(409)
+        .json({ error: "This wallet is already registered for the presale." });
+      return;
+    }
+    submittedWallets.add(normalizedWallet);
+
     console.log("Presale lead", {
-      wallet,
+      wallet: normalizedWallet,
       discord: discord || null,
       telegram: telegram || null,
       source: source || "currentx-presale",
@@ -33,7 +48,7 @@ export default async function handler(req, res) {
       try {
         const content = [
           "**New CurrentX presale lead**",
-          `Wallet: ${wallet}`,
+          `Wallet: ${normalizedWallet}`,
           discord ? `Discord: ${discord}` : "Discord: (none)",
           telegram ? `Telegram: ${telegram}` : "Telegram: (none)",
           `Source: ${source || "currentx-presale"}`,
@@ -53,7 +68,7 @@ export default async function handler(req, res) {
     if (telegramToken && telegramChatId) {
       const tgContent = [
         "New CurrentX whitelist submission",
-        `Wallet: ${wallet}`,
+        `Wallet: ${normalizedWallet}`,
         discord ? `Discord: ${discord}` : "Discord: (none)",
         telegram ? `Telegram: ${telegram}` : "Telegram: (none)",
         `Source: ${source || "currentx-presale"}`,

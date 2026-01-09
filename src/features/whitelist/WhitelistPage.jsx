@@ -34,11 +34,21 @@ export default function WhitelistPage() {
 
     const submit = async () => {
       if (!PRESALE_ENDPOINT) return;
-      await fetch(PRESALE_ENDPOINT, {
+      const resp = await fetch(PRESALE_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      if (!resp.ok) {
+        let message = "Submission failed. Please try again or contact us on Discord.";
+        try {
+          const data = await resp.json();
+          if (data?.error) message = data.error;
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(message);
+      }
     };
 
     try {
