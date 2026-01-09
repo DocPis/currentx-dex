@@ -1,64 +1,17 @@
-import { kv } from "@vercel/kv";
-
+// In-memory deduplication fallback (KV temporarily disabled)
 const submittedWallets =
   globalThis.__cxSubmittedWallets || (globalThis.__cxSubmittedWallets = new Set());
 
 const normalizeWallet = (wallet) =>
   (wallet || "").toString().trim().toLowerCase();
 
-// Only enable KV when explicitly allowed (FORCE_KV=1) and credentials are present.
-const kvEnabled =
-  process.env.FORCE_KV === "1" &&
-  Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-let kvAvailable = kvEnabled;
-
-const handleKvError = (e) => {
-  const msg = e?.message || "";
-  const lower = msg.toLowerCase();
-  // Upstash/Vercel KV can return 402 when free tier is exhausted; disable KV to avoid spamming errors
-  if (lower.includes("payment required")) {
-    kvAvailable = false;
-  }
-  console.error("KV error", msg);
-};
-
 const isDuplicateWallet = async (wallet) => {
   if (!wallet) return false;
-  if (kvAvailable) {
-    try {
-      const existing = await kv.get(wallet);
-      return Boolean(existing);
-    } catch (e) {
-      handleKvError(e);
-    }
-  }
   return submittedWallets.has(wallet);
 };
 
-const storeWallet = async ({ wallet, discord, telegram, source, ts }) => {
-  if (!wallet) return;
-  if (kvAvailable) {
-    try {
-      const result = await kv.set(
-        wallet,
-        {
-          wallet,
-          discord: discord || null,
-          telegram: telegram || null,
-          source: source || "currentx-presale",
-          ts: ts || Date.now(),
-        },
-        { nx: true }
-      );
-      // If nx:true and key exists, result will be null -> treat as duplicate
-      if (result === null) {
-        return { duplicate: true };
-      }
-      return { duplicate: false };
-    } catch (e) {
-      handleKvError(e);
-    }
-  }
+const storeWallet = async ({ wallet }) => {
+  if (!wallet) return { duplicate: false };
   submittedWallets.add(wallet);
   return { duplicate: false };
 };
