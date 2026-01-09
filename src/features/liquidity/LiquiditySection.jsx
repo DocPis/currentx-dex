@@ -95,7 +95,7 @@ const compactRpcMessage = (raw, fallback) => {
   }
   const trimmed =
     stripped.length > 140 ? `${stripped.slice(0, 140).trim()}...` : stripped;
-  return trimmed || fallback;
+  return trimmed || fallback || "Service temporarily unavailable. Please retry.";
 };
 
 const friendlyActionError = (e, actionLabel = "Action") => {
@@ -109,7 +109,13 @@ const friendlyActionError = (e, actionLabel = "Action") => {
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
-  return compactRpcMessage(raw, `${actionLabel} failed`);
+  if (lower.includes("user denied") || lower.includes("rejected")) {
+    return `${actionLabel} was rejected in your wallet. Please approve to continue.`;
+  }
+  return compactRpcMessage(
+    raw,
+    `${actionLabel} could not be completed. Please retry.`
+  );
 };
 
 const shortenAddress = (addr) => {
@@ -1434,7 +1440,7 @@ const [notice, setNotice] = useState("");
                 )}
                 {tokenBalanceError && (
                   <div className="text-[11px] text-amber-200 mb-3">
-                    Token balances: {tokenBalanceError}
+                    Balances unavailable. Open your wallet and try again.
                   </div>
                 )}
 
@@ -1575,12 +1581,12 @@ const [notice, setNotice] = useState("");
                   )}
                   {subgraphError && (
                     <div className="px-2 py-1.5 rounded border border-slate-700/60 bg-transparent text-slate-200">
-                      Subgraph: {subgraphError}
+                      Live data unavailable right now. Please retry later.
                     </div>
                   )}
                   {tvlError && (
                     <div className="px-2 py-1.5 rounded border border-amber-500/30 bg-transparent text-amber-200">
-                      On-chain TVL: {tvlError}
+                      On-chain TVL unavailable at the moment.
                     </div>
                   )}
                 </div>
