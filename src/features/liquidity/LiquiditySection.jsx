@@ -148,6 +148,7 @@ export default function LiquiditySection() {
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [notice, setNotice] = useState("");
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
@@ -477,9 +478,12 @@ export default function LiquiditySection() {
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
-      setLpBalanceError(
-        compactRpcMessage(err?.message, "Failed to refresh LP balance")
+      const msg = compactRpcMessage(
+        err?.message,
+        "Failed to refresh LP balance"
       );
+      setLpBalanceError(msg);
+      setNotice(msg);
     }
   }, [
     pairIdOverride,
