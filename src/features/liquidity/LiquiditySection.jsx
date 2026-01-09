@@ -141,14 +141,14 @@ export default function LiquiditySection() {
   const [lpBalanceError, setLpBalanceError] = useState("");
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
   const [tokenBalances, setTokenBalances] = useState(null);
-  const [tokenBalanceError, setTokenBalanceError] = useState("");
-  const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
-  const [showTokenList, setShowTokenList] = useState(false);
-  const [tokenSearch, setTokenSearch] = useState("");
-  const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
-  const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
-  const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
-  const [notice, setNotice] = useState("");
+const [tokenBalanceError, setTokenBalanceError] = useState("");
+const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
+const [showTokenList, setShowTokenList] = useState(false);
+const [tokenSearch, setTokenSearch] = useState("");
+const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
+const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
+const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+const [notice, setNotice] = useState("");
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
@@ -480,7 +480,7 @@ export default function LiquiditySection() {
     } catch (err) {
       const msg = compactRpcMessage(
         err?.message,
-        "Failed to refresh LP balance"
+        "Pool data not available right now. Please retry."
       );
       setLpBalanceError(msg);
       setNotice(msg);
@@ -788,9 +788,12 @@ export default function LiquiditySection() {
         }
       } catch (err) {
         if (!cancelled) {
-          setTokenBalanceError(
-            compactRpcMessage(err.message, "Failed to load token balances")
+          const msg = compactRpcMessage(
+            err.message,
+            "Wallet balances not available. Open your wallet and retry."
           );
+          setTokenBalanceError(msg);
+          setNotice("Balances unavailable. Open your wallet and try again.");
         }
       } finally {
         if (!cancelled) setTokenBalanceLoading(false);
