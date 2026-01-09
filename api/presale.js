@@ -5,6 +5,17 @@ const submittedWallets =
 const normalizeWallet = (wallet) =>
   (wallet || "").toString().trim().toLowerCase();
 
+const MAX_BODY_BYTES = 20_000; // guardrail against oversized payloads
+const MAX_FIELD_LENGTH = 256;
+const MAX_WALLET_LENGTH = 120;
+const RATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_REQUESTS_PER_IP = 30;
+
+const sanitizeString = (val, max) => {
+  if (typeof val !== "string") return "";
+  return val.trim().slice(0, max);
+};
+
 const isDuplicateWallet = async (wallet) => {
   if (!wallet) return false;
   return submittedWallets.has(wallet);
@@ -16,15 +27,60 @@ const storeWallet = async ({ wallet }) => {
   return { duplicate: false };
 };
 
+const rateBuckets =
+  globalThis.__cxRateBuckets || (globalThis.__cxRateBuckets = new Map());
+
+const getClientIp = (req) => {
+  const xfwd = req.headers["x-forwarded-for"];
+  if (typeof xfwd === "string" && xfwd.length) {
+    return xfwd.split(",")[0].trim();
+  }
+  if (Array.isArray(xfwd) && xfwd.length) {
+    return xfwd[0].split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress || "unknown";
+};
+
+const isRateLimited = (ip) => {
+  const now = Date.now();
+  const bucket = rateBuckets.get(ip);
+  if (!bucket || bucket.resetAt < now) {
+    rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return false;
+  }
+  bucket.count += 1;
+  if (bucket.count > MAX_REQUESTS_PER_IP) return true;
+  return false;
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
   }
 
+  const ip = getClientIp(req);
+  if (isRateLimited(ip)) {
+    res.status(429).json({ error: "Rate limit exceeded. Please retry later." });
+    return;
+  }
+
   try {
+    const rawSize = Buffer.byteLength(
+      JSON.stringify(req.body || {}),
+      "utf8"
+    );
+    if (rawSize > MAX_BODY_BYTES) {
+      res.status(413).json({ error: "Payload too large" });
+      return;
+    }
+
     const { wallet, discord, telegram, source, ts } = req.body || {};
-    const normalizedWallet = normalizeWallet(wallet);
+    const normalizedWallet = normalizeWallet(wallet).slice(0, MAX_WALLET_LENGTH);
+    const safeDiscord = sanitizeString(discord, MAX_FIELD_LENGTH);
+    const safeTelegram = sanitizeString(telegram, MAX_FIELD_LENGTH);
+    const safeSource = sanitizeString(source, MAX_FIELD_LENGTH);
+
     const webhookUrl = process.env.DISCORD_WEBHOOK_URL || "";
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN || "";
     const telegramChatId =
@@ -34,7 +90,7 @@ export default async function handler(req, res) {
       res.status(400).json({ error: "Missing wallet" });
       return;
     }
-    if (!discord && !telegram) {
+    if (!safeDiscord && !safeTelegram) {
       res.status(400).json({ error: "Need at least Discord or Telegram" });
       return;
     }
@@ -49,9 +105,9 @@ export default async function handler(req, res) {
 
     const storeResult = await storeWallet({
       wallet: normalizedWallet,
-      discord,
-      telegram,
-      source,
+      discord: safeDiscord,
+      telegram: safeTelegram,
+      source: safeSource,
       ts,
     });
     if (storeResult?.duplicate) {
@@ -63,9 +119,9 @@ export default async function handler(req, res) {
 
     console.log("Presale lead", {
       wallet: normalizedWallet,
-      discord: discord || null,
-      telegram: telegram || null,
-      source: source || "currentx-presale",
+      discord: safeDiscord || null,
+      telegram: safeTelegram || null,
+      source: safeSource || "currentx-presale",
       ts: ts || Date.now(),
     });
 
@@ -75,9 +131,9 @@ export default async function handler(req, res) {
         const content = [
           "**New CurrentX presale lead**",
           `Wallet: ${normalizedWallet}`,
-          discord ? `Discord: ${discord}` : "Discord: (none)",
-          telegram ? `Telegram: ${telegram}` : "Telegram: (none)",
-          `Source: ${source || "currentx-presale"}`,
+          safeDiscord ? `Discord: ${safeDiscord}` : "Discord: (none)",
+          safeTelegram ? `Telegram: ${safeTelegram}` : "Telegram: (none)",
+          `Source: ${safeSource || "currentx-presale"}`,
           `Timestamp: ${new Date(ts || Date.now()).toISOString()}`,
         ].join("\n");
         await fetch(webhookUrl, {
@@ -95,9 +151,9 @@ export default async function handler(req, res) {
       const tgContent = [
         "New CurrentX whitelist submission",
         `Wallet: ${normalizedWallet}`,
-        discord ? `Discord: ${discord}` : "Discord: (none)",
-        telegram ? `Telegram: ${telegram}` : "Telegram: (none)",
-        `Source: ${source || "currentx-presale"}`,
+        safeDiscord ? `Discord: ${safeDiscord}` : "Discord: (none)",
+        safeTelegram ? `Telegram: ${safeTelegram}` : "Telegram: (none)",
+        `Source: ${safeSource || "currentx-presale"}`,
         `Timestamp: ${new Date(ts || Date.now()).toISOString()}`,
       ].join("\n");
       try {
