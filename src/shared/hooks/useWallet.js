@@ -14,6 +14,22 @@ import {
 const SESSION_KEY = "cx_session_connected";
 const NORMALIZED_MEGAETH_CHAIN_ID = MEGAETH_CHAIN_ID_HEX.toLowerCase();
 
+const isTrustWalletProvider = (provider) => {
+  const name =
+    (provider?.walletName ||
+      provider?.name ||
+      provider?.providerInfo?.name ||
+      provider?.info?.name ||
+      "")?.toLowerCase?.() || "";
+  return (
+    provider?.isTrustWallet ||
+    provider?.isTrustWalletV2 ||
+    provider?.isTrust ||
+    provider?.isTrustProvider ||
+    name.includes("trust")
+  );
+};
+
 const normalizeChainId = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value === "bigint") return `0x${value.toString(16)}`.toLowerCase();
@@ -119,7 +135,43 @@ export function useWallet() {
         "Selected wallet not detected. If you are on mobile (iOS/Android), open this page inside the Trust Wallet app and retry."
       );
     }
+    const isTrustWallet = isTrustWalletProvider(injected);
+
     const ensureCorrectNetwork = async () => {
+      const addMegaethNetwork = async () => {
+        try {
+          await injected.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: MEGAETH_CHAIN_ID_HEX,
+                chainName: NETWORK_NAME || "MegaETH",
+                nativeCurrency: {
+                  name: "Ether",
+                  symbol: "ETH",
+                  decimals: 18,
+                },
+                rpcUrls: [RPC_URL],
+                blockExplorerUrls: EXPLORER_BASE_URL ? [EXPLORER_BASE_URL] : [],
+              },
+            ],
+          });
+          return NORMALIZED_MEGAETH_CHAIN_ID;
+        } catch (addErr) {
+          if (
+            addErr?.code === 4001 ||
+            (addErr?.message || "").toLowerCase().includes("rejected")
+          ) {
+            throw new Error("Please approve the network add/switch to MegaETH in your wallet.");
+          }
+          const alreadyAdded = (addErr?.message || "").toLowerCase().includes("already");
+          if (alreadyAdded) return null;
+          throw new Error(
+            addErr?.message || "Could not add MegaETH network to your wallet."
+          );
+        }
+      };
+
       try {
         const current = normalizeChainId(
           await injected.request({ method: "eth_chainId" })
@@ -128,6 +180,12 @@ export function useWallet() {
       } catch {
         // ignore
       }
+
+      if (isTrustWallet) {
+        const added = await addMegaethNetwork();
+        if (added) return added;
+      }
+
       try {
         await injected.request({
           method: "wallet_switchEthereumChain",
@@ -144,41 +202,16 @@ export function useWallet() {
         if (
           code === 4902 ||
           code === -32603 ||
+          code === -32601 ||
           msg.includes("unrecognized chain") ||
           msg.includes("unknown chain") ||
           msg.includes("chain not added") ||
           msg.includes("not supported") ||
+          msg.includes("method not found") ||
           msg.includes("wallet_switchethereumchain")
         ) {
-          try {
-            await injected.request({
-              method: "wallet_addEthereumChain",
-              params: [
-                {
-                  chainId: MEGAETH_CHAIN_ID_HEX,
-                  chainName: NETWORK_NAME || "MegaETH",
-                  nativeCurrency: {
-                    name: "Ether",
-                    symbol: "ETH",
-                    decimals: 18,
-                  },
-                  rpcUrls: [RPC_URL],
-                  blockExplorerUrls: EXPLORER_BASE_URL ? [EXPLORER_BASE_URL] : [],
-                },
-              ],
-            });
-            return NORMALIZED_MEGAETH_CHAIN_ID;
-          } catch (addErr) {
-            if (
-              addErr?.code === 4001 ||
-              (addErr?.message || "").toLowerCase().includes("rejected")
-            ) {
-              throw new Error("Please approve the network add/switch to MegaETH in your wallet.");
-            }
-            throw new Error(
-              addErr?.message || "Could not add MegaETH network to your wallet."
-            );
-          }
+          const added = await addMegaethNetwork();
+          if (added) return added;
         }
         if (code === 4001 || msg.includes("rejected")) {
           throw new Error("Please switch your wallet to the MegaETH network to continue.");
