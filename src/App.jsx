@@ -41,9 +41,9 @@ export default function App() {
       setConnectError("");
     } catch (e) {
       const msg =
-        eX.code === 4001 || eX.code === "ACTION_REJECTED"
-          X "Request rejected in wallet. Please approve to continue."
-          : eX.message || "Failed to connect wallet";
+        e?.code === 4001 || e?.code === "ACTION_REJECTED"
+          ? "Request rejected in wallet. Please approve to continue."
+          : e?.message || "Failed to connect wallet";
       setConnectError(msg);
     }
   };
@@ -93,7 +93,7 @@ export default function App() {
               onClick={() => setTab(item.id)}
               className={`px-4 py-2 rounded-xl border transition shadow-sm ${
                 tab === item.id
-                  X "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
+                  ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
                   : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
               }`}
             >
