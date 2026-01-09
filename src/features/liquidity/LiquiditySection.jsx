@@ -1165,7 +1165,20 @@ export default function LiquiditySection() {
                   className="h-9 w-9 flex items-center justify-center rounded-full border border-slate-800 text-slate-300 hover:border-slate-600"
                   aria-label="Change base token"
                 >
-                  ↺
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4"
+                  >
+                    <path
+                      d="M5 8a5 5 0 0 1 9-3.1M14 4.5V2.5m0 0h-2m2 0 2 2M15 12a5 5 0 0 1-9 3.1M6 15.5V17.5m0 0h2m-2 0-2-2"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
                 </button>
               </div>
 

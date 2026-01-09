@@ -116,7 +116,7 @@ export function useWallet() {
       : getInjectedEthereum();
     if (!injected) {
       throw new Error(
-        "Selected wallet not detected. Please install/open the chosen wallet and retry."
+        "Selected wallet not detected. If you are on mobile (iOS/Android), open this page inside the Trust Wallet app and retry."
       );
     }
     const ensureCorrectNetwork = async () => {

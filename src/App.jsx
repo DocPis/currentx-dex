@@ -1,4 +1,4 @@
-// src/App.jsx
+﻿// src/App.jsx
 import React, { useEffect, useState } from "react";
 import Header from "./shared/ui/Header";
 import SwapSection from "./features/swap/SwapSection";
@@ -41,9 +41,9 @@ export default function App() {
       setConnectError("");
     } catch (e) {
       const msg =
-        e?.code === 4001 || e?.code === "ACTION_REJECTED"
-          ? "Request rejected in wallet. Please approve to continue."
-          : e?.message || "Failed to connect wallet";
+        eX.code === 4001 || eX.code === "ACTION_REJECTED"
+          X "Request rejected in wallet. Please approve to continue."
+          : eX.message || "Failed to connect wallet";
       setConnectError(msg);
     }
   };
@@ -65,7 +65,7 @@ export default function App() {
               className="ml-auto text-rose-200/70 hover:text-rose-100"
               aria-label="Dismiss"
             >
-              ×
+              X
             </button>
           </div>
         </div>
@@ -93,7 +93,7 @@ export default function App() {
               onClick={() => setTab(item.id)}
               className={`px-4 py-2 rounded-xl border transition shadow-sm ${
                 tab === item.id
-                  ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
+                  X "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
                   : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
               }`}
             >
@@ -122,3 +122,4 @@ export default function App() {
     </div>
   );
 }
+

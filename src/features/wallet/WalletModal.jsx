@@ -6,6 +6,12 @@ import rabbyIcon from "../../assets/wallets/rabby.png";
 import trustIcon from "../../assets/wallets/trustwallet.png";
 import { getInjectedProviderByType } from "../../shared/config/web3";
 
+const isMobileBrowser = () =>
+  typeof navigator !== "undefined" &&
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent
+  );
+
 const wallets = [
   {
     id: "trustwallet",
@@ -22,6 +28,20 @@ export default function WalletModal({
   onClose,
   onSelectWallet,
 }) {
+  const isMobile = useMemo(() => isMobileBrowser(), []);
+  const trustDeepLink = useMemo(() => {
+    if (!open || typeof window === "undefined") return "";
+    try {
+      const currentUrl = window.location?.href || "";
+      if (!currentUrl) return "";
+      return `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(
+        currentUrl
+      )}`;
+    } catch {
+      return "";
+    }
+  }, [open]);
+
   const detected = useMemo(() => {
     if (!open) return {};
     const map = {};
@@ -37,7 +57,21 @@ export default function WalletModal({
 
   if (!open) return null;
 
+  const openTrustDeepLink = () => {
+    if (!trustDeepLink || typeof window === "undefined") return;
+    window.location.assign(trustDeepLink);
+  };
+
   const handleSelect = (id) => {
+    if (
+      id === "trustwallet" &&
+      isMobile &&
+      !detected.trustwallet &&
+      trustDeepLink
+    ) {
+      openTrustDeepLink();
+      return;
+    }
     onSelectWallet(id);
   };
 
@@ -59,7 +93,7 @@ export default function WalletModal({
             className="h-8 w-8 rounded-full bg-slate-800 text-slate-200 flex items-center justify-center hover:bg-slate-700"
             aria-label="Close"
           >
-            ✕
+            X
           </button>
         </div>
 
@@ -73,7 +107,7 @@ export default function WalletModal({
                   ? `bg-gradient-to-r ${wallet.accent} text-white`
                   : "bg-slate-900/60 text-slate-100"
               }`}
-          >
+            >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   {wallet.logo ? (
@@ -110,6 +144,25 @@ export default function WalletModal({
               </div>
             </button>
           ))}
+          {isMobile && !detected.trustwallet && trustDeepLink && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-xs text-slate-200 space-y-2">
+              <div className="text-sm font-semibold text-slate-50">
+                Trust Wallet on mobile
+              </div>
+              <p className="text-slate-300">
+                On iOS, open this page inside the Trust Wallet browser to connect. Tap below to reopen directly in the app.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  openTrustDeepLink();
+                }}
+                className="w-full rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-semibold px-3 py-2 transition"
+              >
+                Open in Trust Wallet
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -59,6 +59,8 @@ export {
 function collectInjectedProviders() {
   if (typeof window === "undefined") return [];
   const { ethereum, trustwallet, rabby } = window;
+  const trustWallet =
+    window.trustWallet || window.TrustWallet || window.tw || trustwallet;
   const out = [];
   const seen = new Set();
   const push = (p) => {
@@ -81,10 +83,16 @@ function collectInjectedProviders() {
       Object.values(ethereum.providerMap).forEach(push);
     }
   }
+  if (Array.isArray(trustWallet?.providers)) trustWallet.providers.forEach(push);
+  if (Array.isArray(trustWallet?.ethereum?.providers))
+    trustWallet.ethereum.providers.forEach(push);
   if (Array.isArray(trustwallet?.providers)) trustwallet.providers.forEach(push);
   if (Array.isArray(trustwallet?.ethereum?.providers))
     trustwallet.ethereum.providers.forEach(push);
   push(ethereum);
+  push(trustWallet);
+  push(trustWallet?.ethereum);
+  push(trustWallet?.provider);
   push(trustwallet);
   push(trustwallet?.ethereum);
   push(trustwallet?.provider);
@@ -172,13 +180,19 @@ export function getInjectedEthereum() {
 export function getInjectedProviderByType(type) {
   if (typeof window !== "undefined" && type === "trustwallet") {
     const { trustwallet, ethereum } = window;
+    const trustAlias = window.trustWallet || window.TrustWallet || window.tw;
     if (trustwallet?.ethereum) return trustwallet.ethereum;
+    if (trustAlias?.ethereum) return trustAlias.ethereum;
     if (trustwallet) return trustwallet;
+    if (trustAlias) return trustAlias;
     if (Array.isArray(ethereum?.providers)) {
       const tw = ethereum.providers.find((p) => isTrust(p));
       if (tw) return tw;
     }
     if (ethereum && isTrust(ethereum)) return ethereum;
+    const collected = collectInjectedProviders();
+    const matchTrust = collected.find((p) => isTrust(p));
+    if (matchTrust) return matchTrust;
     return null;
   }
 
@@ -231,7 +245,7 @@ export async function getProvider(preferredType) {
   }
   if (!eth) {
     throw new Error(
-      "No wallet found. On mobile, open the site in the MetaMask in-app browser or another injected wallet."
+      "No wallet found. On mobile, open the site in the Trust Wallet or MetaMask in-app browser."
     );
   }
   return new BrowserProvider(eth);
