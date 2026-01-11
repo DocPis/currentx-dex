@@ -4,17 +4,24 @@ import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
+  getReadOnlyProvider,
   getV2PairReserves,
   WETH_ADDRESS,
   USDC_ADDRESS,
   UNIV2_ROUTER_ADDRESS,
+  UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
   fetchMasterChefFarms,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
 } from "../../shared/config/web3";
-import { ERC20_ABI, UNIV2_ROUTER_ABI } from "../../shared/config/abis";
+import {
+  ERC20_ABI,
+  UNIV2_FACTORY_ABI,
+  UNIV2_PAIR_ABI,
+  UNIV2_ROUTER_ABI,
+} from "../../shared/config/abis";
 import { fetchV2PairData } from "../../shared/config/subgraph";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
@@ -156,46 +163,80 @@ export default function LiquiditySection() {
     let cancelled = false;
     const loadBasePools = async () => {
       try {
-        const data = await fetchMasterChefFarms();
-        if (cancelled) return;
+        const provider = getReadOnlyProvider();
+        const factory = new Contract(
+          UNIV2_FACTORY_ADDRESS,
+          UNIV2_FACTORY_ABI,
+          provider
+        );
+        const registryForLookup = { ...TOKENS, ...customTokens };
+
+        const lengthRaw = await factory.allPairsLength();
+        const total = Number(lengthRaw || 0);
         const tokenMap = {};
-        const addToken = (t, fallbackIdx, suffix) => {
-          if (!t?.symbol) return;
-          const symbol = (t.symbol || `TOKEN-${fallbackIdx}-${suffix}`).toUpperCase();
-          tokenMap[symbol] = {
+
+        const matchRegistryToken = (addr) => {
+          const lower = (addr || "").toLowerCase();
+          const found = Object.values(registryForLookup).find(
+            (t) => t.address && t.address.toLowerCase() === lower
+          );
+          return found || null;
+        };
+
+        const fetchTokenMeta = async (addr, idx, suffix) => {
+          const known = matchRegistryToken(addr);
+          if (known) return known;
+          const erc = new Contract(addr, ERC20_ABI, provider);
+          const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+            erc.symbol().catch(() => `TOKEN-${idx}-${suffix}`),
+            erc.name().catch(() => `Token-${idx}-${suffix}`),
+            erc.decimals().catch(() => 18),
+          ]);
+          const symbol = (symbolRaw || `TOKEN-${idx}-${suffix}`).toUpperCase();
+          return {
             symbol,
-            name: t.name || symbol,
-            address: t.address || null,
-            decimals: t.decimals || 18,
-            logo: t.logo || TOKENS.CRX.logo,
+            name: nameRaw || symbol,
+            address: addr,
+            decimals: Number(decimalsRaw) || 18,
+            logo: TOKENS.CRX.logo,
           };
         };
-        const poolsFromChain = (data?.pools || [])
-          .map((farm, idx) => {
-            const t0 = farm.tokens?.[0];
-            const t1 = farm.tokens?.[1];
-            if (!t0 || !t1) return null;
-            const token0Symbol =
-              (t0.symbol || t0.name || `Token0-${idx}`).toUpperCase();
-            const token1Symbol =
-              (t1.symbol || t1.name || `Token1-${idx}`).toUpperCase();
-            const id = `${token0Symbol.toLowerCase()}-${token1Symbol.toLowerCase()}`;
-            addToken(t0, idx, "a");
-            addToken(t1, idx, "b");
-            return {
+
+        const poolsFromChain = [];
+        for (let i = 0; i < total; i += 1) {
+          try {
+            const pairAddress = await factory.allPairs(i);
+            const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
+            const [token0, token1] = await Promise.all([
+              pair.token0(),
+              pair.token1(),
+            ]);
+            const [meta0, meta1] = await Promise.all([
+              fetchTokenMeta(token0, i, "a"),
+              fetchTokenMeta(token1, i, "b"),
+            ]);
+
+            tokenMap[meta0.symbol] = tokenMap[meta0.symbol] || meta0;
+            tokenMap[meta1.symbol] = tokenMap[meta1.symbol] || meta1;
+
+            const id = `${meta0.symbol.toLowerCase()}-${meta1.symbol.toLowerCase()}`;
+            poolsFromChain.push({
               id,
-              token0Symbol,
-              token1Symbol,
-              poolType: farm.poolType || "volatile",
-              token0Address: t0.address || null,
-              token1Address: t1.address || null,
-              token0Decimals: t0.decimals || 18,
-              token1Decimals: t1.decimals || 18,
-              token0Logo: t0.logo,
-              token1Logo: t1.logo,
-            };
-          })
-          .filter(Boolean);
+              token0Symbol: meta0.symbol,
+              token1Symbol: meta1.symbol,
+              poolType: "volatile",
+              token0Address: meta0.address,
+              token1Address: meta1.address,
+              token0Decimals: meta0.decimals,
+              token1Decimals: meta1.decimals,
+              token0Logo: meta0.logo,
+              token1Logo: meta1.logo,
+            });
+          } catch {
+            // ignore per-pair errors
+          }
+        }
+
         const seen = new Set();
         const deduped = [];
         poolsFromChain.forEach((p) => {
@@ -216,7 +257,7 @@ export default function LiquiditySection() {
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick]);
+  }, [customTokens, lpRefreshTick]);
 
   useEffect(() => {
     if (!basePools.length) return;
