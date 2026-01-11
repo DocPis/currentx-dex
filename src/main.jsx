@@ -1,8 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { inject } from "@vercel/analytics";
 import App from "./App";
 import WhitelistPage from "./features/whitelist/WhitelistPage";
 import "./index.css";
+
+if (import.meta.env.MODE === "production") {
+  inject();
+}
 
 const path = (window?.location?.pathname || "").toLowerCase();
 const isWhitelistPage = path.includes("whitelist");
