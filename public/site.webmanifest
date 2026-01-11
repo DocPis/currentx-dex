@@ -1,0 +1,20 @@
+{
+  "name": "CurrentX",
+  "short_name": "CurrentX",
+  "description": "CurrentX DEX - swap, liquidity, farms on MegaETH.",
+  "icons": [
+    {
+      "src": "/currentx-favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64 32x32 16x16",
+      "type": "image/x-icon"
+    }
+  ],
+  "theme_color": "#020617",
+  "background_color": "#020617",
+  "display": "standalone"
+}
