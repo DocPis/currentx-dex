@@ -533,7 +533,13 @@ export default function LiquiditySection() {
     return Object.values(tokenRegistry).map((t) => ({
       ...t,
       tvlUsd: tvlMap[t.symbol] || 0,
-      priceUsd: tokenPrices[(t.address || "").toLowerCase()],
+      priceUsd:
+        tokenPrices[(t.address || "").toLowerCase()] ||
+        (t.symbol === "ETH"
+          ? tokenPrices[WETH_ADDRESS.toLowerCase()]
+          : t.symbol === "WETH"
+            ? tokenPrices[WETH_ADDRESS.toLowerCase()]
+            : undefined),
     }));
   }, [pools, tokenPrices, tokenRegistry]);
 
