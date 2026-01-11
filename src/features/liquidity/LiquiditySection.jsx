@@ -144,6 +144,7 @@ export default function LiquiditySection() {
   const [searchTerm, setSearchTerm] = useState("");
   const [pairInfo, setPairInfo] = useState(null);
   const [pairError, setPairError] = useState("");
+  const [pairNotDeployed, setPairNotDeployed] = useState(false);
   const [depositToken0, setDepositToken0] = useState("");
   const [depositToken1, setDepositToken1] = useState("");
   const [withdrawLp, setWithdrawLp] = useState("");
@@ -439,8 +440,7 @@ export default function LiquiditySection() {
           // ignore per-pool chain errors to avoid breaking the whole list
           const msg = chainErr?.message || "Failed to load TVL";
           const pairMissing =
-            msg.toLowerCase().includes("pair not found on megaeth") &&
-            Boolean(pairIdOverride);
+            msg.toLowerCase().includes("pair not found on megaeth");
           if (!cancelled && !tvlError && !pairMissing) {
             setTvlError(msg);
           }
@@ -481,6 +481,7 @@ export default function LiquiditySection() {
     setLastEdited("");
     setActionStatus("");
     setPairError("");
+    setPairNotDeployed(false);
     setPairInfo(null);
     setLpBalance(null);
     setLpBalanceError("");
@@ -652,7 +653,8 @@ export default function LiquiditySection() {
   const pairIdOverride = selectedPool?.pairId;
   const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
   const pairMissing =
-    pairError && pairError.toLowerCase().includes("pair not found");
+    pairNotDeployed ||
+    (pairError && pairError.toLowerCase().includes("pair not found"));
   const pairBlockingError = Boolean(pairError && !pairMissing);
   const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
 
@@ -661,7 +663,7 @@ export default function LiquiditySection() {
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
   const fetchLpBalance = useCallback(async () => {
-    if (!poolSupportsActions || !selectedPool) return;
+    if (!poolSupportsActions || !selectedPool || pairMissing) return;
     try {
       setLpBalanceError("");
       const provider = await getProvider();
@@ -691,6 +693,7 @@ export default function LiquiditySection() {
   }, [
     pairIdOverride,
     pairInfo,
+    pairMissing,
     poolSupportsActions,
     selectedPool,
     token0Address,
@@ -715,6 +718,7 @@ export default function LiquiditySection() {
     const loadPair = async () => {
       setPairInfo(null);
       setPairError("");
+      setPairNotDeployed(false);
 
       if (!selectedPool) return;
       if (!poolSupportsActions) {
@@ -760,8 +764,10 @@ export default function LiquiditySection() {
           const pairMissing = message.toLowerCase().includes("pair not found on megaeth");
           if (pairMissing && pairIdOverride) {
             setPairError("");
+            setPairNotDeployed(true);
           } else if (pairMissing) {
-            setPairError("Pair not found on MegaETH for this token combination. Adding liquidity will deploy it.");
+            setPairError("");
+            setPairNotDeployed(true);
             setLpBalance(null);
             setLpBalanceError("");
           } else {
@@ -962,7 +968,7 @@ export default function LiquiditySection() {
       setTokenBalanceLoading(true);
       setTokenBalanceError("");
       setTokenBalances(null);
-      if (!poolSupportsActions) {
+      if (!poolSupportsActions || pairMissing) {
         setTokenBalanceLoading(false);
         return;
       }
@@ -1011,6 +1017,7 @@ export default function LiquiditySection() {
     };
   }, [
     poolSupportsActions,
+    pairMissing,
     selectedPoolId,
     lpRefreshTick,
     token0Address,
@@ -1294,19 +1301,19 @@ export default function LiquiditySection() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
         <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
           <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
-            <div className="flex flex-col items-center gap-3 max-w-3xl">
-              <p className="text-base sm:text-lg text-slate-200">
-                Provide liquidity to enable low-slippage swaps and earn emissions.
-              </p>
-              <div className="flex items-center justify-center gap-2 flex-wrap">
-                <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
-                  Live data
-                </span>
-                <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                  MegaETH V2
-                </span>
+              <div className="flex flex-col items-center gap-3 max-w-3xl">
+                <p className="text-base sm:text-lg text-slate-200">
+                  Provide liquidity to enable low-slippage swaps and earn emissions.
+                </p>
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
+                    Live data
+                  </span>
+                  <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                  MegaETH
+                  </span>
+                </div>
               </div>
-            </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-3xl text-center">
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
@@ -1830,9 +1837,6 @@ export default function LiquiditySection() {
               >
                 Tokens ({tokensCount})
               </button>
-              <span className="hidden sm:inline text-slate-500 text-xs">
-                Sorted by TVL | Live (subgraph + on-chain fallback)
-              </span>
             </div>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
               <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
