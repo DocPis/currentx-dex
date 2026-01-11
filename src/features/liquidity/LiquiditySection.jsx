@@ -159,18 +159,39 @@ export default function LiquiditySection() {
   const [lpBalanceError, setLpBalanceError] = useState("");
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
   const [tokenBalances, setTokenBalances] = useState(null);
-const [tokenBalanceError, setTokenBalanceError] = useState("");
-const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
-const [showTokenList, setShowTokenList] = useState(false);
-const [tokenSearch, setTokenSearch] = useState("");
-const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
-const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
-const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
-const [notice, setNotice] = useState("");
+  const [tokenBalanceError, setTokenBalanceError] = useState("");
+  const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
+  const [showTokenList, setShowTokenList] = useState(false);
+  const [tokenSearch, setTokenSearch] = useState("");
+  const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
+  const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
+  const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [notice, setNotice] = useState("");
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
   );
+
+  const trackedPools = useMemo(() => {
+    const list = [...basePools];
+    const base = tokenSelection?.baseSymbol;
+    const pair = tokenSelection?.pairSymbol;
+    if (base && pair) {
+      const matchesBase = basePools.some((p) => {
+        const symbols = [p.token0Symbol, p.token1Symbol];
+        return symbols.includes(base) && symbols.includes(pair);
+      });
+      if (!matchesBase) {
+        list.push({
+          id: `custom-${base}-${pair}`,
+          token0Symbol: base,
+          token1Symbol: pair,
+          poolType: "volatile",
+        });
+      }
+    }
+    return list;
+  }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
   useEffect(() => {
     setRegisteredCustomTokens(customTokens);
@@ -220,7 +241,7 @@ const [notice, setNotice] = useState("");
         // silently ignore farm fetch errors to avoid blocking pool stats
       }
 
-      for (const pool of basePools) {
+      for (const pool of trackedPools) {
         const token0Addr = resolveTokenAddress(
           pool.token0Symbol,
           tokenRegistry
@@ -303,7 +324,7 @@ const [notice, setNotice] = useState("");
       if (!cancelled && Object.keys(updates).length) {
         // attach farm emission APR if available
         Object.entries(updates).forEach(([id, data]) => {
-          const pool = basePools.find((p) => p.id === id);
+          const pool = trackedPools.find((p) => p.id === id);
           if (!pool) return;
           const normA = pool.token0Symbol === "ETH" ? "WETH" : pool.token0Symbol;
           const normB = pool.token1Symbol === "ETH" ? "WETH" : pool.token1Symbol;
@@ -324,7 +345,7 @@ const [notice, setNotice] = useState("");
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick, subgraphError, tokenRegistry, tvlError]);
+  }, [lpRefreshTick, subgraphError, tokenRegistry, trackedPools, tvlError]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -427,20 +448,29 @@ const [notice, setNotice] = useState("");
     const hasAddresses =
       resolveTokenAddress(base, tokenRegistry) &&
       resolveTokenAddress(pair, tokenRegistry);
+    const poolId = `custom-${base}-${pair}`;
+    const stats = poolStats[poolId] || {};
     return [
       {
-        id: `custom-${base}-${pair}`,
+        id: poolId,
         token0Symbol: base,
         token1Symbol: pair,
         poolType: "volatile",
-        tvlUsd: 0,
-        volume24hUsd: 0,
-        fees24hUsd: 0,
-        isActive: false,
+        ...stats,
+        isActive: derivePoolActivity(
+          { token0Symbol: base, token1Symbol: pair, active: stats.active },
+          stats
+        ),
         hasAddresses: Boolean(hasAddresses),
       },
     ];
-  }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol, tokenRegistry]);
+  }, [
+    pools,
+    poolStats,
+    tokenSelection?.baseSymbol,
+    tokenSelection?.pairSymbol,
+    tokenRegistry,
+  ]);
 
   const allPools = useMemo(() => {
     const extras = selectionPools.filter(
