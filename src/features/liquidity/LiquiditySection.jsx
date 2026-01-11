@@ -22,7 +22,7 @@ import {
   UNIV2_PAIR_ABI,
   UNIV2_ROUTER_ABI,
 } from "../../shared/config/abis";
-import { fetchV2PairData } from "../../shared/config/subgraph";
+import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 
@@ -58,6 +58,15 @@ const resolveTokenAddress = (symbol, registry = TOKENS) => {
 const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
+
+const formatUsdPrice = (v) => {
+  const num = Number(v);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  if (num >= 1_000) return `~$${num.toFixed(0)}`;
+  if (num >= 1) return `$${num.toFixed(2)}`;
+  if (num >= 0.01) return `$${num.toFixed(4)}`;
+  return `$${num.toFixed(6)}`;
+};
 
 const derivePoolActivity = (pool, stats = {}) => {
   if (pool?.active === true) return true;
@@ -127,6 +136,7 @@ export default function LiquiditySection() {
   const [customTokens, setCustomTokens] = useState(() =>
     getRegisteredCustomTokens()
   );
+  const [tokenPrices, setTokenPrices] = useState({});
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
   const [poolStats, setPoolStats] = useState({});
@@ -266,6 +276,29 @@ export default function LiquiditySection() {
       return basePools[0].id;
     });
   }, [basePools]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadTokenPrices = async () => {
+      const addrs = Object.values(tokenRegistry)
+        .map((t) => t.address)
+        .filter(Boolean);
+      if (!addrs.length) {
+        setTokenPrices({});
+        return;
+      }
+      try {
+        const prices = await fetchTokenPrices(addrs);
+        if (!cancelled) setTokenPrices(prices || {});
+      } catch {
+        if (!cancelled) setTokenPrices({});
+      }
+    };
+    loadTokenPrices();
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenRegistry]);
 
   const trackedPools = useMemo(() => {
     const list = [...basePools];
@@ -500,8 +533,9 @@ export default function LiquiditySection() {
     return Object.values(tokenRegistry).map((t) => ({
       ...t,
       tvlUsd: tvlMap[t.symbol] || 0,
+      priceUsd: tokenPrices[(t.address || "").toLowerCase()],
     }));
-  }, [pools, tokenRegistry]);
+  }, [pools, tokenPrices, tokenRegistry]);
 
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
@@ -2084,7 +2118,7 @@ export default function LiquiditySection() {
                     <div className="text-[11px] text-slate-500">TVL</div>
                   </div>
                   <div className="col-span-6 md:col-span-2 text-right text-sm text-slate-100">
-                    --
+                    {formatUsdPrice(t.priceUsd)}
                     <div className="text-[11px] text-slate-500">Onchain price</div>
                   </div>
                   <div className="col-span-12 md:col-span-2 text-right text-sm text-slate-100">

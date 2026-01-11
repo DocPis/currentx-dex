@@ -404,6 +404,56 @@ export async function fetchRecentTransactions(limit = 12) {
   return events;
 }
 
+// Fetch token USD prices using derivedETH + bundle price (Uniswap V2 schema)
+export async function fetchTokenPrices(addresses = []) {
+  const ids = Array.from(
+    new Set(
+      (addresses || [])
+        .filter(Boolean)
+        .map((a) => a.toLowerCase())
+    )
+  );
+  if (!ids.length) return {};
+
+  const query = `
+    query Tokens($ids: [Bytes!]!) {
+      tokens(where: { id_in: $ids }) {
+        id
+        symbol
+        derivedETH
+      }
+      bundles(first: 1) {
+        ethPrice
+      }
+    }
+  `;
+
+  try {
+    const res = await postSubgraph(query, { ids });
+    const bundlePrice = Number(res?.bundles?.[0]?.ethPrice || 0);
+    const out = {};
+    (res?.tokens || []).forEach((t) => {
+      const derivedEth = Number(t?.derivedETH || 0);
+      if (!Number.isFinite(derivedEth) || derivedEth <= 0) return;
+      const usd =
+        bundlePrice && Number.isFinite(bundlePrice)
+          ? derivedEth * bundlePrice
+          : null;
+      if (usd !== null && Number.isFinite(usd)) {
+        out[(t.id || "").toLowerCase()] = usd;
+      }
+    });
+    return out;
+  } catch (err) {
+    const message = err?.message || "";
+    const noTokensField =
+      message.includes("Cannot query field \"tokens\"") ||
+      message.includes("Type `Query` has no field `tokens`");
+    if (noTokensField) return {};
+    throw err;
+  }
+}
+
 // Fetch top pairs by daily volume for the latest indexed day
 export async function fetchTopPairsBreakdown(limit = 4) {
   const safeQuery = async (query, field, variables = {}) => {
@@ -478,7 +528,7 @@ export async function fetchTopPairsBreakdown(limit = 4) {
       pairMetaById = Object.fromEntries(
         (pairMeta || []).map((p) => [p.id?.toLowerCase(), p])
       );
-    } catch (err) {
+    } catch {
       pairMetaById = {};
     }
   }
