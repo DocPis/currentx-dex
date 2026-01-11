@@ -165,6 +165,9 @@ export default function LiquiditySection() {
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [customTokenAddress, setCustomTokenAddress] = useState("");
+  const [customTokenAddError, setCustomTokenAddError] = useState("");
+  const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...onchainTokens, ...customTokens }),
     [customTokens, onchainTokens]
@@ -960,6 +963,62 @@ export default function LiquiditySection() {
     setPairSelectorOpen(false);
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const handleAddCustomToken = async (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    const addr = (customTokenAddress || "").trim();
+    setCustomTokenAddError("");
+    if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+      setCustomTokenAddError("Enter a valid token contract address (0x...)");
+      return;
+    }
+    const lower = addr.toLowerCase();
+    const exists = Object.values(tokenRegistry).find(
+      (t) => (t.address || "").toLowerCase() === lower
+    );
+    if (exists) {
+      setCustomTokenAddError("Token already listed.");
+      return;
+    }
+    setCustomTokenAddLoading(true);
+    try {
+      const provider = await getProvider();
+      const erc20 = new Contract(addr, ERC20_ABI, provider);
+      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+        erc20.symbol().catch(() => "TOKEN"),
+        erc20.name().catch(() => "Custom Token"),
+        erc20.decimals().catch(() => 18),
+      ]);
+      const symbol = (symbolRaw || "TOKEN").toString().toUpperCase();
+      const name = nameRaw || symbol;
+      const decimals = Number(decimalsRaw) || 18;
+      const tokenKey = symbol;
+      const alreadySymbol = tokenRegistry[tokenKey];
+      if (alreadySymbol) {
+        setCustomTokenAddError("Symbol already in use. Try another token.");
+        return;
+      }
+      const next = {
+        ...customTokens,
+        [tokenKey]: {
+          symbol: tokenKey,
+          name,
+          address: addr,
+          decimals,
+          logo: TOKENS.CRX.logo,
+        },
+      };
+      setCustomTokens(next);
+      setRegisteredCustomTokens(next);
+      setCustomTokenAddress("");
+    } catch (err) {
+      setCustomTokenAddError(
+        compactRpcMessage(err?.message, "Unable to load token metadata")
+      );
+    } finally {
+      setCustomTokenAddLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -2089,12 +2148,27 @@ export default function LiquiditySection() {
                   className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
                 />
               </div>
-              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wide text-slate-500">
-                <span className="px-2 py-1 rounded-full bg-slate-900 border border-slate-800">
-                  Filters
-                </span>
-                <span className="text-slate-400">Default</span>
-              </div>
+              <form
+                onSubmit={handleAddCustomToken}
+                className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto"
+              >
+                <input
+                  value={customTokenAddress}
+                  onChange={(e) => {
+                    setCustomTokenAddress(e.target.value);
+                    if (customTokenAddError) setCustomTokenAddError("");
+                  }}
+                  placeholder="Add custom token (contract address)"
+                  className="flex-1 bg-slate-900 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600"
+                />
+                <button
+                  type="submit"
+                  disabled={customTokenAddLoading}
+                  className="px-4 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+                >
+                  {customTokenAddLoading ? "Adding..." : "Add token"}
+                </button>
+              </form>
             </div>
 
             <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
@@ -2103,6 +2177,12 @@ export default function LiquiditySection() {
               <div className="col-span-2 text-right">Onchain price</div>
               <div className="col-span-2 text-right">Balance</div>
             </div>
+
+            {customTokenAddError && (
+              <div className="px-5 pt-2 text-xs text-amber-200">
+                {customTokenAddError}
+              </div>
+            )}
 
             <div className="divide-y divide-slate-800">
               {filteredTokens.map((t) => (
