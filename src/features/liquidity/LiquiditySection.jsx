@@ -140,6 +140,7 @@ export default function LiquiditySection() {
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
   const [poolStats, setPoolStats] = useState({});
+  const [poolStatsReady, setPoolStatsReady] = useState(false);
   const [selectedPoolId, setSelectedPoolId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [pairInfo, setPairInfo] = useState(null);
@@ -173,9 +174,30 @@ export default function LiquiditySection() {
     [customTokens, onchainTokens]
   );
 
+  const getStatusStyle = (status) => {
+    if (status === null) {
+      return {
+        label: "Loading",
+        className: "bg-slate-700/40 text-slate-200 border-slate-600",
+      };
+    }
+    if (status) {
+      return {
+        label: "Active",
+        className:
+          "bg-emerald-500/15 text-emerald-200 border-emerald-500/30",
+      };
+    }
+    return {
+      label: "Inactive",
+      className: "bg-rose-500/10 text-rose-200 border-rose-500/25",
+    };
+  };
+
   useEffect(() => {
     let cancelled = false;
     const loadBasePools = async () => {
+      setPoolStatsReady(false);
       try {
         const provider = getReadOnlyProvider();
         const factory = new Contract(
@@ -266,6 +288,7 @@ export default function LiquiditySection() {
           setOnchainTokens({});
         }
       }
+      if (!cancelled) setPoolStatsReady(true);
     };
     loadBasePools();
     return () => {
@@ -345,6 +368,7 @@ export default function LiquiditySection() {
   useEffect(() => {
     let cancelled = false;
     const loadPools = async () => {
+      setPoolStatsReady(false);
       const updates = {};
       setSubgraphError("");
       setTvlError("");
@@ -469,6 +493,7 @@ export default function LiquiditySection() {
         });
         setPoolStats((prev) => ({ ...prev, ...updates }));
       }
+      if (!cancelled) setPoolStatsReady(true);
     };
     loadPools();
     return () => {
@@ -506,11 +531,11 @@ export default function LiquiditySection() {
         ...stats,
         token0Address,
         token1Address,
-        isActive: derivePoolActivity(p, stats),
+        isActive: poolStatsReady ? derivePoolActivity(p, stats) : null,
         hasAddresses,
       };
     });
-  }, [basePools, poolStats, tokenRegistry]);
+  }, [basePools, poolStats, poolStatsReady, tokenRegistry]);
 
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
@@ -711,7 +736,7 @@ export default function LiquiditySection() {
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
   const autopilotPool =
-    pools.find((p) => p.id === "crx-weth" && p.isActive && p.hasAddresses) ||
+    pools.find((p) => p.id === "crx-weth" && p.isActive !== false && p.hasAddresses) ||
     pools.find((p) => p.isActive && p.hasAddresses) ||
     pools.find((p) => p.hasAddresses) ||
     null;
@@ -1592,15 +1617,14 @@ export default function LiquiditySection() {
                       </div>
                       <div className="text-[11px] text-slate-500 flex items-center gap-2">
                         {p.poolType || "volatile"} pool
-                        <span
-                          className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                            p.isActive
-                              ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                              : "bg-rose-500/10 text-rose-200 border-rose-500/25"
-                          }`}
-                        >
-                          {p.isActive ? "Active" : "Inactive"}
-                        </span>
+                        {(() => {
+                          const { label, className } = getStatusStyle(p.isActive);
+                          return (
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] border ${className}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
                       </div>
                     </div>
                   </div>
@@ -1643,15 +1667,14 @@ export default function LiquiditySection() {
                     </div>
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                       {getPoolLabel(selectedPool)}
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[11px] border ${
-                          selectedPool?.isActive
-                            ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                            : "bg-rose-500/10 text-rose-200 border-rose-500/25"
-                        }`}
-                      >
-                        {selectedPool?.isActive ? "Active" : "Inactive"}
-                      </span>
+                      {(() => {
+                        const { label, className } = getStatusStyle(selectedPool?.isActive);
+                        return (
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] border ${className}`}>
+                            {label}
+                          </span>
+                        );
+                      })()}
                     </div>
                     {!selectedPool?.isActive && (
                       <div className="text-[11px] text-amber-200 mt-1">
@@ -1987,15 +2010,14 @@ export default function LiquiditySection() {
                     </div>
                     <div className="text-[11px] text-slate-500 capitalize flex items-center gap-2">
                       {p.poolType || "volatile"} pool
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                          p.isActive
-                            ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
-                            : "bg-rose-500/10 text-rose-200 border-rose-500/25"
-                        }`}
-                      >
-                        {p.isActive ? "Active" : "Inactive"}
-                      </span>
+                      {(() => {
+                        const { label, className } = getStatusStyle(p.isActive);
+                        return (
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] border ${className}`}>
+                            {label}
+                          </span>
+                        );
+                      })()}
                       {!rowSupports && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200 border border-amber-500/30">
                           Data only
@@ -2010,10 +2032,18 @@ export default function LiquiditySection() {
                     <span>Status</span>
                     <span
                       className={`text-slate-100 ${
-                        p.isActive ? "text-emerald-300" : "text-rose-300"
+                        p.isActive === null
+                          ? "text-slate-300"
+                          : p.isActive
+                            ? "text-emerald-300"
+                            : "text-rose-300"
                       }`}
                     >
-                      {p.isActive ? "Active" : "Inactive"}
+                      {p.isActive === null
+                        ? "Loading"
+                        : p.isActive
+                          ? "Active"
+                          : "Inactive"}
                     </span>
                   </div>
                   <div className="flex justify-between w-full">

@@ -1,6 +1,10 @@
 // src/config/subgraph.js
 const SUBGRAPH_URL = import.meta.env.VITE_UNIV2_SUBGRAPH;
 const SUBGRAPH_API_KEY = import.meta.env.VITE_UNIV2_SUBGRAPH_API_KEY;
+const SUBGRAPH_MISSING_KEY =
+  SUBGRAPH_URL &&
+  !SUBGRAPH_API_KEY &&
+  (SUBGRAPH_URL.includes("thegraph.com") || SUBGRAPH_URL.includes("gateway"));
 
 async function postSubgraph(query, variables = {}) {
   if (!SUBGRAPH_URL) {
@@ -35,6 +39,15 @@ async function postSubgraph(query, variables = {}) {
 // Fetch Uniswap V2 pair data (tvl, 24h volume) by token addresses
 // Falls back to pairCreateds when the schema does not expose `pairs`
 export async function fetchV2PairData(tokenA, tokenB) {
+  if (SUBGRAPH_MISSING_KEY) {
+    return {
+      pairId: null,
+      tvlUsd: undefined,
+      volume24hUsd: undefined,
+      fees24hUsd: undefined,
+      note: "Subgraph key missing; skipping live TVL/volume.",
+    };
+  }
   const tokenALower = tokenA.toLowerCase();
   const tokenBLower = tokenB.toLowerCase();
 
@@ -406,6 +419,7 @@ export async function fetchRecentTransactions(limit = 12) {
 
 // Fetch token USD prices using derivedETH + bundle price (Uniswap V2 schema)
 export async function fetchTokenPrices(addresses = []) {
+  if (SUBGRAPH_MISSING_KEY) return {};
   const ids = Array.from(
     new Set(
       (addresses || [])
