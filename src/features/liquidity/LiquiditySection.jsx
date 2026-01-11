@@ -73,6 +73,18 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
 
+const derivePoolActivity = (pool, stats = {}) => {
+  if (pool?.active === true) return true;
+  if (pool?.active === false) return false;
+  const hasPair = Boolean(stats.pairAddress || stats.pairId);
+  const hasLiquidity =
+    Number(stats.tvlUsd || 0) > 0 ||
+    Number(stats.volume24hUsd || 0) > 0 ||
+    Number(stats.fees24hUsd || 0) > 0;
+  const hasEmissions = stats.emissionApr !== undefined;
+  return hasPair || hasLiquidity || hasEmissions;
+};
+
 const compactRpcMessage = (raw, fallback) => {
   if (!raw) return fallback;
   const stripped = raw
@@ -330,11 +342,19 @@ const [notice, setNotice] = useState("");
   }, [selectedPoolId]);
 
   const pools = useMemo(() => {
-    return basePools.map((p) => ({
-      ...p,
-      ...(poolStats[p.id] || {}),
-    }));
-  }, [poolStats]);
+    return basePools.map((p) => {
+      const stats = poolStats[p.id] || {};
+      const hasAddresses =
+        resolveTokenAddress(p.token0Symbol, tokenRegistry) &&
+        resolveTokenAddress(p.token1Symbol, tokenRegistry);
+      return {
+        ...p,
+        ...stats,
+        isActive: derivePoolActivity(p, stats),
+        hasAddresses,
+      };
+    });
+  }, [poolStats, tokenRegistry]);
 
   const filteredPools = useMemo(() => {
     if (!searchTerm) return pools;
@@ -404,6 +424,9 @@ const [notice, setNotice] = useState("");
     const baseMeta = tokenRegistry[base];
     const pairMeta = tokenRegistry[pair];
     if (!baseMeta || !pairMeta) return [];
+    const hasAddresses =
+      resolveTokenAddress(base, tokenRegistry) &&
+      resolveTokenAddress(pair, tokenRegistry);
     return [
       {
         id: `custom-${base}-${pair}`,
@@ -413,6 +436,8 @@ const [notice, setNotice] = useState("");
         tvlUsd: 0,
         volume24hUsd: 0,
         fees24hUsd: 0,
+        isActive: false,
+        hasAddresses: Boolean(hasAddresses),
       },
     ];
   }, [pools, tokenSelection?.baseSymbol, tokenSelection?.pairSymbol, tokenRegistry]);
@@ -507,7 +532,11 @@ const [notice, setNotice] = useState("");
   const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
   const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
   const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
-  const autopilotPool = pools.find((p) => p.id === "crx-weth") || pools[0];
+  const autopilotPool =
+    pools.find((p) => p.id === "crx-weth" && p.isActive && p.hasAddresses) ||
+    pools.find((p) => p.isActive && p.hasAddresses) ||
+    pools.find((p) => p.hasAddresses) ||
+    null;
 
   useEffect(() => {
     let cancelled = false;
@@ -1320,20 +1349,26 @@ const [notice, setNotice] = useState("");
                           className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
                         />
                       ))}
-                      <div className="flex flex-col">
-                        <div className="text-sm font-semibold text-slate-100">
-                          {p.token0Symbol} / {p.token1Symbol}
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                          {p.poolType || "volatile"} pool
-                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[10px] border border-slate-700">
-                            Live
-                          </span>
-                        </div>
+                    <div className="flex flex-col">
+                      <div className="text-sm font-semibold text-slate-100">
+                        {p.token0Symbol} / {p.token1Symbol}
+                      </div>
+                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                        {p.poolType || "volatile"} pool
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                            p.isActive
+                              ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+                              : "bg-rose-500/10 text-rose-200 border-rose-500/25"
+                          }`}
+                        >
+                          {p.isActive ? "Active" : "Inactive"}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm text-slate-200">
-                      <div className="text-right">
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-slate-200">
+                    <div className="text-right">
                         <div className="text-[11px] text-slate-500">APR</div>
                         <div>{p.feeApr ? `${p.feeApr.toFixed(2)}%` : "N/A"}</div>
                       </div>
@@ -1367,11 +1402,25 @@ const [notice, setNotice] = useState("");
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Active pool
+                      Pool status
                     </div>
-                    <div className="text-sm font-semibold text-slate-100">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                       {getPoolLabel(selectedPool)}
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[11px] border ${
+                          selectedPool?.isActive
+                            ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+                            : "bg-rose-500/10 text-rose-200 border-rose-500/25"
+                        }`}
+                      >
+                        {selectedPool?.isActive ? "Active" : "Inactive"}
+                      </span>
                     </div>
+                    {!selectedPool?.isActive && (
+                      <div className="text-[11px] text-amber-200 mt-1">
+                        No live liquidity detected yet. Deposits here will seed the pool.
+                      </div>
+                    )}
                     {!poolSupportsActions && (
                       <div className="text-[11px] text-amber-200 mt-1">
                         Interaction disabled: missing on-chain address for at least one token.
@@ -1672,8 +1721,9 @@ const [notice, setNotice] = useState("");
             const token1 = tokenRegistry[p.token1Symbol];
             const isSelected = selectedPoolId === p.id;
             const rowSupports =
-              resolveTokenAddress(p.token0Symbol, tokenRegistry) &&
-              resolveTokenAddress(p.token1Symbol, tokenRegistry);
+              p.hasAddresses ??
+              (resolveTokenAddress(p.token0Symbol, tokenRegistry) &&
+                resolveTokenAddress(p.token1Symbol, tokenRegistry));
 
             return (
               <button
@@ -1703,11 +1753,15 @@ const [notice, setNotice] = useState("");
                     </div>
                     <div className="text-[11px] text-slate-500 capitalize flex items-center gap-2">
                       {p.poolType || "volatile"} pool
-                      {isSelected && (
-                        <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-200 border border-sky-500/30">
-                          Active
-                        </span>
-                      )}
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                          p.isActive
+                            ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30"
+                            : "bg-rose-500/10 text-rose-200 border-rose-500/25"
+                        }`}
+                      >
+                        {p.isActive ? "Active" : "Inactive"}
+                      </span>
                       {!rowSupports && (
                         <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200 border border-amber-500/30">
                           Data only
@@ -1718,6 +1772,16 @@ const [notice, setNotice] = useState("");
                 </div>
 
                 <div className="flex flex-wrap gap-2 w-full text-xs text-slate-400 md:hidden">
+                  <div className="flex justify-between w-full">
+                    <span>Status</span>
+                    <span
+                      className={`text-slate-100 ${
+                        p.isActive ? "text-emerald-300" : "text-rose-300"
+                      }`}
+                    >
+                      {p.isActive ? "Active" : "Inactive"}
+                    </span>
+                  </div>
                   <div className="flex justify-between w-full">
                     <span>Volume</span>
                     <span className="text-slate-100">
