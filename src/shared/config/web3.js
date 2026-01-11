@@ -265,3 +265,5 @@ export const fetchMasterChefUserData = (address, pools, providerOverride) =>
     pools,
     providerOverride || getReadOnlyProvider()
   );
+
+// Simple telemetry: latest block and subgraph auth hint.
