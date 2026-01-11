@@ -529,10 +529,15 @@ export default function LiquiditySection() {
         tvlMap[p.token1Symbol] = (tvlMap[p.token1Symbol] || 0) + share;
       }
     });
+    const ethLikeTvl =
+      (tvlMap.ETH || 0) + (tvlMap.WETH || 0);
 
     return Object.values(tokenRegistry).map((t) => ({
       ...t,
-      tvlUsd: tvlMap[t.symbol] || 0,
+      tvlUsd:
+        t.symbol === "ETH" || t.symbol === "WETH"
+          ? ethLikeTvl
+          : tvlMap[t.symbol] || 0,
       priceUsd:
         tokenPrices[(t.address || "").toLowerCase()] ||
         (t.symbol === "ETH"
