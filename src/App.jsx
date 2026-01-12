@@ -5,7 +5,6 @@ import SwapSection from "./features/swap/SwapSection";
 import LiquiditySection from "./features/liquidity/LiquiditySection";
 import Dashboard from "./features/dashboard/Dashboard";
 import Farms from "./features/farms/Farms";
-import Landing from "./features/landing/Landing";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
@@ -13,7 +12,6 @@ import Footer from "./shared/ui/Footer";
 import WhitelistBanner from "./shared/ui/WhitelistBanner";
 
 export default function App() {
-  const [showLanding, setShowLanding] = useState(true);
   const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
@@ -52,11 +50,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col relative">
-      {showLanding && (
-        <div className="fixed inset-0 z-50">
-          <Landing onEnter={() => setShowLanding(false)} />
-        </div>
-      )}
       <WhitelistBanner />
       {connectError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
