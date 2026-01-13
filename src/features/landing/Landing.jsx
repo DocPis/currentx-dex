@@ -18,7 +18,9 @@ export default function Landing({ onEnter }) {
                 <img src={currentxLogo} alt="CurrentX logo" className="h-10 w-10 object-contain" />
               </div>
               <div className="flex flex-col leading-tight">
-                <span className="text-sm uppercase tracking-[0.2em] text-slate-400">MegaETH</span>
+                <span className="text-[10px] sm:text-sm uppercase tracking-[0.16em] sm:tracking-[0.2em] text-slate-400">
+                  MegaETH
+                </span>
                 <span className="text-xl font-black tracking-tight">CurrentX</span>
               </div>
             </div>
