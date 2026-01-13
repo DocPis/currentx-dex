@@ -42,7 +42,10 @@ export default function Landing({ onEnter }) {
           <main className="grid lg:grid-cols-2 gap-10 items-center">
             <div className="space-y-8">
               <div className="space-y-4">
-                <div className="text-[11px] uppercase tracking-[0.3em] text-sky-300">MegaETH ready</div>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-sky-300">
+                  <img src="/megaeth.png" alt="MegaETH logo" className="h-4 w-4 object-contain shrink-0" />
+                  <span>MegaETH ready</span>
+                </div>
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] tracking-tight">
                   Zero latency liquidity. <br /> Sub-millisecond swaps.
                 </h1>
