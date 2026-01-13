@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { Analytics } from "@vercel/analytics/react";
 import Landing from "./features/landing/Landing";
 import "./index.css";
 
@@ -16,5 +17,6 @@ ReactDOM.createRoot(document.getElementById("root")).render(
         window.location.href = appUrl;
       }}
     />
+    <Analytics />
   </React.StrictMode>
 );
