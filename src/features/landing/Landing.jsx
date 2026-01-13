@@ -11,7 +11,7 @@ export default function Landing({ onEnter }) {
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(0deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:160px_160px] opacity-40" />
         </div>
 
-        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-10 pb-20 flex flex-col gap-10">
+        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-8 pb-14 sm:pt-10 sm:pb-20 lg:pb-24 flex flex-col gap-10">
           <header className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <div className="h-12 w-12 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-center shadow-[0_10px_40px_-20px_rgba(56,189,248,0.5)]">
@@ -43,7 +43,7 @@ export default function Landing({ onEnter }) {
             <div className="space-y-8">
               <div className="space-y-4">
                 <div className="text-[11px] uppercase tracking-[0.3em] text-sky-300">MegaETH ready</div>
-                <h1 className="text-5xl sm:text-6xl font-black leading-[1.05] tracking-tight">
+                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] tracking-tight">
                   Zero latency liquidity. <br /> Sub-millisecond swaps.
                 </h1>
                 <p className="text-base sm:text-lg text-slate-300 max-w-xl">
