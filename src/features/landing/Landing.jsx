@@ -84,13 +84,7 @@ export default function Landing({ onEnter }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 shadow-[0_8px_30px_-18px_rgba(56,189,248,0.6)]">
-                      <div className="h-6 w-6 rounded-full border border-slate-700 bg-slate-800/80 flex items-center justify-center">
-                        <img
-                          src="/megaeth.png"
-                          alt="MegaETH logo"
-                          className="h-4 w-4 object-contain drop-shadow-[0_0_6px_rgba(56,189,248,0.55)] brightness-150"
-                        />
-                      </div>
+                      <img src="/megaeth.png" alt="MegaETH logo" className="h-6 w-6 object-contain" />
                       <span className="text-[11px] font-semibold text-slate-100">MegaETH</span>
                     </div>
                     <span className="px-3 py-1 text-[11px] rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
