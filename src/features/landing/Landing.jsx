@@ -11,14 +11,14 @@ export default function Landing({ onEnter }) {
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(0deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:160px_160px] opacity-40" />
         </div>
 
-        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-10 pb-20 flex flex-col gap-10">
+        <div className="relative z-10 max-w-7xl mx-auto px-6 pt-8 pb-14 sm:pt-10 sm:pb-20 lg:pb-24 flex flex-col gap-10">
           <header className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center justify-center shadow-[0_10px_40px_-20px_rgba(56,189,248,0.5)]">
-                <img src={currentxLogo} alt="CurrentX logo" className="h-10 w-10 object-contain" />
-              </div>
+              <img src={currentxLogo} alt="CurrentX logo" className="h-12 w-12 object-contain shrink-0" />
               <div className="flex flex-col leading-tight">
-                <span className="text-sm uppercase tracking-[0.2em] text-slate-400">MegaETH</span>
+                <span className="text-[10px] sm:text-sm uppercase tracking-[0.16em] sm:tracking-[0.2em] text-slate-400">
+                  MegaETH
+                </span>
                 <span className="text-xl font-black tracking-tight">CurrentX</span>
               </div>
             </div>
@@ -42,8 +42,11 @@ export default function Landing({ onEnter }) {
           <main className="grid lg:grid-cols-2 gap-10 items-center">
             <div className="space-y-8">
               <div className="space-y-4">
-                <div className="text-[11px] uppercase tracking-[0.3em] text-sky-300">MegaETH ready</div>
-                <h1 className="text-5xl sm:text-6xl font-black leading-[1.05] tracking-tight">
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.26em] text-sky-300">
+                  <img src="/megaeth.png" alt="MegaETH logo" className="h-4 w-4 object-contain shrink-0" />
+                  <span>MegaETH ready</span>
+                </div>
+                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.05] tracking-tight">
                   Zero latency liquidity. <br /> Sub-millisecond swaps.
                 </h1>
                 <p className="text-base sm:text-lg text-slate-300 max-w-xl">
@@ -72,19 +75,25 @@ export default function Landing({ onEnter }) {
             <div className="relative">
               <div className="absolute -inset-16 bg-gradient-to-br from-sky-500/10 via-transparent to-emerald-500/10 blur-3xl" aria-hidden />
               <div className="relative rounded-[32px] border border-slate-800 bg-slate-900/70 shadow-2xl shadow-black/50 overflow-hidden p-10 flex flex-col gap-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="h-12 w-12 rounded-2xl bg-slate-800 flex items-center justify-center border border-slate-700">
-                      <img src={currentxLogo} alt="CurrentX" className="h-10 w-10 object-contain" />
-                    </div>
-                    <div className="flex flex-col leading-tight">
-                      <span className="text-sm font-semibold">Built for MegaETH</span>
-                      <span className="text-xs text-slate-400">Ultra-fast AMM infrastructure</span>
-                    </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-3">
+                  <img src={currentxLogo} alt="CurrentX" className="h-12 w-12 object-contain shrink-0" />
+                  <div className="flex flex-col leading-tight">
+                    <span className="text-sm font-semibold">Built for MegaETH</span>
+                    <span className="text-xs text-slate-400">Ultra-fast AMM infrastructure</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  <div className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-slate-900/70 px-2 sm:px-2.5 py-1 shadow-[0_8px_30px_-18px_rgba(56,189,248,0.6)]">
+                    <img src="/megaeth.png" alt="MegaETH logo" className="h-5 w-5 object-contain shrink-0" />
+                    <span className="text-[9px] sm:text-[11px] font-semibold text-slate-100 leading-none whitespace-nowrap">
+                      MegaETH
+                    </span>
                   </div>
                   <span className="px-3 py-1 text-[11px] rounded-full border border-emerald-500/40 bg-emerald-500/10 text-emerald-200">
                     Live
                   </span>
+                </div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-5 flex flex-col gap-3">
