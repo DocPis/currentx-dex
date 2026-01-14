@@ -6,7 +6,7 @@ import telegramIcon from "../../assets/social/telegram.png";
 const FOOTER_LINKS = {
   docs: "https://docs.currentx.app/",
   twitter: "https://x.com/currentxdex",
-  discord: "https://discord.gg/g33rC3RT",
+  discord: "https://discord.gg/hebSwdXwVv",
   telegram: "https://t.co/VLEkH8Z2fD",
 };
 
