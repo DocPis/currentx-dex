@@ -1,5 +1,5 @@
 // src/features/swap/SwapSection.jsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -20,10 +20,13 @@ import {
   UNIV2_ROUTER_ABI,
   UNIV2_FACTORY_ABI,
 } from "../../shared/config/abis";
+import { getRealtimeClient } from "../../shared/services/realtime";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CRX"];
 const MAX_UINT256 = (1n << 256n) - 1n;
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
+const SYNC_TOPIC =
+  "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -71,6 +74,8 @@ export default function SwapSection({ balances }) {
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
   const [quoteRoute, setQuoteRoute] = useState([]);
+  const [quotePairs, setQuotePairs] = useState([]); // tracked LPs for realtime refresh
+  const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
@@ -80,7 +85,7 @@ export default function SwapSection({ balances }) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
-  const [toastTimer, setToastTimer] = useState(null);
+  const toastTimerRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -178,13 +183,13 @@ export default function SwapSection({ balances }) {
     if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
     const direct = await factory.getPair(a, b);
-    if (direct && direct !== ZERO_ADDRESS) return [a, b];
+    if (direct && direct !== ZERO_ADDRESS) return { path: [a, b], pairs: [direct] };
 
     // try hop through WETH
     const hopA = await factory.getPair(a, WETH_ADDRESS);
     const hopB = await factory.getPair(WETH_ADDRESS, b);
     if (hopA && hopA !== ZERO_ADDRESS && hopB && hopB !== ZERO_ADDRESS) {
-      return [a, WETH_ADDRESS, b];
+      return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
     }
 
     throw new Error("No route available for this pair.");
@@ -232,6 +237,35 @@ export default function SwapSection({ balances }) {
     });
   }, [quoteRoute, tokenRegistry]);
 
+  // Re-run quotes when LP reserves move (Sync events via miniBlocks)
+  useEffect(() => {
+    const pairs = (quotePairs || []).filter(Boolean);
+    if (!pairs.length) return undefined;
+    const watched = new Set(pairs.map((p) => p.toLowerCase()));
+    const client = getRealtimeClient();
+
+    const handleMini = (mini) => {
+      const receipts = mini?.receipts;
+      if (!Array.isArray(receipts)) return;
+      for (let i = 0; i < receipts.length; i += 1) {
+        const logs = receipts[i]?.logs;
+        if (!Array.isArray(logs)) continue;
+        for (let j = 0; j < logs.length; j += 1) {
+          const log = logs[j];
+          const addr = (log?.address || "").toLowerCase();
+          if (!watched.has(addr)) continue;
+          const topic0 = (log?.topics?.[0] || "").toLowerCase();
+          if (topic0 !== SYNC_TOPIC) continue;
+          setLiveRouteTick((t) => t + 1);
+          return;
+        }
+      }
+    };
+
+    const unsubscribe = client.addMiniBlockListener(handleMini);
+    return unsubscribe;
+  }, [quotePairs]);
+
   useEffect(() => {
     let cancelled = false;
     const fetchQuote = async () => {
@@ -242,6 +276,7 @@ export default function SwapSection({ balances }) {
       setApproveNeeded(false);
       setApprovalTarget(null);
       setQuoteRoute([]);
+      setQuotePairs([]);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -255,6 +290,7 @@ export default function SwapSection({ balances }) {
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
         setQuoteRoute([sellToken, buyToken]);
+        setQuotePairs([]);
         return;
       }
 
@@ -269,8 +305,9 @@ export default function SwapSection({ balances }) {
         }
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-        const path = await buildPath();
+        const { path, pairs } = await buildPath();
         setQuoteRoute(path);
+        setQuotePairs(pairs || []);
         const amountOut = await getV2Quote(provider, amountWei, path);
         if (cancelled) return;
 
@@ -345,6 +382,7 @@ export default function SwapSection({ balances }) {
     sellMeta?.address,
     sellMeta?.decimals,
     sellToken,
+    liveRouteTick,
   ]);
 
   const slippageBps = (() => {
@@ -359,18 +397,19 @@ export default function SwapSection({ balances }) {
 
   useEffect(() => {
     if (!swapStatus) return undefined;
-    if (toastTimer) {
-      clearTimeout(toastTimer);
-      setToastTimer(null);
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
     }
     const id = setTimeout(() => {
       setSwapStatus(null);
-      setToastTimer(null);
     }, 15000);
-    setToastTimer(id);
+    toastTimerRef.current = id;
     return () => {
       clearTimeout(id);
-      setToastTimer(null);
+      if (toastTimerRef.current === id) {
+        toastTimerRef.current = null;
+      }
     };
   }, [swapStatus]);
 
@@ -460,7 +499,10 @@ export default function SwapSection({ balances }) {
         return;
       }
 
-      const path = quoteRoute.length ? quoteRoute : await buildPath();
+      const routeMeta = quoteRoute.length
+        ? { path: quoteRoute, pairs: quotePairs }
+        : await buildPath();
+      const path = routeMeta?.path || [];
       let amountOut = quoteOutRaw;
       if (!amountOut) {
         const readProvider = getReadOnlyProvider();

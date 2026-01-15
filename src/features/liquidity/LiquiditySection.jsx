@@ -1,5 +1,5 @@
 // src/features/liquidity/LiquiditySection.jsx
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Contract, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -23,8 +23,11 @@ import {
   UNIV2_ROUTER_ABI,
 } from "../../shared/config/abis";
 import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
+import { getRealtimeClient } from "../../shared/services/realtime";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
+const SYNC_TOPIC =
+  "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
 
 const formatNumber = (v) => {
   const num = Number(v || 0);
@@ -158,6 +161,8 @@ export default function LiquiditySection() {
   const [lpBalance, setLpBalance] = useState(null);
   const [lpBalanceError, setLpBalanceError] = useState("");
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
+  const [pairLiveTick, setPairLiveTick] = useState(0);
+  const livePairThrottle = useRef(0);
   const [tokenBalances, setTokenBalances] = useState(null);
   const [tokenBalanceError, setTokenBalanceError] = useState("");
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
@@ -683,6 +688,41 @@ export default function LiquiditySection() {
   const pairMissing =
     pairNotDeployed ||
     (pairError && pairError.toLowerCase().includes("pair not found"));
+
+  // Listen for Sync events on the active pair to refresh reserves instantly
+  useEffect(() => {
+    const candidate =
+      pairInfo?.pairAddress ||
+      selectedPool?.pairAddress ||
+      pairIdOverride;
+    if (!candidate) return undefined;
+    const target = candidate.toLowerCase();
+    const client = getRealtimeClient();
+
+    const handleMini = (mini) => {
+      const receipts = mini?.receipts;
+      if (!Array.isArray(receipts)) return;
+      for (let i = 0; i < receipts.length; i += 1) {
+        const logs = receipts[i]?.logs;
+        if (!Array.isArray(logs)) continue;
+        for (let j = 0; j < logs.length; j += 1) {
+          const log = logs[j];
+          const addr = (log?.address || "").toLowerCase();
+          if (addr !== target) continue;
+          const topic0 = (log?.topics?.[0] || "").toLowerCase();
+          if (topic0 !== SYNC_TOPIC) continue;
+          const now = Date.now();
+          if (now - (livePairThrottle.current || 0) < 800) return;
+          livePairThrottle.current = now;
+          setPairLiveTick((t) => t + 1);
+          return;
+        }
+      }
+    };
+
+    const unsubscribe = client.addMiniBlockListener(handleMini);
+    return unsubscribe;
+  }, [pairIdOverride, pairInfo?.pairAddress, selectedPool?.pairAddress]);
   const pairBlockingError = Boolean(pairError && !pairMissing);
   const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
 
@@ -820,6 +860,7 @@ export default function LiquiditySection() {
     token0Address,
     token1Address,
     lpRefreshTick,
+    pairLiveTick,
   ]);
 
   // Suggest balanced amount based on current reserves

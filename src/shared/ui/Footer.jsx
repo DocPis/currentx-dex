@@ -10,31 +10,31 @@ const FOOTER_LINKS = {
   telegram: "https://t.co/VLEkH8Z2fD",
 };
 
+const LinkItem = ({ href, children }) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noreferrer"
+    className="text-sm text-slate-300 hover:text-sky-300 transition-colors"
+  >
+    {children}
+  </a>
+);
+
+const IconButton = ({ href, label, children }) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noreferrer"
+    className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all overflow-hidden"
+    aria-label={label}
+    title={label}
+  >
+    {children}
+  </a>
+);
+
 export default function Footer() {
-  const LinkItem = ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="text-sm text-slate-300 hover:text-sky-300 transition-colors"
-    >
-      {children}
-    </a>
-  );
-
-  const IconButton = ({ href, label, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all overflow-hidden"
-      aria-label={label}
-      title={label}
-    >
-      {children}
-    </a>
-  );
-
   return (
     <footer className="mt-10 border-t border-slate-800 bg-[#050915]">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">

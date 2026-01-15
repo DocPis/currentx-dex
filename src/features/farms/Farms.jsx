@@ -11,6 +11,7 @@ import {
   NETWORK_NAME,
 } from "../../shared/config/web3";
 import { ERC20_ABI, MASTER_CHEF_ABI } from "../../shared/config/abis";
+import { getRealtimeClient } from "../../shared/services/realtime";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 
@@ -57,7 +58,9 @@ function FarmsList({ address, onConnect }) {
   const [meta, setMeta] = useState({ totalAllocPoint: 0, emissionPerBlock: 0 });
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
+  const [userLiveTick, setUserLiveTick] = useState(0);
   const firstLoadRef = useRef(true);
+  const liveUserThrottle = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +112,35 @@ function FarmsList({ address, onConnect }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [address, farms]);
+  }, [address, farms, userLiveTick]);
+
+  // Realtime refresh for user data when MasterChef emits logs (miniBlocks)
+  useEffect(() => {
+    if (!address) return undefined;
+    const client = getRealtimeClient();
+    const chef = MASTER_CHEF_ADDRESS.toLowerCase();
+
+    const handleMini = (mini) => {
+      const receipts = mini?.receipts;
+      if (!Array.isArray(receipts)) return;
+      for (let i = 0; i < receipts.length; i += 1) {
+        const logs = receipts[i]?.logs;
+        if (!Array.isArray(logs)) continue;
+        for (let j = 0; j < logs.length; j += 1) {
+          const log = logs[j];
+          if ((log?.address || "").toLowerCase() !== chef) continue;
+          const now = Date.now();
+          if (now - (liveUserThrottle.current || 0) < 800) return;
+          liveUserThrottle.current = now;
+          setUserLiveTick((t) => t + 1);
+          return;
+        }
+      }
+    };
+
+    const unsubscribe = client.addMiniBlockListener(handleMini);
+    return unsubscribe;
+  }, [address]);
 
   const isEmpty = !farms.length && !loading && !error;
 
