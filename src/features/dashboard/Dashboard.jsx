@@ -591,7 +591,7 @@ export default function Dashboard() {
           </div>
           <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 uppercase tracking-wide">
             <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
-            All-time volume (top 4)
+            Top 4
           </div>
         </div>
         <div className="space-y-4">
@@ -619,7 +619,7 @@ export default function Dashboard() {
                         {pair.label}
                       </div>
                       <div className="text-[11px] uppercase text-slate-500 tracking-wide">
-                        All-time volume
+                        Volume (all-time)
                       </div>
                     </div>
                     <div className="text-sm font-semibold text-sky-200">
@@ -627,7 +627,7 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span>Volume (USD, all-time)</span>
+                    <span>Volume (USD)</span>
                     <span className="text-slate-200">
                       ${formatNumber(pair.volumeUsd || 0)}
                     </span>
