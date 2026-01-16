@@ -468,7 +468,7 @@ export async function fetchTokenPrices(addresses = []) {
   }
 }
 
-// Fetch top pairs by daily volume for the latest indexed day
+// Fetch top pairs by all-time volume (falling back gracefully if unavailable)
 export async function fetchTopPairsBreakdown(limit = 4) {
   const safeQuery = async (query, field, variables = {}) => {
     try {
@@ -484,63 +484,53 @@ export async function fetchTopPairsBreakdown(limit = 4) {
     }
   };
 
-  // Get the most recent day that has pair day data to avoid empty "today" gaps on testnets.
-  const latestDayRes = await safeQuery(
-    `
-      query LatestPairDay {
-        pairDayDatas(first: 1, orderBy: date, orderDirection: desc) {
-          date
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+
+  const [topPairsRes, factoryRes] = await Promise.all([
+    safeQuery(
+      `
+        query TopPairs($limit: Int!) {
+          pairs(
+            first: $limit
+            orderBy: volumeUSD
+            orderDirection: desc
+          ) {
+            id
+            volumeUSD
+            reserveUSD
+            token0 { symbol }
+            token1 { symbol }
+          }
         }
-      }
-    `,
-    "pairDayDatas"
-  );
-
-  const latestDay = Number(latestDayRes?.[0]?.date || 0);
-  if (!latestDay) return [];
-
-  const topPairsRes = await safeQuery(
-    `
-      query TopPairs($day: Int!, $limit: Int!) {
-        pairDayDatas(
-          first: $limit
-          where: { date: $day }
-          orderBy: dailyVolumeUSD
-          orderDirection: desc
-        ) {
-          date
-          pairAddress
-          dailyVolumeUSD
-          reserveUSD
+      `,
+      "pairs",
+      { limit: finalLimit }
+    ),
+    safeQuery(
+      `
+        query FactoryVolume {
+          uniswapFactories(first: 1) {
+            totalVolumeUSD
+          }
         }
-      }
-    `,
-    "pairDayDatas",
-    { day: latestDay, limit: Math.max(limit, 6) }
-  );
+      `,
+      "uniswapFactories"
+    ),
+  ]);
 
-  const pairIds = topPairsRes
-    .map((p) => p?.pairAddress)
-    .filter(Boolean);
+  const pairIds = topPairsRes.map((p) => p?.id).filter(Boolean);
 
   let pairMetaById = {};
   if (pairIds.length) {
     try {
-      const pairMeta = await safeQuery(
-        `
-          query PairMeta($ids: [Bytes!]!) {
-            pairs(where: { id_in: $ids }) {
-              id
-              token0 { symbol }
-              token1 { symbol }
-            }
-          }
-        `,
-        "pairs",
-        { ids: pairIds }
-      );
       pairMetaById = Object.fromEntries(
-        (pairMeta || []).map((p) => [p.id?.toLowerCase(), p])
+        (topPairsRes || []).map((p) => [
+          p.id?.toLowerCase(),
+          {
+            token0: p.token0,
+            token1: p.token1,
+          },
+        ])
       );
     } catch {
       pairMetaById = {};
@@ -548,12 +538,12 @@ export async function fetchTopPairsBreakdown(limit = 4) {
   }
 
   const mapped = topPairsRes.map((p, idx) => {
-    const pairId = (p?.pairAddress || "").toLowerCase();
+    const pairId = (p?.id || "").toLowerCase();
     const meta = pairMetaById[pairId];
     const t0 = meta?.token0?.symbol || "Token0";
     const t1 = meta?.token1?.symbol || "Token1";
     const label = meta ? `${t0}-${t1}` : (pairId ? `${pairId.slice(0, 6)}...${pairId.slice(-4)}` : "Pair");
-    const volumeUsd = Number(p?.dailyVolumeUSD || 0);
+    const volumeUsd = Number(p?.volumeUSD || 0);
     const tvlUsd = Number(p?.reserveUSD || 0);
     return {
       id: pairId || `${label}-${idx}`,
@@ -566,14 +556,16 @@ export async function fetchTopPairsBreakdown(limit = 4) {
   const filtered = mapped.filter((p) => p.volumeUsd > 0 || p.tvlUsd > 0);
   if (!filtered.length) return [];
 
-  const top = filtered.slice(0, limit);
-  const totalVolume = top.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
-  const fallbackTotal = totalVolume === 0 ? top.reduce((sum, p) => sum + (p.tvlUsd || 0), 0) : totalVolume;
-  const baseIsTvl = totalVolume === 0;
+  const top = filtered.slice(0, finalLimit);
+  const factoryVolumeUsd = Number(factoryRes?.[0]?.totalVolumeUSD || 0);
+  const volumeSumTop = top.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
+  const tvlSumTop = top.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
+  const baseTotal = factoryVolumeUsd || volumeSumTop || tvlSumTop;
+  const baseIsTvl = !factoryVolumeUsd && volumeSumTop === 0;
 
   return top.map((p, idx) => {
     const baseValue = baseIsTvl ? p.tvlUsd : p.volumeUsd;
-    const share = fallbackTotal ? (baseValue / fallbackTotal) * 100 : 0;
+    const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
     return {
       ...p,
       share,
