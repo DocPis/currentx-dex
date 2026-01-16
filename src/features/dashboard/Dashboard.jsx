@@ -618,9 +618,6 @@ export default function Dashboard() {
                       <div className="text-sm font-semibold text-white">
                         {pair.label}
                       </div>
-                      <div className="text-[11px] uppercase text-slate-500 tracking-wide">
-                        Volume (all-time)
-                      </div>
                     </div>
                     <div className="text-sm font-semibold text-sky-200">
                       {Math.round(pair.share || 0)}%
