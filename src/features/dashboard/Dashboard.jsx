@@ -624,7 +624,6 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span>Volume (USD)</span>
                     <span className="text-slate-200">
                       ${formatNumber(pair.volumeUsd || 0)}
                     </span>
