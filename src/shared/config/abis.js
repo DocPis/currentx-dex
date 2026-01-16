@@ -564,3 +564,14 @@ export const UNIV2_PAIR_ABI = [
     type: "function",
   },
 ];
+
+// HighPrecisionTimestampOracle: returns microsecond-level timestamp for the current tx
+export const HIGH_PRECISION_TIMESTAMP_ORACLE_ABI = [
+  {
+    inputs: [],
+    name: "timestamp",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+];

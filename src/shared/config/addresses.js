@@ -25,6 +25,10 @@ export const MASTER_CHEF_ADDRESS =
 export const CRX_WETH_LP_ADDRESS =
   "0x340d63169285e5ae01a722ce762c0e81a7fa3037";
 
+// Infra: high-precision timestamp oracle (microsecond)
+export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =
+  "0x6342000000000000000000000000000000000002";
+
 // Uniswap V2 factory/router
 export const UNIV2_FACTORY_ADDRESS =
   "0x1F49127E87A1B925694a67C437dd2252641B3875";

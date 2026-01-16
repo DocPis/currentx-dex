@@ -2,6 +2,7 @@
 import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
 import {
   ERC20_ABI,
+  HIGH_PRECISION_TIMESTAMP_ORACLE_ABI,
   MASTER_CHEF_ABI,
   UNIV2_FACTORY_ABI,
   UNIV2_ROUTER_ABI,
@@ -50,6 +51,7 @@ export { getRegisteredCustomTokens, setRegisteredCustomTokens } from "./customTo
 // Re-export ABIs for convenience across the app
 export {
   ERC20_ABI,
+  HIGH_PRECISION_TIMESTAMP_ORACLE_ABI,
   MASTER_CHEF_ABI,
   UNIV2_FACTORY_ABI,
   UNIV2_ROUTER_ABI,
