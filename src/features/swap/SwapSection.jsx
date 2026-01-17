@@ -88,7 +88,9 @@ export default function SwapSection({ balances }) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
+  const [copiedToken, setCopiedToken] = useState("");
   const toastTimerRef = useRef(null);
+  const copyTimerRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -221,6 +223,13 @@ export default function SwapSection({ balances }) {
     setSelectorOpen(null);
     setTokenSearch("");
   };
+
+  useEffect(() => () => {
+    if (copyTimerRef.current) {
+      clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+  }, []);
 
   const displayRoute = useMemo(() => {
     if (!quoteRoute.length) return [];
@@ -1045,34 +1054,63 @@ export default function SwapSection({ balances }) {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            const copy = () => {
+                              setCopiedToken(t.address);
+                              if (copyTimerRef.current) {
+                                clearTimeout(copyTimerRef.current);
+                              }
+                              copyTimerRef.current = setTimeout(() => {
+                                setCopiedToken("");
+                                copyTimerRef.current = null;
+                              }, 1000);
+                            };
                             if (navigator?.clipboard?.writeText) {
-                              navigator.clipboard.writeText(t.address).catch(() => {});
+                              navigator.clipboard.writeText(t.address).then(copy).catch(copy);
+                            } else {
+                              copy();
                             }
                           }}
                           className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-slate-800 border border-slate-700 text-[11px] text-slate-300 hover:text-sky-100 hover:border-sky-500/60"
                           aria-label={`Copy ${t.symbol} address`}
                         >
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-3.5 w-3.5"
-                          >
-                            <path
-                              d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
-                              stroke="currentColor"
-                              strokeWidth="1.3"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <path
-                              d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
-                              stroke="currentColor"
-                              strokeWidth="1.3"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
+                          {copiedToken === t.address ? (
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-3.5 w-3.5 text-emerald-300"
+                            >
+                              <path
+                                d="M5 11l3 3 7-7"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-3.5 w-3.5"
+                            >
+                              <path
+                                d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
+                                stroke="currentColor"
+                                strokeWidth="1.3"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                              <path
+                                d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
+                                stroke="currentColor"
+                                strokeWidth="1.3"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          )}
                         </button>
                       </div>
                     ) : (
