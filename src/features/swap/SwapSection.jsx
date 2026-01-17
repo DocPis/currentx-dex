@@ -953,7 +953,6 @@ export default function SwapSection({ balances }) {
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
               <div>
                 <div className="text-sm font-semibold text-slate-100">Select token</div>
-                <div className="text-xs text-slate-400">Pick from list</div>
               </div>
               <button
                 onClick={closeSelector}
