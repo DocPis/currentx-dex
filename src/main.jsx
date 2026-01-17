@@ -5,6 +5,7 @@ import App from "./App";
 import WhitelistPage from "./features/whitelist/WhitelistPage";
 import "./index.css";
 
+// Only enable analytics in production to avoid dev warnings.
 if (import.meta.env.MODE === "production") {
   inject();
 }
