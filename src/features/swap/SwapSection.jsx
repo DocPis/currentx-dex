@@ -39,6 +39,8 @@ const formatBalance = (v) => {
     useGrouping: false,
   });
 };
+const displaySymbol = (token, fallback) =>
+  (token && (token.displaySymbol || token.symbol)) || fallback;
 
 const friendlySwapError = (e) => {
   const raw = e?.message || "";
@@ -135,6 +137,8 @@ export default function SwapSection({ balances }) {
   const buyMeta = tokenRegistry[buyKey];
   const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
   const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
+  const displaySellSymbol = displaySymbol(displaySellMeta, sellToken);
+  const displayBuySymbol = displaySymbol(displayBuyMeta, buyToken);
   const displaySellAddress =
     (displaySellMeta?.address || (sellToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
   const displayBuyAddress =
@@ -247,7 +251,7 @@ export default function SwapSection({ balances }) {
           : null;
       const label =
         typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
-          ? metaByAddr?.symbol || "Token"
+          ? displaySymbol(metaByAddr, "Token")
           : addrOrSymbol;
       return label || "Token";
     });
@@ -594,7 +598,7 @@ export default function SwapSection({ balances }) {
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
             <span className="font-medium text-slate-300">
-              Balance: {(balances[sellToken] || 0).toFixed(4)} {sellToken}
+              Balance: {(balances[sellToken] || 0).toFixed(4)} {displaySellSymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -614,12 +618,12 @@ export default function SwapSection({ balances }) {
                 />
               ) : (
                 <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(displaySellMeta?.symbol || sellToken || "?").slice(0, 2)}
+                  {(displaySellSymbol || "?").slice(0, 2)}
                 </div>
               )}
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
-                  {displaySellMeta?.symbol || sellToken}
+                  {displaySellSymbol}
                 </span>
                 <span className="text-[10px] text-slate-400">
                   {displaySellAddress ? shortenAddress(displaySellAddress) : "Native"}
@@ -663,7 +667,7 @@ export default function SwapSection({ balances }) {
               </button>
             ))}
             <div className="px-2 py-1 text-slate-400">
-              {(sellBalance || 0).toFixed(4)} {sellToken} available
+              {(sellBalance || 0).toFixed(4)} {displaySellSymbol} available
             </div>
           </div>
         </div>
@@ -715,7 +719,7 @@ export default function SwapSection({ balances }) {
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Buy</span>
             <span className="font-medium text-slate-300">
-              Balance: {(balances[buyToken] || 0).toFixed(2)} {buyToken}
+              Balance: {(balances[buyToken] || 0).toFixed(2)} {displayBuySymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -735,12 +739,12 @@ export default function SwapSection({ balances }) {
                 />
               ) : (
                 <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(displayBuyMeta?.symbol || buyToken || "?").slice(0, 2)}
+                  {(displayBuySymbol || "?").slice(0, 2)}
                 </div>
               )}
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
-                  {displayBuyMeta?.symbol || buyToken}
+                  {displayBuySymbol}
                 </span>
                 <span className="text-[10px] text-slate-400">
                   {displayBuyAddress ? shortenAddress(displayBuyAddress) : "Native"}
@@ -996,6 +1000,7 @@ export default function SwapSection({ balances }) {
               {filteredTokens.map((t) => {
                 const displayAddress =
                   t.address || (t.symbol === "ETH" ? WETH_ADDRESS : "");
+                const displaySym = displaySymbol(t, t.symbol);
                 return (
                   <button
                     key={`${selectorOpen}-${t.symbol}`}
@@ -1011,12 +1016,12 @@ export default function SwapSection({ balances }) {
                       />
                     ) : (
                       <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center">
-                        {t.symbol.slice(0, 3)}
+                        {displaySym.slice(0, 3)}
                       </div>
                     )}
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                        {t.symbol}
+                        {displaySym}
                         {!displayAddress && (
                           <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300">
                             Native
@@ -1074,7 +1079,7 @@ export default function SwapSection({ balances }) {
                               }
                             }}
                             className="h-6 w-6 inline-flex items-center justify-center rounded-md bg-slate-800 border border-slate-700 text-[11px] text-slate-300 hover:text-sky-100 hover:border-sky-500/60"
-                            aria-label={`Copy ${t.symbol} address`}
+                            aria-label={`Copy ${displaySym} address`}
                           >
                             {copiedToken === displayAddress ? (
                               <svg
