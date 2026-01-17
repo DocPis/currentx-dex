@@ -33,8 +33,8 @@ const shortenAddress = (addr) =>
 const formatBalance = (v) => {
   const n = Number(v || 0);
   if (!Number.isFinite(n)) return "0";
-  if (n >= 1) return n.toFixed(3);
-  return n.toFixed(4);
+  if (n >= 1) return n.toFixed(2);
+  return n.toFixed(3);
 };
 
 const friendlySwapError = (e) => {
