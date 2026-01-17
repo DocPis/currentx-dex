@@ -988,17 +988,19 @@ export default function SwapSection({ balances }) {
                   onClick={() => handleSelectToken(t.symbol)}
                   className="w-full px-4 py-3 flex items-center gap-3 bg-slate-950/50 hover:bg-slate-900/70 transition text-left"
                 >
-                  {t.logo ? (
-                    <img
-                      src={t.logo}
-                      alt={`${t.symbol} logo`}
-                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                    />
-                  ) : (
-                    <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center">
-                      {t.symbol.slice(0, 3)}
-                    </div>
-                  )}
+                  <div className="h-11 w-11 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center shrink-0">
+                    {t.logo ? (
+                      <img
+                        src={t.logo}
+                        alt={`${t.symbol} logo`}
+                        className="h-8 w-8 object-contain"
+                      />
+                    ) : (
+                      <div className="h-8 w-8 rounded-full bg-slate-800 border border-slate-700 text-xs font-semibold text-white flex items-center justify-center">
+                        {t.symbol.slice(0, 3)}
+                      </div>
+                    )}
+                  </div>
                   <div className="flex flex-col min-w-0">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                       {t.symbol}
