@@ -45,7 +45,7 @@ export const TOKENS = {
   },
   CUSD: {
     symbol: "CUSD",
-    name: "cUSD",
+    name: "Cap USD",
     address: CUSD_ADDRESS,
     decimals: 18,
     logo: cusdLogo,
