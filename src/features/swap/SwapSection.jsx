@@ -32,9 +32,8 @@ const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 const formatBalance = (v) => {
   const n = Number(v || 0);
-  if (!Number.isFinite(n)) return "0";
-  if (n >= 1) return n.toFixed(0);
-  return n.toFixed(1);
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  return n.toFixed(2);
 };
 
 const friendlySwapError = (e) => {
