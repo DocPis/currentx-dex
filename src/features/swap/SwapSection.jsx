@@ -122,6 +122,16 @@ const findActualOutput = (receipt, targetAddress, userAddress, opts = {}) => {
 const friendlySwapError = (e) => {
   const raw = e?.message || "";
   const lower = raw.toLowerCase();
+  const rpcCode =
+    e?.code || e?.error?.code || (typeof e?.data?.code !== "undefined" ? e.data.code : null);
+  if (
+    rpcCode === -32603 ||
+    lower.includes("internal json-rpc error") ||
+    lower.includes("json-rpc") ||
+    lower.includes("could not coalesce")
+  ) {
+    return "RPC rejected the transaction (internal error). Switch RPC (e.g. official MegaETH) and try again.";
+  }
   if (
     lower.includes("insufficient output amount") ||
     lower.includes("uniswapv2router: insufficient_output_amount")
