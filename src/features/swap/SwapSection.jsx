@@ -977,7 +977,7 @@ export default function SwapSection({ balances }) {
                 <input
                   value={tokenSearch}
                   onChange={(e) => setTokenSearch(e.target.value)}
-                  placeholder="WETH, USDC, 0x..."
+                  placeholder="Search name or paste token address"
                   className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500"
                 />
               </div>
