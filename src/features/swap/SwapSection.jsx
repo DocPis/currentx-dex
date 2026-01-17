@@ -992,9 +992,7 @@ export default function SwapSection({ balances }) {
                     <img
                       src={t.logo}
                       alt={`${t.symbol} logo`}
-                      className={`rounded-full border border-slate-800 bg-slate-900 object-contain ${
-                        t.symbol === "ETH" ? "h-11 w-11" : "h-10 w-10"
-                      }`}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
                     />
                   ) : (
                     <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center">
