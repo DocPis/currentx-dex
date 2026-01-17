@@ -35,7 +35,7 @@ const formatBalance = (v) => {
   if (!Number.isFinite(n) || n <= 0) return "0";
   return n.toLocaleString("en-US", {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
+    maximumFractionDigits: 4,
     useGrouping: false,
   });
 };
