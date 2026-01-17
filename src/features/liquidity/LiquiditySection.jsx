@@ -447,9 +447,9 @@ export default function LiquiditySection() {
           const metaA = tokenRegistry[pool.token0Symbol];
           const metaB = tokenRegistry[pool.token1Symbol];
           const stableA =
-            metaA?.symbol === "USDC";
+            metaA?.symbol === "USDC" || metaA?.symbol === "USDm";
           const stableB =
-            metaB?.symbol === "USDC";
+            metaB?.symbol === "USDC" || metaB?.symbol === "USDm";
           let tvlUsd;
           let finalPairAddress = pairAddress;
           if (stableA) {

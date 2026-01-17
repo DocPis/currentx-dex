@@ -22,7 +22,7 @@ import {
 } from "../../shared/config/abis";
 import { getRealtimeClient } from "../../shared/services/realtime";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CRX"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "USDm", "CRX"];
 const MAX_UINT256 = (1n << 256n) - 1n;
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =

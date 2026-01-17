@@ -1,11 +1,13 @@
 // src/shared/config/tokens.js
 import ethLogo from "../../tokens/eth.png";
 import usdcLogo from "../../tokens/usdc.png";
+import usdmLogo from "../../tokens/usdm.png";
 import wethLogo from "../../tokens/weth.png";
 import currentxLogo from "../../assets/currentx.png";
 import {
   CRX_ADDRESS,
   USDC_ADDRESS,
+  USDM_ADDRESS,
   WETH_ADDRESS,
 } from "./addresses";
 
@@ -38,5 +40,12 @@ export const TOKENS = {
     address: USDC_ADDRESS,
     decimals: 6,
     logo: usdcLogo,
+  },
+  USDm: {
+    symbol: "USDm",
+    name: "MegaUSD (uSDM)",
+    address: USDM_ADDRESS,
+    decimals: 18,
+    logo: usdmLogo,
   },
 };

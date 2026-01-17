@@ -10,6 +10,7 @@ import {
   CRX_WETH_LP_ADDRESS,
   MASTER_CHEF_ADDRESS,
   USDC_ADDRESS,
+  USDM_ADDRESS,
   WETH_ADDRESS,
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";
@@ -53,19 +54,34 @@ async function getWethPriceUSD(provider, priceCache) {
   const key = WETH_ADDRESS.toLowerCase();
   const cached = priceCache[key];
   if (typeof cached === "number") return cached;
-  const { reserve0, reserve1, token0 } = await getV2PairReserves(
-    provider,
-    WETH_ADDRESS,
-    USDC_ADDRESS
-  );
-  const wethIs0 = token0.toLowerCase() === WETH_ADDRESS.toLowerCase();
-  const wethRes = wethIs0 ? reserve0 : reserve1;
-  const usdcRes = wethIs0 ? reserve1 : reserve0;
-  const price =
-    Number(formatUnits(usdcRes, TOKENS.USDC.decimals)) /
-    Number(formatUnits(wethRes, TOKENS.WETH.decimals));
-  priceCache[key] = price;
-  return price;
+
+  const stables = [
+    { address: USDC_ADDRESS, decimals: TOKENS.USDC.decimals },
+    { address: USDM_ADDRESS, decimals: TOKENS.USDm.decimals },
+  ];
+
+  for (const stable of stables) {
+    try {
+      const { reserve0, reserve1, token0 } = await getV2PairReserves(
+        provider,
+        WETH_ADDRESS,
+        stable.address
+      );
+      const wethIs0 = token0.toLowerCase() === WETH_ADDRESS.toLowerCase();
+      const wethRes = wethIs0 ? reserve0 : reserve1;
+      const stableRes = wethIs0 ? reserve1 : reserve0;
+      const price =
+        Number(formatUnits(stableRes, stable.decimals)) /
+        Number(formatUnits(wethRes, TOKENS.WETH.decimals));
+      if (!Number.isFinite(price) || price <= 0) continue;
+      priceCache[key] = price;
+      return price;
+    } catch {
+      // Try the next stable pair if available
+    }
+  }
+
+  return null;
 }
 
 async function getTokenPriceUSD(provider, address, priceCache) {
@@ -77,6 +93,11 @@ async function getTokenPriceUSD(provider, address, priceCache) {
     if (
       lower === USDC_ADDRESS.toLowerCase()
     ) {
+      priceCache[lower] = 1;
+      return 1;
+    }
+
+    if (lower === USDM_ADDRESS.toLowerCase()) {
       priceCache[lower] = 1;
       return 1;
     }
