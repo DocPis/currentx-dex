@@ -124,6 +124,9 @@ const friendlySwapError = (e) => {
   const lower = raw.toLowerCase();
   const rpcCode =
     e?.code || e?.error?.code || (typeof e?.data?.code !== "undefined" ? e.data.code : null);
+  if (rpcCode === 4001 || rpcCode === "ACTION_REJECTED") {
+    return "Transaction was rejected in wallet.";
+  }
   if (
     rpcCode === -32603 ||
     lower.includes("internal json-rpc error") ||
@@ -131,6 +134,35 @@ const friendlySwapError = (e) => {
     lower.includes("could not coalesce")
   ) {
     return "RPC rejected the transaction (internal error). Switch RPC (e.g. official MegaETH) and try again.";
+  }
+  if (lower.includes("insufficient funds")) {
+    return "Not enough ETH to cover amount + gas. Reduce amount or add more ETH.";
+  }
+  if (
+    lower.includes("replacement fee too low") ||
+    lower.includes("underpriced") ||
+    lower.includes("fee too low")
+  ) {
+    return "Gas fee too low. Increase max fee/priority or try again with the suggested gas.";
+  }
+  if (lower.includes("nonce too low") || lower.includes("already known")) {
+    return "You have a pending transaction with this nonce. Speed up/cancel it in wallet, then retry.";
+  }
+  if (
+    lower.includes("intrinsic gas") ||
+    lower.includes("gas required exceeds") ||
+    lower.includes("exceeds allowance")
+  ) {
+    return "Gas limit too low for this call. Try again or bump gas limit in wallet.";
+  }
+  if (lower.includes("execution reverted") || lower.includes("reverted")) {
+    return "Swap reverted. Try a smaller size, higher slippage, or a different route.";
+  }
+  if (lower.includes("network") && lower.includes("mismatch")) {
+    return "Wrong network. Please switch to MegaETH and retry.";
+  }
+  if (lower.includes("rate limit") || lower.includes("too many requests")) {
+    return "RPC rate-limited. Switch RPC or wait a few seconds and retry.";
   }
   if (
     lower.includes("insufficient output amount") ||
@@ -147,7 +179,10 @@ const friendlySwapError = (e) => {
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return "Swap simulation failed (no revert data). Try a smaller size, a different route, or a higher slippage.";
   }
-  return raw || "Swap failed";
+  if (lower.includes("transfer helper")) {
+    return "Token transfer failed. Check allowance and balance, then retry.";
+  }
+  return raw || "Swap failed. Try again or change RPC.";
 };
 
 export default function SwapSection({ balances }) {
@@ -598,7 +633,7 @@ export default function SwapSection({ balances }) {
         variant: "error",
         message: userRejected
           ? "Approval was rejected in wallet."
-          : e.message || "Approve failed",
+          : friendlySwapError(e) || "Approve failed",
       });
     } finally {
       setApproveLoading(false);
