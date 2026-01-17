@@ -89,10 +89,6 @@ export default function SwapSection({ balances }) {
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
-  const displaySellAddress =
-    (displaySellMeta?.address || (sellToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
-  const displayBuyAddress =
-    (displayBuyMeta?.address || (buyToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
   const toastTimerRef = useRef(null);
   const copyTimerRef = useRef(null);
 
@@ -139,6 +135,10 @@ export default function SwapSection({ balances }) {
   const buyMeta = tokenRegistry[buyKey];
   const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
   const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
+  const displaySellAddress =
+    (displaySellMeta?.address || (sellToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
+  const displayBuyAddress =
+    (displayBuyMeta?.address || (buyToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
   const computeRoutePriceImpact = useCallback(
