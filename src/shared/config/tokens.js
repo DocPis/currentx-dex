@@ -36,14 +36,14 @@ export const TOKENS = {
   },
   USDC: {
     symbol: "USDC",
-    name: "USD Coin (test)",
+    name: "USD Coin",
     address: USDC_ADDRESS,
     decimals: 6,
     logo: usdcLogo,
   },
   USDm: {
     symbol: "USDm",
-    name: "MegaUSD (uSDM)",
+    name: "MegaUSD",
     address: USDM_ADDRESS,
     decimals: 18,
     logo: usdmLogo,
