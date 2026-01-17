@@ -6,7 +6,15 @@ import {
   fetchTopPairsBreakdown,
 } from "../../shared/config/subgraph";
 
-const TVL_START_DATE = Date.UTC(2025, 11, 22); // 22/12/2025 UTC
+// Start the protocol TVL counter from "today" (UTC midnight) and keep counting forward.
+const TVL_START_DATE = (() => {
+  const now = new Date();
+  const start = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  );
+  start.setUTCDate(start.getUTCDate() - 1);
+  return start.getTime();
+})();
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
