@@ -33,7 +33,11 @@ const shortenAddress = (addr) =>
 const formatBalance = (v) => {
   const n = Number(v || 0);
   if (!Number.isFinite(n) || n <= 0) return "0";
-  return n.toFixed(3);
+  return n.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 3,
+    useGrouping: false,
+  });
 };
 
 const friendlySwapError = (e) => {
