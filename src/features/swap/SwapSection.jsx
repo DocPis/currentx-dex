@@ -1044,7 +1044,6 @@ export default function SwapSection({ balances }) {
                       <span className="text-[11px] text-slate-500">Native asset</span>
                     )}
                     <div>{formatBalance(balances[t.symbol])}</div>
-                    <div className="text-[11px] text-slate-500">Balance</div>
                   </div>
                 </button>
               ))}
