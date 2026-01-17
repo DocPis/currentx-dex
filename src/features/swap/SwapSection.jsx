@@ -1009,10 +1009,37 @@ export default function SwapSection({ balances }) {
                       )}
                     </div>
                     <div className="text-[11px] text-slate-500 truncate">
-                      {t.address ? shortenAddress(t.address) : t.name || "Token"}
+                      {t.name || (t.address ? shortenAddress(t.address) : "Token")}
                     </div>
                   </div>
-                  <div className="ml-auto text-right text-sm text-slate-200">
+                  <div className="ml-auto flex flex-col items-end gap-1 text-right text-sm text-slate-200">
+                    {t.address ? (
+                      <a
+                        href={`${EXPLORER_BASE_URL}/address/${t.address}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-sky-200 hover:text-sky-100"
+                      >
+                        {shortenAddress(t.address)}
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-3 w-3"
+                        >
+                          <path
+                            d="M5 13l9-9m0 0h-5m5 0v5"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </a>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">Native asset</span>
+                    )}
                     <div>{formatBalance(balances[t.symbol])}</div>
                     <div className="text-[11px] text-slate-500">Balance</div>
                   </div>
