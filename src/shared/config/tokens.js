@@ -2,11 +2,13 @@
 import ethLogo from "../../tokens/eth.png";
 import usdcLogo from "../../tokens/usdc.png";
 import usdmLogo from "../../tokens/usdm.png";
+import cusdLogo from "../../tokens/cusd.png";
 import wethLogo from "../../tokens/weth.png";
 import currentxLogo from "../../assets/currentx.png";
 import {
   CRX_ADDRESS,
   USDC_ADDRESS,
+  CUSD_ADDRESS,
   USDM_ADDRESS,
   WETH_ADDRESS,
 } from "./addresses";
@@ -40,6 +42,13 @@ export const TOKENS = {
     address: USDC_ADDRESS,
     decimals: 6,
     logo: usdcLogo,
+  },
+  CUSD: {
+    symbol: "CUSD",
+    name: "cUSD",
+    address: CUSD_ADDRESS,
+    decimals: 18,
+    logo: cusdLogo,
   },
   USDm: {
     symbol: "USDm",

@@ -13,6 +13,7 @@ export function useBalances(address) {
     ETH: 0,
     WETH: 0,
     USDC: 0,
+    CUSD: 0,
     USDm: 0,
     CRX: 0,
   });
@@ -56,6 +57,7 @@ export function useBalances(address) {
 
         const weth = await getErc20Balance("WETH");
         const usdc = await getErc20Balance("USDC");
+        const cusd = await getErc20Balance("CUSD");
         const usdm = await getErc20Balance("USDm");
         const crx = await getErc20Balance("CRX");
 
@@ -63,6 +65,7 @@ export function useBalances(address) {
           ETH: eth,
           WETH: weth,
           USDC: usdc,
+          CUSD: cusd,
           USDm: usdm,
           CRX: crx,
         });
@@ -85,7 +88,7 @@ export function useBalances(address) {
     if (address) {
       refresh(address);
     } else {
-      setBalances({ ETH: 0, WETH: 0, USDC: 0, USDm: 0, CRX: 0 });
+      setBalances({ ETH: 0, WETH: 0, USDC: 0, CUSD: 0, USDm: 0, CRX: 0 });
     }
   }, [address, refresh]);
 
