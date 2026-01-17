@@ -24,17 +24,66 @@ import {
   WETH_ADDRESS,
 } from "./addresses";
 
-const DEFAULT_RPC_URL =
-  (typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    (import.meta.env.VITE_RPC_URL ||
-      import.meta.env.VITE_MEGAETH_RPC)) ||
-  "https://mainnet.megaeth.com/rpc";
+const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const RAW_RPC_SOURCES = [
+  env.VITE_RPC_URLS, // comma separated list
+  env.VITE_RPC_URL,
+  env.VITE_MEGAETH_RPC,
+  env.VITE_RPC_FALLBACK,
+  env.VITE_RPC_TATUM,
+  env.VITE_RPC_THIRDWEB,
+  "https://mainnet.megaeth.com/rpc",
+];
 
-export const RPC_URL = DEFAULT_RPC_URL;
+const dedupe = (arr) => {
+  const seen = new Set();
+  const out = [];
+  arr.forEach((u) => {
+    const clean = (u || "").trim();
+    if (!clean) return;
+    if (seen.has(clean)) return;
+    seen.add(clean);
+    out.push(clean);
+  });
+  return out;
+};
 
-export function getReadOnlyProvider() {
-  return new JsonRpcProvider(DEFAULT_RPC_URL);
+const expandRpcList = () =>
+  RAW_RPC_SOURCES.flatMap((entry) =>
+    (entry || "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean)
+  );
+
+const RPC_POOL = dedupe(expandRpcList());
+
+export const RPC_URL = RPC_POOL[0];
+
+const providerCache = new Map();
+const getProviderForUrl = (url) => {
+  if (!url) return null;
+  if (providerCache.has(url)) return providerCache.get(url);
+  const provider = new JsonRpcProvider(url);
+  providerCache.set(url, provider);
+  return provider;
+};
+
+let rpcIndex = 0;
+
+export function getReadOnlyProvider(preferNext = false) {
+  if (preferNext) rpcIndex = (rpcIndex + 1) % RPC_POOL.length;
+  const url = RPC_POOL[rpcIndex] || RPC_POOL[0];
+  return getProviderForUrl(url);
+}
+
+export function rotateRpcProvider() {
+  rpcIndex = (rpcIndex + 1) % RPC_POOL.length;
+  return getReadOnlyProvider();
+}
+
+export function getRpcPool() {
+  return [...RPC_POOL];
 }
 
 // Re-export key config bits

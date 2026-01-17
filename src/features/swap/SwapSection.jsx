@@ -1,6 +1,6 @@
 // src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, formatUnits, parseUnits } from "ethers";
+import { Contract, formatUnits, id, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -27,6 +27,9 @@ const MAX_UINT256 = (1n << 256n) - 1n;
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
+const TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
+const WETH_WITHDRAWAL_TOPIC = id("Withdrawal(address,uint256)").toLowerCase();
+const WETH_DEPOSIT_TOPIC = id("Deposit(address,uint256)").toLowerCase();
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -41,6 +44,80 @@ const formatBalance = (v) => {
 };
 const displaySymbol = (token, fallback) =>
   (token && (token.displaySymbol || token.symbol)) || fallback;
+const paddedTopicAddress = (addr) =>
+  `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+
+const formatRelativeTime = (ts) => {
+  if (!ts) return "--";
+  const diffSec = Math.floor((Date.now() - ts) / 1000);
+  if (diffSec < 5) return "just now";
+  if (diffSec < 60) return `${diffSec}s ago`;
+  const mins = Math.floor(diffSec / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
+};
+
+const computeOutcomeGrade = (expected, actual, minReceived) => {
+  if (!Number.isFinite(actual) || !Number.isFinite(expected)) {
+    return { label: "OK", icon: "⚠️", deltaPct: null };
+  }
+  const deltaPct = expected
+    ? ((actual - expected) / expected) * 100
+    : null;
+  if (deltaPct >= -0.1) return { label: "Great", icon: "✅", deltaPct };
+  if (Number.isFinite(minReceived) && actual < minReceived) {
+    return { label: "Bad", icon: "❌", deltaPct };
+  }
+  return { label: "OK", icon: "⚠️", deltaPct };
+};
+
+const findActualOutput = (receipt, targetAddress, userAddress, opts = {}) => {
+  if (!receipt || !Array.isArray(receipt.logs) || !userAddress) return null;
+  const targetLower = (targetAddress || "").toLowerCase();
+  const userTopic = paddedTopicAddress(userAddress);
+  let observed = null;
+
+  for (let i = 0; i < receipt.logs.length; i += 1) {
+    const log = receipt.logs[i];
+    const addr = (log?.address || "").toLowerCase();
+    const topic0 = (log?.topics?.[0] || "").toLowerCase();
+
+    if (targetLower && addr === targetLower && topic0 === TRANSFER_TOPIC) {
+      const toTopic = (log?.topics?.[2] || "").toLowerCase();
+      if (toTopic === userTopic) {
+        const amount = log?.data ? BigInt(log.data) : 0n;
+        if (observed === null || amount > observed) observed = amount;
+      }
+    }
+
+    if (
+      opts.captureWithdrawal &&
+      addr === WETH_ADDRESS.toLowerCase() &&
+      topic0 === WETH_WITHDRAWAL_TOPIC
+    ) {
+      const dstTopic = (log?.topics?.[1] || "").toLowerCase();
+      if (dstTopic === userTopic) {
+        const amount = log?.data ? BigInt(log.data) : 0n;
+        if (observed === null || amount > observed) observed = amount;
+      }
+    }
+
+    if (
+      opts.captureDeposit &&
+      addr === WETH_ADDRESS.toLowerCase() &&
+      topic0 === WETH_DEPOSIT_TOPIC
+    ) {
+      const dstTopic = (log?.topics?.[1] || "").toLowerCase();
+      if (dstTopic === userTopic) {
+        const amount = log?.data ? BigInt(log.data) : 0n;
+        if (observed === null || amount > observed) observed = amount;
+      }
+    }
+  }
+
+  return observed;
+};
 
 const friendlySwapError = (e) => {
   const raw = e?.message || "";
@@ -81,6 +158,9 @@ export default function SwapSection({ balances }) {
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // tracked LPs for realtime refresh
   const [liveRouteTick, setLiveRouteTick] = useState(0);
+  const [lastQuoteAt, setLastQuoteAt] = useState(null);
+  const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
+  const [quoteLockedUntil, setQuoteLockedUntil] = useState(0);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
@@ -91,8 +171,11 @@ export default function SwapSection({ balances }) {
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
+  const [executionProof, setExecutionProof] = useState(null);
   const toastTimerRef = useRef(null);
   const copyTimerRef = useRef(null);
+  const quoteLockTimerRef = useRef(null);
+  const pendingExecutionRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -232,12 +315,40 @@ export default function SwapSection({ balances }) {
     setTokenSearch("");
   };
 
+  const triggerQuoteLock = useCallback((ms = 4500) => {
+    const until = Date.now() + ms;
+    setQuoteLockedUntil(until);
+    if (quoteLockTimerRef.current) {
+      clearTimeout(quoteLockTimerRef.current);
+      quoteLockTimerRef.current = null;
+    }
+    quoteLockTimerRef.current = setTimeout(() => {
+      setQuoteLockedUntil(0);
+      quoteLockTimerRef.current = null;
+    }, ms);
+  }, []);
+
   useEffect(() => () => {
     if (copyTimerRef.current) {
       clearTimeout(copyTimerRef.current);
       copyTimerRef.current = null;
     }
+    if (quoteLockTimerRef.current) {
+      clearTimeout(quoteLockTimerRef.current);
+      quoteLockTimerRef.current = null;
+    }
   }, []);
+
+  useEffect(() => {
+    if (!lastQuoteAt) {
+      setQuoteAgeLabel("--");
+      return undefined;
+    }
+    const updateLabel = () => setQuoteAgeLabel(formatRelativeTime(lastQuoteAt));
+    updateLabel();
+    const id = setInterval(updateLabel, 1000);
+    return () => clearInterval(id);
+  }, [lastQuoteAt]);
 
   const displayRoute = useMemo(() => {
     if (!quoteRoute.length) return [];
@@ -289,6 +400,10 @@ export default function SwapSection({ balances }) {
   useEffect(() => {
     let cancelled = false;
     const fetchQuote = async () => {
+      const now = Date.now();
+      if (quoteLockedUntil && now < quoteLockedUntil) {
+        return;
+      }
       setQuoteError("");
       setQuoteOut(null);
       setQuoteOutRaw(null);
@@ -297,6 +412,7 @@ export default function SwapSection({ balances }) {
       setApprovalTarget(null);
       setQuoteRoute([]);
       setQuotePairs([]);
+      setLastQuoteAt(null);
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -311,6 +427,7 @@ export default function SwapSection({ balances }) {
         setPriceImpact(0);
         setQuoteRoute([sellToken, buyToken]);
         setQuotePairs([]);
+        setLastQuoteAt(Date.now());
         return;
       }
 
@@ -334,6 +451,7 @@ export default function SwapSection({ balances }) {
         const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
         setQuoteOut(formatted);
         setQuoteOutRaw(amountOut);
+        setLastQuoteAt(Date.now());
 
         // price impact across full route (multi-hop aware)
         try {
@@ -403,6 +521,7 @@ export default function SwapSection({ balances }) {
     sellMeta?.decimals,
     sellToken,
     liveRouteTick,
+    quoteLockedUntil,
   ]);
 
   const slippageBps = (() => {
@@ -414,6 +533,14 @@ export default function SwapSection({ balances }) {
   const minReceivedRaw = quoteOutRaw
     ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
     : null;
+  const minReceivedDisplay = minReceivedRaw
+    ? `${Number(formatUnits(minReceivedRaw, buyMeta?.decimals ?? 18)).toFixed(6)} ${buyToken}`
+    : "--";
+  const activeRouteLabels =
+    displayRoute && displayRoute.length
+      ? displayRoute
+      : [displaySellSymbol, displayBuySymbol];
+  const isQuoteLocked = quoteLockedUntil && quoteLockedUntil > Date.now();
 
   useEffect(() => {
     if (!swapStatus) return undefined;
@@ -471,6 +598,7 @@ export default function SwapSection({ balances }) {
   const handleSwap = async () => {
     try {
       setSwapStatus(null);
+      setExecutionProof(null);
       if (swapLoading) return;
       if (!amountIn || Number.isNaN(Number(amountIn))) {
         throw new Error("Enter a valid amount");
@@ -481,6 +609,12 @@ export default function SwapSection({ balances }) {
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
       }
+
+      const decimalsOut = buyMeta?.decimals ?? 18;
+      const routeLabelsSnapshot =
+        displayRoute && displayRoute.length
+          ? displayRoute
+          : [displaySellSymbol, displayBuySymbol];
 
       setSwapLoading(true);
       const provider = await getProvider();
@@ -499,15 +633,70 @@ export default function SwapSection({ balances }) {
         }
       }
 
+      triggerQuoteLock();
+      pendingExecutionRef.current = null;
+
       if (isDirectEthWeth) {
+        pendingExecutionRef.current = {
+          expectedRaw: amountWei,
+          minRaw: amountWei,
+          priceImpactSnapshot: 0,
+          slippagePct: "0",
+          routeLabels: routeLabelsSnapshot,
+          buyDecimals: decimalsOut,
+          buySymbol: displayBuySymbol,
+        };
         const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
-        let tx;
-        if (sellToken === "ETH") {
-          tx = await weth.deposit({ value: amountWei });
-        } else {
-          tx = await weth.withdraw(amountWei);
+        // Some RPCs reject gas estimation; fall back to a safe manual limit if needed.
+      const wrapOpts = { value: amountWei };
+      try {
+        const est = await weth.deposit.estimateGas(wrapOpts);
+        wrapOpts.gasLimit = (est * 120n) / 100n; // add 20% buffer
+      } catch {
+        wrapOpts.gasLimit = 200000n; // fallback gas limit for deposit (covers strict RPCs)
+      }
+      const unwrapOpts = {};
+      if (!wrapOpts.gasLimit) {
+          unwrapOpts.gasLimit = 200000n;
+      }
+      let tx;
+      if (sellToken === "ETH") {
+        tx = await weth.deposit(wrapOpts);
+      } else {
+        try {
+          const est = await weth.withdraw.estimateGas(amountWei);
+          unwrapOpts.gasLimit = (est * 120n) / 100n;
+        } catch {
+          // keep fallback gas limit
         }
+        tx = await weth.withdraw(amountWei, unwrapOpts);
+      }
         const receipt = await tx.wait();
+        const actualWrapOut = findActualOutput(
+          receipt,
+          WETH_ADDRESS,
+          user,
+          {
+            captureWithdrawal: sellToken !== "ETH",
+            captureDeposit: sellToken === "ETH",
+          }
+        );
+        const actualValue = actualWrapOut ?? amountWei;
+        const actualFloat = Number(formatUnits(actualValue, decimalsOut));
+        const expectedFloat = Number(formatUnits(amountWei, decimalsOut));
+        const grade = computeOutcomeGrade(expectedFloat, actualFloat, actualFloat);
+        setExecutionProof({
+          expected: `${expectedFloat.toFixed(6)} ${displayBuySymbol}`,
+          executed: `${actualFloat.toFixed(6)} ${displayBuySymbol}`,
+          minReceived: `${actualFloat.toFixed(6)} ${displayBuySymbol}`,
+          priceImpact: 0,
+          slippage: "0",
+          gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
+          txHash: receipt?.hash,
+          deltaPct: grade.deltaPct,
+          route: pendingExecutionRef.current.routeLabels,
+          grade,
+        });
         setSwapStatus({
           message: `Swap executed (wrap/unwrap). Received ${formatUnits(
             amountWei,
@@ -568,6 +757,47 @@ export default function SwapSection({ balances }) {
       }
 
       const receipt = await tx.wait();
+      pendingExecutionRef.current = {
+        expectedRaw: amountOut,
+        minRaw: minOut,
+        priceImpactSnapshot: priceImpact,
+        slippagePct: slippage,
+        routeLabels: routeLabelsSnapshot,
+        buyDecimals: decimalsOut,
+        buySymbol: displayBuySymbol,
+      };
+
+      const targetAddress =
+        buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+      const actualOutRaw = findActualOutput(receipt, targetAddress, user, {
+        captureWithdrawal: buyToken === "ETH",
+      });
+      const resolvedExpected = pendingExecutionRef.current.expectedRaw || amountOut;
+      const resolvedMin = pendingExecutionRef.current.minRaw || minOut;
+      const resolvedActual = actualOutRaw || resolvedExpected || resolvedMin;
+      const expectedFloat = resolvedExpected
+        ? Number(formatUnits(resolvedExpected, decimalsOut))
+        : null;
+      const actualFloat = resolvedActual
+        ? Number(formatUnits(resolvedActual, decimalsOut))
+        : null;
+      const minFloat = resolvedMin
+        ? Number(formatUnits(resolvedMin, decimalsOut))
+        : null;
+      const grade = computeOutcomeGrade(expectedFloat, actualFloat, minFloat);
+
+      setExecutionProof({
+        expected: expectedFloat !== null ? `${expectedFloat.toFixed(6)} ${displayBuySymbol}` : "--",
+        executed: actualFloat !== null ? `${actualFloat.toFixed(6)} ${displayBuySymbol}` : "--",
+        minReceived: minFloat !== null ? `${minFloat.toFixed(6)} ${displayBuySymbol}` : "--",
+        priceImpact: pendingExecutionRef.current.priceImpactSnapshot ?? priceImpact,
+        slippage: pendingExecutionRef.current.slippagePct ?? slippage,
+        gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
+        txHash: receipt?.hash,
+        deltaPct: grade.deltaPct,
+        route: pendingExecutionRef.current.routeLabels,
+        grade,
+      });
 
       setSwapStatus({
         message: `Swap executed. Min received: ${formatUnits(
@@ -588,6 +818,7 @@ export default function SwapSection({ balances }) {
       setSwapStatus({ message, variant: "error" });
     } finally {
       setSwapLoading(false);
+      pendingExecutionRef.current = null;
     }
   };
 
@@ -778,41 +1009,78 @@ export default function SwapSection({ balances }) {
                     ? "Direct wrap/unwrap (no fee)"
                     : "Live quote via Uniswap V2 (MegaETH)"
                   : "Enter an amount to fetch a quote")}
-            </div>
-            {!quoteError && displayRoute.length > 1 && (
-              <div className="mt-3 flex justify-end">
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gradient-to-r from-sky-500/10 via-indigo-500/10 to-purple-500/10 border border-sky-500/30 text-[11px] shadow-[0_10px_30px_-18px_rgba(56,189,248,0.8)]">
-                  <span className="text-slate-200 uppercase tracking-wide">Route</span>
-                  <div className="flex items-center gap-2">
-                    {displayRoute.map((label, idx) => (
-                      <React.Fragment key={`${label}-${idx}`}>
-                        <span className="px-2 py-1 rounded-lg bg-slate-900/80 border border-slate-700 text-slate-50">
-                          {label}
-                        </span>
-                        {idx < displayRoute.length - 1 && (
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            className="h-3 w-3 text-sky-400"
-                          >
-                            <path
-                              d="M7 5l5 5-5 5"
-                              stroke="currentColor"
-                              strokeWidth="1.4"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
+
+        <div className="mb-3 rounded-2xl bg-slate-900/70 border border-slate-800 p-4 shadow-[0_14px_40px_-24px_rgba(56,189,248,0.6)]">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 text-slate-100">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-sm font-semibold">Route (Live)</span>
+            </div>
+            <div
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-900/40 border border-emerald-600/40 text-[11px] text-emerald-100"
+              title="Route updates in real-time to keep best execution."
+            >
+              <span className="font-semibold">LiveRoute</span>
+              <span aria-hidden>✅</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200 mb-2">
+            <span className="text-slate-400">Path:</span>
+            {activeRouteLabels.map((label, idx) => (
+              <React.Fragment key={`${label}-${idx}`}>
+                <span className="px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-50">
+                  {label}
+                </span>
+                {idx < activeRouteLabels.length - 1 && (
+                  <span className="text-slate-500">→</span>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">Expected output</span>
+              <span className="font-semibold">
+                {quoteOut !== null ? `${Number(quoteOut).toFixed(5)} ${displayBuySymbol}` : "--"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">Price impact</span>
+              <span className="font-semibold">
+                {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">Min received (slippage)</span>
+              <span className="font-semibold">{minReceivedDisplay}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">Updated</span>
+              <span className="inline-flex items-center gap-2 text-emerald-100">
+                <span
+                  className={`h-2 w-2 rounded-full ${
+                    quoteLoading ? "bg-amber-400 animate-pulse" : "bg-emerald-400 animate-ping"
+                  }`}
+                />
+                {quoteLoading ? "Updating..." : quoteAgeLabel}
+              </span>
+            </div>
+          </div>
+          {isQuoteLocked ? (
+            <div className="mt-2 text-[11px] text-amber-200 inline-flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+              <span>Quote locked while you sign. Auto re-quote resumes shortly.</span>
+            </div>
+          ) : null}
+          {quoteError ? (
+            <div className="mt-2 text-[11px] text-rose-300">
+              {quoteError}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
@@ -844,11 +1112,7 @@ export default function SwapSection({ balances }) {
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">Min received</span>
               <span className="text-slate-100">
-                {minReceivedRaw
-                  ? `${Number(
-                      formatUnits(minReceivedRaw, buyMeta?.decimals ?? 18)
-                    ).toFixed(6)} ${buyToken}`
-                  : "--"}
+                {minReceivedDisplay}
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px] mt-1">
@@ -945,6 +1209,132 @@ export default function SwapSection({ balances }) {
         </div>
 
       </div>
+
+      {executionProof && (
+        <div className="w-full max-w-xl mt-4 rounded-3xl bg-slate-950/80 border border-emerald-700/40 p-4 sm:p-5 shadow-[0_18px_48px_-24px_rgba(16,185,129,0.55)]">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2 text-emerald-50">
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-lg font-semibold">Execution Proof</span>
+            </div>
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-emerald-500/50 text-sm text-emerald-100">
+              <span>{executionProof.grade?.icon || "⚠️"}</span>
+              <span className="font-semibold">{executionProof.grade?.label || "OK"}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm text-slate-100">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Expected</span>
+              <span className="font-semibold">{executionProof.expected}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Executed</span>
+              <span className="font-semibold">{executionProof.executed}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Min received (slippage)</span>
+              <span className="font-semibold">{executionProof.minReceived}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Execution delta</span>
+              <span
+                className={`font-semibold ${
+                  executionProof.deltaPct !== null
+                    ? executionProof.deltaPct >= -0.1
+                      ? "text-emerald-200"
+                      : executionProof.deltaPct > -0.5
+                        ? "text-amber-200"
+                        : "text-rose-300"
+                    : "text-slate-100"
+                }`}
+              >
+                {executionProof.deltaPct !== null
+                  ? `${executionProof.deltaPct.toFixed(2)}%`
+                  : "--"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Price impact</span>
+              <span className="font-semibold">
+                {executionProof.priceImpact !== null && executionProof.priceImpact !== undefined
+                  ? `${Number(executionProof.priceImpact || 0).toFixed(2)}%`
+                  : "--"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Slippage</span>
+              <span className="font-semibold">
+                {executionProof.slippage ? `${executionProof.slippage}%` : `${slippage}%`}
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-100">
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Gas used</span>
+              <span className="font-semibold">
+                {executionProof.gasUsed ? executionProof.gasUsed.toLocaleString() : "--"}
+              </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] text-slate-400">Tx</span>
+              {executionProof.txHash ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    window.open(`${EXPLORER_BASE_URL}/tx/${executionProof.txHash}`, "_blank", "noopener,noreferrer")
+                  }
+                  className="inline-flex items-center gap-2 text-emerald-200 underline underline-offset-4 hover:text-emerald-100"
+                >
+                  View on {EXPLORER_LABEL}
+                  <svg
+                    viewBox="0 0 20 20"
+                    fill="none"
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4"
+                  >
+                    <path
+                      d="M5 13l9-9m0 0h-5m5 0v5"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              ) : (
+                <span className="text-slate-400">--</span>
+              )}
+            </div>
+          </div>
+
+          {executionProof.route?.length ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
+              <span className="text-slate-500">Route</span>
+              {executionProof.route.map((label, idx) => (
+                <React.Fragment key={`${label}-${idx}-proof`}>
+                  <span className="px-2 py-1 rounded-lg bg-slate-900/70 border border-slate-700 text-slate-50">
+                    {label}
+                  </span>
+                  {idx < executionProof.route.length - 1 && (
+                    <span className="text-slate-500">→</span>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="mt-3 text-[12px] text-emerald-200 flex items-center gap-2">
+            <span>Outcome grade:</span>
+            <span>{executionProof.grade?.icon || "⚠️"}</span>
+            <span className="font-semibold">{executionProof.grade?.label || "OK"}</span>
+            <span className="text-slate-500 ml-2">
+              ✅ Great / ⚠️ OK / ❌ Bad
+            </span>
+          </div>
+        </div>
+      )}
 
       {selectorOpen && (
         <div className="fixed inset-0 z-50 flex items-start justify-center px-4 py-8">

@@ -1,16 +1,35 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+const DEV_NONCE = 'dev-nonce-123';
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react({
+      // Disable React Fast Refresh to avoid inline preamble in CSP-constrained dev contexts.
+      fastRefresh: false,
+    }),
+    {
+      name: 'dev-inline-nonce',
+      enforce: 'post',
+      transformIndexHtml(html) {
+        return html.replace(/<script(?![^>]*nonce=)/g, `<script nonce="${DEV_NONCE}"`);
+      },
+    },
+  ],
   server: {
     host: '0.0.0.0',
     port: 4173,
-    // Allow Vite dev server to run under strict CSP contexts by enabling eval only in dev.
+    hmr: false,
+    // Dev-only permissive CSP to unblock HMR/preamble in browsers or extensions that inject stricter policies.
     // Do NOT mirror this header in production.
     headers: {
-      "Content-Security-Policy": "script-src 'self' 'unsafe-eval'; object-src 'none';",
+      "Content-Security-Policy":
+        `default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; ` +
+        `script-src * data: blob: 'unsafe-inline' 'unsafe-eval' 'nonce-${DEV_NONCE}'; ` +
+        `style-src * data: blob: 'unsafe-inline'; ` +
+        "img-src * data: blob:; connect-src *; frame-src *; object-src 'none';",
     },
   },
   preview: {
