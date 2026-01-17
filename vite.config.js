@@ -7,6 +7,11 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 4173,
+    // Allow Vite dev server to run under strict CSP contexts by enabling eval only in dev.
+    // Do NOT mirror this header in production.
+    headers: {
+      "Content-Security-Policy": "script-src 'self' 'unsafe-eval'; object-src 'none';",
+    },
   },
   preview: {
     host: '0.0.0.0',
