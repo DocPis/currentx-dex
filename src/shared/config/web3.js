@@ -23,9 +23,13 @@ import {
   USDC_ADDRESS,
   WETH_ADDRESS,
 } from "./addresses";
+import { getActiveNetworkConfig } from "./networks";
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const activeNetwork = getActiveNetworkConfig();
+
 const RAW_RPC_SOURCES = [
+  ...(activeNetwork.rpcUrls || []),
   env.VITE_RPC_URLS, // comma separated list
   env.VITE_RPC_URL,
   env.VITE_MEGAETH_RPC,

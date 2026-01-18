@@ -7,10 +7,20 @@ Currently, two official plugins are available:
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
 - [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-## React Compiler
+## Setup
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+1) Install deps
+```bash
+npm install
+```
 
-## Expanding the ESLint configuration
+2) Dev server (HTTPS enabled via plugin-basic-ssl/mkcert)
+```bash
+npm run dev -- --host --port 4173
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Network presets (Mainnet/Testnet)
+- Mainnet is default. To enable the MegaETH testnet toggle, copy `env.testnet.example` into your env (e.g. merge into `.env.local`) and fill real testnet RPC/explorer/contract addresses.
+- Required: `VITE_TESTNET_RPC_URL`, `VITE_TESTNET_WETH_ADDRESS`, `VITE_TESTNET_FACTORY_ADDRESS`, `VITE_TESTNET_ROUTER_ADDRESS`.
+- Recommended: token/protocol addresses (`VITE_TESTNET_USDC_ADDRESS`, `VITE_TESTNET_CUSD_ADDRESS`, `VITE_TESTNET_USDM_ADDRESS`, `VITE_TESTNET_CRX_ADDRESS`, `VITE_TESTNET_MEGA_TOKEN_ADDRESS`, `VITE_TESTNET_MASTER_CHEF_ADDRESS`, `VITE_TESTNET_CRX_WETH_LP_ADDRESS`, `VITE_TESTNET_TIMESTAMP_ORACLE_ADDRESS`, `VITE_TESTNET_EXPLORER`, `VITE_TESTNET_CHAIN_ID_HEX`).
+- To load testnet by default, set `VITE_DEFAULT_NETWORK_PRESET=testnet`.

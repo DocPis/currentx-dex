@@ -1,42 +1,32 @@
 // src/config/addresses.js
-// Central place for chain IDs and on-chain addresses
-export const MEGAETH_CHAIN_ID_HEX = "0x10e6"; // Chain 4326 (MegaETH)
-export const NETWORK_NAME = "MegaETH";
-export const EXPLORER_BASE_URL =
-  (typeof import.meta !== "undefined" &&
-    import.meta.env &&
-    (import.meta.env.VITE_EXPLORER_BASE || import.meta.env.VITE_MEGAETH_EXPLORER)) ||
-  "https://megaeth.blockscout.com";
+// Central place for chain IDs and on-chain addresses, driven by the active network preset.
+import { getActiveNetworkConfig } from "./networks";
+
+const active = getActiveNetworkConfig();
+
+export const MEGAETH_CHAIN_ID_HEX = active.chainIdHex;
+export const NETWORK_NAME = active.name;
+export const EXPLORER_BASE_URL = active.explorer;
 
 // Infra
 export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
 
 // Tokens
-export const WETH_ADDRESS =
-  "0x4200000000000000000000000000000000000006";
-export const USDC_ADDRESS =
-  "0x4c99d545E82D32dA12Cc634a3964b1698073DA2B";
-export const CUSD_ADDRESS =
-  "0xcCcc62962d17b8914c62D74FfB843d73B2a3cccC";
-export const USDM_ADDRESS =
-  "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7";
-export const CRX_ADDRESS =
-  "0xDEdDFD6F6fD2eDa3B0bC01c3Dfa03F2eA6f40504";
-export const MEGA_TOKEN_ADDRESS =
-  "0x28B7E77f82B25B95953825F1E3eA0E36c1c29861";
+export const WETH_ADDRESS = active.addresses.WETH_ADDRESS;
+export const USDC_ADDRESS = active.addresses.USDC_ADDRESS;
+export const CUSD_ADDRESS = active.addresses.CUSD_ADDRESS;
+export const USDM_ADDRESS = active.addresses.USDM_ADDRESS;
+export const CRX_ADDRESS = active.addresses.CRX_ADDRESS;
+export const MEGA_TOKEN_ADDRESS = active.addresses.MEGA_TOKEN_ADDRESS;
 
 // Protocol contracts
-export const MASTER_CHEF_ADDRESS =
-  "0x0e59533B28df0537bc28D05618a2c4f20EBE07a0";
-export const CRX_WETH_LP_ADDRESS =
-  "0x340d63169285e5ae01a722ce762c0e81a7fa3037";
+export const MASTER_CHEF_ADDRESS = active.addresses.MASTER_CHEF_ADDRESS;
+export const CRX_WETH_LP_ADDRESS = active.addresses.CRX_WETH_LP_ADDRESS;
 
 // Infra: high-precision timestamp oracle (microsecond)
 export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =
-  "0x6342000000000000000000000000000000000002";
+  active.addresses.HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS;
 
 // Uniswap V2 factory/router
-export const UNIV2_FACTORY_ADDRESS =
-  "0x1F49127E87A1B925694a67C437dd2252641B3875";
-export const UNIV2_ROUTER_ADDRESS =
-  "0x40276Cff28774FaFaF758992415cFA03b6E4689c";
+export const UNIV2_FACTORY_ADDRESS = active.addresses.UNIV2_FACTORY_ADDRESS;
+export const UNIV2_ROUTER_ADDRESS = active.addresses.UNIV2_ROUTER_ADDRESS;
