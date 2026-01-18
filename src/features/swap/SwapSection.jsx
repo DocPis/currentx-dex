@@ -213,6 +213,8 @@ export default function SwapSection({ balances }) {
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance }
   const [approveLoading, setApproveLoading] = useState(false);
+  const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
+  const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
@@ -221,6 +223,7 @@ export default function SwapSection({ balances }) {
   const copyTimerRef = useRef(null);
   const quoteLockTimerRef = useRef(null);
   const pendingExecutionRef = useRef(null);
+  const lastQuoteOutRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const customKeys = Object.keys(customTokens || {});
@@ -316,25 +319,49 @@ export default function SwapSection({ balances }) {
     []
   );
 
-  const buildPath = useCallback(async () => {
-    const provider = getReadOnlyProvider();
-    const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
-    const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
-    const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
-    if (!a || !b) throw new Error("Select tokens with valid addresses.");
+  const buildPath = useCallback(
+    async (opts = {}) => {
+      const { amountWei, mode } = opts;
+      const provider = getReadOnlyProvider();
+      const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
+      const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+      const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+      if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
-    const direct = await factory.getPair(a, b);
-    if (direct && direct !== ZERO_ADDRESS) return { path: [a, b], pairs: [direct] };
+      const direct = await factory.getPair(a, b);
+      const hopA = await factory.getPair(a, WETH_ADDRESS);
+      const hopB = await factory.getPair(WETH_ADDRESS, b);
+      const hasDirect = direct && direct !== ZERO_ADDRESS;
+      const hasHop = hopA && hopA !== ZERO_ADDRESS && hopB && hopB !== ZERO_ADDRESS;
+      const effectiveMode = mode || executionMode;
 
-    // try hop through WETH
-    const hopA = await factory.getPair(a, WETH_ADDRESS);
-    const hopB = await factory.getPair(WETH_ADDRESS, b);
-    if (hopA && hopA !== ZERO_ADDRESS && hopB && hopB !== ZERO_ADDRESS) {
-      return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
-    }
+      if (!hasDirect && !hasHop) {
+        throw new Error("No route available for this pair.");
+      }
 
-    throw new Error("No route available for this pair.");
-  }, [buyMeta?.address, buyToken, sellMeta?.address, sellToken]);
+      if (effectiveMode === "protected") {
+        if (hasDirect) return { path: [a, b], pairs: [direct] };
+        if (hasHop) return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
+      }
+
+      // Turbo (or default): pick best output when both paths exist and we know the size.
+      if (hasDirect && hasHop && amountWei) {
+        const [directOut, hopOut] = await Promise.all([
+          getV2Quote(provider, amountWei, [a, b]),
+          getV2Quote(provider, amountWei, [a, WETH_ADDRESS, b]),
+        ]);
+        if (hopOut > directOut) {
+          return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
+        }
+        return { path: [a, b], pairs: [direct] };
+      }
+
+      if (hasDirect) return { path: [a, b], pairs: [direct] };
+      if (hasHop) return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
+      throw new Error("No route available for this pair.");
+    },
+    [buyMeta?.address, buyToken, executionMode, sellMeta?.address, sellToken]
+  );
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
@@ -458,6 +485,8 @@ export default function SwapSection({ balances }) {
       setQuoteRoute([]);
       setQuotePairs([]);
       setLastQuoteAt(null);
+      setQuoteVolatilityPct(0);
+      lastQuoteOutRef.current = null;
 
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
@@ -487,7 +516,7 @@ export default function SwapSection({ balances }) {
         }
         const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-        const { path, pairs } = await buildPath();
+        const { path, pairs } = await buildPath({ amountWei });
         setQuoteRoute(path);
         setQuotePairs(pairs || []);
         const amountOut = await getV2Quote(provider, amountWei, path);
@@ -497,6 +526,20 @@ export default function SwapSection({ balances }) {
         setQuoteOut(formatted);
         setQuoteOutRaw(amountOut);
         setLastQuoteAt(Date.now());
+        const prevRaw = lastQuoteOutRef.current;
+        lastQuoteOutRef.current = amountOut;
+        if (prevRaw) {
+          const prevNum = Number(formatUnits(prevRaw, buyMeta?.decimals ?? 18));
+          const currNum = Number(formatted);
+          if (prevNum > 0 && Number.isFinite(prevNum) && Number.isFinite(currNum)) {
+            const deltaPct = Math.abs((currNum - prevNum) / prevNum) * 100;
+            setQuoteVolatilityPct(deltaPct);
+          } else {
+            setQuoteVolatilityPct(0);
+          }
+        } else {
+          setQuoteVolatilityPct(0);
+        }
 
         // price impact across full route (multi-hop aware)
         try {
@@ -569,10 +612,25 @@ export default function SwapSection({ balances }) {
     quoteLockedUntil,
   ]);
 
-  const slippageBps = (() => {
+  const baseSlippagePct = (() => {
     const val = Number(slippage);
-    if (Number.isNaN(val) || val < 0) return 50;
-    return Math.min(5000, Math.round(val * 100));
+    if (Number.isNaN(val) || val < 0) return 0.5;
+    return Math.min(5, val);
+  })();
+  const safePriceImpact = Number.isFinite(priceImpact) ? Math.max(priceImpact, 0) : 0;
+  const safeVolatility = Number.isFinite(quoteVolatilityPct)
+    ? Math.max(quoteVolatilityPct, 0)
+    : 0;
+  const turboAutoSlippagePct = Math.min(
+    5,
+    Math.max(baseSlippagePct, safePriceImpact * 0.6 + safeVolatility * 0.45 + 0.35)
+  );
+  const protectedSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
+  const effectiveSlippagePct =
+    executionMode === "turbo" ? turboAutoSlippagePct : protectedSlippagePct;
+  const slippageBps = (() => {
+    if (Number.isNaN(effectiveSlippagePct) || effectiveSlippagePct < 0) return 50;
+    return Math.min(5000, Math.round(effectiveSlippagePct * 100));
   })();
 
   const minReceivedRaw = quoteOutRaw
@@ -678,6 +736,51 @@ export default function SwapSection({ balances }) {
         }
       }
 
+      // Pre-flight re-quote if the market moved too fast (anti-sandwich guard).
+      let guardedRouteMeta = null;
+      let guardedAmountOut = quoteOutRaw;
+      if (!isDirectEthWeth) {
+        const readProvider = getReadOnlyProvider();
+        const candidateRoute = quoteRoute.length
+          ? { path: quoteRoute, pairs: quotePairs }
+          : await buildPath({ amountWei, mode: executionMode });
+        const pathForCheck = candidateRoute?.path || [];
+        const freshOut = await getV2Quote(readProvider, amountWei, pathForCheck);
+        const freshOutNum = Number(formatUnits(freshOut, decimalsOut));
+        const currentOutNum =
+          quoteOut !== null && Number.isFinite(Number(quoteOut))
+            ? Number(quoteOut)
+            : freshOutNum;
+        const deltaPct = currentOutNum
+          ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
+          : 0;
+        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        guardedRouteMeta = candidateRoute;
+        guardedAmountOut = freshOut;
+        setQuoteVolatilityPct(deltaPct);
+
+        if (deltaPct > reQuoteThreshold) {
+          setQuoteOut(formatUnits(freshOut, decimalsOut));
+          setQuoteOutRaw(freshOut);
+          setQuoteRoute(pathForCheck);
+          setQuotePairs(candidateRoute?.pairs || []);
+          setLastQuoteAt(Date.now());
+          try {
+            const impact = await computeRoutePriceImpact(readProvider, amountWei, pathForCheck);
+            setPriceImpact(impact);
+          } catch {
+            // ignore impact recompute failures
+          }
+          setQuoteVolatilityPct(deltaPct);
+          setSwapStatus({
+            message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
+            variant: "error",
+          });
+          setSwapLoading(false);
+          return;
+        }
+      }
+
       triggerQuoteLock();
       pendingExecutionRef.current = null;
 
@@ -753,11 +856,13 @@ export default function SwapSection({ balances }) {
         return;
       }
 
-      const routeMeta = quoteRoute.length
-        ? { path: quoteRoute, pairs: quotePairs }
-        : await buildPath();
+      const routeMeta =
+        guardedRouteMeta ||
+        (quoteRoute.length
+          ? { path: quoteRoute, pairs: quotePairs }
+          : await buildPath({ amountWei }));
       const path = routeMeta?.path || [];
-      let amountOut = quoteOutRaw;
+      let amountOut = guardedAmountOut;
       if (!amountOut) {
         const readProvider = getReadOnlyProvider();
         amountOut = await getV2Quote(readProvider, amountWei, path);
@@ -806,7 +911,7 @@ export default function SwapSection({ balances }) {
         expectedRaw: amountOut,
         minRaw: minOut,
         priceImpactSnapshot: priceImpact,
-        slippagePct: slippage,
+        slippagePct: effectiveSlippagePct,
         routeLabels: routeLabelsSnapshot,
         buyDecimals: decimalsOut,
         buySymbol: displayBuySymbol,
@@ -836,7 +941,7 @@ export default function SwapSection({ balances }) {
         executed: actualFloat !== null ? `${actualFloat.toFixed(6)} ${displayBuySymbol}` : "--",
         minReceived: minFloat !== null ? `${minFloat.toFixed(6)} ${displayBuySymbol}` : "--",
         priceImpact: pendingExecutionRef.current.priceImpactSnapshot ?? priceImpact,
-        slippage: pendingExecutionRef.current.slippagePct ?? slippage,
+        slippage: pendingExecutionRef.current.slippagePct ?? effectiveSlippagePct,
         gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
         txHash: receipt?.hash,
         deltaPct: grade.deltaPct,
@@ -870,6 +975,35 @@ export default function SwapSection({ balances }) {
   return (
     <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
       <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-4 sm:p-6 shadow-xl">
+        <div className="mb-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-sm font-semibold text-slate-100">Execution mode</span>
+            <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-800 overflow-hidden">
+              {[
+                { id: "turbo", label: "Turbo" },
+                { id: "protected", label: "Protected" },
+              ].map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setExecutionMode(opt.id)}
+                  className={`px-3 py-1.5 text-sm font-semibold transition ${
+                    executionMode === opt.id
+                      ? "bg-sky-500/20 text-sky-100 border border-sky-500/40"
+                      : "text-slate-200 hover:text-sky-100"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-400">
+            {executionMode === "turbo"
+              ? "Turbo: quote live, auto-slippage, auto re-quote on fast moves."
+              : "Protected: tighter limits and conservative routing (direct/WETH fallback)."}
+          </div>
+        </div>
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
@@ -1065,12 +1199,30 @@ export default function SwapSection({ balances }) {
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-sm font-semibold">Route (Live)</span>
             </div>
-            <div
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-900/40 border border-emerald-600/40 text-[11px] text-emerald-100"
-              title="Route updates in real-time to keep best execution."
-            >
-              <span className="font-semibold">LiveRoute</span>
-              <span aria-hidden>✅</span>
+            <div className="flex items-center gap-2">
+              <div
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-900/40 border border-emerald-600/40 text-[11px] text-emerald-100"
+                title="Route updates in real-time to keep best execution."
+              >
+                <span className="font-semibold">LiveRoute</span>
+                <span aria-hidden>✅</span>
+              </div>
+              <div
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] ${
+                  executionMode === "turbo"
+                    ? "bg-sky-900/40 border-sky-600/50 text-sky-100"
+                    : "bg-amber-900/30 border-amber-600/50 text-amber-100"
+                }`}
+                title={
+                  executionMode === "turbo"
+                    ? "Turbo: auto-slippage + auto re-quote on fast moves."
+                    : "Protected: tighter limits and conservative routing."
+                }
+              >
+                <span className="font-semibold">
+                  {executionMode === "turbo" ? "Turbo" : "Protected"}
+                </span>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200 mb-2">
@@ -1131,7 +1283,7 @@ export default function SwapSection({ balances }) {
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
           <div className="flex-1 rounded-2xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-300">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-slate-400">Slippage (%)</span>
+              <span className="text-slate-400">Base slippage (%)</span>
               <div className="flex items-center gap-2">
                 {[0.1, 0.5, 1].map((p) => (
                   <button
@@ -1155,6 +1307,13 @@ export default function SwapSection({ balances }) {
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-500">Effective (mode)</span>
+              <span className="text-slate-100">
+                {Number(effectiveSlippagePct || 0).toFixed(2)}%{" "}
+                {executionMode === "turbo" ? "auto" : "protected"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">Min received</span>
               <span className="text-slate-100">
                 {minReceivedDisplay}
@@ -1164,6 +1323,12 @@ export default function SwapSection({ balances }) {
               <span className="text-slate-500">Price impact</span>
               <span className="text-slate-100">
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] mt-1">
+              <span className="text-slate-500">Route volatility</span>
+              <span className="text-slate-100">
+                {quoteVolatilityPct ? `${quoteVolatilityPct.toFixed(2)}%` : "Calm"}
               </span>
             </div>
           </div>
@@ -1310,7 +1475,9 @@ export default function SwapSection({ balances }) {
             <div className="flex flex-col gap-1">
               <span className="text-[11px] text-slate-400">Slippage</span>
               <span className="font-semibold">
-                {executionProof.slippage ? `${executionProof.slippage}%` : `${slippage}%`}
+                {executionProof.slippage
+                  ? `${executionProof.slippage}%`
+                  : `${Number(effectiveSlippagePct || slippage || 0).toFixed(2)}%`}
               </span>
             </div>
           </div>

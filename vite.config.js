@@ -1,11 +1,19 @@
+import fs from 'fs'
+import path from 'path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import basicSsl from '@vitejs/plugin-basic-ssl'
 
 const DEV_NONCE = 'dev-nonce-123';
+const certDir = path.resolve(process.cwd(), 'certs');
+const devKeyPath = path.join(certDir, 'dev.key');
+const devCertPath = path.join(certDir, 'dev.crt');
+const hasCustomCert = fs.existsSync(devKeyPath) && fs.existsSync(devCertPath);
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    basicSsl(),
     react({
       // Disable React Fast Refresh to avoid inline preamble in CSP-constrained dev contexts.
       fastRefresh: false,
@@ -19,6 +27,12 @@ export default defineConfig({
     },
   ],
   server: {
+    https: hasCustomCert
+      ? {
+          key: fs.readFileSync(devKeyPath),
+          cert: fs.readFileSync(devCertPath),
+        }
+      : true,
     host: '0.0.0.0',
     port: 4173,
     hmr: false,
