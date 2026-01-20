@@ -829,7 +829,9 @@ export default function LiquiditySection() {
       } catch (err) {
         if (!cancelled) {
           const message = err?.message || "Failed to load pool data";
-          const pairMissingMsg = message.toLowerCase().includes("pair not found on megaeth");
+          const lower = message.toLowerCase();
+          const pairMissingMsg =
+            lower.includes("pair not found on megaeth") || lower.includes("pair not found");
           if (pairMissingMsg) {
             setPairError("");
             setPairNotDeployed(true);
@@ -1095,12 +1097,16 @@ export default function LiquiditySection() {
         return;
       }
       try {
-        const provider = await getProvider();
-        const signer = await provider.getSigner();
-        const user = await signer.getAddress();
+        const provider = getReadOnlyProvider();
+        const accounts =
+          (await window?.ethereum?.request?.({ method: "eth_accounts" })) || [];
+        const user = accounts[0];
+        if (!user) {
+          throw new Error("Balances unavailable. Open your wallet and try again.");
+        }
 
         const fetchBalance = async (symbol, address, meta) => {
-          if (symbol === "ETH") {
+          if (!address) {
             const bal = await provider.getBalance(user);
             return Number(formatUnits(bal, 18));
           }
