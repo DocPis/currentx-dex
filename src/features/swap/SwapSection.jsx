@@ -1599,8 +1599,7 @@ export default function SwapSection({ balances }) {
 
             <div className="max-h-[480px] overflow-y-auto divide-y divide-slate-800">
               {filteredTokens.map((t) => {
-                const displayAddress =
-                  t.address || (t.symbol === "ETH" ? WETH_ADDRESS : "");
+                const displayAddress = t.address || "";
                 const displaySym = displaySymbol(t, t.symbol);
                 return (
                   <button
