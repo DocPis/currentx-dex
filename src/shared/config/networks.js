@@ -44,10 +44,10 @@ const mainnetPreset = {
 
 const testnetPreset = (() => {
   // Only expose testnet if minimally configured.
-  const router = env.VITE_TESTNET_ROUTER_ADDRESS || env.VITE_MEGAETH_T_ROUTER;
-  const factory = env.VITE_TESTNET_FACTORY_ADDRESS || env.VITE_MEGAETH_T_FACTORY;
-  const weth = env.VITE_TESTNET_WETH_ADDRESS || env.VITE_MEGAETH_T_WETH;
-  const rpc = env.VITE_TESTNET_RPC_URL || env.VITE_MEGAETH_T_RPC;
+  const router = env.VITE_TESTNET_ROUTER_ADDRESS;
+  const factory = env.VITE_TESTNET_FACTORY_ADDRESS;
+  const weth = env.VITE_TESTNET_WETH_ADDRESS;
+  const rpc = env.VITE_TESTNET_RPC_URL;
   if (!router || !factory || !weth || !rpc) return null;
 
   return {
@@ -56,47 +56,36 @@ const testnetPreset = (() => {
     name: env.VITE_TESTNET_NAME || "MegaETH Testnet",
     chainIdHex: env.VITE_TESTNET_CHAIN_ID_HEX || "0x10e7", // placeholder; override via env
     explorer:
-      env.VITE_TESTNET_EXPLORER ||
-      env.VITE_MEGAETH_T_EXPLORER ||
-      env.VITE_EXPLORER_BASE_TESTNET ||
-      "",
+      env.VITE_TESTNET_EXPLORER || env.VITE_EXPLORER_BASE_TESTNET || "",
     rpcUrls: [
       env.VITE_TESTNET_RPC_URLS,
       env.VITE_TESTNET_RPC_URL,
-      env.VITE_MEGAETH_T_RPC,
-      env.VITE_RPC_TESTNET,
       rpc,
     ].filter(Boolean),
     addresses: {
       WETH_ADDRESS: weth,
       USDC_ADDRESS:
-        env.VITE_TESTNET_USDC_ADDRESS || env.VITE_MEGAETH_T_USDC || "",
+        env.VITE_TESTNET_USDC_ADDRESS || "",
       CUSD_ADDRESS:
-        env.VITE_TESTNET_CUSD_ADDRESS || env.VITE_MEGAETH_T_CUSD || "",
+        env.VITE_TESTNET_CUSD_ADDRESS || "",
       USDM_ADDRESS:
-        env.VITE_TESTNET_USDM_ADDRESS || env.VITE_MEGAETH_T_USDM || "",
+        env.VITE_TESTNET_USDM_ADDRESS || "",
       CRX_ADDRESS:
-        env.VITE_TESTNET_CRX_ADDRESS || env.VITE_MEGAETH_T_CRX || "",
+        env.VITE_TESTNET_CRX_ADDRESS || "",
       MEGA_TOKEN_ADDRESS:
-        env.VITE_TESTNET_MEGA_TOKEN_ADDRESS || env.VITE_MEGAETH_T_MEGA || "",
+        env.VITE_TESTNET_MEGA_TOKEN_ADDRESS || "",
       XBTC_ADDRESS:
-        env.VITE_TESTNET_XBTC_ADDRESS || env.VITE_MEGAETH_T_XBTC || "",
+        env.VITE_TESTNET_XBTC_ADDRESS || "",
       WUSD_ADDRESS:
-        env.VITE_TESTNET_WUSD_ADDRESS || env.VITE_MEGAETH_T_WUSD || "",
+        env.VITE_TESTNET_WUSD_ADDRESS || "",
       WUSDC_ADDRESS:
-        env.VITE_TESTNET_WUSDC_ADDRESS || env.VITE_MEGAETH_T_WUSDC || "",
+        env.VITE_TESTNET_WUSDC_ADDRESS || "",
       MASTER_CHEF_ADDRESS:
-        env.VITE_TESTNET_MASTER_CHEF_ADDRESS ||
-        env.VITE_MEGAETH_T_MASTER_CHEF ||
-        "",
+        env.VITE_TESTNET_MASTER_CHEF_ADDRESS || "",
       CRX_WETH_LP_ADDRESS:
-        env.VITE_TESTNET_CRX_WETH_LP_ADDRESS ||
-        env.VITE_MEGAETH_T_CRX_WETH_LP ||
-        "",
+        env.VITE_TESTNET_CRX_WETH_LP_ADDRESS || "",
       HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS:
-        env.VITE_TESTNET_TIMESTAMP_ORACLE_ADDRESS ||
-        env.VITE_MEGAETH_T_TIMESTAMP_ORACLE ||
-        "",
+        env.VITE_TESTNET_TIMESTAMP_ORACLE_ADDRESS || "",
       UNIV2_FACTORY_ADDRESS: factory,
       UNIV2_ROUTER_ADDRESS: router,
     },
