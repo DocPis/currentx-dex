@@ -2,8 +2,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   TOKENS,
-  getProvider,
   getErc20,
+  getReadOnlyProvider,
 } from "../config/web3";
 import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
@@ -28,7 +28,7 @@ export function useBalances(address) {
 
   const refresh = useCallback(
     async (walletAddress = address) => {
-      if (!walletAddress || !window.ethereum) return;
+      if (!walletAddress) return;
       if (isRefreshing.current) {
         pendingAddress.current = walletAddress;
         return;
@@ -37,7 +37,7 @@ export function useBalances(address) {
       isRefreshing.current = true;
       try {
         setLoading(true);
-        const provider = await getProvider();
+        const provider = getReadOnlyProvider();
 
         // ETH
         const ethBalance = await provider.getBalance(walletAddress);
@@ -100,7 +100,7 @@ export function useBalances(address) {
 
     const setupListener = async () => {
       try {
-        provider = await getProvider();
+        provider = getReadOnlyProvider();
         provider.on("block", handleBlock);
       } catch (e) {
         console.error("Error starting balance watcher:", e);

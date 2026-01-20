@@ -2,22 +2,20 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
-  EXPLORER_BASE_URL,
-  NETWORK_NAME,
-  RPC_URL,
   getInjectedEthereum,
   getInjectedProviderByType,
   setActiveInjectedProvider,
 } from "../config/web3";
-import { getActiveNetworkConfig } from "../config/networks";
+import { getActiveNetworkConfig, getAvailableNetworkPresets } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
-const activeNetwork = getActiveNetworkConfig();
+let activeNetwork = getActiveNetworkConfig();
+const presets = getAvailableNetworkPresets();
 const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
 const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
-const ACTIVE_NETWORK_NAME = activeNetwork?.name || NETWORK_NAME || "MegaETH";
-const ACTIVE_EXPLORER = activeNetwork?.explorer || EXPLORER_BASE_URL || "";
-const ACTIVE_RPC = (activeNetwork?.rpcUrls && activeNetwork.rpcUrls[0]) || RPC_URL;
+const ACTIVE_NETWORK_NAME = activeNetwork?.name || "MegaETH";
+const ACTIVE_EXPLORER = activeNetwork?.explorer || "";
+const ACTIVE_RPC = (activeNetwork?.rpcUrls && activeNetwork.rpcUrls[0]) || "";
 
 const isTrustWalletProvider = (provider) => {
   const name =
