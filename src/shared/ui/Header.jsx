@@ -76,7 +76,7 @@ export default function Header({
             className="px-3 py-1.5 rounded-full text-xs font-semibold border border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:border-emerald-400/70 transition flex items-center gap-2"
           >
             <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.65)]" />
-            <span>{activeNetwork?.label || "Network"}</span>
+            <span>{activeNetwork?.id === "mainnet" ? "MegaETH" : "Testnet"}</span>
             <svg
               className="h-3 w-3 text-emerald-200"
               viewBox="0 0 20 20"
@@ -120,10 +120,9 @@ export default function Header({
                         selected ? "bg-emerald-400" : "bg-slate-500"
                       }`}
                     />
-                    <div className="flex flex-col">
-                      <span className="font-semibold">{net.label}</span>
-                      <span className="text-[11px] text-slate-400">{net.chainIdHex}</span>
-                    </div>
+                    <span className="font-semibold">
+                      {net.id === "mainnet" ? "MegaETH" : "Testnet"}
+                    </span>
                   </button>
                 );
               })}
