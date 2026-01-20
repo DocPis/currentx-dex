@@ -472,7 +472,8 @@ export default function LiquiditySection() {
           // ignore per-pool chain errors to avoid breaking the whole list
           const msg = chainErr?.message || "Failed to load TVL";
           const pairMissing =
-            msg.toLowerCase().includes("pair not found on megaeth");
+            msg.toLowerCase().includes("pair not found on megaeth") ||
+            msg.toLowerCase().includes("pair not found");
           if (!cancelled && !tvlError && !pairMissing) {
             setTvlError(msg);
           }
@@ -739,9 +740,14 @@ export default function LiquiditySection() {
     }
     try {
       setLpBalanceError("");
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const user = await signer.getAddress();
+      const provider = getReadOnlyProvider();
+      const accounts =
+        (await window?.ethereum?.request?.({ method: "eth_accounts" })) || [];
+      const user = accounts[0];
+      if (!user) {
+        setLpBalanceError("");
+        return;
+      }
 
       const resolved =
         pairInfo ||
@@ -757,6 +763,15 @@ export default function LiquiditySection() {
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
+      const lower = (err?.message || "").toLowerCase();
+      const missing =
+        lower.includes("pair not found") || lower.includes("pair not found on megaeth");
+      if (missing) {
+        setPairNotDeployed(true);
+        setLpBalanceError("");
+        setLpBalance(null);
+        return;
+      }
       const msg = compactRpcMessage(
         err?.message,
         "Pool data not available right now. Please retry."
@@ -767,6 +782,7 @@ export default function LiquiditySection() {
     pairIdOverride,
     pairInfo,
     pairMissing,
+    pairBlockingError,
     poolSupportsActions,
     selectedPool,
     token0Address,
