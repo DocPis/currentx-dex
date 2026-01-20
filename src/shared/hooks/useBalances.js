@@ -1,5 +1,5 @@
 // src/shared/hooks/useBalances.js
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   TOKENS,
   getProvider,
