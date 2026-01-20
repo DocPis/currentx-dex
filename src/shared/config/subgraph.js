@@ -3,10 +3,16 @@ import { getActiveNetworkConfig } from "./networks";
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const activeNet = getActiveNetworkConfig() || {};
-const SUBGRAPH_URL =
-  activeNet.subgraphUrl || env.VITE_UNIV2_SUBGRAPH || "";
-const SUBGRAPH_API_KEY =
-  activeNet.subgraphApiKey || env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
+let SUBGRAPH_URL = activeNet.subgraphUrl;
+let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
+
+// Fallback to global env only when the active network does not define its own.
+if (!SUBGRAPH_URL && activeNet?.id !== "testnet") {
+  SUBGRAPH_URL = env.VITE_UNIV2_SUBGRAPH || "";
+}
+if (!SUBGRAPH_API_KEY && activeNet?.id !== "testnet") {
+  SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
+}
 const SUBGRAPH_MISSING_KEY =
   SUBGRAPH_URL &&
   !SUBGRAPH_API_KEY &&

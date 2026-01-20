@@ -71,9 +71,8 @@ const testnetDefaults = {
   name: "MegaETH Testnet",
   chainIdHex: "0x18c7",
   explorer: "https://megaeth-testnet-v2.blockscout.com",
-  subgraphUrl: env.VITE_UNIV2_SUBGRAPH_TESTNET || env.VITE_UNIV2_SUBGRAPH || "",
-  subgraphApiKey:
-    env.VITE_UNIV2_SUBGRAPH_API_KEY_TESTNET || env.VITE_UNIV2_SUBGRAPH_API_KEY || "",
+  subgraphUrl: env.VITE_UNIV2_SUBGRAPH_TESTNET || "",
+  subgraphApiKey: env.VITE_UNIV2_SUBGRAPH_API_KEY_TESTNET || "",
   rpcUrls: ["https://carrot.megaeth.com/rpc"],
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
