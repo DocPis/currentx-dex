@@ -9,14 +9,19 @@ import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
 
 export function useBalances(address) {
-  const [balances, setBalances] = useState({
-    ETH: 0,
-    WETH: 0,
-    USDC: 0,
-    CUSD: 0,
-    USDm: 0,
-    CRX: 0,
-  });
+  const tokenKeys = useMemo(() => {
+    return Object.keys(TOKENS).filter((k) => k === "ETH" || TOKENS[k]?.address);
+  }, []);
+  const makeZeroBalances = useCallback(
+    () =>
+      tokenKeys.reduce((acc, key) => {
+        acc[key] = 0;
+        return acc;
+      }, {}),
+    [tokenKeys]
+  );
+
+  const [balances, setBalances] = useState(() => makeZeroBalances());
   const [loading, setLoading] = useState(false);
   const isRefreshing = useRef(false);
   const pendingAddress = useRef(null);
@@ -55,20 +60,15 @@ export function useBalances(address) {
           }
         };
 
-        const weth = await getErc20Balance("WETH");
-        const usdc = await getErc20Balance("USDC");
-        const cusd = await getErc20Balance("CUSD");
-        const usdm = await getErc20Balance("USDm");
-        const crx = await getErc20Balance("CRX");
-
-        setBalances({
-          ETH: eth,
-          WETH: weth,
-          USDC: usdc,
-          CUSD: cusd,
-          USDm: usdm,
-          CRX: crx,
-        });
+        const next = { ...makeZeroBalances(), ETH: eth };
+        await Promise.all(
+          tokenKeys
+            .filter((k) => k !== "ETH")
+            .map(async (key) => {
+              next[key] = await getErc20Balance(key);
+            })
+        );
+        setBalances(next);
       } catch (e) {
         console.error("Error loading balances:", e?.message || e);
       } finally {
@@ -88,9 +88,9 @@ export function useBalances(address) {
     if (address) {
       refresh(address);
     } else {
-      setBalances({ ETH: 0, WETH: 0, USDC: 0, CUSD: 0, USDm: 0, CRX: 0 });
+      setBalances(makeZeroBalances());
     }
-  }, [address, refresh]);
+  }, [address, refresh, makeZeroBalances]);
 
   useEffect(() => {
     if (!address) return undefined;
