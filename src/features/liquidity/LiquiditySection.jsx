@@ -731,7 +731,7 @@ export default function LiquiditySection() {
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
   const fetchLpBalance = useCallback(async () => {
-    if (!poolSupportsActions || !selectedPool || pairMissing) return;
+    if (!poolSupportsActions || !selectedPool || pairBlockingError) return;
     try {
       setLpBalanceError("");
       const provider = await getProvider();
@@ -829,11 +829,8 @@ export default function LiquiditySection() {
       } catch (err) {
         if (!cancelled) {
           const message = err?.message || "Failed to load pool data";
-          const pairMissing = message.toLowerCase().includes("pair not found on megaeth");
-          if (pairMissing && pairIdOverride) {
-            setPairError("");
-            setPairNotDeployed(true);
-          } else if (pairMissing) {
+          const pairMissingMsg = message.toLowerCase().includes("pair not found on megaeth");
+          if (pairMissingMsg) {
             setPairError("");
             setPairNotDeployed(true);
             setLpBalance(null);
