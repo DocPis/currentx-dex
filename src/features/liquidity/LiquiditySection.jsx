@@ -732,6 +732,11 @@ export default function LiquiditySection() {
 
   const fetchLpBalance = useCallback(async () => {
     if (!poolSupportsActions || !selectedPool || pairBlockingError) return;
+    if (pairMissing) {
+      setLpBalance(null);
+      setLpBalanceError("");
+      return;
+    }
     try {
       setLpBalanceError("");
       const provider = await getProvider();
@@ -1791,7 +1796,7 @@ export default function LiquiditySection() {
                     ))}
                   </div>
                 )}
-                {tokenBalanceError && (
+                {tokenBalanceError && !pairMissing && (
                   <div className="text-[11px] text-amber-200 mb-3">
                     Balances unavailable. Open your wallet and try again.
                   </div>
@@ -1866,16 +1871,19 @@ export default function LiquiditySection() {
                         </button>
                       </div>
                     )}
-                    {lpBalanceError && (
+                    {pairMissing ? (
+                      <div className="text-xs text-slate-400 self-center">
+                        Pool not deployed yet. Your first deposit will create it.
+                      </div>
+                    ) : lpBalanceError ? (
                       <div className="text-xs text-rose-300 self-center">
                         {lpBalanceError}
                       </div>
-                    )}
-                    {!hasLpBalance && !lpBalanceError && (
+                    ) : !hasLpBalance ? (
                       <div className="text-xs text-slate-400 self-center">
                         You need LP tokens in this pool before withdrawing.
                       </div>
-                    )}
+                    ) : null}
                     <button
                       disabled={
                         actionLoading ||
