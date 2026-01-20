@@ -40,15 +40,7 @@ const mainnetPreset = {
     "https://megaeth.blockscout.com",
   subgraphUrl: DEFAULT_MAINNET_SUBGRAPH_URL,
   subgraphApiKey: DEFAULT_MAINNET_SUBGRAPH_API_KEY,
-  rpcUrls: [
-    env.VITE_RPC_URLS,
-    env.VITE_RPC_URL,
-    env.VITE_MEGAETH_RPC,
-    env.VITE_RPC_FALLBACK,
-    env.VITE_RPC_TATUM,
-    env.VITE_RPC_THIRDWEB,
-    "https://mainnet.megaeth.com/rpc",
-  ].filter(Boolean),
+  rpcUrls: [env.VITE_RPC_URLS, env.VITE_RPC_URL, env.VITE_MEGAETH_RPC].filter(Boolean),
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
     USDC_ADDRESS: "0x4c99d545E82D32dA12Cc634a3964b1698073DA2B",
@@ -97,9 +89,7 @@ const testnetDefaults = {
 
 const testnetPreset = (() => {
   const rpcUrls = dedupeList([
-    env.VITE_TESTNET_RPC_URLS,
-    env.VITE_TESTNET_RPC_URL,
-    ...(testnetDefaults.rpcUrls || []),
+    env.VITE_TESTNET_RPC_URL || env.VITE_TESTNET_RPC_URLS || "",
   ]);
   const addresses = {
     WETH_ADDRESS: env.VITE_TESTNET_WETH_ADDRESS || testnetDefaults.addresses.WETH_ADDRESS,
