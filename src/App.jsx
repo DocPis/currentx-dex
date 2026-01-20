@@ -15,8 +15,8 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
-  const { address, isOnActiveNetwork, connect, disconnect } = useWallet();
-  const { balances, refresh } = useBalances(address);
+  const { address, chainId, isOnActiveNetwork, connect, disconnect } = useWallet();
+  const { balances, refresh } = useBalances(address, chainId);
 
   useEffect(() => {
     if (!connectError) return undefined;
@@ -105,7 +105,7 @@ export default function App() {
 
       <main className="flex-1">
         {tab === "swap" && <SwapSection balances={balances} />}
-        {tab === "liquidity" && <LiquiditySection />}
+        {tab === "liquidity" && <LiquiditySection address={address} chainId={chainId} />}
         {tab === "dashboard" && <Dashboard />}
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />

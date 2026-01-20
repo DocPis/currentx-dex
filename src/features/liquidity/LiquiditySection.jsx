@@ -133,7 +133,7 @@ const shortenAddress = (addr) => {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
-export default function LiquiditySection() {
+export default function LiquiditySection({ address, chainId }) {
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() =>
@@ -742,10 +742,14 @@ export default function LiquiditySection() {
     }
     try {
       setLpBalanceError("");
-      const provider = getReadOnlyProvider();
-      const accounts =
-        (await window?.ethereum?.request?.({ method: "eth_accounts" })) || [];
-      const user = accounts[0];
+      let provider;
+      try {
+        provider = await getProvider();
+      } catch {
+        provider = getReadOnlyProvider();
+      }
+      const accounts = await provider.send("eth_accounts", []);
+      const user = accounts?.[0];
       if (!user) {
         setLpBalanceError("");
         return;
@@ -810,7 +814,12 @@ export default function LiquiditySection() {
       }
 
       try {
-        const provider = await getProvider();
+        let provider;
+        try {
+          provider = await getProvider();
+        } catch {
+          provider = getReadOnlyProvider();
+        }
         const res = await getV2PairReserves(
           provider,
           token0Address,
@@ -1100,12 +1109,23 @@ export default function LiquiditySection() {
         return;
       }
       try {
-        const provider = getReadOnlyProvider();
-        const accounts =
-          (await window?.ethereum?.request?.({ method: "eth_accounts" })) || [];
-        const user = accounts[0];
+        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+        const walletChainId = (chainId || "").toLowerCase();
+        const preferWallet = walletChainId && walletChainId === activeChainId;
+        let provider;
+        if (preferWallet) {
+          try {
+            provider = await getProvider();
+          } catch {
+            provider = getReadOnlyProvider();
+          }
+        } else {
+          provider = getReadOnlyProvider();
+        }
+        const user = address || null;
         if (!user) {
-          throw new Error("Balances unavailable. Open your wallet and try again.");
+          setTokenBalanceError("");
+          return;
         }
 
         const fetchBalance = async (symbol, address, meta) => {
@@ -1183,9 +1203,14 @@ export default function LiquiditySection() {
         );
       }
 
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const user = await signer.getAddress();
+        let provider;
+        try {
+          provider = await getProvider();
+        } catch {
+          provider = getReadOnlyProvider();
+        }
+        const signer = await provider.getSigner();
+        const user = await signer.getAddress();
 
       const router = new Contract(
         UNIV2_ROUTER_ADDRESS,

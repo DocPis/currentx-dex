@@ -9,7 +9,9 @@ import {
 import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
 
-export function useBalances(address) {
+import { getActiveNetworkConfig } from "../config/networks";
+
+export function useBalances(address, chainId) {
   const tokenKeys = useMemo(() => {
     return Object.keys(TOKENS).filter((k) => k === "ETH" || TOKENS[k]?.address);
   }, []);
@@ -38,10 +40,17 @@ export function useBalances(address) {
       isRefreshing.current = true;
       try {
         setLoading(true);
+        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+        const walletChainId = (chainId || "").toLowerCase();
+        const preferWallet = walletChainId && walletChainId === activeChainId;
         let provider;
-        try {
-          provider = await getProvider();
-        } catch {
+        if (preferWallet) {
+          try {
+            provider = await getProvider();
+          } catch {
+            provider = getReadOnlyProvider();
+          }
+        } else {
           provider = getReadOnlyProvider();
         }
 
