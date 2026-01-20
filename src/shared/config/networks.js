@@ -4,6 +4,10 @@
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const LOCAL_STORAGE_KEY = "MEGAETH_NETWORK_PRESET";
+const DEFAULT_MAINNET_SUBGRAPH_URL =
+  env.VITE_UNIV2_SUBGRAPH ||
+  "https://gateway.thegraph.com/api/subgraphs/id/AokDW2tqCMiFvVqXUEfiwY94mNXoBQfsszwd5bnPiNcr";
+const DEFAULT_MAINNET_SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 
 const dedupeList = (arr = []) => {
   const seen = new Set();
@@ -31,6 +35,8 @@ const mainnetPreset = {
     env.VITE_EXPLORER_BASE ||
     env.VITE_MEGAETH_EXPLORER ||
     "https://megaeth.blockscout.com",
+  subgraphUrl: DEFAULT_MAINNET_SUBGRAPH_URL,
+  subgraphApiKey: DEFAULT_MAINNET_SUBGRAPH_API_KEY,
   rpcUrls: [
     env.VITE_RPC_URLS,
     env.VITE_RPC_URL,
@@ -65,6 +71,9 @@ const testnetDefaults = {
   name: "MegaETH Testnet",
   chainIdHex: "0x18c7",
   explorer: "https://megaeth-testnet-v2.blockscout.com",
+  subgraphUrl: env.VITE_UNIV2_SUBGRAPH_TESTNET || env.VITE_UNIV2_SUBGRAPH || "",
+  subgraphApiKey:
+    env.VITE_UNIV2_SUBGRAPH_API_KEY_TESTNET || env.VITE_UNIV2_SUBGRAPH_API_KEY || "",
   rpcUrls: ["https://carrot.megaeth.com/rpc"],
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
@@ -128,6 +137,8 @@ const testnetPreset = (() => {
     name: env.VITE_TESTNET_NAME || testnetDefaults.name,
     chainIdHex: env.VITE_TESTNET_CHAIN_ID_HEX || testnetDefaults.chainIdHex,
     explorer: env.VITE_TESTNET_EXPLORER || env.VITE_EXPLORER_BASE_TESTNET || testnetDefaults.explorer,
+    subgraphUrl: testnetDefaults.subgraphUrl,
+    subgraphApiKey: testnetDefaults.subgraphApiKey,
     rpcUrls,
     addresses,
   };

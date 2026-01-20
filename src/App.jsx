@@ -15,7 +15,7 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
-  const { address, isOnMegaeth, connect, disconnect } = useWallet();
+  const { address, isOnActiveNetwork, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address);
 
   useEffect(() => {
@@ -72,7 +72,7 @@ export default function App() {
       )}
       <Header
         address={address}
-        isOnMegaeth={isOnMegaeth}
+        isOnActiveNetwork={isOnActiveNetwork}
         onConnect={handleConnect}
         onSwitchWallet={() => setShowWalletModal(true)}
         onDisconnect={handleDisconnect}

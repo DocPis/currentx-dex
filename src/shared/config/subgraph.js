@@ -1,6 +1,12 @@
 // src/config/subgraph.js
-const SUBGRAPH_URL = import.meta.env.VITE_UNIV2_SUBGRAPH;
-const SUBGRAPH_API_KEY = import.meta.env.VITE_UNIV2_SUBGRAPH_API_KEY;
+import { getActiveNetworkConfig } from "./networks";
+
+const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const activeNet = getActiveNetworkConfig() || {};
+const SUBGRAPH_URL =
+  activeNet.subgraphUrl || env.VITE_UNIV2_SUBGRAPH || "";
+const SUBGRAPH_API_KEY =
+  activeNet.subgraphApiKey || env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 const SUBGRAPH_MISSING_KEY =
   SUBGRAPH_URL &&
   !SUBGRAPH_API_KEY &&
