@@ -30,13 +30,17 @@ const activeNetwork = getActiveNetworkConfig();
 
 const RAW_RPC_SOURCES = [
   ...(activeNetwork.rpcUrls || []),
-  env.VITE_RPC_URLS, // comma separated list
-  env.VITE_RPC_URL,
-  env.VITE_MEGAETH_RPC,
-  env.VITE_RPC_FALLBACK,
-  env.VITE_RPC_TATUM,
-  env.VITE_RPC_THIRDWEB,
-  "https://mainnet.megaeth.com/rpc",
+  ...(activeNetwork.id === "mainnet"
+    ? [
+        env.VITE_RPC_URLS, // comma separated list
+        env.VITE_RPC_URL,
+        env.VITE_MEGAETH_RPC,
+        env.VITE_RPC_FALLBACK,
+        env.VITE_RPC_TATUM,
+        env.VITE_RPC_THIRDWEB,
+        "https://mainnet.megaeth.com/rpc",
+      ]
+    : []),
 ];
 
 const dedupe = (arr) => {
