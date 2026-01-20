@@ -18,6 +18,9 @@ export const CUSD_ADDRESS = active.addresses.CUSD_ADDRESS;
 export const USDM_ADDRESS = active.addresses.USDM_ADDRESS;
 export const CRX_ADDRESS = active.addresses.CRX_ADDRESS;
 export const MEGA_TOKEN_ADDRESS = active.addresses.MEGA_TOKEN_ADDRESS;
+export const XBTC_ADDRESS = active.addresses.XBTC_ADDRESS;
+export const WUSD_ADDRESS = active.addresses.WUSD_ADDRESS;
+export const WUSDC_ADDRESS = active.addresses.WUSDC_ADDRESS;
 
 // Protocol contracts
 export const MASTER_CHEF_ADDRESS = active.addresses.MASTER_CHEF_ADDRESS;

@@ -6,8 +6,14 @@ import cusdLogo from "../../tokens/cusd.png";
 import wethLogo from "../../tokens/weth.png";
 import currentxLogo from "../../assets/currentx.png";
 import megaLogo from "../../tokens/megaeth.png";
+import xbtcLogo from "../../tokens/xbtc.png";
+import wusdLogo from "../../tokens/wusd.png";
+import wusdcLogo from "../../tokens/wusdc.png";
+// placeholder for xBTC logo; wire later
+// import xbtcLogo from "../../tokens/xbtc.png";
 import {
   CRX_ADDRESS,
+  XBTC_ADDRESS,
   USDC_ADDRESS,
   CUSD_ADDRESS,
   USDM_ADDRESS,
@@ -66,5 +72,29 @@ export const TOKENS = {
     address: MEGA_TOKEN_ADDRESS,
     decimals: 18,
     logo: megaLogo,
+  },
+  XBTC: {
+    symbol: "XBTC",
+    displaySymbol: "xBTC",
+    name: "xBitcoin",
+    address: XBTC_ADDRESS,
+    decimals: 18,
+    logo: xbtcLogo,
+  },
+  WUSD: {
+    symbol: "WUSD",
+    displaySymbol: "wUSD",
+    name: "Wrapped USD",
+    address: null, // set per network via env
+    decimals: 18,
+    logo: wusdLogo,
+  },
+  WUSDC: {
+    symbol: "WUSDC",
+    displaySymbol: "wUSDC",
+    name: "Wrapped USDC",
+    address: null, // set per network via env
+    decimals: 6,
+    logo: wusdcLogo,
   },
 };
