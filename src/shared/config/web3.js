@@ -80,6 +80,14 @@ const getProviderForUrl = (url) => {
 let rpcIndex = 0;
 
 export function getReadOnlyProvider(preferNext = false) {
+  // Prefer injected provider when available to avoid CORS on some RPCs (e.g., testnet)
+  if (typeof window !== "undefined" && window.ethereum) {
+    try {
+      return new BrowserProvider(window.ethereum);
+    } catch {
+      // fallback to RPC pool
+    }
+  }
   if (preferNext) rpcIndex = (rpcIndex + 1) % RPC_POOL.length;
   const url = RPC_POOL[rpcIndex] || RPC_POOL[0];
   return getProviderForUrl(url);

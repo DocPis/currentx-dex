@@ -4,6 +4,7 @@ import {
   TOKENS,
   getErc20,
   getReadOnlyProvider,
+  getProvider,
 } from "../config/web3";
 import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
@@ -37,7 +38,12 @@ export function useBalances(address) {
       isRefreshing.current = true;
       try {
         setLoading(true);
-        const provider = getReadOnlyProvider();
+        let provider;
+        try {
+          provider = await getProvider();
+        } catch {
+          provider = getReadOnlyProvider();
+        }
 
         // ETH
         const ethBalance = await provider.getBalance(walletAddress);
