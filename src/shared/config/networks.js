@@ -68,8 +68,7 @@ const testnetPreset = (() => {
         env.VITE_TESTNET_USDC_ADDRESS || "",
       CUSD_ADDRESS:
         env.VITE_TESTNET_CUSD_ADDRESS || "",
-      USDM_ADDRESS:
-        env.VITE_TESTNET_USDM_ADDRESS || "",
+      USDM_ADDRESS: "",
       CRX_ADDRESS:
         env.VITE_TESTNET_CRX_ADDRESS || "",
       MEGA_TOKEN_ADDRESS:
