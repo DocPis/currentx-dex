@@ -763,20 +763,10 @@ export default function LiquiditySection() {
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
-      const lower = (err?.message || "").toLowerCase();
-      const missing =
-        lower.includes("pair not found") || lower.includes("pair not found on megaeth");
-      if (missing) {
-        setPairNotDeployed(true);
-        setLpBalanceError("");
-        setLpBalance(null);
-        return;
-      }
-      const msg = compactRpcMessage(
-        err?.message,
-        "Pool data not available right now. Please retry."
-      );
-      setLpBalanceError(msg);
+      // Treat any failure as "not deployed yet" to allow first deposit
+      setPairNotDeployed(true);
+      setLpBalanceError("");
+      setLpBalance(null);
     }
   }, [
     pairIdOverride,
