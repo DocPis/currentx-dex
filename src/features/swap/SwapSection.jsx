@@ -20,11 +20,6 @@ import {
   UNIV2_ROUTER_ABI,
   UNIV2_FACTORY_ABI,
 } from "../../shared/config/abis";
-import {
-  getActiveNetworkPresetId,
-  getAvailableNetworkPresets,
-  setActiveNetworkPreset,
-} from "../../shared/config/networks";
 import { getRealtimeClient } from "../../shared/services/realtime";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CUSD", "USDm", "CRX", "MEGA"];
@@ -220,13 +215,6 @@ export default function SwapSection({ balances }) {
   const [approveLoading, setApproveLoading] = useState(false);
   const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
   const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
-  const [activeNetworkId, setActiveNetworkId] = useState(() =>
-    getActiveNetworkPresetId()
-  );
-  const availableNetworks = useMemo(
-    () => getAvailableNetworkPresets(),
-    []
-  );
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
@@ -1015,36 +1003,6 @@ export default function SwapSection({ balances }) {
               ? "Turbo: quote live, auto-slippage, auto re-quote on fast moves."
               : "Protected: tighter limits and conservative routing (direct/WETH fallback)."}
           </div>
-          {availableNetworks.length > 1 && (
-            <div className="flex items-center gap-2 text-[12px] text-slate-200">
-              <span className="text-slate-400">Network</span>
-              <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-800 overflow-hidden">
-                {availableNetworks.map((net) => (
-                  <button
-                    key={net.id}
-                    type="button"
-                    onClick={() => {
-                      if (net.id === activeNetworkId) return;
-                      setActiveNetworkId(net.id);
-                      setActiveNetworkPreset(net.id);
-                      window.location.reload();
-                    }}
-                    className={`px-3 py-1 text-[12px] font-semibold transition ${
-                      net.id === activeNetworkId
-                        ? "bg-emerald-500/20 text-emerald-100 border border-emerald-500/40"
-                        : "text-slate-200 hover:text-emerald-100"
-                    }`}
-                    title="Switch network preset and reload"
-                  >
-                    {net.label}
-                  </button>
-                ))}
-              </div>
-              <span className="text-[11px] text-slate-500">
-                Current: {NETWORK_NAME}
-              </span>
-            </div>
-          )}
         </div>
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
