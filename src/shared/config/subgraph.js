@@ -6,11 +6,11 @@ const activeNet = getActiveNetworkConfig() || {};
 let SUBGRAPH_URL = activeNet.subgraphUrl;
 let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
 
-// Fallback to global env only when the active network does not define its own.
-if (!SUBGRAPH_URL && activeNet?.id !== "testnet") {
+// Fallback to global env when missing (align behavior across networks).
+if (!SUBGRAPH_URL) {
   SUBGRAPH_URL = env.VITE_UNIV2_SUBGRAPH || "";
 }
-if (!SUBGRAPH_API_KEY && activeNet?.id !== "testnet") {
+if (!SUBGRAPH_API_KEY) {
   SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 }
 const SUBGRAPH_MISSING_KEY =

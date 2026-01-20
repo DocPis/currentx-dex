@@ -8,6 +8,9 @@ const DEFAULT_MAINNET_SUBGRAPH_URL =
   env.VITE_UNIV2_SUBGRAPH ||
   "https://gateway.thegraph.com/api/subgraphs/id/AokDW2tqCMiFvVqXUEfiwY94mNXoBQfsszwd5bnPiNcr";
 const DEFAULT_MAINNET_SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
+const DEFAULT_TESTNET_SUBGRAPH_URL =
+  env.VITE_UNIV2_SUBGRAPH_TESTNET ||
+  "https://api.goldsky.com/api/public/project_cmg8hsgg04qnz01wnhnnj9s1y/subgraphs/current-x-testnet/1.0.0/gn";
 
 const dedupeList = (arr = []) => {
   const seen = new Set();
@@ -71,7 +74,7 @@ const testnetDefaults = {
   name: "MegaETH Testnet",
   chainIdHex: "0x18c7",
   explorer: "https://megaeth-testnet-v2.blockscout.com",
-  subgraphUrl: env.VITE_UNIV2_SUBGRAPH_TESTNET || "",
+  subgraphUrl: DEFAULT_TESTNET_SUBGRAPH_URL,
   subgraphApiKey: env.VITE_UNIV2_SUBGRAPH_API_KEY_TESTNET || "",
   rpcUrls: ["https://carrot.megaeth.com/rpc"],
   addresses: {
