@@ -474,8 +474,10 @@ export default function LiquiditySection() {
           const pairMissing =
             msg.toLowerCase().includes("pair not found on megaeth") ||
             msg.toLowerCase().includes("pair not found");
-          if (!cancelled && !tvlError && !pairMissing) {
-            setTvlError(msg);
+          if (!cancelled && !pairMissing) {
+            // Optional: log silently without surfacing to UI; pool creation can happen on first addLiquidity
+            console.warn("TVL fetch failed:", msg);
+            setTvlError("");
           }
         }
       }
