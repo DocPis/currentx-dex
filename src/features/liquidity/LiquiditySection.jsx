@@ -849,21 +849,11 @@ export default function LiquiditySection() {
         }
       } catch (err) {
         if (!cancelled) {
-          const message = err?.message || "Failed to load pool data";
-          const lower = message.toLowerCase();
-          const pairMissingMsg =
-            lower.includes("pair not found on megaeth") || lower.includes("pair not found");
-          if (pairMissingMsg) {
-            setPairError("");
-            setPairNotDeployed(true);
-            setLpBalance(null);
-            setLpBalanceError("");
-          } else {
-            setPairError(compactRpcMessage(message, "Failed to load pool data"));
-            setLpBalanceError(
-              compactRpcMessage(err.message, "Failed to load LP balance")
-            );
-          }
+          // Treat missing or unreadable pair as undeployed to allow first deposit
+          setPairError("");
+          setPairNotDeployed(true);
+          setLpBalance(null);
+          setLpBalanceError("");
         }
       }
     };
