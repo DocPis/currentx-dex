@@ -24,6 +24,8 @@ import {
 } from "../../shared/config/abis";
 import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
 import { getRealtimeClient } from "../../shared/services/realtime";
+import { useBalances } from "../../shared/hooks/useBalances";
+import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
@@ -178,6 +180,7 @@ export default function LiquiditySection({ address, chainId }) {
     () => ({ ...TOKENS, ...onchainTokens, ...customTokens }),
     [customTokens, onchainTokens]
   );
+  const { balances: walletBalances, loading: walletBalancesLoading } = useBalances(address, chainId);
 
   const getStatusStyle = (status) => {
     if (status === null) {
@@ -569,21 +572,32 @@ export default function LiquiditySection({ address, chainId }) {
     const ethLikeTvl =
       (tvlMap.ETH || 0) + (tvlMap.WETH || 0);
 
-    return Object.values(tokenRegistry).map((t) => ({
-      ...t,
-      tvlUsd:
-        t.symbol === "ETH" || t.symbol === "WETH"
-          ? ethLikeTvl
-          : tvlMap[t.symbol] || 0,
-      priceUsd:
-        tokenPrices[(t.address || "").toLowerCase()] ||
-        (t.symbol === "ETH"
-          ? tokenPrices[WETH_ADDRESS.toLowerCase()]
-          : t.symbol === "WETH"
+    return Object.values(tokenRegistry).map((t) => {
+      const rawBalance = walletBalances?.[t.symbol];
+      const walletBalance =
+        address && Number.isFinite(Number(rawBalance))
+          ? Number(rawBalance)
+          : address
+            ? 0
+            : null;
+
+      return {
+        ...t,
+        tvlUsd:
+          t.symbol === "ETH" || t.symbol === "WETH"
+            ? ethLikeTvl
+            : tvlMap[t.symbol] || 0,
+        priceUsd:
+          tokenPrices[(t.address || "").toLowerCase()] ||
+          (t.symbol === "ETH"
             ? tokenPrices[WETH_ADDRESS.toLowerCase()]
-            : undefined),
-    }));
-  }, [pools, tokenPrices, tokenRegistry]);
+            : t.symbol === "WETH"
+              ? tokenPrices[WETH_ADDRESS.toLowerCase()]
+              : undefined),
+        walletBalance,
+      };
+    });
+  }, [address, pools, tokenPrices, tokenRegistry, walletBalances]);
 
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
@@ -1127,10 +1141,18 @@ export default function LiquiditySection({ address, chainId }) {
         return;
       }
       try {
+        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+        const walletChainId = (chainId || "").toLowerCase();
+        const preferWallet = walletChainId && walletChainId === activeChainId;
+
         let provider;
-        try {
-          provider = await getProvider();
-        } catch {
+        if (preferWallet) {
+          try {
+            provider = await getProvider();
+          } catch {
+            provider = getReadOnlyProvider();
+          }
+        } else {
           provider = getReadOnlyProvider(false, true);
         }
         const user = address || null;
@@ -2335,7 +2357,11 @@ export default function LiquiditySection({ address, chainId }) {
                     <div className="text-[11px] text-slate-500">Onchain price</div>
                   </div>
                   <div className="col-span-12 md:col-span-2 text-right text-sm text-slate-100">
-                    --
+                    {address
+                      ? walletBalancesLoading
+                        ? "..."
+                        : formatTokenBalance(t.walletBalance)
+                      : "--"}
                     <div className="text-[11px] text-slate-500">Balance</div>
                   </div>
                 </button>

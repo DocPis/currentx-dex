@@ -96,7 +96,7 @@ export function useBalances(address, chainId) {
         }
       }
     },
-    [address]
+    [address, chainId]
   );
 
   useEffect(() => {
@@ -105,7 +105,7 @@ export function useBalances(address, chainId) {
     } else {
       setBalances(makeZeroBalances());
     }
-  }, [address, refresh, makeZeroBalances]);
+  }, [address, chainId, refresh, makeZeroBalances]);
 
   useEffect(() => {
     if (!address) return undefined;
@@ -127,7 +127,7 @@ export function useBalances(address, chainId) {
     return () => {
       if (provider) provider.off("block", handleBlock);
     };
-  }, [address, refresh]);
+  }, [address, chainId, refresh]);
 
   // Native ETH realtime via stateChanges
   useEffect(() => {
