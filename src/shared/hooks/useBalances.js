@@ -1,6 +1,11 @@
 // src/shared/hooks/useBalances.js
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TOKENS, getErc20, getReadOnlyProvider, getProvider } from "../config/web3";
+import {
+  TOKENS,
+  getErc20,
+  getReadOnlyProvider,
+  getProvider,
+} from "../config/web3";
 import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
 
@@ -41,6 +46,29 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         const walletChainId = (chainId || "").toLowerCase();
         const preferWallet = walletChainId && walletChainId === activeChainId;
         let provider;
+        let rotated = false;
+        const shouldRotate = (err) => {
+          const code =
+            err?.code ??
+            err?.error?.code ??
+            err?.data?.code ??
+            err?.info?.error?.code ??
+            null;
+          const httpStatus = err?.data?.httpStatus ?? err?.error?.data?.httpStatus;
+          const msg = (err?.message || "").toLowerCase();
+          return (
+            code === -32005 ||
+            httpStatus === 429 ||
+            msg.includes("rate limit") ||
+            msg.includes("coalesce") ||
+            msg.includes("limit") ||
+            msg.includes("too many")
+          );
+        };
+        const swapProviderOnError = () => {
+          rotated = true;
+          return getReadOnlyProvider(true, true);
+        };
         if (preferWallet) {
           try {
             provider = await getProvider();
@@ -51,8 +79,20 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
           provider = getReadOnlyProvider(false, true);
         }
 
+        const withRpcRetry = async (fn) => {
+          try {
+            return await fn(provider);
+          } catch (err) {
+            if (shouldRotate(err) && !rotated) {
+              provider = swapProviderOnError();
+              return fn(provider);
+            }
+            throw err;
+          }
+        };
+
         // ETH
-        const ethBalance = await provider.getBalance(walletAddress);
+        const ethBalance = await withRpcRetry((prov) => prov.getBalance(walletAddress));
         const eth = Number(formatUnits(ethBalance, TOKENS.ETH.decimals));
 
         // Helper to read ERC20 balances only when we have an address
@@ -60,19 +100,22 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
           const token = tokenRegistry[tokenKey];
           if (!token?.address) return 0;
           try {
-            const contract = await getErc20(token.address, provider);
-            const key = token.address.toLowerCase();
-            let decimals = decimalsCache.current[key];
-            if (decimals === undefined) {
-              try {
-                decimals = Number(await contract.decimals());
-              } catch {
-                decimals = token.decimals;
+            const doRead = async (prov) => {
+              const contract = await getErc20(token.address, prov);
+              const key = token.address.toLowerCase();
+              let decimals = decimalsCache.current[key];
+              if (decimals === undefined) {
+                try {
+                  decimals = Number(await contract.decimals());
+                } catch {
+                  decimals = token.decimals;
+                }
+                decimalsCache.current[key] = decimals;
               }
-              decimalsCache.current[key] = decimals;
-            }
-            const raw = await contract.balanceOf(walletAddress);
-            return Number(formatUnits(raw, decimals || token.decimals || 18));
+              const raw = await contract.balanceOf(walletAddress);
+              return Number(formatUnits(raw, decimals || token.decimals || 18));
+            };
+            return withRpcRetry(doRead);
           } catch (err) {
             console.warn(
               `Balance lookup failed for ${tokenKey} at ${token.address}:`,
