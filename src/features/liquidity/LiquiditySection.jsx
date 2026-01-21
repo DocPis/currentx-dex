@@ -1409,17 +1409,41 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       const safeGasLimit = 900000n;
-      const buildTxOpts = async (valueOverride = null) => {
+      const buildFeeOpts = async (valueOverride = null) => {
         const feeData = await provider.getFeeData();
-        const opts = { gasLimit: safeGasLimit };
-        if (valueOverride !== null) opts.value = valueOverride;
+        const base = { gasLimit: safeGasLimit };
+        if (valueOverride !== null) base.value = valueOverride;
+        const eip1559 = { ...base };
+        const legacy = { ...base };
         if (feeData?.maxFeePerGas && feeData?.maxPriorityFeePerGas) {
-          opts.maxFeePerGas = feeData.maxFeePerGas;
-          opts.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-        } else if (feeData?.gasPrice) {
-          opts.gasPrice = feeData.gasPrice;
+          eip1559.maxFeePerGas = feeData.maxFeePerGas;
+          eip1559.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
         }
-        return opts;
+        if (feeData?.gasPrice) {
+          legacy.gasPrice = feeData.gasPrice;
+        } else {
+          legacy.gasPrice = parseUnits("2", "gwei");
+        }
+        return { eip1559, legacy };
+      };
+      const sendWithLegacyFallback = async (fn, args, feeOpts) => {
+        try {
+          return await fn(...args, feeOpts.eip1559);
+        } catch (err) {
+          const msg = (err?.message || "").toLowerCase();
+          const code = err?.code ?? err?.error?.code ?? err?.data?.code;
+          const retry =
+            msg.includes("coalesce") ||
+            msg.includes("could not") ||
+            msg.includes("eip-1559") ||
+            msg.includes("maxfeepergas") ||
+            msg.includes("base fee") ||
+            msg.includes("intrinsic") ||
+            msg.includes("gas price") ||
+            code === -32603;
+          if (!retry) throw err;
+          return fn(...args, feeOpts.legacy);
+        }
       };
 
       if (usesNativeEth) {
@@ -1438,14 +1462,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
-        const tx = await router.addLiquidityETH(
-          tokenAddress,
-          tokenAmount,
-          0, // amountTokenMin
-          0, // amountETHMin
-          user,
-          deadline,
-          await buildTxOpts(ethValue)
+        const feeOpts = await buildFeeOpts(ethValue);
+        const tx = await sendWithLegacyFallback(
+          router.addLiquidityETH,
+          [tokenAddress, tokenAmount, 0, 0, user, deadline],
+          feeOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1470,14 +1491,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
-        const tx = await router.addLiquidityETH(
-          tokenAddress,
-          tokenAmount,
-          0, // amountTokenMin
-          0, // amountETHMin
-          user,
-          deadline,
-          await buildTxOpts(ethValue)
+        const feeOpts = await buildFeeOpts(ethValue);
+        const tx = await sendWithLegacyFallback(
+          router.addLiquidityETH,
+          [tokenAddress, tokenAmount, 0, 0, user, deadline],
+          feeOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1509,16 +1527,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
-        const tx = await router.addLiquidity(
-          token0Address,
-          token1Address,
-          parsed0,
-          parsed1,
-          0, // amountAMin
-          0, // amountBMin
-          user,
-          deadline,
-          await buildTxOpts()
+        const feeOpts = await buildFeeOpts();
+        const tx = await sendWithLegacyFallback(
+          router.addLiquidity,
+          [token0Address, token1Address, parsed0, parsed1, 0, 0, user, deadline],
+          feeOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
