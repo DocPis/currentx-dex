@@ -137,27 +137,41 @@ const testnetPreset = (() => {
 const presets = [mainnetPreset, ...(testnetPreset ? [testnetPreset] : [])];
 
 const getStoredPresetId = () => {
-  if (typeof localStorage === "undefined") return null;
-  try {
-    return localStorage.getItem(LOCAL_STORAGE_KEY);
-  } catch {
-    return null;
+  const read = (storage) => {
+    if (!storage) return null;
+    try {
+      return storage.getItem(LOCAL_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  };
+
+  // Prefer session-scoped selection so a previous visit doesn't pin the network forever.
+  const fromSession =
+    typeof sessionStorage !== "undefined" ? read(sessionStorage) : null;
+  if (fromSession) return fromSession;
+
+  // Legacy migration: move any persisted choice from localStorage into the session and clear it.
+  const fromLocal = typeof localStorage !== "undefined" ? read(localStorage) : null;
+  if (fromLocal && typeof sessionStorage !== "undefined") {
+    try {
+      sessionStorage.setItem(LOCAL_STORAGE_KEY, fromLocal);
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+    } catch {
+      // ignore storage errors
+    }
   }
+  return fromLocal;
 };
 
 export const getAvailableNetworkPresets = () => presets;
 
 export const getActiveNetworkPresetId = () => {
-  // Allow deployments to force a default (e.g. keep mainnet even if a user previously picked testnet).
   const fromEnv = (env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK || "").toLowerCase();
-  if (fromEnv) {
-    const envMatch = presets.find((p) => p.id === fromEnv);
-    if (envMatch) return envMatch.id;
-  }
-
   const stored = (getStoredPresetId() || "").toLowerCase();
-  const storedMatch = presets.find((p) => p.id === stored);
-  return storedMatch ? storedMatch.id : "mainnet";
+  const desired = stored || fromEnv;
+  const match = presets.find((p) => p.id === desired);
+  return match ? match.id : "mainnet";
 };
 
 export const getActiveNetworkConfig = () => {
@@ -166,11 +180,13 @@ export const getActiveNetworkConfig = () => {
 };
 
 export const setActiveNetworkPreset = (id) => {
-  if (typeof localStorage === "undefined") return;
   const match = presets.find((p) => p.id === id);
   if (!match) return;
+
+  // Session-only persistence to avoid leaking networks across environments/domains.
+  if (typeof sessionStorage === "undefined") return;
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, id);
+    sessionStorage.setItem(LOCAL_STORAGE_KEY, id);
   } catch {
     // ignore storage errors
   }
