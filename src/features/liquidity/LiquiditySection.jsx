@@ -1013,10 +1013,17 @@ export default function LiquiditySection({ address, chainId }) {
       const available0 = getAvailable(0) * percentage;
       const available1 = getAvailable(1) * percentage;
 
-      // If we have on-chain reserves, respect the ratio; otherwise fall back to simple percentages.
-      if (hasPairInfo) {
-        const decimals0 = token0Meta?.decimals ?? 18;
-        const decimals1 = token1Meta?.decimals ?? 18;
+      // Use on-chain reserves ratio only if we have decimals for both sides; otherwise fall back to simple percentages.
+      const dec0 =
+        (token0Address && tokenDecimalsCache.current[token0Address.toLowerCase()]) ??
+        token0Meta?.decimals ??
+        18;
+      const dec1 =
+        (token1Address && tokenDecimalsCache.current[token1Address.toLowerCase()]) ??
+        token1Meta?.decimals ??
+        18;
+
+      if (hasPairInfo && Number.isFinite(dec0) && Number.isFinite(dec1)) {
         const pairToken0Lower = pairInfo.token0.toLowerCase();
         const inputToken0Lower = (token0Address || "").toLowerCase();
         const reserveForToken0 =
@@ -1024,35 +1031,34 @@ export default function LiquiditySection({ address, chainId }) {
         const reserveForToken1 =
           pairToken0Lower === inputToken0Lower ? pairInfo.reserve1 : pairInfo.reserve0;
 
-        const reserve0Float = Number(formatUnits(reserveForToken0, decimals0));
-        const reserve1Float = Number(formatUnits(reserveForToken1, decimals1));
-        if (reserve0Float === 0 || reserve1Float === 0) return;
+        const reserve0Float = Number(formatUnits(reserveForToken0, dec0));
+        const reserve1Float = Number(formatUnits(reserveForToken1, dec1));
+        if (reserve0Float > 0 && reserve1Float > 0) {
+          const priceToken1Per0 = reserve1Float / reserve0Float;
+          if (Number.isFinite(priceToken1Per0) && priceToken1Per0 > 0) {
+            const required1ForAvail0 = available0 * priceToken1Per0;
 
-        const priceToken1Per0 = reserve1Float / reserve0Float;
-        if (!Number.isFinite(priceToken1Per0) || priceToken1Per0 <= 0) return;
+            let next0 = 0;
+            let next1 = 0;
+            if (available0 > 0 && required1ForAvail0 <= available1) {
+              next0 = available0;
+              next1 = required1ForAvail0;
+            } else if (available1 > 0) {
+              next1 = available1;
+              next0 = next1 / priceToken1Per0;
+            }
 
-        const required1ForAvail0 = available0 * priceToken1Per0;
-
-        let next0 = 0;
-        let next1 = 0;
-        if (available0 > 0 && required1ForAvail0 <= available1) {
-          next0 = Math.min(available0, available0);
-          next1 = Math.min(required1ForAvail0, available1);
-        } else if (available1 > 0) {
-          next1 = Math.min(available1, available1);
-          next0 = next1 / priceToken1Per0;
-        } else {
-          return;
+            if (next0 > 0 && next1 > 0) {
+              setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+              setDepositToken0(next0.toFixed(4));
+              setDepositToken1(next1.toFixed(4));
+              return;
+            }
+          }
         }
-
-        if (next0 <= 0 || next1 <= 0) return;
-        setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
-        setDepositToken0(next0.toFixed(4));
-        setDepositToken1(next1.toFixed(4));
-        return;
       }
 
-      // No reserves yet (new pool): just prefill both legs with the chosen percentage.
+      // Fallback: simple percentage of wallet balances (no ratio adjustment)
       const token0Label = token0Meta?.symbol || selectedPool?.token0Symbol;
       if (available0 > 0) setDepositToken0(available0.toFixed(4));
       if (available1 > 0) setDepositToken1(available1.toFixed(4));
