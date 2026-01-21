@@ -1036,14 +1036,25 @@ export default function LiquiditySection({ address, chainId }) {
       };
 
       const getAvailable = (which) => {
-        const fromTokenBalances =
-          which === 0 ? tokenBalances?.token0 : tokenBalances?.token1;
-        if (fromTokenBalances !== undefined && fromTokenBalances !== null) {
-          return Number(fromTokenBalances || 0);
-        }
         const sym = which === 0 ? symbol0 : symbol1;
         const fromWallet = findWalletBalance(sym);
-        if (fromWallet !== undefined) return Number(fromWallet || 0);
+        const fromTokenBalances =
+          which === 0 ? tokenBalances?.token0 : tokenBalances?.token1;
+
+        const walletVal =
+          fromWallet !== undefined && fromWallet !== null
+            ? Number(fromWallet || 0)
+            : null;
+        const tokenVal =
+          fromTokenBalances !== undefined && fromTokenBalances !== null
+            ? Number(fromTokenBalances || 0)
+            : null;
+
+        if (walletVal !== null && tokenVal !== null) {
+          return Math.min(walletVal, tokenVal);
+        }
+        if (walletVal !== null) return walletVal;
+        if (tokenVal !== null) return tokenVal;
         return 0;
       };
 
