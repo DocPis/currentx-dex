@@ -1122,7 +1122,7 @@ export default function LiquiditySection({ address, chainId }) {
       setTokenBalanceLoading(true);
       setTokenBalanceError("");
       setTokenBalances(null);
-      if (!poolSupportsActions || pairMissing) {
+      if (!poolSupportsActions) {
         setTokenBalanceLoading(false);
         return;
       }
