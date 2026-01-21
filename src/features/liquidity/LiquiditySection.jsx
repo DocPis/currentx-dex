@@ -138,9 +138,7 @@ const shortenAddress = (addr) => {
 export default function LiquiditySection({ address, chainId }) {
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
-  const [customTokens, setCustomTokens] = useState(() =>
-    getRegisteredCustomTokens()
-  );
+  const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
   const [tokenPrices, setTokenPrices] = useState({});
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
@@ -176,10 +174,33 @@ export default function LiquiditySection({ address, chainId }) {
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
-  const tokenRegistry = useMemo(
-    () => ({ ...TOKENS, ...onchainTokens, ...customTokens }),
-    [customTokens, onchainTokens]
-  );
+  const basePoolSymbols = useMemo(() => {
+    const symbols = new Set();
+    basePools.forEach((p) => {
+      if (p.token0Symbol) symbols.add(p.token0Symbol);
+      if (p.token1Symbol) symbols.add(p.token1Symbol);
+    });
+    return symbols;
+  }, [basePools]);
+
+  const tokenRegistry = useMemo(() => {
+    // Always include native ETH/WETH for convenience.
+    const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
+
+    // Include tokens that exist on the active network (from on-chain discovery).
+    Object.assign(out, onchainTokens);
+
+    // Include known defaults only if we see them on-chain (same symbol) to avoid mixing networks.
+    Object.entries(TOKENS).forEach(([sym, meta]) => {
+      if (sym === "ETH" || sym === "WETH") return;
+      if (basePoolSymbols.has(sym)) out[sym] = meta;
+    });
+
+    // Always include user-added custom tokens.
+    Object.assign(out, customTokens);
+
+    return out;
+  }, [basePoolSymbols, customTokens, onchainTokens]);
   const tokenDecimalsCache = useRef({});
   const { balances: walletBalances, loading: walletBalancesLoading } = useBalances(address, chainId);
 
