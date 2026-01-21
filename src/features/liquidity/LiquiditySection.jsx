@@ -1409,6 +1409,18 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       const safeGasLimit = 900000n;
+      const buildTxOpts = async (valueOverride = null) => {
+        const feeData = await provider.getFeeData();
+        const opts = { gasLimit: safeGasLimit };
+        if (valueOverride !== null) opts.value = valueOverride;
+        if (feeData?.maxFeePerGas && feeData?.maxPriorityFeePerGas) {
+          opts.maxFeePerGas = feeData.maxFeePerGas;
+          opts.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
+        } else if (feeData?.gasPrice) {
+          opts.gasPrice = feeData.gasPrice;
+        }
+        return opts;
+      };
 
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
@@ -1433,7 +1445,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountETHMin
           user,
           deadline,
-          { value: ethValue, gasLimit: safeGasLimit }
+          await buildTxOpts(ethValue)
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1465,7 +1477,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountETHMin
           user,
           deadline,
-          { value: ethValue, gasLimit: safeGasLimit }
+          await buildTxOpts(ethValue)
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1506,7 +1518,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountBMin
           user,
           deadline,
-          { gasLimit: safeGasLimit }
+          await buildTxOpts()
         );
         const receipt = await tx.wait();
         setActionStatus({
