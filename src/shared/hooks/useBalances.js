@@ -92,8 +92,13 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         };
 
         // ETH
-        const ethBalance = await withRpcRetry((prov) => prov.getBalance(walletAddress));
-        const eth = Number(formatUnits(ethBalance, TOKENS.ETH.decimals));
+        let eth = 0;
+        try {
+          const ethBalance = await withRpcRetry((prov) => prov.getBalance(walletAddress));
+          eth = Number(formatUnits(ethBalance, TOKENS.ETH.decimals));
+        } catch (err) {
+          console.warn("ETH balance lookup failed:", err?.message || err);
+        }
 
         // Helper to read ERC20 balances only when we have an address
         const getErc20Balance = async (tokenKey) => {
@@ -117,10 +122,19 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
             };
             return withRpcRetry(doRead);
           } catch (err) {
-            console.warn(
-              `Balance lookup failed for ${tokenKey} at ${token.address}:`,
-              err?.message || err
-            );
+            const msg = err?.message || "";
+            const silent =
+              msg.toLowerCase().includes("missing revert data") ||
+              msg.toLowerCase().includes("call_exception") ||
+              msg.toLowerCase().includes("could not") ||
+              msg.toLowerCase().includes("rate") ||
+              msg.toLowerCase().includes("limit");
+            if (!silent) {
+              console.warn(
+                `Balance lookup failed for ${tokenKey} at ${token.address}:`,
+                msg || err
+              );
+            }
             return 0;
           }
         };
@@ -135,7 +149,16 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         );
         setBalances(next);
       } catch (e) {
-        console.error("Error loading balances:", e?.message || e);
+        const msg = e?.message || "";
+        const silent =
+          msg.toLowerCase().includes("missing revert data") ||
+          msg.toLowerCase().includes("call_exception") ||
+          msg.toLowerCase().includes("could not") ||
+          msg.toLowerCase().includes("limit") ||
+          msg.toLowerCase().includes("rate");
+        if (!silent) {
+          console.error("Error loading balances:", msg || e);
+        }
       } finally {
         setLoading(false);
         isRefreshing.current = false;

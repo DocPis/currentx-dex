@@ -268,10 +268,14 @@ class RealtimeClient {
         if (type === "stateChanges") this.stateChangeSubId = subId;
         if (type === "miniBlocks") this.miniBlockSubId = subId;
       } else if (data.error) {
-        console.warn(
-          `[realtime] ${type} subscribe error`,
-          data.error?.message || data.error
-        );
+        const msg = data.error?.message || data.error || "";
+        const duplicate =
+          typeof msg === "string" &&
+          (msg.toLowerCase().includes("duplicate subscription") ||
+            msg.toLowerCase().includes("already subscribed"));
+        if (!duplicate) {
+          console.warn(`[realtime] ${type} subscribe error`, msg);
+        }
         if (type === "stateChanges") this.stateChangeDirty = true;
       }
       return;
