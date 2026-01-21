@@ -986,11 +986,21 @@ export default function LiquiditySection({ address, chainId }) {
   ]);
 
   const applyDepositRatio = (percentage) => {
-    if (!tokenBalances) return;
+    if (!tokenBalances && !walletBalances) return;
     if (actionStatus) setActionStatus("");
     try {
-      const available0 = Number(tokenBalances.token0 || 0) * percentage;
-      const available1 = Number(tokenBalances.token1 || 0) * percentage;
+      const symbol0 = token0Meta?.symbol || selectedPool?.token0Symbol;
+      const symbol1 = token1Meta?.symbol || selectedPool?.token1Symbol;
+      const getAvailable = (which) => {
+        const sym = which === 0 ? symbol0 : symbol1;
+        if (sym && walletBalances && walletBalances[sym] !== undefined) {
+          return Number(walletBalances[sym] || 0);
+        }
+        return Number(which === 0 ? tokenBalances?.token0 || 0 : tokenBalances?.token1 || 0);
+      };
+
+      const available0 = getAvailable(0) * percentage;
+      const available1 = getAvailable(1) * percentage;
 
       // If we have on-chain reserves, respect the ratio; otherwise fall back to simple percentages.
       if (hasPairInfo) {
@@ -1015,10 +1025,10 @@ export default function LiquiditySection({ address, chainId }) {
         let next0 = 0;
         let next1 = 0;
         if (available0 > 0 && required1ForAvail0 <= available1) {
-          next0 = available0;
-          next1 = required1ForAvail0;
+          next0 = Math.min(available0, available0);
+          next1 = Math.min(required1ForAvail0, available1);
         } else if (available1 > 0) {
-          next1 = available1;
+          next1 = Math.min(available1, available1);
           next0 = next1 / priceToken1Per0;
         } else {
           return;
@@ -1906,7 +1916,7 @@ export default function LiquiditySection({ address, chainId }) {
                         <button
                           key={pct}
                           type="button"
-                          disabled={!tokenBalances}
+                          disabled={!tokenBalances && !walletBalances}
                           onClick={() => applyDepositRatio(pct)}
                           className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                         >
