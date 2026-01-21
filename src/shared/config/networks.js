@@ -4,6 +4,7 @@
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const LOCAL_STORAGE_KEY = "MEGAETH_NETWORK_PRESET";
+const URL_PARAM_KEY = "network";
 const DEFAULT_MAINNET_SUBGRAPH_URL =
   env.VITE_UNIV2_SUBGRAPH ||
   "https://gateway.thegraph.com/api/subgraphs/id/AokDW2tqCMiFvVqXUEfiwY94mNXoBQfsszwd5bnPiNcr";
@@ -138,6 +139,18 @@ const presets = [mainnetPreset, ...(testnetPreset ? [testnetPreset] : [])];
 
 let inMemoryPreset = null;
 
+const getUrlPresetId = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const params = new URLSearchParams(window.location.search || "");
+    const fromQuery = params.get(URL_PARAM_KEY);
+    if (fromQuery) return fromQuery.toLowerCase();
+  } catch {
+    // ignore malformed URLs
+  }
+  return null;
+};
+
 const getStoredPresetId = () => {
   const read = (storage) => {
     if (!storage) return null;
@@ -171,9 +184,10 @@ const getStoredPresetId = () => {
 export const getAvailableNetworkPresets = () => presets;
 
 export const getActiveNetworkPresetId = () => {
+  const fromUrl = getUrlPresetId();
   const fromEnv = (env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK || "").toLowerCase();
   const stored = (getStoredPresetId() || "").toLowerCase();
-  const desired = stored || fromEnv;
+  const desired = fromUrl || stored || fromEnv;
   const match = presets.find((p) => p.id === desired);
   return match ? match.id : "mainnet";
 };
@@ -186,6 +200,17 @@ export const getActiveNetworkConfig = () => {
 export const setActiveNetworkPreset = (id) => {
   const match = presets.find((p) => p.id === id);
   if (!match) return;
+
+  // Reflect selection in the URL so reloads (and shared links) preserve the preset even if storage is blocked.
+  if (typeof window !== "undefined") {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set(URL_PARAM_KEY, id);
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // ignore URL update errors
+    }
+  }
 
   try {
     if (typeof sessionStorage !== "undefined") {
