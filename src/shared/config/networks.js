@@ -148,11 +148,16 @@ const getStoredPresetId = () => {
 export const getAvailableNetworkPresets = () => presets;
 
 export const getActiveNetworkPresetId = () => {
-  const fromEnv = env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK;
-  const stored = getStoredPresetId();
-  const desired = (stored || fromEnv || "").toLowerCase();
-  const match = presets.find((p) => p.id === desired);
-  return match ? match.id : "mainnet";
+  // Allow deployments to force a default (e.g. keep mainnet even if a user previously picked testnet).
+  const fromEnv = (env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK || "").toLowerCase();
+  if (fromEnv) {
+    const envMatch = presets.find((p) => p.id === fromEnv);
+    if (envMatch) return envMatch.id;
+  }
+
+  const stored = (getStoredPresetId() || "").toLowerCase();
+  const storedMatch = presets.find((p) => p.id === stored);
+  return storedMatch ? storedMatch.id : "mainnet";
 };
 
 export const getActiveNetworkConfig = () => {
