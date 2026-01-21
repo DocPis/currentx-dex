@@ -89,7 +89,11 @@ const testnetDefaults = {
 };
 
 const testnetPreset = (() => {
-  const rpcUrls = dedupeList([env.VITE_TESTNET_RPC_URL, ...(testnetDefaults.rpcUrls || [])]);
+  const rpcUrls = dedupeList([
+    env.VITE_TESTNET_RPC_URL,
+    env.VITE_TESTNET_RPC_URLS,
+    ...(testnetDefaults.rpcUrls || []),
+  ]);
   const addresses = {
     WETH_ADDRESS: env.VITE_TESTNET_WETH_ADDRESS || testnetDefaults.addresses.WETH_ADDRESS,
     USDC_ADDRESS: env.VITE_TESTNET_USDC_ADDRESS || testnetDefaults.addresses.USDC_ADDRESS,
