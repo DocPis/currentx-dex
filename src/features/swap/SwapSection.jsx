@@ -58,6 +58,17 @@ const formatRelativeTime = (ts) => {
   return `${hrs}h ago`;
 };
 
+const formatDisplayAmount = (val, symbol) => {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return "--";
+  const str = num.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 6,
+    useGrouping: false,
+  });
+  return symbol ? `${str} ${symbol}` : str;
+};
+
 const computeOutcomeGrade = (expected, actual, minReceived) => {
   if (!Number.isFinite(actual) || !Number.isFinite(expected)) {
     return { label: "OK", icon: "⚠️", deltaPct: null };
@@ -865,11 +876,11 @@ export default function SwapSection({ balances }) {
         const actualValue = actualWrapOut ?? amountWei;
         const actualFloat = Number(formatUnits(actualValue, decimalsOut));
         const expectedFloat = Number(formatUnits(amountWei, decimalsOut));
-        const grade = computeOutcomeGrade(expectedFloat, actualFloat, actualFloat);
+  const grade = computeOutcomeGrade(expectedFloat, actualFloat, actualFloat);
         setExecutionProof({
-          expected: `${expectedFloat.toFixed(6)} ${displayBuySymbol}`,
-          executed: `${actualFloat.toFixed(6)} ${displayBuySymbol}`,
-          minReceived: `${actualFloat.toFixed(6)} ${displayBuySymbol}`,
+          expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
+          executed: formatDisplayAmount(actualFloat, displayBuySymbol),
+          minReceived: formatDisplayAmount(actualFloat, displayBuySymbol),
           priceImpact: 0,
           slippage: "0",
           gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
@@ -970,9 +981,9 @@ export default function SwapSection({ balances }) {
       const grade = computeOutcomeGrade(expectedFloat, actualFloat, minFloat);
 
       setExecutionProof({
-        expected: expectedFloat !== null ? `${expectedFloat.toFixed(6)} ${displayBuySymbol}` : "--",
-        executed: actualFloat !== null ? `${actualFloat.toFixed(6)} ${displayBuySymbol}` : "--",
-        minReceived: minFloat !== null ? `${minFloat.toFixed(6)} ${displayBuySymbol}` : "--",
+        expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
+        executed: formatDisplayAmount(actualFloat, displayBuySymbol),
+        minReceived: formatDisplayAmount(minFloat, displayBuySymbol),
         priceImpact: pendingExecutionRef.current.priceImpactSnapshot ?? priceImpact,
         slippage: pendingExecutionRef.current.slippagePct ?? effectiveSlippagePct,
         gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
