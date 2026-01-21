@@ -504,6 +504,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           const resB = token0IsA ? reserve1 : reserve0;
           const metaA = tokenRegistry[pool.token0Symbol];
           const metaB = tokenRegistry[pool.token1Symbol];
+          const decimalsA = metaA?.decimals ?? 18;
+          const decimalsB = metaB?.decimals ?? 18;
           const stableA =
             metaA?.symbol === "USDC" || metaA?.symbol === "USDm" || metaA?.symbol === "CUSD";
           const stableB =
@@ -511,11 +513,25 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           let tvlUsd;
           let finalPairAddress = pairAddress;
           if (stableA) {
-            const usd = Number(formatUnits(resA, metaA.decimals));
+            const usd = Number(formatUnits(resA, decimalsA));
             tvlUsd = usd * 2;
           } else if (stableB) {
-            const usd = Number(formatUnits(resB, metaB.decimals));
+            const usd = Number(formatUnits(resB, decimalsB));
             tvlUsd = usd * 2;
+          } else if (tokenPrices && Object.keys(tokenPrices).length) {
+            const priceA = tokenPrices[(token0Addr || "").toLowerCase()];
+            const priceB = tokenPrices[(token1Addr || "").toLowerCase()];
+            const amountA = Number(formatUnits(resA, decimalsA));
+            const amountB = Number(formatUnits(resB, decimalsB));
+            const valA = priceA && Number.isFinite(priceA) ? amountA * priceA : null;
+            const valB = priceB && Number.isFinite(priceB) ? amountB * priceB : null;
+            if (valA !== null && valB !== null) {
+              tvlUsd = valA + valB;
+            } else if (valA !== null) {
+              tvlUsd = valA * 2;
+            } else if (valB !== null) {
+              tvlUsd = valB * 2;
+            }
           }
           if (!cancelled) {
             updates[pool.id] = {
@@ -565,7 +581,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick, subgraphError, tokenRegistry, trackedPools, tvlError]);
+  }, [lpRefreshTick, subgraphError, tokenRegistry, tokenPrices, trackedPools, tvlError]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -2210,11 +2226,18 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                 resolveTokenAddress(p.token1Symbol, tokenRegistry));
 
             return (
-              <button
-                type="button"
+              <div
                 key={p.id}
+                role="button"
+                tabIndex={0}
                 onClick={() => setSelectedPoolId(p.id)}
-                className={`w-full text-left flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl transition border ${
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedPoolId(p.id);
+                  }
+                }}
+                className={`w-full text-left flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl transition border cursor-pointer ${
                   isSelected
                     ? "bg-slate-900/90 border-sky-700/60 shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)]"
                     : "border-transparent hover:border-slate-800 hover:bg-slate-900/70"
@@ -2301,13 +2324,18 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                           : "N/A"}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="mt-1 px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                    onClick={() => handleOpenPoolDepositFromRow(p)}
-                  >
-                    Deposit / Withdraw
-                  </button>
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenPoolDepositFromRow(p);
+                      }}
+                    >
+                      Deposit / Withdraw
+                    </button>
+                  </div>
                 </div>
 
                 <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
@@ -2330,12 +2358,15 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                   <button
                     type="button"
                     className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                    onClick={() => handleOpenPoolDepositFromRow(p)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleOpenPoolDepositFromRow(p);
+                    }}
                   >
                     Deposit
                   </button>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
