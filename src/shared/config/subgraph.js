@@ -5,6 +5,9 @@ const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const activeNet = getActiveNetworkConfig() || {};
 let SUBGRAPH_URL = activeNet.subgraphUrl;
 let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
+const SUBGRAPH_CACHE_TTL_MS = 20000;
+const SUBGRAPH_MAX_RETRIES = 2;
+const subgraphCache = new Map();
 
 // Fallback to global env when missing (align behavior across networks).
 if (!SUBGRAPH_URL) {
@@ -18,9 +21,18 @@ const SUBGRAPH_MISSING_KEY =
   !SUBGRAPH_API_KEY &&
   (SUBGRAPH_URL.includes("thegraph.com") || SUBGRAPH_URL.includes("gateway"));
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function postSubgraph(query, variables = {}) {
   if (!SUBGRAPH_URL) {
     throw new Error("Missing VITE_UNIV2_SUBGRAPH env var");
+  }
+
+  const cacheKey = JSON.stringify({ q: query, v: variables });
+  const cached = subgraphCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.ts < SUBGRAPH_CACHE_TTL_MS) {
+    return cached.data;
   }
 
   const headers = {
@@ -31,21 +43,52 @@ async function postSubgraph(query, variables = {}) {
     headers.Authorization = `Bearer ${SUBGRAPH_API_KEY}`;
   }
 
-  const res = await fetch(SUBGRAPH_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ query, variables }),
-  });
+  let lastError = null;
+  for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
+    try {
+      const res = await fetch(SUBGRAPH_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ query, variables }),
+      });
 
-  if (!res.ok) {
-    throw new Error(`Subgraph HTTP ${res.status}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const rateLimited =
+          res.status === 429 ||
+          text.toLowerCase().includes("rate") ||
+          text.toLowerCase().includes("limit");
+        lastError = new Error(rateLimited ? "Subgraph rate-limited. Please retry shortly." : `Subgraph HTTP ${res.status}`);
+        if (attempt < SUBGRAPH_MAX_RETRIES && (res.status >= 500 || rateLimited)) {
+          await sleep(250 * (attempt + 1));
+          continue;
+        }
+        throw lastError;
+      }
+
+      const json = await res.json();
+      if (json.errors?.length) {
+        throw new Error(json.errors[0]?.message || "Subgraph error");
+      }
+      subgraphCache.set(cacheKey, { ts: now, data: json.data });
+      return json.data;
+    } catch (err) {
+      const msg = (err?.message || "").toLowerCase();
+      const transient =
+        msg.includes("fetch") ||
+        msg.includes("network") ||
+        msg.includes("timeout") ||
+        msg.includes("rate");
+      lastError = err;
+      if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
+        await sleep(250 * (attempt + 1));
+        continue;
+      }
+      break;
+    }
   }
 
-  const json = await res.json();
-  if (json.errors?.length) {
-    throw new Error(json.errors[0]?.message || "Subgraph error");
-  }
-  return json.data;
+  throw lastError || new Error("Subgraph unavailable");
 }
 
 // Fetch Uniswap V2 pair data (tvl, 24h volume) by token addresses
