@@ -742,17 +742,10 @@ export default function LiquiditySection({ address, chainId }) {
     }
     try {
       setLpBalanceError("");
-      const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
-      const walletChainId = (chainId || "").toLowerCase();
-      const preferWallet = walletChainId && walletChainId === activeChainId;
       let provider;
-      if (preferWallet) {
-        try {
-          provider = await getProvider();
-        } catch {
-          provider = getReadOnlyProvider();
-        }
-      } else {
+      try {
+        provider = await getProvider();
+      } catch {
         provider = getReadOnlyProvider(false, true);
       }
       const user = address || null;
@@ -1134,17 +1127,10 @@ export default function LiquiditySection({ address, chainId }) {
         return;
       }
       try {
-        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
-        const walletChainId = (chainId || "").toLowerCase();
-        const preferWallet = walletChainId && walletChainId === activeChainId;
         let provider;
-        if (preferWallet) {
-          try {
-            provider = await getProvider();
-          } catch {
-            provider = getReadOnlyProvider();
-          }
-        } else {
+        try {
+          provider = await getProvider();
+        } catch {
           provider = getReadOnlyProvider(false, true);
         }
         const user = address || null;
