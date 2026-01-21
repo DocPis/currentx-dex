@@ -771,10 +771,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const usesNativeEth =
     selectedPool &&
     (selectedPool.token0Symbol === "ETH" || selectedPool.token1Symbol === "ETH");
-  const usesWethWithToken =
-    selectedPool &&
-    !usesNativeEth &&
-    (selectedPool.token0Symbol === "WETH" || selectedPool.token1Symbol === "WETH");
   const pairIdOverride = selectedPool?.pairId;
   const hasPairInfo = Boolean(pairInfo && poolSupportsActions);
   const pairMissing =
@@ -1451,35 +1447,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const ethValue = ethIsToken0 ? parsed0 : parsed1;
         const tokenAmount = ethIsToken0 ? parsed1 : parsed0;
         const tokenAddress = ethIsToken0 ? token1Address : token0Address;
-        const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
-        const allowance = await tokenContract.allowance(
-          user,
-          UNIV2_ROUTER_ADDRESS
-        );
-        if (allowance < tokenAmount) {
-          await (
-            await tokenContract.approve(UNIV2_ROUTER_ADDRESS, tokenAmount)
-          ).wait();
-        }
-
-        const feeOpts = await buildFeeOpts(ethValue);
-        const tx = await sendWithLegacyFallback(
-          router.addLiquidityETH,
-          [tokenAddress, tokenAmount, 0, 0, user, deadline],
-          feeOpts
-        );
-        const receipt = await tx.wait();
-        setActionStatus({
-          variant: "success",
-          hash: receipt.hash,
-          message: `Deposited ${getPoolLabel(selectedPool)}`,
-        });
-      } else if (usesWethWithToken) {
-        const wethIsToken0 = selectedPool.token0Symbol === "WETH";
-        const ethValue = wethIsToken0 ? parsed0 : parsed1;
-        const tokenAmount = wethIsToken0 ? parsed1 : parsed0;
-        const tokenAddress = wethIsToken0 ? token1Address : token0Address;
-
         const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
         const allowance = await tokenContract.allowance(
           user,
