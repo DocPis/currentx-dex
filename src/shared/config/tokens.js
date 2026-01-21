@@ -21,8 +21,7 @@ import {
   MEGA_TOKEN_ADDRESS,
 } from "./addresses";
 
-// Token registry used across swaps
-export const TOKENS = {
+const RAW_TOKENS = {
   ETH: {
     symbol: "ETH",
     name: "Ether",
@@ -98,3 +97,23 @@ export const TOKENS = {
     logo: wusdcLogo,
   },
 };
+
+const buildTokens = () => {
+  const out = {};
+  Object.entries(RAW_TOKENS).forEach(([key, token]) => {
+    if (!token) return;
+    // Always keep native ETH/WETH entries for UX.
+    if (key === "ETH" || key === "WETH") {
+      out[key] = token;
+      return;
+    }
+    // Only include tokens that have an address on the active network.
+    if (token.address) {
+      out[key] = token;
+    }
+  });
+  return out;
+};
+
+// Token registry used across swaps/liquidity; filtered per-network by presence of an address.
+export const TOKENS = buildTokens();
