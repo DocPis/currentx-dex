@@ -992,11 +992,21 @@ export default function LiquiditySection({ address, chainId }) {
     try {
       const symbol0 = token0Meta?.symbol || selectedPool?.token0Symbol;
       const symbol1 = token1Meta?.symbol || selectedPool?.token1Symbol;
+
+      const findWalletBalance = (sym) => {
+        if (!sym || !walletBalances) return undefined;
+        const lower = sym.toLowerCase();
+        const matchKey = Object.keys(walletBalances).find(
+          (k) => k.toLowerCase() === lower
+        );
+        if (matchKey !== undefined) return walletBalances[matchKey];
+        return undefined;
+      };
+
       const getAvailable = (which) => {
         const sym = which === 0 ? symbol0 : symbol1;
-        if (sym && walletBalances && walletBalances[sym] !== undefined) {
-          return Number(walletBalances[sym] || 0);
-        }
+        const fromWallet = findWalletBalance(sym);
+        if (fromWallet !== undefined) return Number(fromWallet || 0);
         return Number(which === 0 ? tokenBalances?.token0 || 0 : tokenBalances?.token1 || 0);
       };
 
