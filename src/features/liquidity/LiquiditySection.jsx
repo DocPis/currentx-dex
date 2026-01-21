@@ -742,14 +742,20 @@ export default function LiquiditySection({ address, chainId }) {
     }
     try {
       setLpBalanceError("");
+      const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+      const walletChainId = (chainId || "").toLowerCase();
+      const preferWallet = walletChainId && walletChainId === activeChainId;
       let provider;
-      try {
-        provider = await getProvider();
-      } catch {
-        provider = getReadOnlyProvider();
+      if (preferWallet) {
+        try {
+          provider = await getProvider();
+        } catch {
+          provider = getReadOnlyProvider();
+        }
+      } else {
+        provider = getReadOnlyProvider(false, true);
       }
-      const accounts = await provider.send("eth_accounts", []);
-      const user = accounts?.[0];
+      const user = address || null;
       if (!user) {
         setLpBalanceError("");
         return;
@@ -775,6 +781,8 @@ export default function LiquiditySection({ address, chainId }) {
       setLpBalance(null);
     }
   }, [
+    address,
+    chainId,
     pairIdOverride,
     pairInfo,
     pairMissing,
@@ -1196,6 +1204,8 @@ export default function LiquiditySection({ address, chainId }) {
     token0Meta?.decimals,
     token1Meta,
     token1Meta?.decimals,
+    address,
+    chainId,
   ]);
 
   const handleDeposit = async () => {
