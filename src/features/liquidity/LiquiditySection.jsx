@@ -986,46 +986,56 @@ export default function LiquiditySection({ address, chainId }) {
   ]);
 
   const applyDepositRatio = (percentage) => {
-    if (!hasPairInfo || !tokenBalances) return;
+    if (!tokenBalances) return;
     if (actionStatus) setActionStatus("");
     try {
-      const decimals0 = token0Meta?.decimals ?? 18;
-      const decimals1 = token1Meta?.decimals ?? 18;
-      const pairToken0Lower = pairInfo.token0.toLowerCase();
-      const inputToken0Lower = (token0Address || "").toLowerCase();
-      const reserveForToken0 =
-        pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1;
-      const reserveForToken1 =
-        pairToken0Lower === inputToken0Lower ? pairInfo.reserve1 : pairInfo.reserve0;
-
-      const reserve0Float = Number(formatUnits(reserveForToken0, decimals0));
-      const reserve1Float = Number(formatUnits(reserveForToken1, decimals1));
-      if (reserve0Float === 0 || reserve1Float === 0) return;
-
-      const priceToken1Per0 = reserve1Float / reserve0Float;
-      if (!Number.isFinite(priceToken1Per0) || priceToken1Per0 <= 0) return;
-
       const available0 = Number(tokenBalances.token0 || 0) * percentage;
       const available1 = Number(tokenBalances.token1 || 0) * percentage;
-      const required1ForAvail0 = available0 * priceToken1Per0;
 
-      let next0 = 0;
-      let next1 = 0;
-      if (available0 > 0 && required1ForAvail0 <= available1) {
-        next0 = available0;
-        next1 = required1ForAvail0;
-      } else if (available1 > 0) {
-        next1 = available1;
-        next0 = next1 / priceToken1Per0;
-      } else {
+      // If we have on-chain reserves, respect the ratio; otherwise fall back to simple percentages.
+      if (hasPairInfo) {
+        const decimals0 = token0Meta?.decimals ?? 18;
+        const decimals1 = token1Meta?.decimals ?? 18;
+        const pairToken0Lower = pairInfo.token0.toLowerCase();
+        const inputToken0Lower = (token0Address || "").toLowerCase();
+        const reserveForToken0 =
+          pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1;
+        const reserveForToken1 =
+          pairToken0Lower === inputToken0Lower ? pairInfo.reserve1 : pairInfo.reserve0;
+
+        const reserve0Float = Number(formatUnits(reserveForToken0, decimals0));
+        const reserve1Float = Number(formatUnits(reserveForToken1, decimals1));
+        if (reserve0Float === 0 || reserve1Float === 0) return;
+
+        const priceToken1Per0 = reserve1Float / reserve0Float;
+        if (!Number.isFinite(priceToken1Per0) || priceToken1Per0 <= 0) return;
+
+        const required1ForAvail0 = available0 * priceToken1Per0;
+
+        let next0 = 0;
+        let next1 = 0;
+        if (available0 > 0 && required1ForAvail0 <= available1) {
+          next0 = available0;
+          next1 = required1ForAvail0;
+        } else if (available1 > 0) {
+          next1 = available1;
+          next0 = next1 / priceToken1Per0;
+        } else {
+          return;
+        }
+
+        if (next0 <= 0 || next1 <= 0) return;
+        setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+        setDepositToken0(next0.toFixed(4));
+        setDepositToken1(next1.toFixed(4));
         return;
       }
 
-      if (next0 <= 0 || next1 <= 0) return;
-
-      setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
-      setDepositToken0(next0.toFixed(4));
-      setDepositToken1(next1.toFixed(4));
+      // No reserves yet (new pool): just prefill both legs with the chosen percentage.
+      const token0Label = token0Meta?.symbol || selectedPool?.token0Symbol;
+      if (available0 > 0) setDepositToken0(available0.toFixed(4));
+      if (available1 > 0) setDepositToken1(available1.toFixed(4));
+      if (token0Label) setLastEdited(token0Label);
     } catch (err) {
       setDepositQuoteError(
         compactRpcMessage(err.message, "Quote balance failed")
@@ -1896,7 +1906,7 @@ export default function LiquiditySection({ address, chainId }) {
                         <button
                           key={pct}
                           type="button"
-                          disabled={!hasPairInfo || !tokenBalances}
+                          disabled={!tokenBalances}
                           onClick={() => applyDepositRatio(pct)}
                           className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
                         >
