@@ -826,29 +826,27 @@ export default function SwapSection({ balances }) {
         };
         const weth = new Contract(WETH_ADDRESS, WETH_ABI, signer);
         // Some RPCs reject gas estimation; fall back to a safe manual limit if needed.
-      const wrapOpts = { value: amountWei };
-      try {
-        const est = await weth.deposit.estimateGas(wrapOpts);
-        wrapOpts.gasLimit = (est * 120n) / 100n; // add 20% buffer
-      } catch {
-        wrapOpts.gasLimit = 200000n; // fallback gas limit for deposit (covers strict RPCs)
-      }
-      const unwrapOpts = {};
-      if (!wrapOpts.gasLimit) {
-          unwrapOpts.gasLimit = 200000n;
-      }
-      let tx;
-      if (sellToken === "ETH") {
-        tx = await weth.deposit(wrapOpts);
-      } else {
-        try {
-          const est = await weth.withdraw.estimateGas(amountWei);
-          unwrapOpts.gasLimit = (est * 120n) / 100n;
-        } catch {
-          // keep fallback gas limit
+        const fallbackGas = 200000n;
+        let tx;
+        if (sellToken === "ETH") {
+          const wrapOpts = { value: amountWei };
+          try {
+            const est = await weth.deposit.estimateGas(wrapOpts);
+            wrapOpts.gasLimit = (est * 120n) / 100n; // add 20% buffer
+          } catch {
+            wrapOpts.gasLimit = fallbackGas; // covers strict RPCs (e.g. some testnets)
+          }
+          tx = await weth.deposit(wrapOpts);
+        } else {
+          const unwrapOpts = {};
+          try {
+            const est = await weth.withdraw.estimateGas(amountWei);
+            unwrapOpts.gasLimit = (est * 120n) / 100n;
+          } catch {
+            unwrapOpts.gasLimit = fallbackGas; // symmetric fallback for unwraps
+          }
+          tx = await weth.withdraw(amountWei, unwrapOpts);
         }
-        tx = await weth.withdraw(amountWei, unwrapOpts);
-      }
         const receipt = await tx.wait();
         const actualWrapOut = findActualOutput(
           receipt,
