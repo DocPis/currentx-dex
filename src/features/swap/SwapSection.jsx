@@ -1460,48 +1460,39 @@ export default function SwapSection({ balances }) {
 
       </div>
 
-      {executionProof && (
-        <div className="w-full max-w-xl mt-4 rounded-3xl bg-slate-950/80 border border-emerald-700/40 p-4 sm:p-5 shadow-[0_18px_48px_-24px_rgba(16,185,129,0.55)]">
-          <div className="flex items-center justify-between gap-3 mb-3">
+{executionProof && (
+        <div className="w-full max-w-xl mt-4 rounded-3xl bg-slate-950/85 border border-emerald-700/40 p-4 sm:p-5 shadow-[0_18px_48px_-24px_rgba(16,185,129,0.55)]">
+          <div className="flex items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2 text-emerald-50">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-lg font-semibold">Execution Proof</span>
+              <span className="text-lg font-semibold">Swap receipt</span>
             </div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900/80 border border-emerald-500/50 text-sm text-emerald-100">
-              <span>{executionProof.grade?.icon || "⚠️"}</span>
-              <span className="font-semibold">{executionProof.grade?.label || "OK"}</span>
+              <span>{executionProof.grade?.icon || "✓"}</span>
+              <span className="font-semibold">{executionProof.grade?.label || "Done"}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm text-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-100">
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Expected</span>
-              <span className="font-semibold">{executionProof.expected}</span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Executed</span>
+              <span className="text-[11px] text-slate-400">You received</span>
               <span className="font-semibold">{executionProof.executed}</span>
+              <span className="text-[11px] text-emerald-300">
+                {executionProof.deltaPct !== null && executionProof.deltaPct !== undefined
+                  ? executionProof.deltaPct >= -0.1
+                    ? "Matched the quote"
+                    : `-${Math.abs(executionProof.deltaPct).toFixed(2)}% vs quote`
+                  : "Based on on-chain fill"}
+              </span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Min received (slippage)</span>
+              <span className="text-[11px] text-slate-400">Quote safety</span>
               <span className="font-semibold">{executionProof.minReceived}</span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Execution delta</span>
-              <span
-                className={`font-semibold ${
-                  executionProof.deltaPct !== null
-                    ? executionProof.deltaPct >= -0.1
-                      ? "text-emerald-200"
-                      : executionProof.deltaPct > -0.5
-                        ? "text-amber-200"
-                        : "text-rose-300"
-                    : "text-slate-100"
-                }`}
-              >
-                {executionProof.deltaPct !== null
-                  ? `${executionProof.deltaPct.toFixed(2)}%`
-                  : "--"}
+              <span className="text-[11px] text-slate-400">
+                Slippage guard:{" "}
+                {executionProof.slippage
+                  ? `${executionProof.slippage}%`
+                  : `${Number(effectiveSlippagePct || slippage || 0).toFixed(2)}%`}
               </span>
             </div>
             <div className="flex flex-col gap-1">
@@ -1511,58 +1502,19 @@ export default function SwapSection({ balances }) {
                   ? `${Number(executionProof.priceImpact || 0).toFixed(2)}%`
                   : "--"}
               </span>
+              <span className="text-[11px] text-slate-400">Includes LP fees</span>
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Slippage</span>
-              <span className="font-semibold">
-                {executionProof.slippage
-                  ? `${executionProof.slippage}%`
-                  : `${Number(effectiveSlippagePct || slippage || 0).toFixed(2)}%`}
-              </span>
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-slate-100">
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Gas used</span>
+              <span className="text-[11px] text-slate-400">Network fee (gas units)</span>
               <span className="font-semibold">
                 {executionProof.gasUsed ? executionProof.gasUsed.toLocaleString() : "--"}
               </span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-slate-400">Tx</span>
-              {executionProof.txHash ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    window.open(`${EXPLORER_BASE_URL}/tx/${executionProof.txHash}`, "_blank", "noopener,noreferrer")
-                  }
-                  className="inline-flex items-center gap-2 text-emerald-200 underline underline-offset-4 hover:text-emerald-100"
-                >
-                  View on {EXPLORER_LABEL}
-                  <svg
-                    viewBox="0 0 20 20"
-                    fill="none"
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4"
-                  >
-                    <path
-                      d="M5 13l9-9m0 0h-5m5 0v5"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              ) : (
-                <span className="text-slate-400">--</span>
-              )}
+              <span className="text-[11px] text-slate-500">Wallet shows the fee you paid</span>
             </div>
           </div>
 
           {executionProof.route?.length ? (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
               <span className="text-slate-500">Route</span>
               {executionProof.route.map((label, idx) => (
                 <React.Fragment key={`${label}-${idx}-proof`}>
@@ -1574,16 +1526,47 @@ export default function SwapSection({ balances }) {
                   )}
                 </React.Fragment>
               ))}
+              {executionProof.route.length === 2 &&
+                executionProof.route.includes("ETH") &&
+                executionProof.route.includes("WETH") ? (
+                  <span className="ml-1 inline-flex items-center gap-1 text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 rounded-full">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span>Direct wrap/unwrap • no LP fee</span>
+                  </span>
+                ) : null}
             </div>
           ) : null}
 
-          <div className="mt-3 text-[12px] text-emerald-200 flex items-center gap-2">
-            <span>Outcome grade:</span>
-            <span>{executionProof.grade?.icon || "⚠️"}</span>
-            <span className="font-semibold">{executionProof.grade?.label || "OK"}</span>
-            <span className="text-slate-500 ml-2">
-              ✅ Great / ⚠️ OK / ❌ Bad
-            </span>
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-sm">
+            {executionProof.txHash ? (
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(`${EXPLORER_BASE_URL}/tx/${executionProof.txHash}`, "_blank", "noopener,noreferrer")
+                }
+                className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/80 border border-emerald-500/40 text-emerald-100 hover:border-emerald-400/70 transition"
+              >
+                <span>View transaction</span>
+                <svg
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M5 13l9-9m0 0h-5m5 0v5"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-900/60 border border-slate-800 text-slate-100">
+              <span>{executionProof.grade?.icon || "✓"}</span>
+              <span className="font-semibold">{executionProof.grade?.label || "OK"}</span>
+            </div>
           </div>
         </div>
       )}
