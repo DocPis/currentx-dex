@@ -1408,6 +1408,16 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
+      const safeGasLimit = 500000n;
+      const bufferEstimation = async (method, args, valueOpts = {}) => {
+        try {
+          const est = await method.estimateGas(...args, valueOpts);
+          return { ...valueOpts, gasLimit: (est * 120n) / 100n };
+        } catch {
+          return { ...valueOpts, gasLimit: safeGasLimit };
+        }
+      };
+
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
         const ethValue = ethIsToken0 ? parsed0 : parsed1;
@@ -1424,6 +1434,12 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
+        const gasOpts = await bufferEstimation(
+          router.addLiquidityETH,
+          [tokenAddress, tokenAmount, 0, 0, user, deadline],
+          { value: ethValue }
+        );
+
         const tx = await router.addLiquidityETH(
           tokenAddress,
           tokenAmount,
@@ -1431,7 +1447,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountETHMin
           user,
           deadline,
-          { value: ethValue }
+          gasOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1456,6 +1472,12 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
+        const gasOpts = await bufferEstimation(
+          router.addLiquidityETH,
+          [tokenAddress, tokenAmount, 0, 0, user, deadline],
+          { value: ethValue }
+        );
+
         const tx = await router.addLiquidityETH(
           tokenAddress,
           tokenAmount,
@@ -1463,7 +1485,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountETHMin
           user,
           deadline,
-          { value: ethValue }
+          gasOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1495,6 +1517,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
+        const gasOpts = await bufferEstimation(router.addLiquidity, [
+          token0Address,
+          token1Address,
+          parsed0,
+          parsed1,
+          0, // amountAMin
+          0, // amountBMin
+          user,
+          deadline,
+        ]);
+
         const tx = await router.addLiquidity(
           token0Address,
           token1Address,
@@ -1503,7 +1536,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           0, // amountAMin
           0, // amountBMin
           user,
-          deadline
+          deadline,
+          gasOpts
         );
         const receipt = await tx.wait();
         setActionStatus({
