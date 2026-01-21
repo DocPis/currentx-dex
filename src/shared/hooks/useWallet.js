@@ -1,5 +1,5 @@
 // src/shared/hooks/useWallet.js
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
   getInjectedEthereum,
@@ -8,9 +8,7 @@ import {
 } from "../config/web3";
 import {
   getActiveNetworkConfig,
-  getActiveNetworkPresetId,
   getAvailableNetworkPresets,
-  setActiveNetworkPreset,
 } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
@@ -62,28 +60,6 @@ export function useWallet() {
     }
   });
 
-  const ensureActivePresetForChain = useCallback(
-    (chainIdHex) => {
-      const normalized = normalizeChainId(chainIdHex);
-      if (!normalized) return;
-      const match = presets.find(
-        (p) => (p.chainIdHex || "").toLowerCase() === normalized
-      );
-      if (!match) return;
-      const current = getActiveNetworkPresetId();
-      if (current === match.id) return;
-      try {
-        setActiveNetworkPreset(match.id);
-        window.location.reload();
-      } catch {
-        // Fallback if reload fails
-        setActiveNetworkPreset(match.id);
-        window.location.href = window.location.href;
-      }
-    },
-    []
-  );
-
   useEffect(() => {
     let removeListeners = null;
     let initTimeout;
@@ -97,9 +73,7 @@ export function useWallet() {
       };
 
       const handleChainChanged = (chainIdHex) => {
-        const normalized = normalizeChainId(chainIdHex);
-        setChainId(normalized);
-        ensureActivePresetForChain(normalized);
+        setChainId(normalizeChainId(chainIdHex));
       };
 
       eth
@@ -111,11 +85,7 @@ export function useWallet() {
 
       eth
         .request({ method: "eth_chainId" })
-        .then((cid) => {
-          const normalized = normalizeChainId(cid);
-          setChainId(normalized);
-          ensureActivePresetForChain(normalized);
-        })
+        .then((cid) => setChainId(normalizeChainId(cid)))
         .catch(() => {});
 
       eth.on("accountsChanged", handleAccountsChanged);
