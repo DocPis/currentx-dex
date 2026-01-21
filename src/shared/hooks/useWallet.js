@@ -6,7 +6,12 @@ import {
   getInjectedProviderByType,
   setActiveInjectedProvider,
 } from "../config/web3";
-import { getActiveNetworkConfig, getAvailableNetworkPresets } from "../config/networks";
+import {
+  getActiveNetworkConfig,
+  getActiveNetworkPresetId,
+  getAvailableNetworkPresets,
+  setActiveNetworkPreset,
+} from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
 let activeNetwork = getActiveNetworkConfig();
@@ -57,6 +62,28 @@ export function useWallet() {
     }
   });
 
+  const ensureActivePresetForChain = useCallback(
+    (chainIdHex) => {
+      const normalized = normalizeChainId(chainIdHex);
+      if (!normalized) return;
+      const match = presets.find(
+        (p) => (p.chainIdHex || "").toLowerCase() === normalized
+      );
+      if (!match) return;
+      const current = getActiveNetworkPresetId();
+      if (current === match.id) return;
+      try {
+        setActiveNetworkPreset(match.id);
+        window.location.reload();
+      } catch {
+        // Fallback if reload fails
+        setActiveNetworkPreset(match.id);
+        window.location.href = window.location.href;
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     let removeListeners = null;
     let initTimeout;
@@ -70,7 +97,9 @@ export function useWallet() {
       };
 
       const handleChainChanged = (chainIdHex) => {
-        setChainId(normalizeChainId(chainIdHex));
+        const normalized = normalizeChainId(chainIdHex);
+        setChainId(normalized);
+        ensureActivePresetForChain(normalized);
       };
 
       eth
@@ -82,7 +111,11 @@ export function useWallet() {
 
       eth
         .request({ method: "eth_chainId" })
-        .then((cid) => setChainId(normalizeChainId(cid)))
+        .then((cid) => {
+          const normalized = normalizeChainId(cid);
+          setChainId(normalized);
+          ensureActivePresetForChain(normalized);
+        })
         .catch(() => {});
 
       eth.on("accountsChanged", handleAccountsChanged);
