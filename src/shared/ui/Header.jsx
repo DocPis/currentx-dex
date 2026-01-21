@@ -106,8 +106,15 @@ export default function Header({
                         return;
                       }
                       setActiveNetworkId(net.id);
+                      // Persist selection and force a reload on the same URL with ?network=<id>
                       setActiveNetworkPreset(net.id);
-                      window.location.reload();
+                      try {
+                        const url = new URL(window.location.href);
+                        url.searchParams.set("network", net.id);
+                        window.location.href = url.toString();
+                      } catch {
+                        window.location.reload();
+                      }
                     }}
                     className={`w-full px-4 py-3 text-left text-sm flex items-center gap-2 transition ${
                       selected
