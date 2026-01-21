@@ -583,19 +583,15 @@ export default function SwapSection({ balances }) {
           setPriceImpact(null);
         }
 
-        // Precompute allowance requirement for ERC20 sells (needs signer)
-        if (sellToken !== "ETH" && sellAddress) {
+        // Precompute allowance requirement for ERC20 sells (needs signer). Skip for direct wrap/unwrap.
+        if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
           try {
             const signerProvider = await getProvider();
             const signer = await signerProvider.getSigner();
             const user = await signer.getAddress();
             const token = new Contract(sellAddress, ERC20_ABI, signer);
-            const allowance = await token.allowance(
-              user,
-              UNIV2_ROUTER_ADDRESS
-            );
-            const desiredAllowance =
-              approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+            const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+            const desiredAllowance = approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
             if (cancelled) return;
             const needsApproval = allowance < amountWei;
             setApproveNeeded(needsApproval);
@@ -613,12 +609,12 @@ export default function SwapSection({ balances }) {
             setApproveNeeded(false);
             setApprovalTarget(null);
           }
-      } else {
-        if (cancelled) return;
-        setApproveNeeded(false);
-        setApprovalTarget(null);
-      }
-    } catch (e) {
+        } else {
+          if (cancelled) return;
+          setApproveNeeded(false);
+          setApprovalTarget(null);
+        }
+      } catch (e) {
       if (cancelled) return;
       setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
     } finally {
