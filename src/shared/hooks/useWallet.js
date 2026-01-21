@@ -1,5 +1,5 @@
 // src/shared/hooks/useWallet.js
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { BrowserProvider } from "ethers";
 import {
   getInjectedEthereum,
