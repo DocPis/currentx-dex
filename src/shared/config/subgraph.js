@@ -81,11 +81,11 @@ export async function fetchV2PairData(tokenA, tokenB) {
     }
   `;
 
-  const pairDayQuery = `
+  const pairDayQuery = (field = "pairAddress") => `
     query PairDay($pairId: Bytes!) {
       pairDayDatas(
         first: 1
-        where: { pairAddress: $pairId }
+        where: { ${field}: $pairId }
         orderBy: date
         orderDirection: desc
       ) {
@@ -113,10 +113,31 @@ export async function fetchV2PairData(tokenA, tokenB) {
       };
     }
 
-    const dayRes = await postSubgraph(pairDayQuery, { pairId: pair.id });
-    const day = dayRes?.pairDayDatas?.[0];
     const tvlUsd = Number(pair.reserveUSD || 0);
-    const volume24hUsd = Number(day?.dailyVolumeUSD || 0);
+
+    const fetchDailyVolume = async () => {
+      try {
+        const dayRes = await postSubgraph(pairDayQuery("pairAddress"), { pairId: pair.id });
+        const day = dayRes?.pairDayDatas?.[0];
+        if (day?.dailyVolumeUSD !== undefined) return Number(day.dailyVolumeUSD || 0);
+      } catch (err) {
+        const msg = err?.message || "";
+        const missingField =
+          msg.includes("pairAddress") || msg.includes('Cannot query field "pairAddress"');
+        if (!missingField) throw err;
+      }
+      // Fallback for schemas that expose `pair` instead of `pairAddress`
+      try {
+        const dayRes = await postSubgraph(pairDayQuery("pair"), { pairId: pair.id });
+        const day = dayRes?.pairDayDatas?.[0];
+        if (day?.dailyVolumeUSD !== undefined) return Number(day.dailyVolumeUSD || 0);
+      } catch {
+        // swallow and return 0 to avoid blocking TVL display
+      }
+      return 0;
+    };
+
+    const volume24hUsd = await fetchDailyVolume();
     const fees24hUsd = volume24hUsd * 0.003; // 0.30% fee tier
 
     return {

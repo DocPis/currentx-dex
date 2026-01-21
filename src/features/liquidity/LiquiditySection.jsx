@@ -183,6 +183,28 @@ export default function LiquiditySection({ address, chainId }) {
   const tokenDecimalsCache = useRef({});
   const { balances: walletBalances, loading: walletBalancesLoading } = useBalances(address, chainId);
 
+  const readDecimals = useCallback(
+    async (provider, addr, meta) => {
+      if (!addr) return meta?.decimals ?? 18;
+      const key = addr.toLowerCase();
+      if (tokenDecimalsCache.current[key] !== undefined) {
+        return tokenDecimalsCache.current[key];
+      }
+      let dec = meta?.decimals;
+      try {
+        const erc = new Contract(addr, ERC20_ABI, provider);
+        const onchain = await erc.decimals();
+        dec = Number(onchain);
+      } catch {
+        // ignore and fallback
+      }
+      const final = Number.isFinite(dec) && dec > 0 ? dec : 18;
+      tokenDecimalsCache.current[key] = final;
+      return final;
+    },
+    []
+  );
+
   const getStatusStyle = (status) => {
     if (status === null) {
       return {
@@ -849,6 +871,16 @@ export default function LiquiditySection({ address, chainId }) {
           token1Address,
         });
 
+        // Warm decimals cache for ratio calculations and balances
+        try {
+          await Promise.all([
+            readDecimals(provider, token0Address, token0Meta),
+            readDecimals(provider, token1Address, token1Meta),
+          ]);
+        } catch {
+          // non-blocking
+        }
+
         try {
           const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
           const walletChainId = (chainId || "").toLowerCase();
@@ -1004,10 +1036,15 @@ export default function LiquiditySection({ address, chainId }) {
       };
 
       const getAvailable = (which) => {
+        const fromTokenBalances =
+          which === 0 ? tokenBalances?.token0 : tokenBalances?.token1;
+        if (fromTokenBalances !== undefined && fromTokenBalances !== null) {
+          return Number(fromTokenBalances || 0);
+        }
         const sym = which === 0 ? symbol0 : symbol1;
         const fromWallet = findWalletBalance(sym);
         if (fromWallet !== undefined) return Number(fromWallet || 0);
-        return Number(which === 0 ? tokenBalances?.token0 || 0 : tokenBalances?.token1 || 0);
+        return 0;
       };
 
       const available0 = getAvailable(0) * percentage;
@@ -1198,32 +1235,13 @@ export default function LiquiditySection({ address, chainId }) {
           return;
         }
 
-        const readDecimals = async (addr, meta) => {
-          if (!addr) return 18;
-          const key = addr.toLowerCase();
-          if (tokenDecimalsCache.current[key] !== undefined) {
-            return tokenDecimalsCache.current[key];
-          }
-          let dec = meta?.decimals;
-          try {
-            const erc = new Contract(addr, ERC20_ABI, provider);
-            const onchain = await erc.decimals();
-            dec = Number(onchain);
-          } catch {
-            // ignore and fallback
-          }
-          const final = Number.isFinite(dec) && dec > 0 ? dec : 18;
-          tokenDecimalsCache.current[key] = final;
-          return final;
-        };
-
         const fetchBalance = async (symbol, address, meta) => {
           if (!address) {
             const bal = await provider.getBalance(user);
             return Number(formatUnits(bal, 18));
           }
           const erc20 = new Contract(address, ERC20_ABI, provider);
-          const decimals = await readDecimals(address, meta);
+          const decimals = await readDecimals(provider, address, meta);
           const bal = await erc20.balanceOf(user);
           return Number(formatUnits(bal, decimals));
         };
