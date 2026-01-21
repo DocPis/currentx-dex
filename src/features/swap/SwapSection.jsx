@@ -761,7 +761,7 @@ export default function SwapSection({ balances }) {
       const sellAddress = sellMeta?.address;
       const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-      if (sellToken !== "ETH") {
+      if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
         if (allowance < amountWei) {
@@ -1402,7 +1402,7 @@ export default function SwapSection({ balances }) {
                       ? "One-time approval for this token (fewer prompts)."
                       : "Approve only what you swap (stricter control)."}
                   </span>
-                  {approveNeeded && amountIn ? (
+                  {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">
                       Needs approval: {amountIn} {sellToken} to Uniswap router.
                     </span>
@@ -1414,7 +1414,10 @@ export default function SwapSection({ balances }) {
                 </div>
               </div>
             ) : null}
-            {approveNeeded && approvalTarget?.symbol === sellToken && sellToken !== "ETH" ? (
+            {!isDirectEthWeth &&
+            approveNeeded &&
+            approvalTarget?.symbol === sellToken &&
+            sellToken !== "ETH" ? (
               <button
                 onClick={handleApprove}
                 disabled={approveLoading || quoteLoading}
@@ -1427,7 +1430,11 @@ export default function SwapSection({ balances }) {
             ) : null}
             <button
               onClick={handleSwap}
-              disabled={swapLoading || quoteLoading || (approveNeeded && sellToken !== "ETH")}
+              disabled={
+                swapLoading ||
+                quoteLoading ||
+                (!isDirectEthWeth && approveNeeded && sellToken !== "ETH")
+              }
               className="w-full py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
             >
               <span className="inline-flex items-center gap-2 justify-center">
