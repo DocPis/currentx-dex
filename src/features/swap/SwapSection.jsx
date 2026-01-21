@@ -533,6 +533,9 @@ export default function SwapSection({ balances }) {
         setQuoteOut(amountIn);
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
+        // Direct wrap/unwrap never needs approvals; reset any previous state.
+        setApproveNeeded(false);
+        setApprovalTarget(null);
         setQuoteRoute([sellToken, buyToken]);
         setQuotePairs([]);
         setLastQuoteAt(Date.now());
@@ -640,6 +643,8 @@ export default function SwapSection({ balances }) {
     sellToken,
     liveRouteTick,
     quoteLockedUntil,
+    displaySellSymbol,
+    displayBuySymbol,
   ]);
 
   const baseSlippagePct = (() => {

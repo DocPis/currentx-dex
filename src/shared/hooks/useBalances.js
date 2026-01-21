@@ -103,7 +103,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         }
       }
     },
-    [address, chainId, tokenRegistry]
+    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys]
   );
 
   useEffect(() => {

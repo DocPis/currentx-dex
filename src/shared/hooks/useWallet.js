@@ -8,12 +8,10 @@ import {
 } from "../config/web3";
 import {
   getActiveNetworkConfig,
-  getAvailableNetworkPresets,
 } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
 let activeNetwork = getActiveNetworkConfig();
-const presets = getAvailableNetworkPresets();
 const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
 const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
 const ACTIVE_NETWORK_NAME = activeNetwork?.name || "MegaETH";

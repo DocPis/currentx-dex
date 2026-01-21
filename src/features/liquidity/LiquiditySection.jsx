@@ -208,9 +208,13 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     chainId,
     tokenRegistry
   );
-  const walletBalances = hasExternalBalances
-    ? { ...hookBalances, ...balancesProp }
-    : hookBalances;
+  const walletBalances = useMemo(
+    () =>
+      hasExternalBalances
+        ? { ...hookBalances, ...balancesProp }
+        : hookBalances,
+    [balancesProp, hasExternalBalances, hookBalances]
+  );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
 
   const readDecimals = useCallback(
@@ -853,6 +857,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
     } catch (err) {
+      console.warn("LP balance lookup failed:", err?.message || err);
       // Treat any failure as "not deployed yet" to allow first deposit
       setPairNotDeployed(true);
       setLpBalanceError("");
@@ -860,7 +865,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     }
   }, [
     address,
-    chainId,
     pairIdOverride,
     pairInfo,
     pairMissing,
@@ -962,6 +966,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           }
         }
       } catch (err) {
+        console.warn("Pair discovery failed:", err?.message || err);
         if (!cancelled) {
           // Treat missing or unreadable pair as undeployed to allow first deposit
           setPairError("");
@@ -985,6 +990,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     token1Address,
     lpRefreshTick,
     pairLiveTick,
+    address,
+    chainId,
+    readDecimals,
+    token0Meta,
+    token1Meta,
   ]);
 
   // Suggest balanced amount based on current reserves
@@ -1347,6 +1357,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     token1Meta?.decimals,
     address,
     chainId,
+    readDecimals,
   ]);
 
   const handleDeposit = async () => {
