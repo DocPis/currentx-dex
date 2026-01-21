@@ -24,8 +24,8 @@ import {
 } from "../../shared/config/abis";
 import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
 import { getRealtimeClient } from "../../shared/services/realtime";
-import { useBalances } from "../../shared/hooks/useBalances";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
+import { useBalances } from "../../shared/hooks/useBalances";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
@@ -43,14 +43,12 @@ const formatNumber = (v) => {
 
 const formatTokenBalance = (v) => {
   const num = Number(v || 0);
-  if (!Number.isFinite(num)) return "--";
-  if (Math.abs(num) >= 1_000_000) {
-    return num.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  }
-  if (Math.abs(num) >= 1) {
-    return num.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  }
-  return num.toFixed(6);
+  if (!Number.isFinite(num) || num <= 0) return "0";
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+    useGrouping: false,
+  });
 };
 
 const resolveTokenAddress = (symbol, registry = TOKENS) => {
@@ -92,6 +90,17 @@ const compactRpcMessage = (raw, fallback) => {
     .replace(/\(error=.*$/i, "")
     .trim();
   const lower = stripped.toLowerCase();
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429") ||
+    lower.includes("being rate limited")
+  ) {
+    return "RPC rate-limited. Switch RPC or retry in a few seconds.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("etimedout")) {
+    return "RPC timeout. Retry or switch to a faster RPC.";
+  }
   if (lower.includes("eth_requestaccounts")) {
     return "Open your wallet and approve the connection.";
   }
@@ -135,7 +144,7 @@ const shortenAddress = (addr) => {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
-export default function LiquiditySection({ address, chainId }) {
+export default function LiquiditySection({ address, chainId, balances: balancesProp }) {
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
@@ -174,35 +183,35 @@ export default function LiquiditySection({ address, chainId }) {
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
-  const basePoolSymbols = useMemo(() => {
-    const symbols = new Set();
-    basePools.forEach((p) => {
-      if (p.token0Symbol) symbols.add(p.token0Symbol);
-      if (p.token1Symbol) symbols.add(p.token1Symbol);
-    });
-    return symbols;
-  }, [basePools]);
-
   const tokenRegistry = useMemo(() => {
     // Always include native ETH/WETH for convenience.
     const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
 
-    // Include tokens that exist on the active network (from on-chain discovery).
+    // Include tokens discovered on-chain for the active network.
     Object.assign(out, onchainTokens);
 
-    // Include known defaults only if we see them on-chain (same symbol) to avoid mixing networks.
+    // Include any statically defined token that has an address for the active network.
     Object.entries(TOKENS).forEach(([sym, meta]) => {
       if (sym === "ETH" || sym === "WETH") return;
-      if (basePoolSymbols.has(sym)) out[sym] = meta;
+      if (meta?.address) out[sym] = meta;
     });
 
-    // Always include user-added custom tokens.
+    // Include user-added custom tokens.
     Object.assign(out, customTokens);
 
     return out;
-  }, [basePoolSymbols, customTokens, onchainTokens]);
+  }, [customTokens, onchainTokens]);
   const tokenDecimalsCache = useRef({});
-  const { balances: walletBalances, loading: walletBalancesLoading } = useBalances(address, chainId);
+  const hasExternalBalances = Boolean(balancesProp);
+  const { balances: hookBalances, loading: hookBalancesLoading } = useBalances(
+    address,
+    chainId,
+    tokenRegistry
+  );
+  const walletBalances = hasExternalBalances
+    ? { ...hookBalances, ...balancesProp }
+    : hookBalances;
+  const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
 
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
@@ -351,8 +360,10 @@ export default function LiquiditySection({ address, chainId }) {
   useEffect(() => {
     if (!basePools.length) return;
     setSelectedPoolId((prev) => {
-      if (prev && basePools.some((p) => p.id === prev)) return prev;
-      return basePools[0].id;
+      // Preserve any existing selection (including custom pairs not yet on-chain).
+      if (prev) return prev;
+      const first = basePools[0];
+      return first ? first.id : prev;
     });
   }, [basePools]);
 

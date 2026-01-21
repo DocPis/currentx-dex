@@ -1,20 +1,16 @@
 // src/shared/hooks/useBalances.js
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  TOKENS,
-  getErc20,
-  getReadOnlyProvider,
-  getProvider,
-} from "../config/web3";
+import { TOKENS, getErc20, getReadOnlyProvider, getProvider } from "../config/web3";
 import { formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
 
 import { getActiveNetworkConfig } from "../config/networks";
 
-export function useBalances(address, chainId) {
+export function useBalances(address, chainId, tokenRegistry = TOKENS) {
+  const activeNetworkId = (getActiveNetworkConfig()?.id || "mainnet").toLowerCase();
   const tokenKeys = useMemo(() => {
-    return Object.keys(TOKENS).filter((k) => k === "ETH" || TOKENS[k]?.address);
-  }, []);
+    return Object.keys(tokenRegistry).filter((k) => k === "ETH" || tokenRegistry[k]?.address);
+  }, [tokenRegistry]);
   const makeZeroBalances = useCallback(
     () =>
       tokenKeys.reduce((acc, key) => {
@@ -61,7 +57,7 @@ export function useBalances(address, chainId) {
 
         // Helper to read ERC20 balances only when we have an address
         const getErc20Balance = async (tokenKey) => {
-          const token = TOKENS[tokenKey];
+          const token = tokenRegistry[tokenKey];
           if (!token?.address) return 0;
           try {
             const contract = await getErc20(token.address, provider);
@@ -107,7 +103,7 @@ export function useBalances(address, chainId) {
         }
       }
     },
-    [address, chainId]
+    [address, chainId, tokenRegistry]
   );
 
   useEffect(() => {
@@ -143,6 +139,7 @@ export function useBalances(address, chainId) {
   // Native ETH realtime via stateChanges
   useEffect(() => {
     if (!address) return undefined;
+    if (activeNetworkId !== "mainnet") return undefined; // realtime feed is mainnet-only
     const client = getRealtimeClient();
     const lower = address.toLowerCase();
 
@@ -159,14 +156,15 @@ export function useBalances(address, chainId) {
     });
 
     return unsubscribe;
-  }, [address]);
+  }, [activeNetworkId, address]);
 
   // Token deltas in near-real time via miniBlocks (Transfer events)
   useEffect(() => {
     if (!address) return undefined;
+    if (activeNetworkId !== "mainnet") return undefined; // realtime feed is mainnet-only
     const client = getRealtimeClient();
     const lowerAddress = address.toLowerCase();
-    const tokenMap = Object.values(TOKENS).reduce((acc, token) => {
+    const tokenMap = Object.values(tokenRegistry).reduce((acc, token) => {
       if (token.address) {
         acc[token.address.toLowerCase()] = token;
       }
@@ -231,7 +229,7 @@ export function useBalances(address, chainId) {
 
     const unsubscribe = client.addMiniBlockListener(handleMiniBlock);
     return unsubscribe;
-  }, [address]);
+  }, [activeNetworkId, address, tokenRegistry]);
 
   return { balances, loading, refresh };
 }

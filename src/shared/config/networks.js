@@ -69,7 +69,11 @@ const testnetDefaults = {
   explorer: "https://megaeth-testnet-v2.blockscout.com",
   subgraphUrl: DEFAULT_TESTNET_SUBGRAPH_URL,
   subgraphApiKey: env.VITE_UNIV2_SUBGRAPH_API_KEY_TESTNET || "",
-  rpcUrls: ["https://carrot.megaeth.com/rpc"],
+  rpcUrls: [
+    "https://carrot.megaeth.com/rpc",
+    "https://timothy.megaeth.com/rpc",
+    "https://megaeth-timothy.gateway.tatum.io/",
+  ],
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
     USDC_ADDRESS: "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E",

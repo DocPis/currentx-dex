@@ -105,7 +105,9 @@ export default function App() {
 
       <main className="flex-1">
         {tab === "swap" && <SwapSection balances={balances} />}
-        {tab === "liquidity" && <LiquiditySection address={address} chainId={chainId} />}
+        {tab === "liquidity" && (
+          <LiquiditySection address={address} chainId={chainId} balances={balances} />
+        )}
         {tab === "dashboard" && <Dashboard />}
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />

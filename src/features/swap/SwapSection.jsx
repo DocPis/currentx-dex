@@ -185,6 +185,27 @@ const friendlySwapError = (e) => {
   return raw || "Swap failed. Try again or change RPC.";
 };
 
+const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
+  const raw = e?.message || "";
+  const lower = raw.toLowerCase();
+  if (lower.includes("missing revert data") || lower.includes("call_exception")) {
+    return `No pool found for ${sellSymbol}/${buySymbol} on the selected network. Create it first or try another pair.`;
+  }
+  if (lower.includes("could not find") || lower.includes("not found")) {
+    return `Pair ${sellSymbol}/${buySymbol} not found on this network.`;
+  }
+  if (lower.includes("timeout") || lower.includes("rate limit") || lower.includes("429")) {
+    return "RPC is slow or rate-limited. Switch RPC or retry in a few seconds.";
+  }
+  if (lower.includes("network") && lower.includes("mismatch")) {
+    return "Wrong network for this pair. Switch to the correct network and retry.";
+  }
+  if (lower.includes("execution reverted") || lower.includes("reverted")) {
+    return `Quote failed for ${sellSymbol}/${buySymbol}. Pool may be empty or not deployed.`;
+  }
+  return raw || "Quote unavailable right now. Retry or switch RPC.";
+};
+
 export default function SwapSection({ balances }) {
   const [customTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(
@@ -592,18 +613,18 @@ export default function SwapSection({ balances }) {
             setApproveNeeded(false);
             setApprovalTarget(null);
           }
-        } else {
-          if (cancelled) return;
-          setApproveNeeded(false);
-          setApprovalTarget(null);
-        }
-      } catch (e) {
+      } else {
         if (cancelled) return;
-        setQuoteError(e.message || "Failed to fetch quote");
-      } finally {
-        if (!cancelled) setQuoteLoading(false);
+        setApproveNeeded(false);
+        setApprovalTarget(null);
       }
-    };
+    } catch (e) {
+      if (cancelled) return;
+      setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
+    } finally {
+      if (!cancelled) setQuoteLoading(false);
+    }
+  };
     fetchQuote();
     return () => {
       cancelled = true;
