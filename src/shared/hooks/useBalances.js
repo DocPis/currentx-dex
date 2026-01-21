@@ -51,7 +51,7 @@ export function useBalances(address, chainId) {
             provider = getReadOnlyProvider();
           }
         } else {
-          provider = getReadOnlyProvider();
+          provider = getReadOnlyProvider(false, true);
         }
 
         // ETH

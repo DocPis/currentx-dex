@@ -79,9 +79,9 @@ const getProviderForUrl = (url) => {
 
 let rpcIndex = 0;
 
-export function getReadOnlyProvider(preferNext = false) {
-  // Prefer injected provider when available to avoid CORS on some RPCs (e.g., testnet)
-  if (typeof window !== "undefined" && window.ethereum) {
+export function getReadOnlyProvider(preferNext = false, forceRpc = false) {
+  // Prefer injected provider when available to avoid CORS on some RPCs, unless explicitly forced to use RPC.
+  if (!forceRpc && typeof window !== "undefined" && window.ethereum) {
     try {
       return new BrowserProvider(window.ethereum);
     } catch {

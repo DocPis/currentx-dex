@@ -834,12 +834,29 @@ export default function LiquiditySection({ address, chainId }) {
         });
 
         try {
-          const signer = await provider.getSigner();
-          const user = await signer.getAddress();
-          const pairErc20 = new Contract(res.pairAddress, ERC20_ABI, signer);
-          const decimals = await pairErc20.decimals();
-          const balance = await pairErc20.balanceOf(user);
-          if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
+          const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+          const walletChainId = (chainId || "").toLowerCase();
+          const preferWallet = walletChainId && walletChainId === activeChainId;
+          let balProvider;
+          if (preferWallet) {
+            try {
+              balProvider = await getProvider();
+            } catch {
+              balProvider = getReadOnlyProvider();
+            }
+          } else {
+            balProvider = getReadOnlyProvider(false, true);
+          }
+          const user = address || null;
+          if (user) {
+            const pairErc20 = new Contract(res.pairAddress, ERC20_ABI, balProvider);
+            const decimals =
+              typeof pairErc20.decimals === "function"
+                ? await pairErc20.decimals().catch(() => 18)
+                : 18;
+            const balance = await pairErc20.balanceOf(user);
+            if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
+          }
         } catch (balanceErr) {
           if (!cancelled) {
             setLpBalance(null);
@@ -1120,7 +1137,7 @@ export default function LiquiditySection({ address, chainId }) {
             provider = getReadOnlyProvider();
           }
         } else {
-          provider = getReadOnlyProvider();
+          provider = getReadOnlyProvider(false, true);
         }
         const user = address || null;
         if (!user) {
