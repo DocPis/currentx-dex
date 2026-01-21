@@ -136,6 +136,8 @@ const testnetPreset = (() => {
 
 const presets = [mainnetPreset, ...(testnetPreset ? [testnetPreset] : [])];
 
+let inMemoryPreset = null;
+
 const getStoredPresetId = () => {
   const read = (storage) => {
     if (!storage) return null;
@@ -161,7 +163,9 @@ const getStoredPresetId = () => {
       // ignore storage errors
     }
   }
-  return fromLocal;
+
+  if (fromLocal) return fromLocal;
+  return inMemoryPreset;
 };
 
 export const getAvailableNetworkPresets = () => presets;
@@ -183,11 +187,24 @@ export const setActiveNetworkPreset = (id) => {
   const match = presets.find((p) => p.id === id);
   if (!match) return;
 
-  // Session-only persistence to avoid leaking networks across environments/domains.
-  if (typeof sessionStorage === "undefined") return;
   try {
-    sessionStorage.setItem(LOCAL_STORAGE_KEY, id);
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem(LOCAL_STORAGE_KEY, id);
+      return;
+    }
   } catch {
-    // ignore storage errors
+    // ignore session errors and fall through
   }
+
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(LOCAL_STORAGE_KEY, id);
+      return;
+    }
+  } catch {
+    // ignore localStorage errors and fall through
+  }
+
+  // Final fallback so the selection at least sticks in-memory for this page.
+  inMemoryPreset = id;
 };
