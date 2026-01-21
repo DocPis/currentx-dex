@@ -28,6 +28,7 @@ export function useBalances(address, chainId) {
   const [loading, setLoading] = useState(false);
   const isRefreshing = useRef(false);
   const pendingAddress = useRef(null);
+  const decimalsCache = useRef({});
 
   const refresh = useCallback(
     async (walletAddress = address) => {
@@ -64,8 +65,18 @@ export function useBalances(address, chainId) {
           if (!token?.address) return 0;
           try {
             const contract = await getErc20(token.address, provider);
+            const key = token.address.toLowerCase();
+            let decimals = decimalsCache.current[key];
+            if (decimals === undefined) {
+              try {
+                decimals = Number(await contract.decimals());
+              } catch {
+                decimals = token.decimals;
+              }
+              decimalsCache.current[key] = decimals;
+            }
             const raw = await contract.balanceOf(walletAddress);
-            return Number(formatUnits(raw, token.decimals));
+            return Number(formatUnits(raw, decimals || token.decimals || 18));
           } catch (err) {
             console.warn(
               `Balance lookup failed for ${tokenKey} at ${token.address}:`,
