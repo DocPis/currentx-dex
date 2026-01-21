@@ -226,16 +226,29 @@ export default function SwapSection({ balances }) {
   const lastQuoteOutRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
-    const customKeys = Object.keys(customTokens || {});
-    const orderedBase = BASE_TOKEN_OPTIONS;
+    const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
+      const meta = tokenRegistry[sym];
+      return (
+        meta &&
+        (meta.address || sym === "ETH" || sym === "WETH")
+      );
+    });
+    const customKeys = Object.keys(customTokens || {}).filter((k) => {
+      const meta = customTokens[k];
+      return meta && (meta.address || k === "ETH" || k === "WETH");
+    });
     const extras = customKeys.filter((k) => !orderedBase.includes(k));
     return [...orderedBase, ...extras];
-  }, [customTokens]);
+  }, [customTokens, tokenRegistry]);
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
     const all = tokenOptions
       .map((sym) => tokenRegistry[sym])
-      .filter(Boolean);
+      .filter(
+        (t) =>
+          t &&
+          (t.address || t.symbol === "ETH" || t.symbol === "WETH")
+      );
     if (!q) return all;
     return all.filter((t) => {
       const addr = (t.address || "").toLowerCase();
