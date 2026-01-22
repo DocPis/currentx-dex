@@ -1106,8 +1106,9 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       try {
         const decimals0 = token0Meta?.decimals ?? 18;
         const decimals1 = token1Meta?.decimals ?? 18;
-        const pairToken0Lower = pairInfo.token0.toLowerCase();
-        const inputToken0Lower = (token0Address || "").toLowerCase();
+        const pairToken0Lower = safeLower(pairInfo?.token0);
+        const inputToken0Lower = safeLower(token0Address || "");
+        if (!pairToken0Lower || !inputToken0Lower) return;
         const reserveForToken0 =
           pairToken0Lower === inputToken0Lower
             ? pairInfo.reserve0
@@ -1516,6 +1517,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       }
 
       const router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
+      const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, signer);
 
       const parsed0 = safeParseUnits(
         amount0.toString().replace(",", "."),
@@ -1531,8 +1533,31 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
-      // Higher cap to cover first-time pair deployment gas on this testnet.
-      const safeGasLimit = 12_000_000n;
+      // Higher caps to cover first-time pair deployment gas on this testnet.
+      const safeGasLimitCreate = 15_000_000n;
+      const safeGasLimit = 8_000_000n;
+
+      // Ensure the pair is deployed before attempting addLiquidity; router sometimes forwards
+      // limited gas when creating a new pair which can cause silent out-of-gas reverts.
+      const zeroAddr = "0x0000000000000000000000000000000000000000";
+      let pairAddr = await factory.getPair(token0Address, token1Address);
+      if (!pairAddr || pairAddr === zeroAddr) {
+        setActionStatus("Deploying pool...");
+        try {
+          const txCreate = await factory.createPair(token0Address, token1Address, {
+            gasLimit: safeGasLimitCreate,
+          });
+          await txCreate.wait();
+        } catch (err) {
+          const msg = (err?.message || "").toLowerCase();
+          if (!msg.includes("pair exists")) {
+            throw err;
+          }
+        }
+        pairAddr = await factory.getPair(token0Address, token1Address);
+        setPairNotDeployed(false);
+        setPairLiveTick((t) => t + 1);
+      }
 
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
