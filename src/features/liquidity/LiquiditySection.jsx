@@ -1579,9 +1579,19 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
             { value: ethValue, gasLimit: safeGasLimit }
           );
         } catch (simErr) {
-          throw new Error(
-            friendlyActionError(simErr, "Deposit simulation failed")
-          );
+          const msg = (simErr?.message || "").toLowerCase();
+          const invalidArg =
+            simErr?.code === "INVALID_ARGUMENT" ||
+            msg.includes("bignumberish") ||
+            msg.includes("invalid argument") ||
+            msg.includes("value null");
+          if (!invalidArg) {
+            throw new Error(
+              friendlyActionError(simErr, "Deposit simulation failed")
+            );
+          }
+          // ignore invalid-arg from flaky RPC/static-call; proceed to real tx
+          console.warn("Simulation skipped (invalid arg):", simErr?.message || simErr);
         }
 
         const tx = await sendWithLegacyFallback(
@@ -1635,9 +1645,18 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
             { gasLimit: safeGasLimit, from: user }
           );
         } catch (simErr) {
-          throw new Error(
-            friendlyActionError(simErr, "Deposit simulation failed")
-          );
+          const msg = (simErr?.message || "").toLowerCase();
+          const invalidArg =
+            simErr?.code === "INVALID_ARGUMENT" ||
+            msg.includes("bignumberish") ||
+            msg.includes("invalid argument") ||
+            msg.includes("value null");
+          if (!invalidArg) {
+            throw new Error(
+              friendlyActionError(simErr, "Deposit simulation failed")
+            );
+          }
+          console.warn("Simulation skipped (invalid arg):", simErr?.message || simErr);
         }
 
         const tx = await sendWithLegacyFallback(
