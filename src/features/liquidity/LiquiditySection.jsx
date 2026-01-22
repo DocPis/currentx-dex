@@ -87,6 +87,14 @@ const formatUsdPrice = (v) => {
   return `$${num.toFixed(6)}`;
 };
 
+const safeParseUnits = (value, decimals) => {
+  try {
+    return parseUnits(value, decimals);
+  } catch {
+    return null;
+  }
+};
+
 const derivePoolActivity = (pool, stats = {}) => {
   if (pool?.active === true) return true;
   if (pool?.active === false) return false;
@@ -1499,14 +1507,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         simProvider
       );
 
-      const parsed0 = parseUnits(
-        amount0.toString(),
+      const parsed0 = safeParseUnits(
+        amount0.toString().replace(",", "."),
         token0Meta?.decimals ?? 18
       );
-      const parsed1 = parseUnits(
-        amount1.toString(),
+      const parsed1 = safeParseUnits(
+        amount1.toString().replace(",", "."),
         token1Meta?.decimals ?? 18
       );
+      if (!parsed0 || !parsed1) {
+        throw new Error("Invalid amount format. Use dot for decimals.");
+      }
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
