@@ -41,7 +41,8 @@ const formatNumber = (v) => {
   if (abs >= 1_000_000) return `~$${(num / 1_000_000).toFixed(2)}M`;
   if (abs >= 1_000) return `~$${(num / 1_000).toFixed(2)}K`;
   if (abs >= 1) return `~$${num.toFixed(2)}`;
-  return `~$${num.toFixed(4)}`;
+  if (abs > 0) return "~$0";
+  return "~$0";
 };
 
 const formatTokenBalance = (v) => {
@@ -222,7 +223,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
   const [showTokenList, setShowTokenList] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
-  const toastTimerRef = useRef(null);
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
@@ -1689,7 +1689,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
   const handleWithdraw = async () => {
     try {
-      setActionStatus("");
+      setActionStatus(null);
       setActionLoading(true);
       const lpAmount = withdrawLp ? Number(withdrawLp) : 0;
       if (lpAmount <= 0) throw new Error("Enter LP amount to withdraw");
@@ -2168,7 +2168,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                       onChange={(e) => {
                         setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
                         setDepositToken0(e.target.value);
-                        if (actionStatus) setActionStatus("");
+                        if (actionStatus) setActionStatus(null);
                       }}
                       placeholder={`${token0Meta?.symbol || "Token A"} amount`}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
@@ -2178,7 +2178,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                       onChange={(e) => {
                         setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
                         setDepositToken1(e.target.value);
-                        if (actionStatus) setActionStatus("");
+                        if (actionStatus) setActionStatus(null);
                       }}
                       placeholder={`${token1Meta?.symbol || "Token B"} amount`}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
@@ -2211,7 +2211,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                       value={withdrawLp}
                       onChange={(e) => {
                         setWithdrawLp(e.target.value);
-                        if (actionStatus) setActionStatus("");
+                        if (actionStatus) setActionStatus(null);
                       }}
                       disabled={!hasLpBalance}
                       placeholder={hasLpBalance ? "LP tokens" : "No LP to withdraw"}
@@ -2276,27 +2276,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                   {depositQuoteError && (
                     <div className="px-2 py-1.5 rounded border border-rose-500/30 bg-transparent text-rose-200">
                       {depositQuoteError}
-                    </div>
-                  )}
-                  {actionStatus && (
-                    <div
-                      className={`px-2 py-1.5 rounded border bg-transparent ${
-                        actionStatus.variant === "success"
-                          ? "border-slate-700/60 text-slate-200"
-                          : "border-rose-500/30 text-rose-200"
-                      }`}
-                    >
-                      <div>{actionStatus.message}</div>
-                      {actionStatus.hash && (
-                        <a
-                          href={`${EXPLORER_BASE_URL}/tx/${actionStatus.hash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-sky-400 hover:text-sky-300 underline"
-                        >
-                          View on {EXPLORER_LABEL}
-                        </a>
-                      )}
                     </div>
                   )}
                   {subgraphError && (
@@ -2688,6 +2667,96 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {actionStatus && (
+        <div className="fixed left-4 bottom-4 z-50 max-w-sm">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => {
+              if (actionStatus?.hash) {
+                window.open(
+                  `${EXPLORER_BASE_URL}/tx/${actionStatus.hash}`,
+                  "_blank",
+                  "noopener,noreferrer"
+                );
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                if (actionStatus?.hash) {
+                  window.open(
+                    `${EXPLORER_BASE_URL}/tx/${actionStatus.hash}`,
+                    "_blank",
+                    "noopener,noreferrer"
+                  );
+                }
+              }
+            }}
+            className={`group relative flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-sm cursor-pointer transition ${
+              actionStatus.variant === "success"
+                ? "bg-emerald-900/80 border-emerald-500/50 text-emerald-50 hover:border-emerald-400/70"
+                : actionStatus.variant === "pending"
+                ? "bg-slate-900/80 border-slate-700/60 text-slate-100 hover:border-slate-500/70"
+                : "bg-rose-900/80 border-rose-500/50 text-rose-50 hover:border-rose-400/70"
+            }`}
+          >
+            <div
+              className={`mt-0.5 h-8 w-8 rounded-xl flex items-center justify-center shadow-inner shadow-black/30 ${
+                actionStatus.variant === "success"
+                  ? "bg-emerald-600/50 text-emerald-100"
+                  : actionStatus.variant === "pending"
+                  ? "bg-slate-700/60 text-slate-200"
+                  : "bg-rose-600/50 text-rose-100"
+              }`}
+            >
+              {actionStatus.variant === "success" ? (
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-4 w-4">
+                  <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              ) : actionStatus.variant === "pending" ? (
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 animate-spin">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" strokeOpacity="0.35" />
+                  <path d="M21 12a9 9 0 00-9-9" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="h-4 w-4">
+                  <path d="M6 6l12 12M6 18L18 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              )}
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold">
+                {actionStatus.variant === "success"
+                  ? "Transaction confirmed"
+                  : actionStatus.variant === "pending"
+                  ? "Working..."
+                  : "Transaction failed"}
+              </div>
+              <div className="text-xs text-slate-200/90 mt-0.5">
+                {actionStatus.message}
+              </div>
+              {actionStatus.hash && (
+                <div className="text-[11px] text-sky-200 underline mt-1">
+                  Open on {EXPLORER_LABEL}
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActionStatus(null);
+              }}
+              className="ml-2 text-sm text-slate-300 hover:text-white"
+              aria-label="Dismiss"
+            >
+              X
+            </button>
           </div>
         </div>
       )}
