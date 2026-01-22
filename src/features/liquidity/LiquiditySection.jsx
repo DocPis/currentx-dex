@@ -109,7 +109,8 @@ const derivePoolActivity = (pool, stats = {}) => {
 
 const compactRpcMessage = (raw, fallback) => {
   if (!raw) return fallback;
-  const stripped = raw
+  const rawStr = typeof raw === "string" ? raw : String(raw || "");
+  const stripped = rawStr
     .replace(/\{.*$/s, "")
     .replace(/\(error=.*$/i, "")
     .trim();
@@ -153,7 +154,8 @@ const friendlyActionError = (e, actionLabel = "Action") => {
     e?.message ||
     e?.error?.message ||
     "";
-  const lower = raw.toLowerCase();
+  const rawStr = typeof raw === "string" ? raw : String(raw || "");
+  const lower = rawStr.toLowerCase();
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
@@ -171,7 +173,7 @@ const friendlyActionError = (e, actionLabel = "Action") => {
     return `${actionLabel} failed due to RPC error. Switch RPC in wallet or retry.`;
   }
   return compactRpcMessage(
-    raw,
+    rawStr,
     `${actionLabel} could not be completed. Please retry.`
   );
 };
