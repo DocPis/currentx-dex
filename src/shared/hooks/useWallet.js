@@ -299,12 +299,9 @@ export function useWallet() {
     }
   };
 
-  const isOnActiveNetwork = chainId === NORMALIZED_ACTIVE_CHAIN_ID;
-
   return {
     address,
     chainId,
-    isOnActiveNetwork,
     connect,
     disconnect,
     activeNetwork,

@@ -9,7 +9,7 @@ import {
 
 export default function Header({
   address,
-  isOnActiveNetwork,
+  chainId,
   onConnect,
   onSwitchWallet,
   onDisconnect,
@@ -45,11 +45,17 @@ export default function Header({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [menuOpen, networkMenuOpen]);
 
-  const shortAddress = address
-    ? `${address.slice(0, 6)}...${address.slice(-4)}`
-    : "";
-  const isWrongNetwork = Boolean(address && !isOnActiveNetwork);
-  const networkStatus = address ? (isOnActiveNetwork ? "ok" : "warn") : "idle";
+  const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "";
+  const normalizedChainId = (chainId || "").toLowerCase();
+  const uiChainId = (activeNetwork?.chainIdHex || "").toLowerCase();
+  const isOnUiNetwork = Boolean(
+    address &&
+      normalizedChainId &&
+      uiChainId &&
+      normalizedChainId === uiChainId
+  );
+  const isWrongNetwork = Boolean(address && !isOnUiNetwork);
+  const networkStatus = address ? (isOnUiNetwork ? "ok" : "warn") : "idle";
   const networkDotClass =
     networkStatus === "warn"
       ? "bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.75)]"
