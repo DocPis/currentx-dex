@@ -189,7 +189,7 @@ export async function getV2PairReserves(
   const pairAddress =
     pairAddressOverride || (await factory.getPair(tokenA, tokenB));
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
-    throw new Error("Pair not found on MegaETH (not deployed yet)");
+    return null;
   }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
@@ -202,7 +202,7 @@ export async function getV2PairReserves(
     token0 = await pair.token0();
     token1 = await pair.token1();
   } catch {
-    throw new Error("Pair not found on MegaETH (not deployed yet)");
+    return null;
   }
 
   return {

@@ -9,6 +9,12 @@ const SUBGRAPH_CACHE_TTL_MS = 20000;
 const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
 
+// Disable subgraph on non-mainnet to avoid CORS/429 issues from public endpoints.
+if (activeNet.id && activeNet.id !== "mainnet") {
+  SUBGRAPH_URL = "";
+  SUBGRAPH_API_KEY = "";
+}
+
 // Fallback to global env when missing (align behavior across networks).
 if (!SUBGRAPH_URL) {
   SUBGRAPH_URL = env.VITE_UNIV2_SUBGRAPH || "";

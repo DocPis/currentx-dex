@@ -152,6 +152,9 @@ const friendlyActionError = (e, actionLabel = "Action") => {
   if (lower.includes("user denied") || lower.includes("rejected")) {
     return `${actionLabel} was rejected in your wallet. Please approve to continue.`;
   }
+  if (lower.includes("internal json-rpc error")) {
+    return `${actionLabel} failed due to RPC error. Switch RPC in wallet or retry.`;
+  }
   return compactRpcMessage(
     raw,
     `${actionLabel} could not be completed. Please retry.`
@@ -1482,6 +1485,12 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         UNIV2_ROUTER_ABI,
         signer
       );
+      const simProvider = await getRpcProviderWithRetry();
+      const simRouter = new Contract(
+        UNIV2_ROUTER_ADDRESS,
+        UNIV2_ROUTER_ABI,
+        simProvider
+      );
 
       const parsed0 = parseUnits(
         amount0.toString(),
@@ -1551,16 +1560,16 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
         const feeOpts = await buildFeeOpts(ethValue);
 
-        // Dry-run to surface revert reasons before spending gas
+        // Dry-run to surface revert reasons before spending gas (use RPC provider to avoid wallet RPC flakiness)
         try {
-          await router.addLiquidityETH.staticCall(
+          await simRouter.addLiquidityETH.staticCall(
             tokenAddress,
             tokenAmount,
             0,
             0,
             user,
             deadline,
-            { ...feeOpts.eip1559, value: ethValue }
+            { value: ethValue, gasLimit: safeGasLimit }
           );
         } catch (simErr) {
           throw new Error(
@@ -1605,9 +1614,9 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
         const feeOpts = await buildFeeOpts();
 
-        // Dry-run to surface revert reasons before spending gas
+        // Dry-run to surface revert reasons before spending gas (use RPC provider to avoid wallet RPC flakiness)
         try {
-          await router.addLiquidity.staticCall(
+          await simRouter.addLiquidity.staticCall(
             token0Address,
             token1Address,
             parsed0,
@@ -1616,7 +1625,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
             0,
             user,
             deadline,
-            feeOpts.eip1559
+            { gasLimit: safeGasLimit, from: user }
           );
         } catch (simErr) {
           throw new Error(
