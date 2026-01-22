@@ -1149,10 +1149,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     try {
       const symbol0 = token0Meta?.symbol || selectedPool?.token0Symbol;
       const symbol1 = token1Meta?.symbol || selectedPool?.token1Symbol;
+      if (!symbol0 || !symbol1) return;
 
       const findWalletBalance = (sym) => {
         if (!sym || !walletBalances) return undefined;
-        const lower = sym.toLowerCase();
+        const lower = String(sym).toLowerCase();
         const matchKey = Object.keys(walletBalances).find(
           (k) => k.toLowerCase() === lower
         );
@@ -1188,16 +1189,22 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       // Use on-chain reserves ratio only if we have decimals for both sides; otherwise fall back to simple percentages.
       const dec0 =
-        (token0Address && tokenDecimalsCache.current[token0Address.toLowerCase()]) ??
+        (token0Address &&
+          tokenDecimalsCache.current[
+            (token0Address.toLowerCase ? token0Address.toLowerCase() : token0Address)
+          ]) ??
         token0Meta?.decimals ??
         18;
       const dec1 =
-        (token1Address && tokenDecimalsCache.current[token1Address.toLowerCase()]) ??
+        (token1Address &&
+          tokenDecimalsCache.current[
+            (token1Address.toLowerCase ? token1Address.toLowerCase() : token1Address)
+          ]) ??
         token1Meta?.decimals ??
         18;
 
       if (hasPairInfo && Number.isFinite(dec0) && Number.isFinite(dec1)) {
-        const pairToken0Lower = pairInfo.token0.toLowerCase();
+        const pairToken0Lower = pairInfo.token0?.toLowerCase?.();
         const inputToken0Lower = (token0Address || "").toLowerCase();
         const reserveForToken0 =
           pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1;
