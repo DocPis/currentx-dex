@@ -1429,7 +1429,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
-      const safeGasLimit = 900000n;
+      // Higher cap to cover first-time pair deployment gas on this testnet.
+      const safeGasLimit = 4500000n;
       const buildFeeOpts = async (valueOverride = null) => {
         const feeData = await provider.getFeeData();
         const base = { gasLimit: safeGasLimit };
