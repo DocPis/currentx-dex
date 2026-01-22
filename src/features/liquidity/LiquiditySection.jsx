@@ -98,6 +98,9 @@ const compactRpcMessage = (raw, fallback) => {
   ) {
     return "RPC rate-limited. Switch RPC or retry in a few seconds.";
   }
+  if (lower.includes("failed to fetch") || lower.includes("network error")) {
+    return "RPC unreachable from your wallet. Switch RPC in network settings or retry.";
+  }
   if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("etimedout")) {
     return "RPC timeout. Retry or switch to a faster RPC.";
   }

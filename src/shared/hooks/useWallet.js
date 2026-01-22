@@ -16,7 +16,8 @@ const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
 const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
 const ACTIVE_NETWORK_NAME = activeNetwork?.name || "MegaETH";
 const ACTIVE_EXPLORER = activeNetwork?.explorer || "";
-const ACTIVE_RPC = (activeNetwork?.rpcUrls && activeNetwork.rpcUrls[0]) || "";
+const ACTIVE_RPC_LIST = (activeNetwork?.rpcUrls || []).filter(Boolean);
+const ACTIVE_RPC = ACTIVE_RPC_LIST[0] || "";
 
 const isTrustWalletProvider = (provider) => {
   const name =
@@ -155,7 +156,7 @@ export function useWallet() {
                   symbol: "ETH",
                   decimals: 18,
                 },
-                rpcUrls: [ACTIVE_RPC].filter(Boolean),
+                rpcUrls: ACTIVE_RPC_LIST,
                 blockExplorerUrls: ACTIVE_EXPLORER ? [ACTIVE_EXPLORER] : [],
               },
             ],
