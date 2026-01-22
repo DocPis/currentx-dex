@@ -1502,17 +1502,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         );
       }
 
-      const router = new Contract(
-        UNIV2_ROUTER_ADDRESS,
-        UNIV2_ROUTER_ABI,
-        signer
-      );
-      const simProvider = await getRpcProviderWithRetry();
-      const simRouter = new Contract(
-        UNIV2_ROUTER_ADDRESS,
-        UNIV2_ROUTER_ABI,
-        simProvider
-      );
+      const router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
 
       const parsed0 = safeParseUnits(
         amount0.toString().replace(",", "."),
@@ -1529,43 +1519,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       // Higher cap to cover first-time pair deployment gas on this testnet.
-      const safeGasLimit = 4500000n;
-      const buildFeeOpts = async (valueOverride = null) => {
-        const feeData = await provider.getFeeData();
-        const base = { gasLimit: safeGasLimit };
-        if (valueOverride !== null) base.value = valueOverride;
-        const eip1559 = { ...base };
-        const legacy = { ...base };
-        if (feeData?.maxFeePerGas && feeData?.maxPriorityFeePerGas) {
-          eip1559.maxFeePerGas = feeData.maxFeePerGas;
-          eip1559.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas;
-        }
-        if (feeData?.gasPrice) {
-          legacy.gasPrice = feeData.gasPrice;
-        } else {
-          legacy.gasPrice = parseUnits("2", "gwei");
-        }
-        return { eip1559, legacy };
-      };
-      const sendWithLegacyFallback = async (fn, args, feeOpts) => {
-        try {
-          return await fn(...args, feeOpts.eip1559);
-        } catch (err) {
-          const msg = (err?.message || "").toLowerCase();
-          const code = err?.code ?? err?.error?.code ?? err?.data?.code;
-          const retry =
-            msg.includes("coalesce") ||
-            msg.includes("could not") ||
-            msg.includes("eip-1559") ||
-            msg.includes("maxfeepergas") ||
-            msg.includes("base fee") ||
-            msg.includes("intrinsic") ||
-            msg.includes("gas price") ||
-            code === -32603;
-          if (!retry) throw err;
-          return fn(...args, feeOpts.legacy);
-        }
-      };
+      const safeGasLimit = 4_500_000n;
 
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
@@ -1583,39 +1537,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
-        const feeOpts = await buildFeeOpts(ethValue);
-
-        // Dry-run to surface revert reasons before spending gas (use RPC provider to avoid wallet RPC flakiness)
-        try {
-          await simRouter.addLiquidityETH.staticCall(
-            tokenAddress,
-            tokenAmount,
-            0,
-            0,
-            user,
-            deadline,
-            { value: ethValue, gasLimit: safeGasLimit }
-          );
-        } catch (simErr) {
-          const msg = (simErr?.message || "").toLowerCase();
-          const invalidArg =
-            simErr?.code === "INVALID_ARGUMENT" ||
-            msg.includes("bignumberish") ||
-            msg.includes("invalid argument") ||
-            msg.includes("value null");
-          if (!invalidArg) {
-            throw new Error(
-              friendlyActionError(simErr, "Deposit simulation failed")
-            );
-          }
-          // ignore invalid-arg from flaky RPC/static-call; proceed to real tx
-          console.warn("Simulation skipped (invalid arg):", simErr?.message || simErr);
-        }
-
-        const tx = await sendWithLegacyFallback(
-          router.addLiquidityETH,
-          [tokenAddress, tokenAmount, 0, 0, user, deadline],
-          feeOpts
+        const tx = await router.addLiquidityETH(
+          tokenAddress,
+          tokenAmount,
+          0,
+          0,
+          user,
+          deadline,
+          { value: ethValue, gasLimit: safeGasLimit }
         );
         const receipt = await tx.wait();
         setActionStatus({
@@ -1647,40 +1576,16 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           ).wait();
         }
 
-        const feeOpts = await buildFeeOpts();
-
-        // Dry-run to surface revert reasons before spending gas (use RPC provider to avoid wallet RPC flakiness)
-        try {
-          await simRouter.addLiquidity.staticCall(
-            token0Address,
-            token1Address,
-            parsed0,
-            parsed1,
-            0,
-            0,
-            user,
-            deadline,
-            { gasLimit: safeGasLimit, from: user }
-          );
-        } catch (simErr) {
-          const msg = (simErr?.message || "").toLowerCase();
-          const invalidArg =
-            simErr?.code === "INVALID_ARGUMENT" ||
-            msg.includes("bignumberish") ||
-            msg.includes("invalid argument") ||
-            msg.includes("value null");
-          if (!invalidArg) {
-            throw new Error(
-              friendlyActionError(simErr, "Deposit simulation failed")
-            );
-          }
-          console.warn("Simulation skipped (invalid arg):", simErr?.message || simErr);
-        }
-
-        const tx = await sendWithLegacyFallback(
-          router.addLiquidity,
-          [token0Address, token1Address, parsed0, parsed1, 0, 0, user, deadline],
-          feeOpts
+        const tx = await router.addLiquidity(
+          token0Address,
+          token1Address,
+          parsed0,
+          parsed1,
+          0,
+          0,
+          user,
+          deadline,
+          { gasLimit: safeGasLimit }
         );
         const receipt = await tx.wait();
         setActionStatus({
