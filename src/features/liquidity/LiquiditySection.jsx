@@ -6,6 +6,7 @@ import {
   getProvider,
   getReadOnlyProvider,
   getV2PairReserves,
+  rotateRpcProvider,
   WETH_ADDRESS,
   USDC_ADDRESS,
   UNIV2_ROUTER_ADDRESS,
@@ -267,7 +268,24 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     const loadBasePools = async () => {
       setPoolStatsReady(false);
       try {
-        const provider = getReadOnlyProvider();
+        let provider = getReadOnlyProvider(false, true);
+        let attempts = 0;
+        while (attempts < 2) {
+          try {
+            // sanity check: ensure we're on the active chain
+            const net = await provider.getNetwork();
+            const activeChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
+            if (activeChain && Number(net?.chainId || 0) !== activeChain) {
+              throw new Error("Wrong RPC chain");
+            }
+            break;
+          } catch (err) {
+            attempts += 1;
+            rotateRpcProvider();
+            provider = getReadOnlyProvider(true, true);
+            if (attempts >= 2) throw err;
+          }
+        }
         const factory = new Contract(
           UNIV2_FACTORY_ADDRESS,
           UNIV2_FACTORY_ABI,
