@@ -87,6 +87,8 @@ const formatUsdPrice = (v) => {
   return `$${num.toFixed(6)}`;
 };
 
+const safeLower = (v) => (typeof v === "string" ? v.toLowerCase() : "");
+
 const safeParseUnits = (value, decimals) => {
   try {
     return parseUnits(value, decimals);
@@ -554,12 +556,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const pairIdOverride = updates[pool.id]?.pairId;
         try {
           const provider = await getRpcProviderWithRetry();
-          const { reserve0, reserve1, token0, pairAddress } = await getV2PairReserves(
+          const reserves = await getV2PairReserves(
             provider,
             token0Addr,
             token1Addr,
             pairIdOverride
           );
+          if (!reserves) return;
+          const { reserve0, reserve1, token0, pairAddress } = reserves;
           const token0IsA = token0.toLowerCase() === token0Addr.toLowerCase();
           const resA = token0IsA ? reserve0 : reserve1;
           const resB = token0IsA ? reserve1 : reserve0;
@@ -931,6 +935,13 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         pairInfo ||
         (await getV2PairReserves(provider, token0Address, token1Address, pairIdOverride));
 
+      if (!resolved || !resolved.pairAddress) {
+        setPairNotDeployed(true);
+        setLpBalance(null);
+        setLpBalanceError("");
+        return;
+      }
+
       const pairErc20 = new Contract(resolved.pairAddress, ERC20_ABI, provider);
       const decimals =
         typeof pairErc20.decimals === "function"
@@ -1221,8 +1232,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         18;
 
       if (hasPairInfo && Number.isFinite(dec0) && Number.isFinite(dec1)) {
-        const pairToken0Lower = pairInfo.token0?.toLowerCase?.();
-        const inputToken0Lower = (token0Address || "").toLowerCase();
+        const pairToken0Lower = safeLower(pairInfo.token0);
+        const inputToken0Lower = safeLower(token0Address || "");
         const reserveForToken0 =
           pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1;
         const reserveForToken1 =
