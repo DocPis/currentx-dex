@@ -1,5 +1,10 @@
 // src/config/web3.js
-import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
+import {
+  BrowserProvider,
+  Contract,
+  FallbackProvider,
+  JsonRpcProvider,
+} from "ethers";
 import {
   ERC20_ABI,
   HIGH_PRECISION_TIMESTAMP_ORACLE_ABI,
@@ -77,6 +82,23 @@ const getProviderForUrl = (url) => {
   return provider;
 };
 
+let fallbackProvider = null;
+const getFallbackProvider = () => {
+  if (fallbackProvider) return fallbackProvider;
+  const providers = RPC_POOL.map((url, idx) => {
+    const prov = getProviderForUrl(url);
+    return {
+      provider: prov,
+      priority: idx + 1, // keep declared order
+      weight: 1,
+      stallTimeout: 800, // race slow ones quickly
+    };
+  }).filter((p) => p.provider);
+  // quorum=1 to succeed if any RPC responds
+  fallbackProvider = new FallbackProvider(providers, 1);
+  return fallbackProvider;
+};
+
 let rpcIndex = 0;
 
 export function getReadOnlyProvider(preferNext = false, forceRpc = false) {
@@ -88,9 +110,9 @@ export function getReadOnlyProvider(preferNext = false, forceRpc = false) {
       // fallback to RPC pool
     }
   }
-  if (preferNext) rpcIndex = (rpcIndex + 1) % RPC_POOL.length;
-  const url = RPC_POOL[rpcIndex] || RPC_POOL[0];
-  return getProviderForUrl(url);
+  // FallbackProvider will automatically cascade across all RPCs when one fails.
+  if (preferNext) rpcIndex = (rpcIndex + 1) % RPC_POOL.length; // retained for backwards compatibility
+  return getFallbackProvider();
 }
 
 export function rotateRpcProvider() {
