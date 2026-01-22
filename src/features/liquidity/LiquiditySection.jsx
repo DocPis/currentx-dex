@@ -813,11 +813,15 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const pairMissing =
     pairNotDeployed ||
     (pairError && pairError.toLowerCase().includes("pair not found"));
-  const activeNetworkConfig = useMemo(() => getActiveNetworkConfig(), []);
+  // Network badge matches active preset (updates after page reload on preset change).
+  const activeNetworkConfig = getActiveNetworkConfig();
   const networkBadgeLabel =
     activeNetworkConfig?.id === "mainnet"
       ? "MegaETH"
-      : activeNetworkConfig?.label || activeNetworkConfig?.name || "Network";
+      : activeNetworkConfig?.label ||
+        activeNetworkConfig?.name ||
+        activeNetworkConfig?.id ||
+        "Network";
 
   // Listen for Sync events on the active pair to refresh reserves instantly
   useEffect(() => {

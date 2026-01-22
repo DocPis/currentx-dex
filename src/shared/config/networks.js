@@ -147,6 +147,19 @@ const presets = [mainnetPreset, ...(testnetPreset ? [testnetPreset] : [])];
 
 let inMemoryPreset = null;
 
+const getInjectedPresetId = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const eth = window.ethereum;
+    const chainId = eth?.chainId || eth?.networkVersion || eth?.selectedProvider?.chainId;
+    if (!chainId) return null;
+    const preset = findPresetByChainId(chainId);
+    return preset?.id || null;
+  } catch {
+    return null;
+  }
+};
+
 const getUrlPresetId = () => {
   if (typeof window === "undefined") return null;
   try {
@@ -208,9 +221,10 @@ export const getAvailableNetworkPresets = () => presets;
 
 export const getActiveNetworkPresetId = () => {
   const fromUrl = getUrlPresetId();
+  const fromInjected = getInjectedPresetId();
   const fromEnv = (env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK || "").toLowerCase();
   const stored = (getStoredPresetId() || "").toLowerCase();
-  const desired = fromUrl || stored || fromEnv;
+  const desired = fromUrl || stored || fromInjected || fromEnv;
   const match = presets.find((p) => p.id === desired);
   return match ? match.id : "mainnet";
 };
