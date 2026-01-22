@@ -64,6 +64,7 @@ const resolveTokenAddress = (symbol, registry = TOKENS) => {
 const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
+const TOAST_DURATION_MS = 20000;
 
 // Simple concurrency limiter to speed up parallel RPC/subgraph calls without overloading endpoints.
 const runWithConcurrency = async (items, limit, worker) => {
@@ -207,7 +208,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [withdrawLp, setWithdrawLp] = useState("");
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
-  const [actionStatus, setActionStatus] = useState("");
+  const [actionStatus, setActionStatus] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [depositQuoteError, setDepositQuoteError] = useState("");
   const [lastEdited, setLastEdited] = useState("");
@@ -221,12 +222,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
   const [showTokenList, setShowTokenList] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
+  const toastTimerRef = useRef(null);
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
+  const toastTimerRef = useRef(null);
   const tokenRegistry = useMemo(() => {
     // Always include native ETH/WETH for convenience.
     const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
@@ -481,6 +484,28 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     setRegisteredCustomTokens(customTokens);
   }, [customTokens]);
 
+  // Auto-hide liquidity toast (aligned with Swap UX)
+  useEffect(() => {
+    if (!actionStatus || !actionStatus.message) return undefined;
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    const id = setTimeout(() => {
+      setActionStatus(null);
+      toastTimerRef.current = null;
+    }, TOAST_DURATION_MS);
+    toastTimerRef.current = id;
+    return () => {
+      clearTimeout(id);
+      if (toastTimerRef.current === id) toastTimerRef.current = null;
+    };
+  }, [actionStatus]);
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    []
+  );
+
   useEffect(() => {
     if (showTokenList) {
       setCustomTokens(getRegisteredCustomTokens());
@@ -657,7 +682,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     setWithdrawLp("");
     setDepositQuoteError("");
     setLastEdited("");
-    setActionStatus("");
+    setActionStatus(null);
     setPairError("");
     setPairNotDeployed(false);
     setPairInfo(null);
@@ -1177,7 +1202,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
   const applyDepositRatio = (percentage) => {
     if (!tokenBalances && !walletBalances) return;
-    if (actionStatus) setActionStatus("");
+    if (actionStatus) setActionStatus(null);
     try {
       const symbol0 = token0Meta?.symbol || selectedPool?.token0Symbol;
       const symbol1 = token1Meta?.symbol || selectedPool?.token1Symbol;
@@ -1291,7 +1316,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       return;
     }
     setWithdrawLp(formatUnits(targetRaw, lpDecimalsState || 18));
-    if (actionStatus) setActionStatus("");
+    if (actionStatus) setActionStatus(null);
   };
 
   const handleTokenPick = (token) => {
@@ -1468,7 +1493,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
   const handleDeposit = async () => {
     try {
-      setActionStatus("");
+      setActionStatus(null);
       setActionLoading(true);
 
       if (!selectedPool) {
@@ -1545,7 +1570,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const zeroAddr = "0x0000000000000000000000000000000000000000";
       let pairAddr = await factory.getPair(token0Address, token1Address);
       if (!pairAddr || pairAddr === zeroAddr) {
-        setActionStatus("Deploying pool...");
+        setActionStatus({ message: "Deploying pool...", variant: "pending" });
         try {
           const est = await factory
             .createPair.estimateGas(token0Address, token1Address)
@@ -1597,11 +1622,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           { value: ethValue, gasLimit: safeGasLimit }
         );
         const receipt = await tx.wait();
-        setActionStatus({
-          variant: "success",
-          hash: receipt.hash,
-          message: `Deposited ${getPoolLabel(selectedPool)}`,
-        });
+      setActionStatus({
+        variant: "success",
+        hash: receipt.hash,
+        message: `Deposited ${getPoolLabel(selectedPool)}`,
+      });
       } else {
         const token0Contract = new Contract(token0Address, ERC20_ABI, signer);
         const token1Contract = new Contract(token1Address, ERC20_ABI, signer);
