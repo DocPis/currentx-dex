@@ -1521,7 +1521,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       // Higher cap to cover first-time pair deployment gas on this testnet.
-      const safeGasLimit = 4_500_000n;
+      const safeGasLimit = 12_000_000n;
 
       if (usesNativeEth) {
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
