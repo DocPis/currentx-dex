@@ -1378,6 +1378,20 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         );
       }
 
+      // Preflight balance guard to avoid on-chain reverts (common when selecting WETH without wrapping ETH first).
+      const epsilon = 1e-9;
+      const checkBalance = (amt, bal, sym) => {
+        if (bal === null || bal === undefined) return;
+        if (amt - bal > epsilon) {
+          if (sym === "WETH") {
+            throw new Error("Insufficient WETH. Wrap ETH to WETH, then retry.");
+          }
+          throw new Error(`Insufficient ${sym} balance for this deposit.`);
+        }
+      };
+      checkBalance(amount0, tokenBalances?.token0, selectedPool.token0Symbol);
+      checkBalance(amount1, tokenBalances?.token1, selectedPool.token1Symbol);
+
         let provider;
         try {
           provider = await getProvider();
