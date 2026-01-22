@@ -35,11 +35,13 @@ const SYNC_TOPIC =
 const formatNumber = (v) => {
   const num = Number(v || 0);
   if (!Number.isFinite(num)) return "~$0.00";
-  const val = Math.max(0, num);
-  if (val >= 1_000_000_000) return `~$${(val / 1_000_000_000).toFixed(2)}B`;
-  if (val >= 1_000_000) return `~$${(val / 1_000_000).toFixed(2)}M`;
-  if (val >= 1_000) return `~$${(val / 1_000).toFixed(2)}K`;
-  return `~$${val.toFixed(2)}`;
+  const abs = Math.abs(num);
+  if (abs >= 1e14) return "~>999T";
+  if (abs >= 1_000_000_000) return `~$${(num / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `~$${(num / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `~$${(num / 1_000).toFixed(2)}K`;
+  if (abs >= 1) return `~$${num.toFixed(2)}`;
+  return `~$${num.toFixed(4)}`;
 };
 
 const formatTokenBalance = (v) => {
@@ -81,6 +83,7 @@ const runWithConcurrency = async (items, limit, worker) => {
 const formatUsdPrice = (v) => {
   const num = Number(v);
   if (!Number.isFinite(num) || num <= 0) return "--";
+  if (num >= 1e6) return `~$${(num / 1e6).toFixed(2)}M`;
   if (num >= 1_000) return `~$${num.toFixed(0)}`;
   if (num >= 1) return `$${num.toFixed(2)}`;
   if (num >= 0.01) return `$${num.toFixed(4)}`;
