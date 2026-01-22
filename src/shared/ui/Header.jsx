@@ -106,12 +106,12 @@ export default function Header({
                         return;
                       }
                       setActiveNetworkId(net.id);
-                      // Persist selection and force a reload on the same URL with ?network=<id>
+                      // Persist selection and reload while keeping the URL clean
                       setActiveNetworkPreset(net.id);
                       try {
                         const url = new URL(window.location.href);
-                        url.searchParams.set("network", net.id);
-                        window.location.href = url.toString();
+                        url.searchParams.delete("network");
+                        window.location.replace(url.toString());
                       } catch {
                         window.location.reload();
                       }

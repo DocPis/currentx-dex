@@ -150,9 +150,24 @@ let inMemoryPreset = null;
 const getUrlPresetId = () => {
   if (typeof window === "undefined") return null;
   try {
-    const params = new URLSearchParams(window.location.search || "");
-    const fromQuery = params.get(URL_PARAM_KEY);
-    if (fromQuery) return fromQuery.toLowerCase();
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get(URL_PARAM_KEY);
+    if (fromQuery) {
+      // Clean the address bar once we've captured the override.
+      url.searchParams.delete(URL_PARAM_KEY);
+      window.history.replaceState({}, "", url.toString());
+      const normalized = fromQuery.toLowerCase();
+      try {
+        if (typeof sessionStorage !== "undefined") {
+          sessionStorage.setItem(LOCAL_STORAGE_KEY, normalized);
+        } else {
+          inMemoryPreset = normalized;
+        }
+      } catch {
+        inMemoryPreset = normalized;
+      }
+      return normalized;
+    }
   } catch {
     // ignore malformed URLs
   }
@@ -209,12 +224,14 @@ export const setActiveNetworkPreset = (id) => {
   const match = presets.find((p) => p.id === id);
   if (!match) return;
 
-  // Reflect selection in the URL so reloads (and shared links) preserve the preset even if storage is blocked.
+  // Keep URL clean; rely on storage/in-memory state to persist the selection.
   if (typeof window !== "undefined") {
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set(URL_PARAM_KEY, id);
-      window.history.replaceState({}, "", url.toString());
+      if (url.searchParams.has(URL_PARAM_KEY)) {
+        url.searchParams.delete(URL_PARAM_KEY);
+        window.history.replaceState({}, "", url.toString());
+      }
     } catch {
       // ignore URL update errors
     }
