@@ -287,6 +287,29 @@ export function useWallet() {
     maybeSyncPreset();
   }, [chainId]);
 
+  // Fallback poller to keep chainId in sync even if chainChanged events are missed
+  useEffect(() => {
+    if (!sessionConnected) return undefined;
+    let cancelled = false;
+    const poll = async () => {
+      const eth = getInjectedEthereum();
+      if (!eth) return;
+      try {
+        const cid = normalizeChainId(await eth.request({ method: "eth_chainId" }));
+        if (cancelled) return;
+        setChainId((prev) => (cid && prev !== cid ? cid : prev || cid));
+      } catch {
+        // ignore polling errors
+      }
+    };
+    poll();
+    const id = setInterval(poll, 1500);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [sessionConnected]);
+
   const disconnect = () => {
     setAddress(null);
     setChainId(null);
