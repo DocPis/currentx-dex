@@ -160,6 +160,13 @@ const friendlyActionError = (e, actionLabel = "Action") => {
   if (lower.includes("user denied") || lower.includes("rejected")) {
     return `${actionLabel} was rejected in your wallet. Please approve to continue.`;
   }
+  if (
+    lower.includes("bignumberish") ||
+    lower.includes("invalid argument") ||
+    lower.includes("value null")
+  ) {
+    return `${actionLabel} failed: amount not readable by RPC. Re-enter amounts (use dot for decimals) or switch RPC and retry.`;
+  }
   if (lower.includes("internal json-rpc error")) {
     return `${actionLabel} failed due to RPC error. Switch RPC in wallet or retry.`;
   }
