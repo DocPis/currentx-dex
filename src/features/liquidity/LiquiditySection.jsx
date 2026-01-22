@@ -501,7 +501,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         // silently ignore farm fetch errors to avoid blocking pool stats
       }
 
-      await runWithConcurrency(trackedPools, 6, async (pool) => {
+      await runWithConcurrency(trackedPools, 4, async (pool) => {
         const token0Addr =
           pool.token0Address ||
           resolveTokenAddress(pool.token0Symbol, tokenRegistry);
@@ -533,7 +533,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         // On-chain TVL fallback (only if stable side present to avoid wrong USD calc)
         const pairIdOverride = updates[pool.id]?.pairId;
         try {
-          const provider = await getProvider();
+          const provider = await getRpcProviderWithRetry();
           const { reserve0, reserve1, token0, pairAddress } = await getV2PairReserves(
             provider,
             token0Addr,
@@ -823,6 +823,28 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         activeNetworkConfig?.id ||
         "Network";
 
+  // Shared helper: fetch a read-only RPC provider with rotation and chain guard.
+  const getRpcProviderWithRetry = useCallback(async () => {
+    let attempts = 0;
+    let provider = getReadOnlyProvider(false, true);
+    const targetChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
+    while (attempts < 4) {
+      try {
+        const net = await provider.getNetwork();
+        if (targetChain && Number(net?.chainId || 0) !== targetChain) {
+          throw new Error("Wrong RPC chain");
+        }
+        return provider;
+      } catch (err) {
+        attempts += 1;
+        rotateRpcProvider();
+        provider = getReadOnlyProvider(true, true);
+        if (attempts >= 4) throw err;
+      }
+    }
+    return provider;
+  }, []);
+
   // Listen for Sync events on the active pair to refresh reserves instantly
   useEffect(() => {
     const candidate =
@@ -877,7 +899,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       try {
         provider = await getProvider();
       } catch {
-        provider = getReadOnlyProvider(false, true);
+        provider = await getRpcProviderWithRetry();
       }
       const user = address || null;
       if (!user) {
