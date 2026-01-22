@@ -215,6 +215,15 @@ export const getActiveNetworkPresetId = () => {
   return match ? match.id : "mainnet";
 };
 
+export const findPresetByChainId = (chainIdHex) => {
+  if (!chainIdHex) return null;
+  const normalized =
+    typeof chainIdHex === "string"
+      ? chainIdHex.toLowerCase()
+      : `0x${Number(chainIdHex).toString(16)}`.toLowerCase();
+  return presets.find((p) => (p.chainIdHex || "").toLowerCase() === normalized) || null;
+};
+
 export const getActiveNetworkConfig = () => {
   const id = getActiveNetworkPresetId();
   return presets.find((p) => p.id === id) || mainnetPreset;

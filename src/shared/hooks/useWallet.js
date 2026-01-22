@@ -8,6 +8,9 @@ import {
 } from "../config/web3";
 import {
   getActiveNetworkConfig,
+  getActiveNetworkPresetId,
+  setActiveNetworkPreset,
+  findPresetByChainId,
 } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
@@ -272,6 +275,28 @@ export function useWallet() {
     }
     return primaryAccount;
   };
+
+  // Auto-switch app preset to match wallet chain (prevents showing mainnet labels while on testnet).
+  useEffect(() => {
+    const maybeSyncPreset = () => {
+      if (!chainId) return;
+      const preset = findPresetByChainId(chainId);
+      if (!preset) return;
+      const activeId = getActiveNetworkPresetId();
+      if (preset.id !== activeId) {
+        setActiveNetworkPreset(preset.id);
+        // Reload to re-evaluate static imports bound to the preset.
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.delete("network");
+          window.location.replace(url.toString());
+        } catch {
+          window.location.reload();
+        }
+      }
+    };
+    maybeSyncPreset();
+  }, [chainId]);
 
   const disconnect = () => {
     setAddress(null);
