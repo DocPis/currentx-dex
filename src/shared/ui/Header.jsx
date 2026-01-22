@@ -49,6 +49,19 @@ export default function Header({
     ? `${address.slice(0, 6)}...${address.slice(-4)}`
     : "";
   const isWrongNetwork = Boolean(address && !isOnActiveNetwork);
+  const networkStatus = address ? (isOnActiveNetwork ? "ok" : "warn") : "idle";
+  const networkDotClass =
+    networkStatus === "warn"
+      ? "bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.75)]"
+      : networkStatus === "ok"
+        ? "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.65)]"
+        : "bg-slate-500";
+  const networkPillClass =
+    networkStatus === "warn"
+      ? "border-amber-400/60 bg-amber-500/10 text-amber-100 hover:border-amber-300/80"
+      : networkStatus === "ok"
+        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:border-emerald-400/70"
+        : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500/70";
 
   return (
     <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617] relative z-20">
@@ -73,9 +86,9 @@ export default function Header({
           <button
             type="button"
             onClick={() => setNetworkMenuOpen((v) => !v)}
-            className="px-3 py-1.5 rounded-full text-xs font-semibold border border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:border-emerald-400/70 transition flex items-center gap-2"
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-2 ${networkPillClass}`}
           >
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.65)]" />
+            <span className={`h-2 w-2 rounded-full ${networkDotClass}`} />
             <span>{activeNetwork?.id === "mainnet" ? "MegaETH" : "Testnet"}</span>
             <svg
               className="h-3 w-3 text-emerald-200"
