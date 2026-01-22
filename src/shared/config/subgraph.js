@@ -8,9 +8,15 @@ let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
 const SUBGRAPH_CACHE_TTL_MS = 20000;
 const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
+const SUBGRAPH_PROXY =
+  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
+  "https://corsproxy.io/?";
+const disableTestnetSubgraph =
+  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_DISABLE_TESTNET_SUBGRAPH : "") ===
+  "true";
 
-// Disable subgraph on non-mainnet to avoid CORS/429 issues from public endpoints.
-if (activeNet.id && activeNet.id !== "mainnet") {
+// Allow testnet subgraph unless explicitly disabled via env flag
+if (activeNet.id === "testnet" && disableTestnetSubgraph) {
   SUBGRAPH_URL = "";
   SUBGRAPH_API_KEY = "";
 }
@@ -50,9 +56,11 @@ async function postSubgraph(query, variables = {}) {
   }
 
   let lastError = null;
+  let attemptedProxy = false;
   for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
     try {
-      const res = await fetch(SUBGRAPH_URL, {
+      const url = attemptedProxy ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_URL)}` : SUBGRAPH_URL;
+      const res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ query, variables }),
@@ -85,6 +93,13 @@ async function postSubgraph(query, variables = {}) {
         msg.includes("network") ||
         msg.includes("timeout") ||
         msg.includes("rate");
+      const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
+      if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
+        attemptedProxy = true;
+        // retry immediately with proxy
+        attempt -= 1;
+        continue;
+      }
       lastError = err;
       if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
         await sleep(250 * (attempt + 1));
