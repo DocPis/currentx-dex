@@ -63,6 +63,21 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
 
+// Simple concurrency limiter to speed up parallel RPC/subgraph calls without overloading endpoints.
+const runWithConcurrency = async (items, limit, worker) => {
+  if (!Array.isArray(items) || !items.length) return [];
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
+
 const formatUsdPrice = (v) => {
   const num = Number(v);
   if (!Number.isFinite(num) || num <= 0) return "--";
@@ -325,7 +340,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         };
 
         const poolsFromChain = [];
-        for (let i = 0; i < total; i += 1) {
+        const indices = Array.from({ length: total }, (_, i) => i);
+        await runWithConcurrency(indices, 6, async (i) => {
           try {
             const pairAddress = await factory.allPairs(i);
             const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);
@@ -357,7 +373,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           } catch {
             // ignore per-pair errors
           }
-        }
+        });
 
         const seen = new Set();
         const deduped = [];
@@ -485,14 +501,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         // silently ignore farm fetch errors to avoid blocking pool stats
       }
 
-      for (const pool of trackedPools) {
+      await runWithConcurrency(trackedPools, 6, async (pool) => {
         const token0Addr =
           pool.token0Address ||
           resolveTokenAddress(pool.token0Symbol, tokenRegistry);
         const token1Addr =
           pool.token1Address ||
           resolveTokenAddress(pool.token1Symbol, tokenRegistry);
-        if (!token0Addr || !token1Addr) continue;
+        if (!token0Addr || !token1Addr) return;
         if (!updates[pool.id]) updates[pool.id] = {};
 
         try {
@@ -579,7 +595,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
             setTvlError("");
           }
         }
-      }
+      });
 
       if (!cancelled && Object.keys(updates).length) {
         // attach farm emission APR if available
