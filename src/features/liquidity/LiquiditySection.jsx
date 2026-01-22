@@ -1534,7 +1534,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
       // Higher caps to cover first-time pair deployment gas on this testnet.
-      const safeGasLimitCreate = 15_000_000n;
+      const safeGasLimitCreate = 50_000_000n;
       const safeGasLimit = 8_000_000n;
 
       // Ensure the pair is deployed before attempting addLiquidity; router sometimes forwards
@@ -1551,7 +1551,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         } catch (err) {
           const msg = (err?.message || "").toLowerCase();
           if (!msg.includes("pair exists")) {
-            throw err;
+            // If we still OOG, bubble up with a clearer hint.
+            throw new Error(
+              `Pool deployment failed (gas ${safeGasLimitCreate.toString()}): ` +
+              (err?.message || "unknown error")
+            );
           }
         }
         pairAddr = await factory.getPair(token0Address, token1Address);
