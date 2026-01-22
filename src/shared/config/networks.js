@@ -147,7 +147,7 @@ const presets = [mainnetPreset, ...(testnetPreset ? [testnetPreset] : [])];
 
 let inMemoryPreset = null;
 
-const getInjectedPresetId = () => {
+export const getInjectedPresetId = () => {
   if (typeof window === "undefined") return null;
   try {
     const eth = window.ethereum;
@@ -221,10 +221,13 @@ export const getAvailableNetworkPresets = () => presets;
 
 export const getActiveNetworkPresetId = () => {
   const fromUrl = getUrlPresetId();
-  const fromInjected = getInjectedPresetId();
   const fromEnv = (env.VITE_DEFAULT_NETWORK_PRESET || env.VITE_DEFAULT_NETWORK || "").toLowerCase();
   const stored = (getStoredPresetId() || "").toLowerCase();
-  const desired = fromUrl || stored || fromInjected || fromEnv;
+  // Respect explicit user choice (URL override or stored selection) first,
+  // then fall back to env/default. We intentionally ignore injected wallet
+  // chain here so the UI can show a mismatch state instead of silently
+  // switching networks.
+  const desired = fromUrl || stored || fromEnv;
   const match = presets.find((p) => p.id === desired);
   return match ? match.id : "mainnet";
 };

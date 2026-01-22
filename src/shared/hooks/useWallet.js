@@ -8,13 +8,10 @@ import {
 } from "../config/web3";
 import {
   getActiveNetworkConfig,
-  getActiveNetworkPresetId,
-  setActiveNetworkPreset,
   findPresetByChainId,
 } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
-const NETWORK_STORAGE_KEY = "MEGAETH_NETWORK_PRESET";
 let activeNetwork = getActiveNetworkConfig();
 const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
 const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
@@ -49,20 +46,6 @@ const normalizeChainId = (value) => {
     return `0x${asNumber.toString(16)}`.toLowerCase();
   }
   return str.toLowerCase();
-};
-
-const hasStoredNetworkPreset = () => {
-  if (typeof window === "undefined") return false;
-  try {
-    return Boolean(
-      (typeof sessionStorage !== "undefined" &&
-        sessionStorage.getItem(NETWORK_STORAGE_KEY)) ||
-        (typeof localStorage !== "undefined" &&
-          localStorage.getItem(NETWORK_STORAGE_KEY))
-    );
-  } catch {
-    return false;
-  }
 };
 
 export function useWallet() {
@@ -297,18 +280,9 @@ export function useWallet() {
       if (!chainId) return;
       const preset = findPresetByChainId(chainId);
       if (!preset) return;
-      const activeId = getActiveNetworkPresetId();
-      if (preset.id !== activeId && !hasStoredNetworkPreset()) {
-        setActiveNetworkPreset(preset.id);
-        // Reload to re-evaluate static imports bound to the preset.
-        try {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("network");
-          window.location.replace(url.toString());
-        } catch {
-          window.location.reload();
-        }
-      }
+      // We intentionally do NOT auto-switch the UI preset to the wallet chain.
+      // This allows the header indicator to show a mismatch (amber) when the
+      // wallet and selected UI network differ.
     };
     maybeSyncPreset();
   }, [chainId]);
