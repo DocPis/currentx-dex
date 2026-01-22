@@ -1401,6 +1401,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const signer = await provider.getSigner();
         const user = await signer.getAddress();
 
+      // Guard against wrong preset (router missing on the connected chain)
+      const routerCode = await provider.getCode(UNIV2_ROUTER_ADDRESS);
+      if (!routerCode || routerCode === "0x") {
+        throw new Error(
+          "Router contract not deployed on this chain. Switch the app preset to the matching network."
+        );
+      }
+
       const router = new Contract(
         UNIV2_ROUTER_ADDRESS,
         UNIV2_ROUTER_ABI,
@@ -1473,6 +1481,24 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         }
 
         const feeOpts = await buildFeeOpts(ethValue);
+
+        // Dry-run to surface revert reasons before spending gas
+        try {
+          await router.addLiquidityETH.staticCall(
+            tokenAddress,
+            tokenAmount,
+            0,
+            0,
+            user,
+            deadline,
+            { ...feeOpts.eip1559, value: ethValue }
+          );
+        } catch (simErr) {
+          throw new Error(
+            friendlyActionError(simErr, "Deposit simulation failed")
+          );
+        }
+
         const tx = await sendWithLegacyFallback(
           router.addLiquidityETH,
           [tokenAddress, tokenAmount, 0, 0, user, deadline],
@@ -1509,6 +1535,26 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         }
 
         const feeOpts = await buildFeeOpts();
+
+        // Dry-run to surface revert reasons before spending gas
+        try {
+          await router.addLiquidity.staticCall(
+            token0Address,
+            token1Address,
+            parsed0,
+            parsed1,
+            0,
+            0,
+            user,
+            deadline,
+            feeOpts.eip1559
+          );
+        } catch (simErr) {
+          throw new Error(
+            friendlyActionError(simErr, "Deposit simulation failed")
+          );
+        }
+
         const tx = await sendWithLegacyFallback(
           router.addLiquidity,
           [token0Address, token1Address, parsed0, parsed1, 0, 0, user, deadline],
