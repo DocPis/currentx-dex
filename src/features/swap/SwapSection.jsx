@@ -253,6 +253,7 @@ export default function SwapSection({ balances }) {
   const [executionProof, setExecutionProof] = useState(null);
   const toastTimerRef = useRef(null);
   const copyTimerRef = useRef(null);
+  const executionClearRef = useRef(null);
   const quoteLockTimerRef = useRef(null);
   const pendingExecutionRef = useRef(null);
   const lastQuoteOutRef = useRef(null);
@@ -320,6 +321,15 @@ export default function SwapSection({ balances }) {
   const displayBuyAddress =
     (displayBuyMeta?.address || (buyToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+  const pushExecutionProof = useCallback((proof) => {
+    setExecutionProof(proof);
+    if (executionClearRef.current) clearTimeout(executionClearRef.current);
+    executionClearRef.current = setTimeout(() => {
+      setExecutionProof(null);
+      executionClearRef.current = null;
+    }, 20000);
+  }, []);
 
   const computeRoutePriceImpact = useCallback(
     async (provider, amountInWei, path) => {
@@ -709,6 +719,14 @@ export default function SwapSection({ balances }) {
     };
   }, [swapStatus]);
 
+  // Cleanup on unmount
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    if (executionClearRef.current) clearTimeout(executionClearRef.current);
+    if (quoteLockTimerRef.current) clearTimeout(quoteLockTimerRef.current);
+  }, []);
+
   const handleApprove = async () => {
     if (!approvalTarget || approvalTarget.symbol !== sellToken) return;
     try {
@@ -877,7 +895,7 @@ export default function SwapSection({ balances }) {
         const actualFloat = Number(formatUnits(actualValue, decimalsOut));
         const expectedFloat = Number(formatUnits(amountWei, decimalsOut));
   const grade = computeOutcomeGrade(expectedFloat, actualFloat, actualFloat);
-        setExecutionProof({
+        pushExecutionProof({
           expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
           executed: formatDisplayAmount(actualFloat, displayBuySymbol),
           minReceived: formatDisplayAmount(actualFloat, displayBuySymbol),
@@ -980,7 +998,7 @@ export default function SwapSection({ balances }) {
         : null;
       const grade = computeOutcomeGrade(expectedFloat, actualFloat, minFloat);
 
-      setExecutionProof({
+      pushExecutionProof({
         expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
         executed: formatDisplayAmount(actualFloat, displayBuySymbol),
         minReceived: formatDisplayAmount(minFloat, displayBuySymbol),
