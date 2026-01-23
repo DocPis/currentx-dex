@@ -195,26 +195,41 @@ export async function getV2PairReserves(
     return null;
   }
 
-  // Try multicall to grab token0/token1/reserves in one go
-  const canMc = await hasMulticall(provider).catch(() => false);
+  // Try multicall to grab token0/token1/reserves in one go (retry once with rotated RPC)
+  const tryMulticall = async (prov) => {
+    const calls = [
+      { target: pairAddress, callData: pairInterface.encodeFunctionData("token0", []) },
+      { target: pairAddress, callData: pairInterface.encodeFunctionData("token1", []) },
+      { target: pairAddress, callData: pairInterface.encodeFunctionData("getReserves", []) },
+    ];
+    const res = await multicall(calls, prov);
+    const dec = (idx, fn) =>
+      res[idx]?.success
+        ? pairInterface.decodeFunctionResult(fn, res[idx].returnData)
+        : null;
+    const token0 = dec(0, "token0")?.[0];
+    const token1 = dec(1, "token1")?.[0];
+    const reserves = dec(2, "getReserves");
+    if (token0 && token1 && reserves) {
+      const [reserve0, reserve1] = reserves;
+      return { pairAddress, reserve0, reserve1, token0, token1 };
+    }
+    return null;
+  };
+
+  let canMc = await hasMulticall(provider).catch(() => false);
   if (canMc) {
     try {
-      const calls = [
-        { target: pairAddress, callData: pairInterface.encodeFunctionData("token0", []) },
-        { target: pairAddress, callData: pairInterface.encodeFunctionData("token1", []) },
-        { target: pairAddress, callData: pairInterface.encodeFunctionData("getReserves", []) },
-      ];
-      const res = await multicall(calls, provider);
-      const dec = (idx, fn) =>
-        res[idx]?.success
-          ? pairInterface.decodeFunctionResult(fn, res[idx].returnData)
-          : null;
-      const token0 = dec(0, "token0")?.[0];
-      const token1 = dec(1, "token1")?.[0];
-      const reserves = dec(2, "getReserves");
-      if (token0 && token1 && reserves) {
-        const [reserve0, reserve1] = reserves;
-        return { pairAddress, reserve0, reserve1, token0, token1 };
+      const res = await tryMulticall(provider);
+      if (res) return res;
+    } catch {
+      // try rotate
+    }
+    try {
+      const alt = getReadOnlyProvider(true, true);
+      if (alt && (await hasMulticall(alt).catch(() => false))) {
+        const res = await tryMulticall(alt);
+        if (res) return res;
       }
     } catch {
       // fall through to direct reads

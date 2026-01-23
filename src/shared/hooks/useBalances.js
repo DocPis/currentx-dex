@@ -115,9 +115,17 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         }
 
         const next = { ...makeZeroBalances(), ETH: eth };
-        // Batch ERC20 decimals + balances via Multicall3 when available
+        // Batch ERC20 decimals + balances via Multicall3 when available (retry with RPC pool if wallet provider blocks getCode)
         const erc20Keys = tokenKeys.filter((k) => k !== "ETH");
-        const useMc = await hasMulticall(provider).catch(() => false);
+        let mcProvider = provider;
+        let useMc = await hasMulticall(mcProvider).catch(() => false);
+        if (!useMc) {
+          const alt = getReadOnlyProvider(true, true);
+          if (alt) {
+            mcProvider = alt;
+            useMc = await hasMulticall(mcProvider).catch(() => false);
+          }
+        }
         if (useMc && erc20Keys.length) {
           const iface = new Interface(ERC20_ABI);
           const callMeta = [];
@@ -142,10 +150,15 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
             });
           });
 
+          const runMc = async (prov) =>
+            multicall(callMeta.map((c) => ({ target: c.target, callData: c.callData })), prov);
+
           try {
-            const results = await withRpcRetry((prov) =>
-              multicall(callMeta.map((c) => ({ target: c.target, callData: c.callData })), prov)
-            );
+            let results = await withRpcRetry(() => runMc(mcProvider));
+            // If the first multicall fails (rate limit / signer-only provider), rotate once.
+            if (!results || !Array.isArray(results)) {
+              throw new Error("multicall returned empty");
+            }
             results.forEach((res, idx) => {
               const meta = callMeta[idx];
               if (!res.success) return;
@@ -170,7 +183,41 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
               }
             });
           } catch (err) {
-            console.warn("Multicall balances failed, falling back:", err?.message || err);
+            // Retry once with rotated RPC before giving up to per-token fallback
+            try {
+              mcProvider = swapProviderOnError();
+              const ok = await hasMulticall(mcProvider).catch(() => false);
+              if (ok) {
+                const results = await runMc(mcProvider);
+                results.forEach((res, idx) => {
+                  const meta = callMeta[idx];
+                  if (!res.success) return;
+                  try {
+                    if (meta.type === "decimals") {
+                      const dec = Number(iface.decodeFunctionResult("decimals", res.returnData)[0]);
+                      const lower = meta.target.toLowerCase();
+                      decimalsCache.current[lower] = Number.isFinite(dec)
+                        ? dec
+                        : tokenRegistry[meta.tokenKey]?.decimals;
+                    } else if (meta.type === "balance") {
+                      const raw = iface.decodeFunctionResult("balanceOf", res.returnData)[0];
+                      const token = tokenRegistry[meta.tokenKey];
+                      const lower = meta.target.toLowerCase();
+                      const dec =
+                        decimalsCache.current[lower] !== undefined
+                          ? decimalsCache.current[lower]
+                          : token?.decimals;
+                      const num = Number(formatUnits(raw, dec || 18));
+                      if (Number.isFinite(num)) next[meta.tokenKey] = num;
+                    }
+                  } catch {
+                    /* ignore decode errors */
+                  }
+                });
+              }
+            } catch {
+              console.warn("Multicall balances failed, falling back:", err?.message || err);
+            }
           }
         }
 

@@ -277,6 +277,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
+  const [slippageCap, setSlippageCap] = useState("3");
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // tracked LPs for realtime refresh
   const [liveRouteTick, setLiveRouteTick] = useState(0);
@@ -931,8 +932,14 @@ export default function SwapSection({ balances, address, chainId }) {
     Math.max(baseSlippagePct, safePriceImpact * 0.6 + safeVolatility * 0.45 + 0.35)
   );
   const protectedSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
-  const effectiveSlippagePct =
+  const autoSlippagePct =
     executionMode === "turbo" ? turboAutoSlippagePct : protectedSlippagePct;
+  const slippageCapPct = (() => {
+    const val = Number(slippageCap);
+    if (Number.isNaN(val) || val <= 0) return 0.5;
+    return Math.min(5, val);
+  })();
+  const effectiveSlippagePct = Math.min(autoSlippagePct, slippageCapPct);
   const slippageBps = (() => {
     if (Number.isNaN(effectiveSlippagePct) || effectiveSlippagePct < 0) return 50;
     return Math.min(5000, Math.round(effectiveSlippagePct * 100));
@@ -1590,10 +1597,23 @@ export default function SwapSection({ balances, address, chainId }) {
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
               </span>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Min received (slippage)</span>
-              <span className="font-semibold">{minReceivedDisplay}</span>
-            </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-slate-500 text-[11px]">Min received (slippage)</span>
+            <span className="font-semibold">{minReceivedDisplay}</span>
+            <span className="text-[11px] text-slate-400">
+              Effective slippage:{" "}
+              <span
+                className={
+                  effectiveSlippagePct > slippageCapPct * 0.95
+                    ? "text-amber-200"
+                    : "text-emerald-200"
+                }
+              >
+                {Number(effectiveSlippagePct || 0).toFixed(2)}%
+              </span>{" "}
+              (cap {slippageCapPct.toFixed(2)}%)
+            </span>
+          </div>
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Updated</span>
               <span className="inline-flex items-center gap-2 text-emerald-100">
@@ -1645,8 +1665,32 @@ export default function SwapSection({ balances, address, chainId }) {
                 />
               </div>
             </div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-slate-400">Cap slippage (%)</span>
+              <div className="flex items-center gap-2">
+                {[1, 3, 5].map((p) => (
+                  <button
+                    key={`cap-${p}`}
+                    type="button"
+                    onClick={() => setSlippageCap(String(p))}
+                    className={`px-2 py-1 rounded-lg text-[11px] border ${
+                      Number(slippageCap) === p
+                        ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-100"
+                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
+                    }`}
+                  >
+                    {p}%
+                  </button>
+                ))}
+                <input
+                  value={slippageCap}
+                  onChange={(e) => setSlippageCap(e.target.value)}
+                  className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
+                />
+              </div>
+            </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">Effective (mode)</span>
+              <span className="text-slate-500">Effettiva (auto & cap)</span>
               <span className="text-slate-100">
                 {Number(effectiveSlippagePct || 0).toFixed(2)}%{" "}
                 {executionMode === "turbo" ? "auto" : "protected"}

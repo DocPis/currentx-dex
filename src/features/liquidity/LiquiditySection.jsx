@@ -242,14 +242,23 @@ const fetchAllowances = async (provider, owner, spender, tokenAddresses = []) =>
   );
   const out = {};
   if (!uniques.length) return out;
-  const canMc = await hasMulticall(provider).catch(() => false);
+  let mcProvider = provider;
+  let canMc = await hasMulticall(mcProvider).catch(() => false);
+  if (!canMc) {
+    const alt = getReadOnlyProvider(true, true);
+    if (alt) {
+      mcProvider = alt;
+      canMc = await hasMulticall(mcProvider).catch(() => false);
+    }
+  }
   if (canMc) {
     try {
       const calls = uniques.map((addr) => ({
         target: addr,
         callData: iface.encodeFunctionData("allowance", [owner, spender]),
       }));
-      const res = await multicall(calls, provider);
+      let res = await multicall(calls, mcProvider);
+      if (!res || !Array.isArray(res)) throw new Error("multicall empty");
       res.forEach((r, idx) => {
         const addr = uniques[idx];
         if (!r.success) return;
@@ -260,8 +269,34 @@ const fetchAllowances = async (provider, owner, spender, tokenAddresses = []) =>
           /* ignore decode errors */
         }
       });
-    } catch {
-      // fallback handled below
+    } catch (err) {
+      // Retry once with rotated RPC before falling back to per-token queries
+      try {
+        const alt = getReadOnlyProvider(true, true);
+        if (alt) {
+          mcProvider = alt;
+          const ok = await hasMulticall(mcProvider).catch(() => false);
+          if (ok) {
+            const calls = uniques.map((addr) => ({
+              target: addr,
+              callData: iface.encodeFunctionData("allowance", [owner, spender]),
+            }));
+            const res = await multicall(calls, mcProvider);
+            res.forEach((r, idx) => {
+              const addr = uniques[idx];
+              if (!r.success) return;
+              try {
+                const decoded = iface.decodeFunctionResult("allowance", r.returnData)[0];
+                out[addr] = decoded;
+              } catch {
+                /* ignore decode errors */
+              }
+            });
+          }
+        }
+      } catch {
+        // final fallback handled below
+      }
     }
   }
   const missing = uniques.filter((a) => out[a] === undefined);
