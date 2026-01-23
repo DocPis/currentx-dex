@@ -1,6 +1,6 @@
 // src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, formatUnits, id, parseUnits } from "ethers";
+import { Contract, Interface, formatUnits, id, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -20,6 +20,7 @@ import {
   UNIV2_ROUTER_ABI,
   UNIV2_FACTORY_ABI,
 } from "../../shared/config/abis";
+import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CUSD", "USDm", "CRX", "MEGA"];
@@ -130,6 +131,15 @@ const findActualOutput = (receipt, targetAddress, userAddress, opts = {}) => {
   return observed;
 };
 
+const requireDecimals = (symbol, meta) => {
+  if (symbol === "ETH") return 18;
+  const dec = meta?.decimals;
+  if (dec === undefined || dec === null || Number.isNaN(dec)) {
+    throw new Error(`Missing decimals for ${symbol}. Reload tokens or re-add with decimals.`);
+  }
+  return dec;
+};
+
 const friendlySwapError = (e) => {
   const raw = e?.message || "";
   const lower = raw.toLowerCase();
@@ -217,12 +227,47 @@ const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
   return raw || "Quote unavailable right now. Retry or switch RPC.";
 };
 
-export default function SwapSection({ balances }) {
+const buildRealtimeProof = (
+  receipt,
+  { buyDecimals, buySymbol, routeLabels, slippagePct, minRaw, expectedRaw }
+) => {
+  const actual = receipt?.logs?.length
+    ? (() => {
+        const target = receipt.to?.toLowerCase?.() || "";
+        const log = receipt.logs.find((l) => (l?.address || "").toLowerCase() === target);
+        return null;
+      })()
+    : null;
+  return {
+    route: routeLabels,
+    slippage: slippagePct,
+    minReceived: minRaw ? formatDisplayAmount(Number(formatUnits(minRaw, buyDecimals)), buySymbol) : "--",
+    expected: expectedRaw
+      ? formatDisplayAmount(Number(formatUnits(expectedRaw, buyDecimals)), buySymbol)
+      : "--",
+  };
+};
+
+import { getActiveNetworkConfig } from "../../shared/config/networks";
+
+export default function SwapSection({ balances, address, chainId }) {
+  const normalizeChainHex = (value) => {
+    if (value === null || value === undefined) return null;
+    const str = String(value).trim();
+    if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase().replace(/^0x0+/, "0x");
+    const num = Number(str);
+    if (Number.isFinite(num)) return `0x${num.toString(16)}`;
+    return str.toLowerCase();
+  };
+  const [localBalances, setLocalBalances] = useState({});
   const [customTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
   );
+  const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
+  const walletChainHex = normalizeChainHex(chainId);
+  const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("CRX");
   const [amountIn, setAmountIn] = useState("");
@@ -241,7 +286,7 @@ export default function SwapSection({ balances }) {
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
-  const [approvalMode, setApprovalMode] = useState("unlimited"); // "unlimited" | "exact"
+  const [approvalMode, setApprovalMode] = useState("exact"); // "exact" | "unlimited"
   const [approveNeeded, setApproveNeeded] = useState(false);
   const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance }
   const [approveLoading, setApproveLoading] = useState(false);
@@ -259,6 +304,8 @@ export default function SwapSection({ balances }) {
   const lastQuoteOutRef = useRef(null);
   const quoteDebounceRef = useRef(null);
   const allowanceDebounceRef = useRef(null);
+  const pendingTxHashRef = useRef(null);
+  const autoRefreshTimerRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -294,9 +341,65 @@ export default function SwapSection({ balances }) {
       );
     });
   }, [tokenOptions, tokenRegistry, tokenSearch]);
-  const sellBalance = balances?.[sellToken] || 0;
+  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
+  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
+  const sellMeta = tokenRegistry[sellKey];
+  const buyMeta = tokenRegistry[buyKey];
+  const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
+  const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
+  const displaySellSymbol = displaySymbol(displaySellMeta, sellToken);
+  const displayBuySymbol = displaySymbol(displayBuyMeta, buyToken);
+  const displaySellAddress =
+    (displaySellMeta?.address || (sellToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
+  const displayBuyAddress =
+    (displayBuyMeta?.address || (buyToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
+  // Local balance fetch fallback (multicall via provider)
+  useEffect(() => {
+    let cancelled = false;
+    const fetchLocalBalances = async () => {
+      if (!address) return;
+      try {
+        const provider = await getProvider().catch(() => getReadOnlyProvider());
+        const iface = new Interface(ERC20_ABI);
+        const ercTokens = Object.values(tokenRegistry).filter((t) => t && t.address);
+        if (!ercTokens.length) return;
+        const calls = ercTokens.map((t) => ({
+          target: t.address,
+          callData: iface.encodeFunctionData("balanceOf", [address]),
+        }));
+        const res = await multicall(
+          calls.map((c) => ({ target: c.target, callData: c.callData })),
+          provider
+        );
+        const next = {};
+        res.forEach((r, idx) => {
+          if (!r?.success) return;
+          try {
+            const raw = iface.decodeFunctionResult("balanceOf", r.returnData)[0];
+            const token = ercTokens[idx];
+            const num = Number(formatUnits(raw, token.decimals || 18));
+            if (Number.isFinite(num)) next[token.symbol] = num;
+          } catch {
+            /* ignore */
+          }
+        });
+        if (!cancelled && Object.keys(next).length) {
+          setLocalBalances(next);
+        }
+      } catch {
+        // ignore fallback errors
+      }
+    };
+    fetchLocalBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, tokenRegistry]);
+  const effectiveBalances =
+    localBalances && Object.keys(localBalances).length ? localBalances : balances || {};
+  const sellBalance = effectiveBalances?.[sellToken] || 0;
   const handleQuickPercent = (pct) => {
-    const bal = balances?.[sellToken] || 0;
+    const bal = effectiveBalances?.[sellToken] || 0;
     const decimals = Math.min(6, tokenRegistry[sellKey]?.decimals ?? 6);
     if (!bal) {
       setAmountIn("");
@@ -310,18 +413,6 @@ export default function SwapSection({ balances }) {
     setSwapStatus(null);
   };
 
-  const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
-  const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
-  const sellMeta = tokenRegistry[sellKey];
-  const buyMeta = tokenRegistry[buyKey];
-  const displaySellMeta = tokenRegistry[sellToken] || sellMeta;
-  const displayBuyMeta = tokenRegistry[buyToken] || buyMeta;
-  const displaySellSymbol = displaySymbol(displaySellMeta, sellToken);
-  const displayBuySymbol = displaySymbol(displayBuyMeta, buyToken);
-  const displaySellAddress =
-    (displaySellMeta?.address || (sellToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
-  const displayBuyAddress =
-    (displayBuyMeta?.address || (buyToken === "ETH" ? WETH_ADDRESS : "")) ?? "";
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
   const pushExecutionProof = useCallback((proof) => {
@@ -332,6 +423,82 @@ export default function SwapSection({ balances }) {
       executionClearRef.current = null;
     }, 20000);
   }, []);
+  const clearExecutionProof = useCallback(() => {
+    setExecutionProof(null);
+    if (executionClearRef.current) {
+      clearTimeout(executionClearRef.current);
+      executionClearRef.current = null;
+    }
+  }, []);
+  const listenForTx = useCallback(
+    (txHash, meta) => {
+      if (!txHash) return () => {};
+      const client = getRealtimeClient();
+      const unsubscribe = client.addTxListener(txHash, (rcpt) => {
+        const routeLabels = meta?.routeLabels || [];
+        const buyDecimals = meta?.buyDecimals ?? 18;
+        const buySymbol = meta?.buySymbol;
+        const minRaw = meta?.minReceivedRaw || meta?.minRaw || null;
+        const expectedRaw = meta?.expectedRaw || null;
+        const userAddr = (meta?.user || "").toLowerCase();
+        const buyAddr = (meta?.buyAddress || "").toLowerCase();
+
+        let actualRaw = null;
+        if (userAddr && buyAddr) {
+          actualRaw = findActualOutput(rcpt, buyAddr, userAddr, {
+            captureWithdrawal: meta?.captureWithdrawal,
+            captureDeposit: meta?.captureDeposit,
+          });
+        }
+
+        const expectedNum =
+          expectedRaw !== null && expectedRaw !== undefined
+            ? Number(formatUnits(expectedRaw, buyDecimals))
+            : null;
+        const minNum =
+          minRaw !== null && minRaw !== undefined
+            ? Number(formatUnits(minRaw, buyDecimals))
+            : null;
+        const actualNum =
+          actualRaw !== null && actualRaw !== undefined
+            ? Number(formatUnits(actualRaw, buyDecimals))
+            : null;
+        const grade =
+          actualNum !== null && expectedNum !== null
+            ? computeOutcomeGrade(expectedNum, actualNum, minNum)
+            : { label: "Included", icon: "⚡", deltaPct: null };
+
+        pushExecutionProof({
+          expected:
+            expectedRaw !== null && expectedRaw !== undefined
+              ? formatDisplayAmount(expectedNum, buySymbol)
+              : "--",
+          executed:
+            actualNum !== null && Number.isFinite(actualNum)
+              ? formatDisplayAmount(actualNum, buySymbol)
+              : "-- (included)",
+          minReceived:
+            minRaw !== null && minRaw !== undefined
+              ? formatDisplayAmount(minNum, buySymbol)
+              : "--",
+          priceImpact: meta?.priceImpactSnapshot ?? null,
+          slippage: meta?.slippagePct ?? null,
+          gasUsed: rcpt?.gasUsed ? Number(rcpt.gasUsed) : null,
+          txHash: rcpt?.transactionHash || txHash,
+          deltaPct: grade?.deltaPct ?? null,
+          route: routeLabels,
+          grade: { label: grade?.label || "Included", icon: grade?.icon || "⚡" },
+        });
+        setSwapStatus({
+          message: "Included in block… finalizing",
+          hash: rcpt?.transactionHash || txHash,
+          variant: "pending",
+        });
+      });
+      return unsubscribe;
+    },
+    [pushExecutionProof]
+  );
 
   const computeRoutePriceImpact = useCallback(
     async (provider, amountInWei, path) => {
@@ -396,18 +563,24 @@ export default function SwapSection({ balances }) {
         throw new Error("No route available for this pair.");
       }
 
+      // Protected: favor fewer hops to reduce gas/latency.
       if (effectiveMode === "protected") {
         if (hasDirect) return { path: [a, b], pairs: [direct] };
         if (hasHop) return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
       }
 
-      // Turbo (or default): pick best output when both paths exist and we know the size.
+      // Turbo or default: choose best output, but bias to direct if gain < 0.15% (gas/latency saver).
       if (hasDirect && hasHop && amountWei) {
         const [directOut, hopOut] = await Promise.all([
           getV2Quote(provider, amountWei, [a, b]),
           getV2Quote(provider, amountWei, [a, WETH_ADDRESS, b]),
         ]);
-        if (hopOut > directOut) {
+        const betterIsHop = hopOut > directOut;
+        const diffPct =
+          directOut > 0n
+            ? Number((hopOut - directOut) * 1_000_000n / directOut) / 10_000 // ~percent with 4dp
+            : 0;
+        if (betterIsHop && diffPct > 0.15) {
           return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
         }
         return { path: [a, b], pairs: [direct] };
@@ -527,12 +700,60 @@ export default function SwapSection({ balances }) {
   }, [quotePairs]);
 
   useEffect(() => {
+    // periodic auto-refresh of quote while amount is set and supported
+    if (autoRefreshTimerRef.current) {
+      clearInterval(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+    const start = () => {
+      if (autoRefreshTimerRef.current) return;
+      if (!amountIn || Number.isNaN(Number(amountIn)) || !isSupported) return;
+      autoRefreshTimerRef.current = setInterval(() => {
+        setLiveRouteTick((t) => t + 1);
+      }, 3000);
+    };
+    const stop = () => {
+      if (autoRefreshTimerRef.current) {
+        clearInterval(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
+    start();
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        start();
+        setLiveRouteTick((t) => t + 1); // immediate refresh on focus
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("focus", handleVisibility);
+    return () => {
+      stop();
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("focus", handleVisibility);
+    };
+  }, [amountIn, isSupported]);
+
+  useEffect(() => {
     let cancelled = false;
     if (quoteDebounceRef.current) {
       clearTimeout(quoteDebounceRef.current);
       quoteDebounceRef.current = null;
     }
     const fetchQuote = async () => {
+      if (!isChainMatch) {
+        setQuoteError("Wallet network differs from selected network. Switch network to quote.");
+        setQuoteOut(null);
+        setQuoteOutRaw(null);
+        setApproveNeeded(false);
+        setApprovalTarget(null);
+        setQuoteRoute([]);
+        setQuotePairs([]);
+        setLastQuoteAt(null);
+        return;
+      }
       const now = Date.now();
       if (quoteLockedUntil && now < quoteLockedUntil) {
         return;
@@ -579,7 +800,9 @@ export default function SwapSection({ balances }) {
             setQuoteError("Select tokens with valid addresses.");
             return;
           }
-          const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
+          const sellDecimals = requireDecimals(sellToken, sellMeta);
+          const buyDecimals = requireDecimals(buyToken, buyMeta);
+          const amountWei = parseUnits(amountIn, sellDecimals);
 
           const { path, pairs } = await buildPath({ amountWei });
           setQuoteRoute(path);
@@ -587,7 +810,7 @@ export default function SwapSection({ balances }) {
           const amountOut = await getV2Quote(provider, amountWei, path);
           if (cancelled) return;
 
-          const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
+          const formatted = formatUnits(amountOut, buyDecimals);
           setQuoteOut(formatted);
           setQuoteOutRaw(amountOut);
           setLastQuoteAt(Date.now());
@@ -684,7 +907,15 @@ export default function SwapSection({ balances }) {
     quoteLockedUntil,
     displaySellSymbol,
     displayBuySymbol,
+    isChainMatch,
   ]);
+
+  // If the networks realign after a mismatch, clear the guard message and trigger a fresh quote.
+  useEffect(() => {
+    if (!isChainMatch) return;
+    setQuoteError("");
+    setLiveRouteTick((t) => t + 1);
+  }, [isChainMatch]);
 
   const baseSlippagePct = (() => {
     const val = Number(slippage);
@@ -745,10 +976,18 @@ export default function SwapSection({ balances }) {
     if (quoteLockTimerRef.current) clearTimeout(quoteLockTimerRef.current);
     if (quoteDebounceRef.current) clearTimeout(quoteDebounceRef.current);
     if (allowanceDebounceRef.current) clearTimeout(allowanceDebounceRef.current);
+    pendingTxHashRef.current = null;
   }, []);
 
   const handleApprove = async () => {
     if (!approvalTarget || approvalTarget.symbol !== sellToken) return;
+    if (!isChainMatch) {
+      setSwapStatus({
+        variant: "error",
+        message: "Switch wallet to the selected network before approving.",
+      });
+      return;
+    }
     try {
       setApproveLoading(true);
       setSwapStatus(null);
@@ -786,6 +1025,10 @@ export default function SwapSection({ balances }) {
     try {
       setSwapStatus(null);
       setExecutionProof(null);
+      pendingTxHashRef.current = null;
+      if (!isChainMatch) {
+        throw new Error("Wallet network differs from selected network. Switch network to swap.");
+      }
       if (swapLoading) return;
       if (!amountIn || Number.isNaN(Number(amountIn))) {
         throw new Error("Enter a valid amount");
@@ -797,7 +1040,7 @@ export default function SwapSection({ balances }) {
         throw new Error("Fetching quote, please retry");
       }
 
-      const decimalsOut = buyMeta?.decimals ?? 18;
+      const decimalsOut = requireDecimals(buyToken, buyMeta);
       const routeLabelsSnapshot =
         displayRoute && displayRoute.length
           ? displayRoute
@@ -808,7 +1051,8 @@ export default function SwapSection({ balances }) {
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
       const sellAddress = sellMeta?.address;
-      const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
+      const sellDecimals = requireDecimals(sellToken, sellMeta);
+      const amountWei = parseUnits(amountIn, sellDecimals);
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
@@ -988,6 +1232,18 @@ export default function SwapSection({ balances }) {
         );
       }
 
+      pendingTxHashRef.current = tx.hash;
+      listenForTx(tx.hash, {
+        routeLabels: routeLabelsSnapshot,
+        buyDecimals: decimalsOut,
+        buySymbol: displayBuySymbol,
+        minReceivedRaw: minOut,
+        expectedRaw: amountOut,
+        buyAddress: buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address,
+        user,
+        captureWithdrawal: buyToken === "ETH",
+      });
+
       const receipt = await tx.wait();
       pendingExecutionRef.current = {
         expectedRaw: amountOut,
@@ -1051,6 +1307,7 @@ export default function SwapSection({ balances }) {
     } finally {
       setSwapLoading(false);
       pendingExecutionRef.current = null;
+      pendingTxHashRef.current = null;
     }
   };
 
@@ -1448,8 +1705,8 @@ export default function SwapSection({ balances }) {
                 <div className="flex flex-col gap-1 text-slate-200">
                   <span className="text-[11px] text-slate-100">
                     {approvalMode === "unlimited"
-                      ? "One-time approval for this token (fewer prompts)."
-                      : "Approve only what you swap (stricter control)."}
+                      ? "One-time max approval. Faster, but higher risk if router is compromised."
+                      : "Approve only this swap amount (safer, may prompt more often)."}
                   </span>
                   {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">

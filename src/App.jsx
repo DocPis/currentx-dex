@@ -17,12 +17,12 @@ export default function App() {
   const [connectError, setConnectError] = useState("");
   const { address, chainId, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address, chainId);
-
   useEffect(() => {
     if (!connectError) return undefined;
     const id = setTimeout(() => setConnectError(""), 4000);
     return () => clearTimeout(id);
   }, [connectError]);
+
 
   const handleConnect = () => {
     setShowWalletModal(true);
@@ -104,7 +104,9 @@ export default function App() {
       </div>
 
       <main className="flex-1">
-        {tab === "swap" && <SwapSection balances={balances} />}
+        {tab === "swap" && (
+          <SwapSection balances={balances} address={address} chainId={chainId} />
+        )}
         {tab === "liquidity" && (
           <LiquiditySection address={address} chainId={chainId} balances={balances} />
         )}

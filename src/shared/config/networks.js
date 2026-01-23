@@ -50,13 +50,18 @@ const mainnetPreset = {
     env.VITE_RPC_THIRDWEB,
     "https://mainnet.megaeth.com/rpc",
   ]),
+  wsUrls: dedupeList([
+    env.VITE_WS_URL,
+    env.VITE_WS_URLS,
+    env.VITE_MEGAETH_REALTIME_WS,
+  ]),
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
     USDC_ADDRESS: "0x4c99d545E82D32dA12Cc634a3964b1698073DA2B",
     CUSD_ADDRESS: "0xcCcc62962d17b8914c62D74FfB843d73B2a3cccC",
     USDM_ADDRESS: "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7",
     CRX_ADDRESS: "0xDEdDFD6F6fD2eDa3B0bC01c3Dfa03F2eA6f40504",
-    MEGA_TOKEN_ADDRESS: "",
+    MEGA_TOKEN_ADDRESS: "0x28B7E77f82B25B95953825F1E3eA0E36c1c29861",
     XBTC_ADDRESS: "",
     WUSD_ADDRESS: "",
     WUSDC_ADDRESS: "",
@@ -82,6 +87,11 @@ const testnetDefaults = {
     "https://timothy.megaeth.com/rpc",
     "https://megaeth-timothy.gateway.tatum.io/",
   ],
+  wsUrls: dedupeList([
+    env.VITE_TESTNET_WS_URL,
+    env.VITE_TESTNET_WS_URLS,
+    env.VITE_MEGAETH_REALTIME_WS_TESTNET,
+  ]),
   addresses: {
     WETH_ADDRESS: "0x4200000000000000000000000000000000000006",
     USDC_ADDRESS: "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E",

@@ -1,27 +1,41 @@
 // src/shared/services/realtime.js
 // Lightweight MegaETH realtime client (stateChanges + miniBlocks) with auto-reconnect.
 import { RPC_URL } from "../config/web3";
+import { getActiveNetworkConfig } from "../config/networks";
 
 const DEFAULT_WS_FALLBACK = "wss://mainnet.megaeth.com/ws";
 const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 const deriveWsCandidates = () => {
-  const envWs =
-    (typeof import.meta !== "undefined" &&
-      import.meta.env &&
-      (import.meta.env.VITE_REALTIME_RPC_WS ||
-        import.meta.env.VITE_REALTIME_WS ||
-        import.meta.env.VITE_MEGAETH_REALTIME_WS)) ||
-    "";
-
+  const active = getActiveNetworkConfig();
   const list = [];
   const push = (v) => {
     if (v && !list.includes(v)) list.push(v);
   };
 
-  if (envWs) push(envWs);
+  // 1) Per-network wsUrls from preset
+  (active?.wsUrls || []).forEach(push);
 
+  // 2) Env overrides (legacy)
+  const envWs =
+    (typeof import.meta !== "undefined" &&
+      import.meta.env &&
+      (import.meta.env.VITE_REALTIME_RPC_WS ||
+        import.meta.env.VITE_REALTIME_WS ||
+        import.meta.env.VITE_MEGAETH_REALTIME_WS ||
+        import.meta.env.VITE_TESTNET_WS_URL ||
+        import.meta.env.VITE_TESTNET_WS_URLS ||
+        import.meta.env.VITE_WS_URL ||
+        import.meta.env.VITE_WS_URLS)) ||
+    "";
+  envWs
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .forEach(push);
+
+  // 3) Derive from current RPC_URL
   if (RPC_URL && typeof RPC_URL === "string") {
     const rpcWs = RPC_URL.replace(/^http/i, "ws");
     push(rpcWs);
@@ -30,6 +44,7 @@ const deriveWsCandidates = () => {
     }
   }
 
+  // 4) Fallback
   push(DEFAULT_WS_FALLBACK);
   return list;
 };
@@ -362,6 +377,27 @@ class RealtimeClient {
     return () => {
       this.statusListeners.delete(callback);
     };
+  }
+
+  addTxListener(txHash, callback) {
+    if (!txHash || typeof callback !== "function") return () => {};
+    const target = txHash.toLowerCase();
+    const handler = (mini) => {
+      const receipts = mini?.receipts;
+      if (!Array.isArray(receipts)) return;
+      for (let i = 0; i < receipts.length; i += 1) {
+        const rcpt = receipts[i];
+        if ((rcpt?.transactionHash || "").toLowerCase() !== target) continue;
+        try {
+          callback(rcpt);
+        } catch {
+          // ignore listener errors
+        }
+        break;
+      }
+    };
+    const unsub = this.addMiniBlockListener(handler);
+    return unsub;
   }
 }
 

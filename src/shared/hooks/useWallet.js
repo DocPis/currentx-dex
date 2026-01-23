@@ -6,19 +6,9 @@ import {
   getInjectedProviderByType,
   setActiveInjectedProvider,
 } from "../config/web3";
-import {
-  getActiveNetworkConfig,
-  findPresetByChainId,
-} from "../config/networks";
+import { getActiveNetworkConfig, setActiveNetworkPreset } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
-let activeNetwork = getActiveNetworkConfig();
-const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
-const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
-const ACTIVE_NETWORK_NAME = activeNetwork?.name || "MegaETH";
-const ACTIVE_EXPLORER = activeNetwork?.explorer || "";
-const ACTIVE_RPC_LIST = (activeNetwork?.rpcUrls || []).filter(Boolean);
-const ACTIVE_RPC = ACTIVE_RPC_LIST[0] || "";
 
 const isTrustWalletProvider = (provider) => {
   const name =
@@ -51,6 +41,13 @@ const normalizeChainId = (value) => {
 export function useWallet() {
   const [address, setAddress] = useState(null);
   const [chainId, setChainId] = useState(null);
+  const activeNetwork = getActiveNetworkConfig();
+  const ACTIVE_CHAIN_ID_HEX = (activeNetwork?.chainIdHex || "").toLowerCase();
+  const NORMALIZED_ACTIVE_CHAIN_ID = ACTIVE_CHAIN_ID_HEX || null;
+  const ACTIVE_NETWORK_NAME = activeNetwork?.name || "MegaETH";
+  const ACTIVE_EXPLORER = activeNetwork?.explorer || "";
+  const ACTIVE_RPC_LIST = (activeNetwork?.rpcUrls || []).filter(Boolean);
+  const ACTIVE_RPC = ACTIVE_RPC_LIST[0] || "";
   const [sessionConnected, setSessionConnected] = useState(() => {
     if (typeof window === "undefined") return false;
     try {
@@ -187,11 +184,6 @@ export function useWallet() {
         // ignore
       }
 
-      if (isTrustWallet) {
-        const added = await addNetwork();
-        if (added) return added;
-      }
-
       try {
         await injected.request({
           method: "wallet_switchEthereumChain",
@@ -216,17 +208,17 @@ export function useWallet() {
           msg.includes("method not found") ||
           msg.includes("wallet_switchethereumchain")
         ) {
-          const added = await addNetwork();
-          if (added) return added;
-        }
-        if (code === 4001 || msg.includes("rejected")) {
+          await addNetwork();
+        } else if (code === 4001 || msg.includes("rejected")) {
           throw new Error("Please switch your wallet to the selected network to continue.");
+        } else {
+          throw new Error(
+            err?.message ||
+              "Failed to switch to the selected network in your wallet. If you are on Trust Wallet (mobile), open this page inside the Trust Wallet browser and accept the network add/switch prompt."
+          );
         }
-        throw new Error(
-          err?.message ||
-            "Failed to switch to the network in your wallet. If you are on Trust Wallet (mobile), open this page inside the Trust Wallet browser and accept the network add/switch prompt."
-        );
       }
+      return null;
     };
 
     await ensureCorrectNetwork();
@@ -274,18 +266,7 @@ export function useWallet() {
     return primaryAccount;
   };
 
-  // Auto-switch app preset to match wallet chain (prevents showing mainnet labels while on testnet).
-  useEffect(() => {
-    const maybeSyncPreset = () => {
-      if (!chainId) return;
-      const preset = findPresetByChainId(chainId);
-      if (!preset) return;
-      // We intentionally do NOT auto-switch the UI preset to the wallet chain.
-      // This allows the header indicator to show a mismatch (amber) when the
-      // wallet and selected UI network differ.
-    };
-    maybeSyncPreset();
-  }, [chainId]);
+  // No automatic preset switching: the user chooses the network from the UI.
 
   // Fallback poller to keep chainId in sync even if chainChanged events are missed
   useEffect(() => {

@@ -21,7 +21,8 @@ export async function multicall(callStructs, providerOverride) {
     allowFailure: c.allowFailure !== false, // default true
     callData: c.callData,
   }));
-  const res = await mc.aggregate3(calls);
+  // Use static call to avoid requiring a signer (aggregate3 is nonpayable).
+  const res = await mc.aggregate3.staticCall(calls);
   return res.map((r, i) => ({
     success: r.success,
     returnData: r.returnData,

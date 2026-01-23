@@ -104,6 +104,14 @@ const safeParseUnits = (value, decimals) => {
   }
 };
 
+const requireDecimals = (meta, symbol) => {
+  const dec = meta?.decimals;
+  if (dec === undefined || dec === null || Number.isNaN(dec)) {
+    throw new Error(`Missing decimals for ${symbol}. Reload tokens or re-add with decimals.`);
+  }
+  return dec;
+};
+
 const derivePoolActivity = (pool, stats = {}) => {
   if (pool?.active === true) return true;
   if (pool?.active === false) return false;
@@ -165,6 +173,29 @@ const friendlyActionError = (e, actionLabel = "Action") => {
     "";
   const rawStr = typeof raw === "string" ? raw : String(raw || "");
   const lower = rawStr.toLowerCase();
+  if (
+    lower.includes("insufficient liquidity") ||
+    lower.includes("liquidity minted") ||
+    lower.includes("liquidity burned")
+  ) {
+    return `${actionLabel} failed: not enough pool liquidity or pool not initialized yet. Try smaller amounts or create/fund the pool first.`;
+  }
+  if (
+    lower.includes("insufficient_a_amount") ||
+    lower.includes("insufficient_b_amount") ||
+    lower.includes("amountmin") ||
+    lower.includes("excessive_input_amount")
+  ) {
+    return `${actionLabel} failed because min amounts were not met. Increase slippage or reduce size and retry.`;
+  }
+  if (
+    lower.includes("allowance") ||
+    lower.includes("transfer amount exceeds allowance") ||
+    lower.includes("transfer_from_failed") ||
+    lower.includes("transfer helper")
+  ) {
+    return `${actionLabel} failed: insufficient allowance. Re-approve the tokens and try again.`;
+  }
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
@@ -1573,6 +1604,22 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           `Enter amounts for ${selectedPool.token0Symbol} and ${selectedPool.token1Symbol}`
         );
       }
+      const dec0 = requireDecimals(token0Meta, selectedPool.token0Symbol);
+      const dec1 = requireDecimals(token1Meta, selectedPool.token1Symbol);
+
+      const normalizeChainHex = (value) => {
+        if (value === null || value === undefined) return null;
+        const str = String(value).trim();
+        if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase().replace(/^0x0+/, "0x");
+        const num = Number(str);
+        if (Number.isFinite(num)) return `0x${num.toString(16)}`;
+        return str.toLowerCase();
+      };
+      const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
+      const walletChainHex = normalizeChainHex(chainId);
+      if (walletChainHex && activeChainHex && walletChainHex !== activeChainHex) {
+        throw new Error("Wallet network differs from the selected network. Switch network to add liquidity.");
+      }
 
       // Preflight balance guard to avoid on-chain reverts (common when selecting WETH without wrapping ETH first).
       const epsilon = 1e-9;
@@ -1610,11 +1657,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       const parsed0 = safeParseUnits(
         amount0.toString().replace(",", "."),
-        token0Meta?.decimals ?? 18
+        dec0
       );
       const parsed1 = safeParseUnits(
         amount1.toString().replace(",", "."),
-        token1Meta?.decimals ?? 18
+        dec1
       );
       if (!parsed0 || !parsed1) {
         throw new Error("Invalid amount format. Use dot for decimals.");
@@ -1764,6 +1811,20 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         throw new Error(
           "Unsupported pool: missing address for one of the tokens"
         );
+      }
+
+      const normalizeChainHex = (value) => {
+        if (value === null || value === undefined) return null;
+        const str = String(value).trim();
+        if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase().replace(/^0x0+/, "0x");
+        const num = Number(str);
+        if (Number.isFinite(num)) return `0x${num.toString(16)}`;
+        return str.toLowerCase();
+      };
+      const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
+      const walletChainHex = normalizeChainHex(chainId);
+      if (walletChainHex && activeChainHex && walletChainHex !== activeChainHex) {
+        throw new Error("Wallet network differs from the selected network. Switch network to withdraw.");
       }
 
       const provider = await getProvider();

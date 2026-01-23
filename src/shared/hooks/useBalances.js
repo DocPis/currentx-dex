@@ -16,6 +16,15 @@ import { getActiveNetworkConfig } from "../config/networks";
 
 export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const activeNetworkId = (getActiveNetworkConfig()?.id || "mainnet").toLowerCase();
+  const activeChainHex = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+  const normalizeChainHex = (value) => {
+    if (value === null || value === undefined) return null;
+    const str = String(value).trim();
+    if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase().replace(/^0x0+/, "0x");
+    const num = Number(str);
+    if (Number.isFinite(num)) return `0x${num.toString(16)}`;
+    return str.toLowerCase();
+  };
   const tokenKeys = useMemo(() => {
     return Object.keys(tokenRegistry).filter((k) => k === "ETH" || tokenRegistry[k]?.address);
   }, [tokenRegistry]);
@@ -47,7 +56,9 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         setLoading(true);
         const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
         const walletChainId = (chainId || "").toLowerCase();
-        const preferWallet = walletChainId && walletChainId === activeChainId;
+        // Prefer the wallet provider when available, even if preset and wallet mismatch,
+        // to avoid missing balances when the app preset lags the wallet chain.
+        const preferWallet = Boolean(walletChainId);
         let provider;
         let rotated = false;
         const shouldRotate = (err) => {
@@ -226,7 +237,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         }
       }
     },
-    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys]
+    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys, activeChainHex]
   );
 
   useEffect(() => {
@@ -241,12 +252,30 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
     if (!address) return undefined;
 
     let provider;
+    let visibilityHandler;
+
     const handleBlock = () => refresh(address);
 
     const setupListener = async () => {
       try {
         provider = getReadOnlyProvider();
         provider.on("block", handleBlock);
+
+        visibilityHandler = () => {
+          if (document.hidden) {
+            provider.off("block", handleBlock);
+          } else {
+            provider.off("block", handleBlock);
+            provider.on("block", handleBlock);
+            refresh(address); // immediate refresh on focus
+          }
+        };
+        if (typeof document !== "undefined") {
+          document.addEventListener("visibilitychange", visibilityHandler);
+        }
+        if (typeof window !== "undefined") {
+          window.addEventListener("focus", visibilityHandler);
+        }
       } catch (e) {
         console.error("Error starting balance watcher:", e);
       }
@@ -256,6 +285,12 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
 
     return () => {
       if (provider) provider.off("block", handleBlock);
+      if (typeof document !== "undefined" && visibilityHandler) {
+        document.removeEventListener("visibilitychange", visibilityHandler);
+      }
+      if (typeof window !== "undefined" && visibilityHandler) {
+        window.removeEventListener("focus", visibilityHandler);
+      }
     };
   }, [address, chainId, refresh]);
 
