@@ -69,6 +69,7 @@ export default function Header({
         ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-100 hover:border-emerald-400/70"
         : "border-slate-700 bg-slate-800 text-slate-200 hover:border-slate-500/70";
 
+
   return (
     <header className="w-full flex flex-wrap items-center justify-between gap-4 py-4 px-4 sm:px-6 border-b border-slate-800 bg-[#020617] relative z-20">
       <div className="flex items-center gap-1 w-full md:w-auto">
@@ -155,7 +156,6 @@ export default function Header({
             </div>
           )}
         </div>
-
         <div className="relative z-30" ref={menuRef}>
           <button
             onClick={() => {

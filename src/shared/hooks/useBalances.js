@@ -6,8 +6,11 @@ import {
   getReadOnlyProvider,
   getProvider,
 } from "../config/web3";
-import { formatUnits } from "ethers";
+import { Interface, formatUnits } from "ethers";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../services/realtime";
+import { MULTICALL3_ADDRESS } from "../config/addresses";
+import { MULTICALL3_ABI, ERC20_ABI } from "../config/abis";
+import { multicall, hasMulticall } from "../services/multicall";
 
 import { getActiveNetworkConfig } from "../config/networks";
 
@@ -100,52 +103,106 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
           console.warn("ETH balance lookup failed:", err?.message || err);
         }
 
-        // Helper to read ERC20 balances only when we have an address
-        const getErc20Balance = async (tokenKey) => {
-          const token = tokenRegistry[tokenKey];
-          if (!token?.address) return 0;
-          try {
-            const doRead = async (prov) => {
-              const contract = await getErc20(token.address, prov);
-              const key = token.address.toLowerCase();
-              let decimals = decimalsCache.current[key];
-              if (decimals === undefined) {
-                try {
-                  decimals = Number(await contract.decimals());
-                } catch {
-                  decimals = token.decimals;
-                }
-                decimalsCache.current[key] = decimals;
-              }
-              const raw = await contract.balanceOf(walletAddress);
-              return Number(formatUnits(raw, decimals || token.decimals || 18));
-            };
-            return withRpcRetry(doRead);
-          } catch (err) {
-            const msg = err?.message || "";
-            const silent =
-              msg.toLowerCase().includes("missing revert data") ||
-              msg.toLowerCase().includes("call_exception") ||
-              msg.toLowerCase().includes("could not") ||
-              msg.toLowerCase().includes("rate") ||
-              msg.toLowerCase().includes("limit");
-            if (!silent) {
-              console.warn(
-                `Balance lookup failed for ${tokenKey} at ${token.address}:`,
-                msg || err
-              );
-            }
-            return 0;
-          }
-        };
-
         const next = { ...makeZeroBalances(), ETH: eth };
+        // Batch ERC20 decimals + balances via Multicall3 when available
+        const erc20Keys = tokenKeys.filter((k) => k !== "ETH");
+        const useMc = await hasMulticall(provider).catch(() => false);
+        if (useMc && erc20Keys.length) {
+          const iface = new Interface(ERC20_ABI);
+          const callMeta = [];
+          erc20Keys.forEach((key) => {
+            const token = tokenRegistry[key];
+            if (!token?.address) return;
+            const addr = token.address;
+            const lower = addr.toLowerCase();
+            if (decimalsCache.current[lower] === undefined) {
+              callMeta.push({
+                type: "decimals",
+                tokenKey: key,
+                target: addr,
+                callData: iface.encodeFunctionData("decimals", []),
+              });
+            }
+            callMeta.push({
+              type: "balance",
+              tokenKey: key,
+              target: addr,
+              callData: iface.encodeFunctionData("balanceOf", [walletAddress]),
+            });
+          });
+
+          try {
+            const results = await withRpcRetry((prov) =>
+              multicall(callMeta.map((c) => ({ target: c.target, callData: c.callData })), prov)
+            );
+            results.forEach((res, idx) => {
+              const meta = callMeta[idx];
+              if (!res.success) return;
+              try {
+                if (meta.type === "decimals") {
+                  const dec = Number(iface.decodeFunctionResult("decimals", res.returnData)[0]);
+                  const lower = meta.target.toLowerCase();
+                  decimalsCache.current[lower] = Number.isFinite(dec) ? dec : tokenRegistry[meta.tokenKey]?.decimals;
+                } else if (meta.type === "balance") {
+                  const raw = iface.decodeFunctionResult("balanceOf", res.returnData)[0];
+                  const token = tokenRegistry[meta.tokenKey];
+                  const lower = meta.target.toLowerCase();
+                  const dec =
+                    decimalsCache.current[lower] !== undefined
+                      ? decimalsCache.current[lower]
+                      : token?.decimals;
+                  const num = Number(formatUnits(raw, dec || 18));
+                  if (Number.isFinite(num)) next[meta.tokenKey] = num;
+                }
+              } catch {
+                // ignore malformed decode
+              }
+            });
+          } catch (err) {
+            console.warn("Multicall balances failed, falling back:", err?.message || err);
+          }
+        }
+
+        // Fallback or fill missing tokens with direct RPC
         await Promise.all(
-          tokenKeys
-            .filter((k) => k !== "ETH")
-            .map(async (key) => {
-              next[key] = await getErc20Balance(key);
-            })
+          erc20Keys.map(async (key) => {
+            if (typeof next[key] === "number" && next[key] !== undefined) return;
+            const token = tokenRegistry[key];
+            if (!token?.address) return;
+            try {
+              const doRead = async (prov) => {
+                const contract = await getErc20(token.address, prov);
+                const cacheKey = token.address.toLowerCase();
+                let decimals = decimalsCache.current[cacheKey];
+                if (decimals === undefined) {
+                  try {
+                    decimals = Number(await contract.decimals());
+                  } catch {
+                    decimals = token.decimals;
+                  }
+                  decimalsCache.current[cacheKey] = decimals;
+                }
+                const raw = await contract.balanceOf(walletAddress);
+                return Number(formatUnits(raw, decimals || token.decimals || 18));
+              };
+              next[key] = await withRpcRetry(doRead);
+            } catch (err) {
+              const msg = err?.message || "";
+              const silent =
+                msg.toLowerCase().includes("missing revert data") ||
+                msg.toLowerCase().includes("call_exception") ||
+                msg.toLowerCase().includes("could not") ||
+                msg.toLowerCase().includes("rate") ||
+                msg.toLowerCase().includes("limit");
+              if (!silent) {
+                console.warn(
+                  `Balance lookup failed for ${key} at ${token.address}:`,
+                  msg || err
+                );
+              }
+              next[key] = next[key] || 0;
+            }
+          })
         );
         setBalances(next);
       } catch (e) {

@@ -1,6 +1,6 @@
 // src/features/liquidity/LiquiditySection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, formatUnits, parseUnits } from "ethers";
+import { Contract, Interface, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -27,6 +27,7 @@ import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph"
 import { getRealtimeClient } from "../../shared/services/realtime";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import { useBalances } from "../../shared/hooks/useBalances";
+import { multicall, hasMulticall } from "../../shared/services/multicall";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
@@ -66,6 +67,7 @@ const getPoolLabel = (pool) =>
   pool ? `${pool.token0Symbol} / ${pool.token1Symbol}` : "";
 const MIN_LP_THRESHOLD = 1e-12;
 const TOAST_DURATION_MS = 20000;
+const MAX_BPS = 5000; // 50%
 
 // Simple concurrency limiter to speed up parallel RPC/subgraph calls without overloading endpoints.
 const runWithConcurrency = async (items, limit, worker) => {
@@ -190,6 +192,63 @@ const shortenAddress = (addr) => {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
+const clampBps = (input) => {
+  const num = Number(input);
+  if (Number.isNaN(num) || num < 0) return 50;
+  return Math.min(MAX_BPS, Math.round(num * 100));
+};
+
+const applySlippage = (amountBigInt, bps) => {
+  if (!amountBigInt || amountBigInt <= 0n) return 0n;
+  const safeBps = clampBps(bps);
+  return (amountBigInt * BigInt(10000 - safeBps)) / 10000n;
+};
+
+const fetchAllowances = async (provider, owner, spender, tokenAddresses = []) => {
+  const iface = new Interface(ERC20_ABI);
+  const uniques = Array.from(
+    new Set((tokenAddresses || []).filter(Boolean).map((a) => a.toLowerCase()))
+  );
+  const out = {};
+  if (!uniques.length) return out;
+  const canMc = await hasMulticall(provider).catch(() => false);
+  if (canMc) {
+    try {
+      const calls = uniques.map((addr) => ({
+        target: addr,
+        callData: iface.encodeFunctionData("allowance", [owner, spender]),
+      }));
+      const res = await multicall(calls, provider);
+      res.forEach((r, idx) => {
+        const addr = uniques[idx];
+        if (!r.success) return;
+        try {
+          const decoded = iface.decodeFunctionResult("allowance", r.returnData)[0];
+          out[addr] = decoded;
+        } catch {
+          /* ignore decode errors */
+        }
+      });
+    } catch {
+      // fallback handled below
+    }
+  }
+  const missing = uniques.filter((a) => out[a] === undefined);
+  if (missing.length) {
+    await Promise.all(
+      missing.map(async (addr) => {
+        try {
+          const c = new Contract(addr, ERC20_ABI, provider);
+          out[addr] = await c.allowance(owner, spender);
+        } catch {
+          out[addr] = 0n;
+        }
+      })
+    );
+  }
+  return out;
+};
+
 export default function LiquiditySection({ address, chainId, balances: balancesProp }) {
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
@@ -209,6 +268,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [withdrawLp, setWithdrawLp] = useState("");
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
+  const [slippageInput, setSlippageInput] = useState("0.5");
   const [actionStatus, setActionStatus] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [depositQuoteError, setDepositQuoteError] = useState("");
@@ -249,6 +309,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     return out;
   }, [customTokens, onchainTokens]);
   const tokenDecimalsCache = useRef({});
+  const slippageBps = useMemo(() => clampBps(slippageInput), [slippageInput]);
   const hasExternalBalances = Boolean(balancesProp);
   const { balances: hookBalances, loading: hookBalancesLoading } = useBalances(
     address,
@@ -1558,6 +1619,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       if (!parsed0 || !parsed1) {
         throw new Error("Invalid amount format. Use dot for decimals.");
       }
+      const parsed0Min = applySlippage(parsed0, slippageBps);
+      const parsed1Min = applySlippage(parsed1, slippageBps);
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
@@ -1600,12 +1663,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const ethIsToken0 = selectedPool.token0Symbol === "ETH";
         const ethValue = ethIsToken0 ? parsed0 : parsed1;
         const tokenAmount = ethIsToken0 ? parsed1 : parsed0;
+        const tokenMin = ethIsToken0 ? parsed1Min : parsed0Min;
+        const ethMin = ethIsToken0 ? parsed0Min : parsed1Min;
         const tokenAddress = ethIsToken0 ? token1Address : token0Address;
         const tokenContract = new Contract(tokenAddress, ERC20_ABI, signer);
-        const allowance = await tokenContract.allowance(
+        const allowances = await fetchAllowances(
+          signer.provider || provider,
           user,
-          UNIV2_ROUTER_ADDRESS
+          UNIV2_ROUTER_ADDRESS,
+          [tokenAddress]
         );
+        const allowance = allowances[(tokenAddress || "").toLowerCase()] ?? 0n;
         if (allowance < tokenAmount) {
           await (
             await tokenContract.approve(UNIV2_ROUTER_ADDRESS, tokenAmount)
@@ -1615,8 +1683,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const tx = await router.addLiquidityETH(
           tokenAddress,
           tokenAmount,
-          0,
-          0,
+          tokenMin,
+          ethMin,
           user,
           deadline,
           { value: ethValue, gasLimit: safeGasLimit }
@@ -1631,24 +1699,19 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         const token0Contract = new Contract(token0Address, ERC20_ABI, signer);
         const token1Contract = new Contract(token1Address, ERC20_ABI, signer);
 
-        const allowance0 = await token0Contract.allowance(
+        const allowances = await fetchAllowances(
+          signer.provider || provider,
           user,
-          UNIV2_ROUTER_ADDRESS
+          UNIV2_ROUTER_ADDRESS,
+          [token0Address, token1Address]
         );
+        const allowance0 = allowances[(token0Address || "").toLowerCase()] ?? 0n;
+        const allowance1 = allowances[(token1Address || "").toLowerCase()] ?? 0n;
         if (allowance0 < parsed0) {
-          await (
-            await token0Contract.approve(UNIV2_ROUTER_ADDRESS, parsed0)
-          ).wait();
+          await (await token0Contract.approve(UNIV2_ROUTER_ADDRESS, parsed0)).wait();
         }
-
-        const allowance1 = await token1Contract.allowance(
-          user,
-          UNIV2_ROUTER_ADDRESS
-        );
         if (allowance1 < parsed1) {
-          await (
-            await token1Contract.approve(UNIV2_ROUTER_ADDRESS, parsed1)
-          ).wait();
+          await (await token1Contract.approve(UNIV2_ROUTER_ADDRESS, parsed1)).wait();
         }
 
         const tx = await router.addLiquidity(
@@ -1656,8 +1719,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           token1Address,
           parsed0,
           parsed1,
-          0,
-          0,
+          parsed0Min,
+          parsed1Min,
           user,
           deadline,
           { gasLimit: safeGasLimit }
@@ -1723,15 +1786,26 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       }
 
       // Approve router to spend LP
-      const lpAllowance = await pairErc20.allowance(
+      const lpAllowances = await fetchAllowances(
+        signer.provider || provider,
         user,
-        UNIV2_ROUTER_ADDRESS
+        UNIV2_ROUTER_ADDRESS,
+        [resolvedPair.pairAddress]
       );
+      const lpAllowance = lpAllowances[(resolvedPair.pairAddress || "").toLowerCase()] ?? 0n;
       if (lpAllowance < lpValue) {
-        await (
-          await pairErc20.approve(UNIV2_ROUTER_ADDRESS, lpValue)
-        ).wait();
+        await (await pairErc20.approve(UNIV2_ROUTER_ADDRESS, lpValue)).wait();
       }
+
+      const totalSupply = await pairErc20.totalSupply();
+      const reserve0 = resolvedPair.reserve0 || 0n;
+      const reserve1 = resolvedPair.reserve1 || 0n;
+      const amount0Expected =
+        totalSupply && totalSupply > 0n ? (lpValue * reserve0) / totalSupply : 0n;
+      const amount1Expected =
+        totalSupply && totalSupply > 0n ? (lpValue * reserve1) / totalSupply : 0n;
+      const amount0Min = applySlippage(amount0Expected, slippageBps);
+      const amount1Min = applySlippage(amount1Expected, slippageBps);
 
       const router = new Contract(
         UNIV2_ROUTER_ADDRESS,
@@ -1744,21 +1818,35 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       if (usesNativeEth) {
         const tokenAddress =
           selectedPool.token0Symbol === "ETH" ? token1Address : token0Address;
+        const tokenMin =
+          (resolvedPair.token0?.toLowerCase?.() === tokenAddress.toLowerCase()
+            ? amount0Min
+            : amount1Min) || 0n;
+        const ethMin =
+          (resolvedPair.token0?.toLowerCase?.() === tokenAddress.toLowerCase()
+            ? amount1Min
+            : amount0Min) || 0n;
         tx = await router.removeLiquidityETH(
           tokenAddress,
           lpValue,
-          0, // amountTokenMin
-          0, // amountETHMin
+          tokenMin,
+          ethMin,
           user,
           deadline
         );
       } else {
+        const token0Lower = (token0Address || "").toLowerCase();
+        const token1Lower = (token1Address || "").toLowerCase();
+        const amountAMin =
+          resolvedPair.token0?.toLowerCase?.() === token0Lower ? amount0Min : amount1Min;
+        const amountBMin =
+          resolvedPair.token0?.toLowerCase?.() === token0Lower ? amount1Min : amount0Min;
         tx = await router.removeLiquidity(
           token0Address,
           token1Address,
           lpValue,
-          0, // amountAMin
-          0, // amountBMin
+          amountAMin,
+          amountBMin,
           user,
           deadline
         );
@@ -2204,6 +2292,15 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                           {Math.round(pct * 100)}%
                         </button>
                       ))}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500">Slippage %</span>
+                        <input
+                          value={slippageInput}
+                          onChange={(e) => setSlippageInput(e.target.value)}
+                          className="w-20 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-100"
+                          placeholder="0.5"
+                        />
+                      </div>
                     </div>
                   </div>
                   <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">

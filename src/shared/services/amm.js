@@ -1,5 +1,5 @@
 // src/services/amm.js
-import { Contract, formatUnits } from "ethers";
+import { Contract, Interface, formatUnits } from "ethers";
 import { UNIV2_FACTORY_ABI, UNIV2_PAIR_ABI } from "../config/abis";
 import {
   UNIV2_FACTORY_ADDRESS,
@@ -8,6 +8,9 @@ import {
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";
 import { getRegisteredCustomTokens } from "../config/customTokens";
+import { multicall, hasMulticall } from "./multicall";
+
+const pairInterface = new Interface(UNIV2_PAIR_ABI);
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -190,6 +193,32 @@ export async function getV2PairReserves(
     pairAddressOverride || (await factory.getPair(tokenA, tokenB));
   if (!pairAddress || pairAddress === ZERO_ADDRESS) {
     return null;
+  }
+
+  // Try multicall to grab token0/token1/reserves in one go
+  const canMc = await hasMulticall(provider).catch(() => false);
+  if (canMc) {
+    try {
+      const calls = [
+        { target: pairAddress, callData: pairInterface.encodeFunctionData("token0", []) },
+        { target: pairAddress, callData: pairInterface.encodeFunctionData("token1", []) },
+        { target: pairAddress, callData: pairInterface.encodeFunctionData("getReserves", []) },
+      ];
+      const res = await multicall(calls, provider);
+      const dec = (idx, fn) =>
+        res[idx]?.success
+          ? pairInterface.decodeFunctionResult(fn, res[idx].returnData)
+          : null;
+      const token0 = dec(0, "token0")?.[0];
+      const token1 = dec(1, "token1")?.[0];
+      const reserves = dec(2, "getReserves");
+      if (token0 && token1 && reserves) {
+        const [reserve0, reserve1] = reserves;
+        return { pairAddress, reserve0, reserve1, token0, token1 };
+      }
+    } catch {
+      // fall through to direct reads
+    }
   }
 
   const pair = new Contract(pairAddress, UNIV2_PAIR_ABI, provider);

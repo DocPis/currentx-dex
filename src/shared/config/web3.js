@@ -30,17 +30,21 @@ const activeNetwork = getActiveNetworkConfig();
 
 const RAW_RPC_SOURCES = [
   ...(activeNetwork.rpcUrls || []),
+  env.VITE_RPC_URLS,
+  env.VITE_RPC_URL,
+  env.VITE_MEGAETH_RPC,
+  env.VITE_RPC_FALLBACK,
+  env.VITE_RPC_TATUM,
+  env.VITE_RPC_THIRDWEB,
   ...(activeNetwork.id === "mainnet"
-    ? [
-        env.VITE_RPC_URLS, // comma separated list
-        env.VITE_RPC_URL,
-        env.VITE_MEGAETH_RPC,
-        env.VITE_RPC_FALLBACK,
-        env.VITE_RPC_TATUM,
-        env.VITE_RPC_THIRDWEB,
-        "https://mainnet.megaeth.com/rpc",
-      ]
-    : []),
+    ? ["https://mainnet.megaeth.com/rpc"]
+    : [
+        env.VITE_TESTNET_RPC_URLS,
+        env.VITE_TESTNET_RPC_URL,
+        "https://timothy.megaeth.com/rpc",
+        "https://carrot.megaeth.com/rpc",
+        "https://megaeth-timothy.gateway.tatum.io/",
+      ]),
 ];
 
 const dedupe = (arr) => {
@@ -66,7 +70,12 @@ const expandRpcList = () =>
 
 const RPC_POOL = dedupe(expandRpcList());
 
+if (!RPC_POOL.length) {
+  throw new Error("No RPC endpoints configured for the selected network.");
+}
+
 export const RPC_URL = RPC_POOL[0];
+export const getCurrentRpcUrl = () => RPC_POOL[rpcIndex] || RPC_POOL[0];
 
 const providerCache = new Map();
 const getProviderForUrl = (url) => {

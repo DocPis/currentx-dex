@@ -257,6 +257,8 @@ export default function SwapSection({ balances }) {
   const quoteLockTimerRef = useRef(null);
   const pendingExecutionRef = useRef(null);
   const lastQuoteOutRef = useRef(null);
+  const quoteDebounceRef = useRef(null);
+  const allowanceDebounceRef = useRef(null);
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -526,6 +528,10 @@ export default function SwapSection({ balances }) {
 
   useEffect(() => {
     let cancelled = false;
+    if (quoteDebounceRef.current) {
+      clearTimeout(quoteDebounceRef.current);
+      quoteDebounceRef.current = null;
+    }
     const fetchQuote = async () => {
       const now = Date.now();
       if (quoteLockedUntil && now < quoteLockedUntil) {
@@ -563,91 +569,103 @@ export default function SwapSection({ balances }) {
         return;
       }
 
-      try {
-        setQuoteLoading(true);
-        const provider = getReadOnlyProvider();
-        const sellAddress = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
-        const buyAddress = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
-        if (!sellAddress || !buyAddress) {
-          setQuoteError("Select tokens with valid addresses.");
-          return;
-        }
-        const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
+      quoteDebounceRef.current = setTimeout(async () => {
+        try {
+          setQuoteLoading(true);
+          const provider = getReadOnlyProvider();
+          const sellAddress = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+          const buyAddress = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+          if (!sellAddress || !buyAddress) {
+            setQuoteError("Select tokens with valid addresses.");
+            return;
+          }
+          const amountWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
 
-        const { path, pairs } = await buildPath({ amountWei });
-        setQuoteRoute(path);
-        setQuotePairs(pairs || []);
-        const amountOut = await getV2Quote(provider, amountWei, path);
-        if (cancelled) return;
+          const { path, pairs } = await buildPath({ amountWei });
+          setQuoteRoute(path);
+          setQuotePairs(pairs || []);
+          const amountOut = await getV2Quote(provider, amountWei, path);
+          if (cancelled) return;
 
-        const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
-        setQuoteOut(formatted);
-        setQuoteOutRaw(amountOut);
-        setLastQuoteAt(Date.now());
-        const prevRaw = lastQuoteOutRef.current;
-        lastQuoteOutRef.current = amountOut;
-        if (prevRaw) {
-          const prevNum = Number(formatUnits(prevRaw, buyMeta?.decimals ?? 18));
-          const currNum = Number(formatted);
-          if (prevNum > 0 && Number.isFinite(prevNum) && Number.isFinite(currNum)) {
-            const deltaPct = Math.abs((currNum - prevNum) / prevNum) * 100;
-            setQuoteVolatilityPct(deltaPct);
+          const formatted = formatUnits(amountOut, buyMeta?.decimals ?? 18);
+          setQuoteOut(formatted);
+          setQuoteOutRaw(amountOut);
+          setLastQuoteAt(Date.now());
+          const prevRaw = lastQuoteOutRef.current;
+          lastQuoteOutRef.current = amountOut;
+          if (prevRaw) {
+            const prevNum = Number(formatUnits(prevRaw, buyMeta?.decimals ?? 18));
+            const currNum = Number(formatted);
+            if (prevNum > 0 && Number.isFinite(prevNum) && Number.isFinite(currNum)) {
+              const deltaPct = Math.abs((currNum - prevNum) / prevNum) * 100;
+              setQuoteVolatilityPct(deltaPct);
+            } else {
+              setQuoteVolatilityPct(0);
+            }
           } else {
             setQuoteVolatilityPct(0);
           }
-        } else {
-          setQuoteVolatilityPct(0);
-        }
 
-        // price impact across full route (multi-hop aware)
-        try {
-          const impact = await computeRoutePriceImpact(provider, amountWei, path);
-          if (!cancelled) setPriceImpact(impact);
-        } catch {
-          setPriceImpact(null);
-        }
-
-        // Precompute allowance requirement for ERC20 sells (needs signer). Skip for direct wrap/unwrap.
-        if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
+          // price impact across full route (multi-hop aware)
           try {
-            const signerProvider = await getProvider();
-            const signer = await signerProvider.getSigner();
-            const user = await signer.getAddress();
-            const token = new Contract(sellAddress, ERC20_ABI, signer);
-            const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
-            const desiredAllowance = approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
-            if (cancelled) return;
-            const needsApproval = allowance < amountWei;
-            setApproveNeeded(needsApproval);
-            setApprovalTarget(
-              needsApproval
-                ? {
-                    symbol: sellToken,
-                    address: sellAddress,
-                    desiredAllowance,
-                  }
-                : null
-            );
+            const impact = await computeRoutePriceImpact(provider, amountWei, path);
+            if (!cancelled) setPriceImpact(impact);
           } catch {
+            setPriceImpact(null);
+          }
+
+          // Precompute allowance requirement for ERC20 sells (needs signer). Skip for direct wrap/unwrap.
+          if (allowanceDebounceRef.current) {
+            clearTimeout(allowanceDebounceRef.current);
+            allowanceDebounceRef.current = null;
+          }
+          if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
+            allowanceDebounceRef.current = setTimeout(async () => {
+              try {
+                const signerProvider = await getProvider();
+                const signer = await signerProvider.getSigner();
+                const user = await signer.getAddress();
+                const token = new Contract(sellAddress, ERC20_ABI, signer);
+                const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+                const desiredAllowance = approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+                if (cancelled) return;
+                const needsApproval = allowance < amountWei;
+                setApproveNeeded(needsApproval);
+                setApprovalTarget(
+                  needsApproval
+                    ? {
+                        symbol: sellToken,
+                        address: sellAddress,
+                        desiredAllowance,
+                      }
+                    : null
+                );
+              } catch {
+                if (cancelled) return;
+                setApproveNeeded(false);
+                setApprovalTarget(null);
+              }
+            }, 200);
+          } else {
             if (cancelled) return;
             setApproveNeeded(false);
             setApprovalTarget(null);
           }
-        } else {
+        } catch (e) {
           if (cancelled) return;
-          setApproveNeeded(false);
-          setApprovalTarget(null);
+          setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
+        } finally {
+          if (!cancelled) setQuoteLoading(false);
         }
-      } catch (e) {
-      if (cancelled) return;
-      setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
-    } finally {
-      if (!cancelled) setQuoteLoading(false);
-    }
+      }, 250); // debounce 250ms to cut RPC spam
   };
     fetchQuote();
     return () => {
       cancelled = true;
+      if (quoteDebounceRef.current) {
+        clearTimeout(quoteDebounceRef.current);
+        quoteDebounceRef.current = null;
+      }
     };
   }, [
     amountIn,
@@ -725,6 +743,8 @@ export default function SwapSection({ balances }) {
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
     if (executionClearRef.current) clearTimeout(executionClearRef.current);
     if (quoteLockTimerRef.current) clearTimeout(quoteLockTimerRef.current);
+    if (quoteDebounceRef.current) clearTimeout(quoteDebounceRef.current);
+    if (allowanceDebounceRef.current) clearTimeout(allowanceDebounceRef.current);
   }, []);
 
   const handleApprove = async () => {
