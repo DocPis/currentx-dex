@@ -1154,11 +1154,18 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       }
 
       try {
+        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+        const walletChainId = (chainId || "").toLowerCase();
+        const preferWallet = address && walletChainId && walletChainId === activeChainId;
         let provider;
-        try {
-          provider = await getProvider();
-        } catch {
-          provider = getReadOnlyProvider();
+        if (preferWallet) {
+          try {
+            provider = await getProvider();
+          } catch {
+            provider = getReadOnlyProvider();
+          }
+        } else {
+          provider = getReadOnlyProvider(false, true);
         }
         const res = await getV2PairReserves(
           provider,

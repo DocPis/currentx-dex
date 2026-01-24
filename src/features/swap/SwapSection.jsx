@@ -823,7 +823,9 @@ export default function SwapSection({ balances, address, chainId }) {
       quoteDebounceRef.current = setTimeout(async () => {
         try {
           setQuoteLoading(true);
-          const provider = getReadOnlyProvider();
+          const provider = address
+            ? getReadOnlyProvider()
+            : getReadOnlyProvider(false, true);
           const sellAddress = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
           const buyAddress = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
           if (!sellAddress || !buyAddress) {
