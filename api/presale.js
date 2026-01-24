@@ -11,6 +11,7 @@ const MAX_FIELD_LENGTH = 256;
 const MAX_WALLET_LENGTH = 120;
 const RATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_REQUESTS_PER_IP = 30;
+const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
 // KV opt-in: use if creds are present; fallback to in-memory on error.
 const kvEnabled = Boolean(
@@ -108,7 +109,8 @@ export default async function handler(req, res) {
     }
 
     const { wallet, discord, telegram, source, ts } = req.body || {};
-    const normalizedWallet = normalizeWallet(wallet).slice(0, MAX_WALLET_LENGTH);
+    const rawWallet = (wallet || "").toString().trim();
+    const normalizedWallet = normalizeWallet(rawWallet).slice(0, MAX_WALLET_LENGTH);
     const safeDiscord = sanitizeString(discord, MAX_FIELD_LENGTH);
     const safeTelegram = sanitizeString(telegram, MAX_FIELD_LENGTH);
     const safeSource = sanitizeString(source, MAX_FIELD_LENGTH);
@@ -118,8 +120,12 @@ export default async function handler(req, res) {
     const telegramChatId =
       process.env.TELEGRAM_WHITELIST_CHAT_ID || process.env.TELEGRAM_CHAT_ID || "";
 
-    if (!normalizedWallet) {
+    if (!rawWallet) {
       res.status(400).json({ error: "Missing wallet" });
+      return;
+    }
+    if (!WALLET_REGEX.test(rawWallet)) {
+      res.status(400).json({ error: "Invalid wallet address" });
       return;
     }
     if (!safeDiscord && !safeTelegram) {
@@ -171,7 +177,10 @@ export default async function handler(req, res) {
         await fetch(webhookUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({
+            content,
+            allowed_mentions: { parse: [] },
+          }),
         });
       } catch (e) {
         console.error("Discord webhook error", e);

@@ -260,11 +260,32 @@ export default function SwapSection({ balances, address, chainId }) {
     return str.toLowerCase();
   };
   const [localBalances, setLocalBalances] = useState({});
-  const [customTokens] = useState(() => getRegisteredCustomTokens());
+  const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(
     () => ({ ...TOKENS, ...customTokens }),
     [customTokens]
   );
+  useEffect(() => {
+    const sync = () => {
+      try {
+        setCustomTokens(getRegisteredCustomTokens());
+      } catch {
+        // ignore sync errors
+      }
+    };
+    sync();
+    if (typeof window === "undefined" || typeof document === "undefined") return undefined;
+    const handleFocus = () => sync();
+    const handleVisibility = () => {
+      if (!document.hidden) sync();
+    };
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, []);
   const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
   const walletChainHex = normalizeChainHex(chainId);
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
@@ -358,7 +379,10 @@ export default function SwapSection({ balances, address, chainId }) {
   useEffect(() => {
     let cancelled = false;
     const fetchLocalBalances = async () => {
-      if (!address) return;
+      if (!address) {
+        setLocalBalances({});
+        return;
+      }
       try {
         const provider = await getProvider().catch(() => getReadOnlyProvider());
         const iface = new Interface(ERC20_ABI);
@@ -396,6 +420,11 @@ export default function SwapSection({ balances, address, chainId }) {
       cancelled = true;
     };
   }, [address, tokenRegistry]);
+  useEffect(() => {
+    if (!address) {
+      setLocalBalances({});
+    }
+  }, [address]);
   const effectiveBalances =
     localBalances && Object.keys(localBalances).length ? localBalances : balances || {};
   const sellBalance = effectiveBalances?.[sellToken] || 0;

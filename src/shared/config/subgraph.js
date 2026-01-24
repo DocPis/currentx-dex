@@ -10,7 +10,7 @@ const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
 const SUBGRAPH_PROXY =
   (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
-  "https://corsproxy.io/?";
+  "";
 const disableTestnetSubgraph =
   (typeof import.meta !== "undefined" ? import.meta.env?.VITE_DISABLE_TESTNET_SUBGRAPH : "") ===
   "true";
@@ -47,22 +47,27 @@ async function postSubgraph(query, variables = {}) {
     return cached.data;
   }
 
-  const headers = {
-    "Content-Type": "application/json",
+  const buildHeaders = (useProxy) => {
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (SUBGRAPH_API_KEY && !useProxy) {
+      headers.Authorization = `Bearer ${SUBGRAPH_API_KEY}`;
+    }
+    return headers;
   };
-
-  if (SUBGRAPH_API_KEY) {
-    headers.Authorization = `Bearer ${SUBGRAPH_API_KEY}`;
-  }
 
   let lastError = null;
   let attemptedProxy = false;
   for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
     try {
-      const url = attemptedProxy ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_URL)}` : SUBGRAPH_URL;
+      const useProxy = attemptedProxy && Boolean(SUBGRAPH_PROXY);
+      const url = useProxy
+        ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_URL)}`
+        : SUBGRAPH_URL;
       const res = await fetch(url, {
         method: "POST",
-        headers,
+        headers: buildHeaders(useProxy),
         body: JSON.stringify({ query, variables }),
       });
 

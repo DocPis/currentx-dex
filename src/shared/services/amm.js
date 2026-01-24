@@ -8,6 +8,7 @@ import {
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";
 import { getRegisteredCustomTokens } from "../config/customTokens";
+import { getReadOnlyProvider } from "../config/web3";
 import { multicall, hasMulticall } from "./multicall";
 
 const pairInterface = new Interface(UNIV2_PAIR_ABI);
