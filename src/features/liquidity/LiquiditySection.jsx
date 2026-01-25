@@ -16,6 +16,10 @@ import {
   fetchMasterChefFarms,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
+  BTCB_ADDRESS,
+  SUSDE_ADDRESS,
+  EZETH_ADDRESS,
+  WSTETH_ADDRESS,
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
@@ -32,6 +36,35 @@ import { multicall, hasMulticall } from "../../shared/services/multicall";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
+
+const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH"]);
+const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
+  [BTCB_ADDRESS, SUSDE_ADDRESS, EZETH_ADDRESS, WSTETH_ADDRESS]
+    .filter(Boolean)
+    .map((addr) => addr.toLowerCase())
+);
+
+const isLiquiditySymbolBlocked = (symbol) => {
+  const normalized = (symbol || "").toString().toUpperCase();
+  return Boolean(normalized && LIQUIDITY_BLOCKED_SYMBOLS.has(normalized));
+};
+
+const isLiquidityTokenBlocked = (token) => {
+  if (!token) return false;
+  if (isLiquiditySymbolBlocked(token.symbol)) return true;
+  const addr = (token.address || "").toLowerCase();
+  return Boolean(addr && LIQUIDITY_BLOCKED_ADDRESSES.has(addr));
+};
+
+const filterLiquidityRegistry = (registry = {}) => {
+  const out = {};
+  Object.entries(registry).forEach(([sym, meta]) => {
+    if (!meta) return;
+    if (isLiquiditySymbolBlocked(sym) || isLiquidityTokenBlocked(meta)) return;
+    out[sym] = meta;
+  });
+  return out;
+};
 
 const formatNumber = (v) => {
   const num = Number(v || 0);
@@ -361,16 +394,24 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
 
     // Include tokens discovered on-chain for the active network.
-    Object.assign(out, onchainTokens);
+    Object.entries(onchainTokens).forEach(([sym, meta]) => {
+      if (isLiquiditySymbolBlocked(sym) || isLiquidityTokenBlocked(meta)) return;
+      out[sym] = meta;
+    });
 
     // Include any statically defined token that has an address for the active network.
     Object.entries(TOKENS).forEach(([sym, meta]) => {
       if (sym === "ETH" || sym === "WETH") return;
-      if (meta?.address) out[sym] = meta;
+      if (!meta?.address) return;
+      if (isLiquiditySymbolBlocked(sym) || isLiquidityTokenBlocked(meta)) return;
+      out[sym] = meta;
     });
 
     // Include user-added custom tokens.
-    Object.assign(out, customTokens);
+    Object.entries(customTokens).forEach(([sym, meta]) => {
+      if (isLiquiditySymbolBlocked(sym) || isLiquidityTokenBlocked(meta)) return;
+      out[sym] = meta;
+    });
 
     return out;
   }, [customTokens, onchainTokens]);
@@ -461,7 +502,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           UNIV2_FACTORY_ABI,
           provider
         );
-        const registryForLookup = { ...TOKENS, ...customTokens };
+        const registryForLookup = filterLiquidityRegistry({ ...TOKENS, ...customTokens });
 
         const lengthRaw = await factory.allPairsLength();
         const total = Number(lengthRaw || 0);
@@ -508,6 +549,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
               fetchTokenMeta(token0, i, "a"),
               fetchTokenMeta(token1, i, "b"),
             ]);
+
+            if (isLiquidityTokenBlocked(meta0) || isLiquidityTokenBlocked(meta1)) return;
 
             tokenMap[meta0.symbol] = tokenMap[meta0.symbol] || meta0;
             tokenMap[meta1.symbol] = tokenMap[meta1.symbol] || meta1;
@@ -1510,6 +1553,10 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const symbol = (symbolRaw || "TOKEN").toString().toUpperCase();
       const name = nameRaw || symbol;
       const decimals = Number(decimalsRaw) || 18;
+      if (isLiquidityTokenBlocked({ symbol, address: addr })) {
+        setCustomTokenAddError("Token not supported in liquidity yet.");
+        return;
+      }
       const tokenKey = symbol;
       const alreadySymbol = tokenRegistry[tokenKey];
       if (alreadySymbol) {
