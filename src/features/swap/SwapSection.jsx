@@ -425,8 +425,12 @@ export default function SwapSection({ balances, address, chainId }) {
       setLocalBalances({});
     }
   }, [address]);
-  const effectiveBalances =
-    localBalances && Object.keys(localBalances).length ? localBalances : balances || {};
+  const effectiveBalances = useMemo(() => {
+    const base = balances || {};
+    const local = localBalances || {};
+    if (!Object.keys(local).length) return base;
+    return { ...base, ...local };
+  }, [balances, localBalances]);
   const sellBalance = effectiveBalances?.[sellToken] || 0;
   const handleQuickPercent = (pct) => {
     const bal = effectiveBalances?.[sellToken] || 0;
