@@ -15,10 +15,16 @@ export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
 export const WETH_ADDRESS = active.addresses.WETH_ADDRESS;
 export const USDC_ADDRESS = active.addresses.USDC_ADDRESS;
 export const CUSD_ADDRESS = active.addresses.CUSD_ADDRESS;
+export const STCUSD_ADDRESS = active.addresses.STCUSD_ADDRESS;
+export const SUSDE_ADDRESS = active.addresses.SUSDE_ADDRESS;
+export const USDE_ADDRESS = active.addresses.USDE_ADDRESS;
+export const EZETH_ADDRESS = active.addresses.EZETH_ADDRESS;
+export const WSTETH_ADDRESS = active.addresses.WSTETH_ADDRESS;
 export const USDM_ADDRESS = active.addresses.USDM_ADDRESS;
 export const CRX_ADDRESS = active.addresses.CRX_ADDRESS;
 export const MEGA_TOKEN_ADDRESS = active.addresses.MEGA_TOKEN_ADDRESS;
 export const XBTC_ADDRESS = active.addresses.XBTC_ADDRESS;
+export const BTCB_ADDRESS = active.addresses.BTCB_ADDRESS;
 export const WUSD_ADDRESS = active.addresses.WUSD_ADDRESS;
 export const WUSDC_ADDRESS = active.addresses.WUSDC_ADDRESS;
 
