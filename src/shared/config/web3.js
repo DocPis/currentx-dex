@@ -335,15 +335,30 @@ export async function getErc20(address, provider) {
   return new Contract(address, ERC20_ABI, provider);
 }
 
-// Wrappers to preserve existing API while delegating to services
-export const fetchMasterChefFarms = (providerOverride) =>
-  fetchMasterChefFarmsService(providerOverride || getReadOnlyProvider());
+async function getSafeReadOnlyProvider() {
+  const targetChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
+  let provider = getReadOnlyProvider();
+  if (!targetChain) return provider;
+  try {
+    const net = await provider.getNetwork();
+    if (Number(net?.chainId || 0) === targetChain) {
+      return provider;
+    }
+  } catch {
+    // fall through to forced RPC
+  }
+  return getReadOnlyProvider(false, true);
+}
 
-export const fetchMasterChefUserData = (address, pools, providerOverride) =>
+// Wrappers to preserve existing API while delegating to services
+export const fetchMasterChefFarms = async (providerOverride) =>
+  fetchMasterChefFarmsService(providerOverride || (await getSafeReadOnlyProvider()));
+
+export const fetchMasterChefUserData = async (address, pools, providerOverride) =>
   fetchMasterChefUserDataService(
     address,
     pools,
-    providerOverride || getReadOnlyProvider()
+    providerOverride || (await getSafeReadOnlyProvider())
   );
 
 // Simple telemetry: latest block and subgraph auth hint.

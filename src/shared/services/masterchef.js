@@ -20,6 +20,21 @@ import { getV2PairReserves } from "./amm";
 
 const BLOCKS_PER_YEAR = 2628000n; // ~12s block time
 
+const isBadDataError = (err) => {
+  const msg = (err?.message || "").toLowerCase();
+  return err?.code === "BAD_DATA" || msg.includes("could not decode result data");
+};
+
+async function assertContractExists(provider, address, label) {
+  if (!address) {
+    throw new Error(`${label} address not configured for this network.`);
+  }
+  const code = await provider.getCode(address);
+  if (!code || code === "0x") {
+    throw new Error(`${label} contract not deployed on this network.`);
+  }
+}
+
 async function fetchTokenMeta(provider, address, cache = {}) {
   if (!address) return null;
   const lower = address.toLowerCase();
@@ -194,12 +209,23 @@ async function getLpSummary(provider, lpAddress, priceCache, metaCache) {
 
 export async function fetchMasterChefFarms(provider) {
   const chefProvider = provider;
+  await assertContractExists(chefProvider, MASTER_CHEF_ADDRESS, "MasterChef");
   const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, chefProvider);
-  const [poolLengthRaw, totalAllocPointRaw, perBlockRaw] = await Promise.all([
-    chef.poolLength(),
-    chef.totalAllocPoint(),
-    chef.currentxPerBlock(),
-  ]);
+  let poolLengthRaw;
+  let totalAllocPointRaw;
+  let perBlockRaw;
+  try {
+    [poolLengthRaw, totalAllocPointRaw, perBlockRaw] = await Promise.all([
+      chef.poolLength(),
+      chef.totalAllocPoint(),
+      chef.currentxPerBlock(),
+    ]);
+  } catch (err) {
+    if (isBadDataError(err)) {
+      throw new Error("MasterChef ABI mismatch or wrong network.");
+    }
+    throw err;
+  }
   const poolLength = Number(poolLengthRaw);
   const totalAllocPoint = BigInt(totalAllocPointRaw || 0n);
   const perBlock = BigInt(perBlockRaw || 0n);
@@ -280,6 +306,7 @@ export async function fetchMasterChefFarms(provider) {
 
 export async function fetchMasterChefUserData(address, pools, provider) {
   if (!address || !pools?.length) return {};
+  await assertContractExists(provider, MASTER_CHEF_ADDRESS, "MasterChef");
   const chef = new Contract(MASTER_CHEF_ADDRESS, MASTER_CHEF_ABI, provider);
   const out = {};
   for (const pool of pools) {
