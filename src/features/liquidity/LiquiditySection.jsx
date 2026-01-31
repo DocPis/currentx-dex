@@ -234,6 +234,12 @@ const friendlyActionError = (e, actionLabel = "Action") => {
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
+  if (lower.includes("nonce too low") || lower.includes("already known")) {
+    return (
+      `${actionLabel} was already submitted from your wallet (nonce too low). ` +
+      "Check wallet activity or the explorer; if confirmed, refresh. If stuck, speed up/cancel and retry."
+    );
+  }
   if (lower.includes("user denied") || lower.includes("rejected")) {
     return `${actionLabel} was rejected in your wallet. Please approve to continue.`;
   }
@@ -256,6 +262,40 @@ const friendlyActionError = (e, actionLabel = "Action") => {
 const shortenAddress = (addr) => {
   if (!addr) return "Native asset";
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+};
+
+const extractTxHash = (err) => {
+  const candidate =
+    err?.transaction?.hash ||
+    err?.receipt?.hash ||
+    err?.transactionHash ||
+    err?.hash ||
+    err?.data?.txHash ||
+    err?.data?.hash ||
+    err?.error?.data?.txHash ||
+    err?.error?.data?.hash ||
+    err?.info?.error?.data?.txHash ||
+    err?.info?.error?.data?.hash;
+  if (typeof candidate !== "string") return null;
+  if (!candidate.startsWith("0x")) return null;
+  return candidate;
+};
+
+const tryFetchReceipt = async (hash, provider) => {
+  if (!hash) return null;
+  const providers = [];
+  if (provider) providers.push(provider);
+  const fallback = getReadOnlyProvider(true, true);
+  if (fallback) providers.push(fallback);
+  for (const p of providers) {
+    try {
+      const receipt = await p.getTransactionReceipt(hash);
+      if (receipt) return receipt;
+    } catch {
+      // ignore provider failures
+    }
+  }
+  return null;
 };
 
 const clampBps = (input) => {
@@ -1675,6 +1715,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   ]);
 
   const handleDeposit = async () => {
+    let provider;
     try {
       setActionStatus(null);
       setActionLoading(true);
@@ -1726,14 +1767,13 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       checkBalance(amount0, tokenBalances?.token0, selectedPool.token0Symbol);
       checkBalance(amount1, tokenBalances?.token1, selectedPool.token1Symbol);
 
-        let provider;
-        try {
-          provider = await getProvider();
-        } catch {
-          provider = getReadOnlyProvider();
-        }
-        const signer = await provider.getSigner();
-        const user = await signer.getAddress();
+      try {
+        provider = await getProvider();
+      } catch {
+        provider = getReadOnlyProvider();
+      }
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
 
       // Guard against wrong preset (router missing on the connected chain)
       const routerCode = await provider.getCode(UNIV2_ROUTER_ADDRESS);
@@ -1873,6 +1913,37 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
 
       setLpRefreshTick((t) => t + 1);
     } catch (e) {
+      const txHash = extractTxHash(e);
+      if (txHash) {
+        const receipt = await tryFetchReceipt(txHash, provider);
+        const status = receipt?.status;
+        const normalized =
+          typeof status === "bigint" ? Number(status) : status;
+        const poolLabel = getPoolLabel(selectedPool);
+        if (normalized === 1) {
+          setActionStatus({
+            variant: "success",
+            hash: txHash,
+            message: poolLabel ? `Deposited ${poolLabel}` : "Deposit confirmed",
+          });
+          setLpRefreshTick((t) => t + 1);
+          return;
+        }
+        if (normalized === 0) {
+          setActionStatus({
+            variant: "error",
+            hash: txHash,
+            message: friendlyActionError(e, "Deposit"),
+          });
+          return;
+        }
+        setActionStatus({
+          variant: "pending",
+          hash: txHash,
+          message: "Transaction submitted. Waiting for confirmation.",
+        });
+        return;
+      }
       const userRejected =
         e?.code === 4001 ||
         e?.code === "ACTION_REJECTED" ||
@@ -1889,6 +1960,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   };
 
   const handleWithdraw = async () => {
+    let provider;
     try {
       setActionStatus(null);
       setActionLoading(true);
@@ -1918,7 +1990,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         throw new Error("Wallet network differs from the selected network. Switch network to withdraw.");
       }
 
-      const provider = await getProvider();
+      provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
 
@@ -2012,6 +2084,37 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       });
       setLpRefreshTick((t) => t + 1);
     } catch (e) {
+      const txHash = extractTxHash(e);
+      if (txHash) {
+        const receipt = await tryFetchReceipt(txHash, provider);
+        const status = receipt?.status;
+        const normalized =
+          typeof status === "bigint" ? Number(status) : status;
+        const poolLabel = getPoolLabel(selectedPool);
+        if (normalized === 1) {
+          setActionStatus({
+            variant: "success",
+            hash: txHash,
+            message: poolLabel ? `Withdrew ${poolLabel}` : "Withdraw confirmed",
+          });
+          setLpRefreshTick((t) => t + 1);
+          return;
+        }
+        if (normalized === 0) {
+          setActionStatus({
+            variant: "error",
+            hash: txHash,
+            message: friendlyActionError(e, "Withdraw"),
+          });
+          return;
+        }
+        setActionStatus({
+          variant: "pending",
+          hash: txHash,
+          message: "Transaction submitted. Waiting for confirmation.",
+        });
+        return;
+      }
       const userRejected =
         e?.code === 4001 ||
         e?.code === "ACTION_REJECTED" ||

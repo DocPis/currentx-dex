@@ -70,6 +70,40 @@ const formatDisplayAmount = (val, symbol) => {
   return symbol ? `${str} ${symbol}` : str;
 };
 
+const extractTxHash = (err) => {
+  const candidate =
+    err?.transaction?.hash ||
+    err?.receipt?.hash ||
+    err?.transactionHash ||
+    err?.hash ||
+    err?.data?.txHash ||
+    err?.data?.hash ||
+    err?.error?.data?.txHash ||
+    err?.error?.data?.hash ||
+    err?.info?.error?.data?.txHash ||
+    err?.info?.error?.data?.hash;
+  if (typeof candidate !== "string") return null;
+  if (!candidate.startsWith("0x")) return null;
+  return candidate;
+};
+
+const tryFetchReceipt = async (hash, provider) => {
+  if (!hash) return null;
+  const providers = [];
+  if (provider) providers.push(provider);
+  const fallback = getReadOnlyProvider(true, true);
+  if (fallback) providers.push(fallback);
+  for (const p of providers) {
+    try {
+      const receipt = await p.getTransactionReceipt(hash);
+      if (receipt) return receipt;
+    } catch {
+      // ignore provider failures
+    }
+  }
+  return null;
+};
+
 const computeOutcomeGrade = (expected, actual, minReceived) => {
   if (!Number.isFinite(actual) || !Number.isFinite(expected)) {
     return { label: "OK", icon: "⚠️", deltaPct: null };
@@ -1030,10 +1064,11 @@ export default function SwapSection({ balances, address, chainId }) {
       });
       return;
     }
+    let provider;
     try {
       setApproveLoading(true);
       setSwapStatus(null);
-      const provider = await getProvider();
+      provider = await getProvider();
       const signer = await provider.getSigner();
       const token = new Contract(approvalTarget.address, ERC20_ABI, signer);
       const tx = await token.approve(
@@ -1048,6 +1083,37 @@ export default function SwapSection({ balances, address, chainId }) {
         message: `Approval updated for ${approvalTarget.symbol}.`,
       });
     } catch (e) {
+      const txHash = extractTxHash(e);
+      if (txHash) {
+        const receipt = await tryFetchReceipt(txHash, provider);
+        const status = receipt?.status;
+        const normalized = typeof status === "bigint" ? Number(status) : status;
+        const symbol = approvalTarget?.symbol || "token";
+        if (normalized === 1) {
+          setApproveNeeded(false);
+          setApprovalTarget(null);
+          setSwapStatus({
+            variant: "success",
+            hash: txHash,
+            message: `Approval confirmed for ${symbol}.`,
+          });
+          return;
+        }
+        if (normalized === 0) {
+          setSwapStatus({
+            variant: "error",
+            hash: txHash,
+            message: friendlySwapError(e) || "Approve failed",
+          });
+          return;
+        }
+        setSwapStatus({
+          variant: "pending",
+          hash: txHash,
+          message: "Approval submitted. Waiting for confirmation.",
+        });
+        return;
+      }
       const userRejected =
         e?.code === 4001 ||
         e?.code === "ACTION_REJECTED" ||
@@ -1064,6 +1130,7 @@ export default function SwapSection({ balances, address, chainId }) {
   };
 
   const handleSwap = async () => {
+    let provider;
     try {
       setSwapStatus(null);
       setExecutionProof(null);
@@ -1089,7 +1156,7 @@ export default function SwapSection({ balances, address, chainId }) {
           : [displaySellSymbol, displayBuySymbol];
 
       setSwapLoading(true);
-      const provider = await getProvider();
+      provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
       const sellAddress = sellMeta?.address;
@@ -1338,6 +1405,34 @@ export default function SwapSection({ balances, address, chainId }) {
         variant: "success",
       });
     } catch (e) {
+      const txHash = extractTxHash(e) || pendingTxHashRef.current;
+      if (txHash) {
+        const receipt = await tryFetchReceipt(txHash, provider);
+        const status = receipt?.status;
+        const normalized = typeof status === "bigint" ? Number(status) : status;
+        if (normalized === 1) {
+          setSwapStatus({
+            variant: "success",
+            hash: txHash,
+            message: "Swap confirmed. Check the explorer for details.",
+          });
+          return;
+        }
+        if (normalized === 0) {
+          setSwapStatus({
+            variant: "error",
+            hash: txHash,
+            message: friendlySwapError(e),
+          });
+          return;
+        }
+        setSwapStatus({
+          variant: "pending",
+          hash: txHash,
+          message: "Transaction submitted. Waiting for confirmation.",
+        });
+        return;
+      }
       const userRejected =
         e?.code === 4001 ||
         e?.code === "ACTION_REJECTED" ||
@@ -2168,6 +2263,8 @@ export default function SwapSection({ balances, address, chainId }) {
             className={`group relative flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-2xl backdrop-blur-sm cursor-pointer transition ${
               swapStatus.variant === "success"
                 ? "bg-emerald-900/80 border-emerald-500/50 text-emerald-50 hover:border-emerald-400/70"
+                : swapStatus.variant === "pending"
+                ? "bg-slate-900/80 border-slate-700/60 text-slate-100 hover:border-slate-500/70"
                 : "bg-rose-900/80 border-rose-500/50 text-rose-50 hover:border-rose-400/70"
             }`}
           >
@@ -2175,6 +2272,8 @@ export default function SwapSection({ balances, address, chainId }) {
               className={`mt-0.5 h-8 w-8 rounded-xl flex items-center justify-center shadow-inner shadow-black/30 ${
                 swapStatus.variant === "success"
                   ? "bg-emerald-600/50 text-emerald-100"
+                  : swapStatus.variant === "pending"
+                  ? "bg-slate-700/60 text-slate-200"
                   : "bg-rose-600/50 text-rose-100"
               }`}
             >
@@ -2191,6 +2290,28 @@ export default function SwapSection({ balances, address, chainId }) {
                     strokeWidth="1.8"
                     strokeLinecap="round"
                     strokeLinejoin="round"
+                  />
+                </svg>
+              ) : swapStatus.variant === "pending" ? (
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 animate-spin"
+                >
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r="9"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeOpacity="0.35"
+                  />
+                  <path
+                    d="M21 12a9 9 0 00-9-9"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
                   />
                 </svg>
               ) : (
@@ -2213,6 +2334,8 @@ export default function SwapSection({ balances, address, chainId }) {
               <div className="text-sm font-semibold">
                 {swapStatus.variant === "success"
                   ? "Transaction confirmed"
+                  : swapStatus.variant === "pending"
+                  ? "Working..."
                   : "Transaction failed"}
               </div>
               <div className="text-xs text-slate-200/90 mt-0.5">
