@@ -49,6 +49,7 @@ const mainnetPreset = {
     env.VITE_RPC_TATUM,
     env.VITE_RPC_THIRDWEB,
     "https://mainnet.megaeth.com/rpc",
+    "https://rpc-megaeth-mainnet.globalstake.io",
   ]),
   wsUrls: dedupeList([
     env.VITE_WS_URL,
@@ -78,6 +79,8 @@ const mainnetPreset = {
     UNIV2_FACTORY_ADDRESS: "0x1F49127E87A1B925694a67C437dd2252641B3875",
     UNIV2_ROUTER_ADDRESS: "0x40276Cff28774FaFaF758992415cFA03b6E4689c",
     UNIV3_FACTORY_ADDRESS: "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E",
+    UNIV3_QUOTER_V2_ADDRESS: "0x962e62df3df243844bd89ffb5b061919725dca2d",
+    UNIV3_TICK_LENS_ADDRESS: "0xd8fe4a55f7f79d2937637671923e59d8488683c3",
   },
 };
 
@@ -121,6 +124,8 @@ const testnetDefaults = {
     UNIV2_FACTORY_ADDRESS: "0x28c56b84190FA59Ce3903d5fE4b3FdbE5315FA24",
     UNIV2_ROUTER_ADDRESS: "0x2A6a1e904c86551B195D79DaE8B51202bF645080",
     UNIV3_FACTORY_ADDRESS: "",
+    UNIV3_QUOTER_V2_ADDRESS: "",
+    UNIV3_TICK_LENS_ADDRESS: "",
   },
 };
 
@@ -160,6 +165,12 @@ const testnetPreset = (() => {
       env.VITE_TESTNET_ROUTER_ADDRESS || testnetDefaults.addresses.UNIV2_ROUTER_ADDRESS,
     UNIV3_FACTORY_ADDRESS:
       env.VITE_TESTNET_V3_FACTORY_ADDRESS || testnetDefaults.addresses.UNIV3_FACTORY_ADDRESS,
+    UNIV3_QUOTER_V2_ADDRESS:
+      env.VITE_TESTNET_V3_QUOTER_V2_ADDRESS ||
+      testnetDefaults.addresses.UNIV3_QUOTER_V2_ADDRESS,
+    UNIV3_TICK_LENS_ADDRESS:
+      env.VITE_TESTNET_V3_TICK_LENS_ADDRESS ||
+      testnetDefaults.addresses.UNIV3_TICK_LENS_ADDRESS,
   };
 
   const required = [

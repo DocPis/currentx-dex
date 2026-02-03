@@ -42,3 +42,5 @@ export const UNIV2_ROUTER_ADDRESS = active.addresses.UNIV2_ROUTER_ADDRESS;
 
 // Uniswap V3 factory (mainnet-only unless provided in testnet preset/env)
 export const UNIV3_FACTORY_ADDRESS = active.addresses.UNIV3_FACTORY_ADDRESS;
+export const UNIV3_QUOTER_V2_ADDRESS = active.addresses.UNIV3_QUOTER_V2_ADDRESS;
+export const UNIV3_TICK_LENS_ADDRESS = active.addresses.UNIV3_TICK_LENS_ADDRESS;
