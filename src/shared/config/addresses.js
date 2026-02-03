@@ -39,3 +39,6 @@ export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =
 // Uniswap V2 factory/router
 export const UNIV2_FACTORY_ADDRESS = active.addresses.UNIV2_FACTORY_ADDRESS;
 export const UNIV2_ROUTER_ADDRESS = active.addresses.UNIV2_ROUTER_ADDRESS;
+
+// Uniswap V3 factory (mainnet-only unless provided in testnet preset/env)
+export const UNIV3_FACTORY_ADDRESS = active.addresses.UNIV3_FACTORY_ADDRESS;

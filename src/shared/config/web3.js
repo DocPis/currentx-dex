@@ -6,6 +6,7 @@ import {
   MASTER_CHEF_ABI,
   UNIV2_FACTORY_ABI,
   UNIV2_ROUTER_ABI,
+  UNIV3_FACTORY_ABI,
   WETH_ABI,
 } from "./abis";
 import { TOKENS } from "./tokens";
@@ -133,6 +134,7 @@ export {
   MASTER_CHEF_ABI,
   UNIV2_FACTORY_ABI,
   UNIV2_ROUTER_ABI,
+  UNIV3_FACTORY_ABI,
   WETH_ABI,
 };
 
