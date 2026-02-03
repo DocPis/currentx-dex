@@ -39,8 +39,14 @@ export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =
 // Uniswap V2 factory/router
 export const UNIV2_FACTORY_ADDRESS = active.addresses.UNIV2_FACTORY_ADDRESS;
 export const UNIV2_ROUTER_ADDRESS = active.addresses.UNIV2_ROUTER_ADDRESS;
+export const UNIV2_PAIR_CODE_HASH = active.addresses.UNIV2_PAIR_CODE_HASH;
 
 // Uniswap V3 factory (mainnet-only unless provided in testnet preset/env)
 export const UNIV3_FACTORY_ADDRESS = active.addresses.UNIV3_FACTORY_ADDRESS;
 export const UNIV3_QUOTER_V2_ADDRESS = active.addresses.UNIV3_QUOTER_V2_ADDRESS;
 export const UNIV3_TICK_LENS_ADDRESS = active.addresses.UNIV3_TICK_LENS_ADDRESS;
+export const UNIV3_SWAP_ROUTER_ADDRESS = active.addresses.UNIV3_SWAP_ROUTER_ADDRESS;
+export const UNIV3_POSITION_MANAGER_ADDRESS = active.addresses.UNIV3_POSITION_MANAGER_ADDRESS;
+export const UNIV3_MULTICALL_ADDRESS = active.addresses.UNIV3_MULTICALL_ADDRESS;
+export const UNIV3_MIGRATOR_ADDRESS = active.addresses.UNIV3_MIGRATOR_ADDRESS;
+export const UNIV3_POOL_INIT_CODE_HASH = active.addresses.UNIV3_POOL_INIT_CODE_HASH;
