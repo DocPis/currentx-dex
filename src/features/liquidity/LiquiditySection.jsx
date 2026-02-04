@@ -22,12 +22,16 @@ import {
   WSTETH_ADDRESS,
   STCUSD_ADDRESS,
   USDE_ADDRESS,
+  UNIV3_FACTORY_ADDRESS,
+  UNIV3_POSITION_MANAGER_ADDRESS,
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
   UNIV2_FACTORY_ABI,
   UNIV2_PAIR_ABI,
   UNIV2_ROUTER_ABI,
+  UNIV3_FACTORY_ABI,
+  UNIV3_POSITION_MANAGER_ABI,
 } from "../../shared/config/abis";
 import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
 import { getRealtimeClient } from "../../shared/services/realtime";
@@ -38,6 +42,14 @@ import { multicall, hasMulticall } from "../../shared/services/multicall";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
+const V3_MIN_TICK = -887272;
+const V3_MAX_TICK = 887272;
+const V3_FEE_OPTIONS = [
+  { fee: 100, label: "0.01%" },
+  { fee: 500, label: "0.05%" },
+  { fee: 3000, label: "0.30%" },
+  { fee: 10000, label: "1.00%" },
+];
 
 const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
 const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
@@ -264,6 +276,12 @@ const shortenAddress = (addr) => {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 };
 
+const formatFeeTier = (fee) => {
+  const num = Number(fee || 0);
+  if (!Number.isFinite(num)) return "--";
+  return `${(num / 10000).toFixed(2)}%`;
+};
+
 const extractTxHash = (err) => {
   const candidate =
     err?.transaction?.hash ||
@@ -407,6 +425,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [depositToken0, setDepositToken0] = useState("");
   const [depositToken1, setDepositToken1] = useState("");
   const [withdrawLp, setWithdrawLp] = useState("");
+  const [v3Token0, setV3Token0] = useState("ETH");
+  const [v3Token1, setV3Token1] = useState("USDC");
+  const [v3FeeTier, setV3FeeTier] = useState(3000);
+  const [v3Amount0, setV3Amount0] = useState("");
+  const [v3Amount1, setV3Amount1] = useState("");
+  const [v3MintError, setV3MintError] = useState("");
+  const [v3MintLoading, setV3MintLoading] = useState(false);
+  const [v3Positions, setV3Positions] = useState([]);
+  const [v3PositionsLoading, setV3PositionsLoading] = useState(false);
+  const [v3PositionsError, setV3PositionsError] = useState("");
+  const [v3RefreshTick, setV3RefreshTick] = useState(0);
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
   const [slippageInput, setSlippageInput] = useState("0.5");
@@ -473,6 +502,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     [balancesProp, hasExternalBalances, hookBalances]
   );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
+  const hasV3Liquidity = Boolean(UNIV3_FACTORY_ADDRESS && UNIV3_POSITION_MANAGER_ADDRESS);
 
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
