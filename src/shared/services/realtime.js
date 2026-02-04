@@ -1,6 +1,6 @@
 // src/shared/services/realtime.js
 // Lightweight MegaETH realtime client (stateChanges + miniBlocks) with auto-reconnect.
-import { RPC_URL } from "../config/web3";
+import { RPC_URL, getRpcPool } from "../config/web3";
 import { getActiveNetworkConfig } from "../config/networks";
 
 const DEFAULT_WS_FALLBACK = "wss://mainnet.megaeth.com/ws";
@@ -33,8 +33,14 @@ const deriveWsCandidates = () => {
     .filter(Boolean)
     .forEach(push);
 
-  // 3) Derive from current RPC_URL
-  if (RPC_URL && typeof RPC_URL === "string") {
+  // 3) RPC pool explicit websocket endpoints
+  const rpcPool = typeof getRpcPool === "function" ? getRpcPool() : [];
+  rpcPool
+    .filter((u) => typeof u === "string" && u.trim().toLowerCase().startsWith("ws"))
+    .forEach(push);
+
+  // 4) Derive from current RPC_URL only if no WS candidates exist yet
+  if (!list.length && RPC_URL && typeof RPC_URL === "string") {
     const rpcWs = RPC_URL.replace(/^http/i, "ws");
     push(rpcWs);
     if (rpcWs.endsWith("/rpc")) {
@@ -42,7 +48,7 @@ const deriveWsCandidates = () => {
     }
   }
 
-  // 4) Fallback
+  // 5) Fallback
   push(DEFAULT_WS_FALLBACK);
   return list;
 };
