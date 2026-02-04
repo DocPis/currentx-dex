@@ -109,6 +109,11 @@ const formatRelativeTime = (ts) => {
   const hrs = Math.floor(mins / 60);
   return `${hrs}h ago`;
 };
+const formatV3Fee = (fee) => {
+  const num = Number(fee);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  return `${(num / 10000).toFixed(2)}%`;
+};
 
 const formatDisplayAmount = (val, symbol) => {
   const num = Number(val);
@@ -873,6 +878,57 @@ export default function SwapSection({ balances, address, chainId }) {
       return label || "Token";
     });
   }, [quoteRoute, tokenRegistry]);
+  const resolveRouteToken = useCallback(
+    (value) => {
+      if (!value) return { symbol: "Token", meta: null };
+      if (typeof value === "string" && value.startsWith("0x")) {
+        const lower = value.toLowerCase();
+        const meta = Object.values(tokenRegistry).find(
+          (t) => t.address && t.address.toLowerCase() === lower
+        );
+        const symbol = displaySymbol(meta, meta?.symbol || shortenAddress(value));
+        return { symbol, meta };
+      }
+      const meta = tokenRegistry[value] || null;
+      return { symbol: displaySymbol(meta, value), meta };
+    },
+    [tokenRegistry]
+  );
+  const routeBreakdown = useMemo(() => {
+    if (isDirectEthWeth) {
+      return [
+        {
+          protocol: "WRAP",
+          fee: null,
+          pool: null,
+          from: resolveRouteToken(sellToken),
+          to: resolveRouteToken(buyToken),
+        },
+      ];
+    }
+    const path = Array.isArray(quoteMeta?.path) ? quoteMeta.path : [];
+    const fees = Array.isArray(quoteMeta?.fees) ? quoteMeta.fees : [];
+    if (!path.length || !fees.length) return [];
+    const hops = [];
+    const hopCount = Math.min(fees.length, path.length - 1);
+    for (let i = 0; i < hopCount; i += 1) {
+      hops.push({
+        protocol: "V3",
+        fee: fees[i],
+        pool: quoteMeta?.pools?.[i] || null,
+        from: resolveRouteToken(path[i]),
+        to: resolveRouteToken(path[i + 1]),
+      });
+    }
+    return hops;
+  }, [buyToken, isDirectEthWeth, quoteMeta, resolveRouteToken, sellToken]);
+  const routeModeLabel = isDirectEthWeth
+    ? "Wrap/Unwrap"
+    : quoteMeta?.kind === "direct"
+      ? "Direct"
+      : quoteMeta?.kind === "hop"
+        ? "2-hop"
+        : "";
 
   // Re-run quotes when LP reserves move (Sync events via miniBlocks)
   useEffect(() => {
@@ -1851,11 +1907,72 @@ export default function SwapSection({ balances, address, chainId }) {
                   {label}
                 </span>
                 {idx < activeRouteLabels.length - 1 && (
-                  <span className="text-slate-500">→</span>
+                  <span className="text-slate-500">-&gt;</span>
                 )}
               </React.Fragment>
             ))}
           </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-3">
+            <span>Protocol:</span>
+            <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+              {isDirectEthWeth ? "Wrap/Unwrap" : "V3"}
+            </span>
+            {routeModeLabel && (
+              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                {routeModeLabel}
+              </span>
+            )}
+            {routeBreakdown.length > 0 && (
+              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                {routeBreakdown.length} hop{routeBreakdown.length > 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          {routeBreakdown.length ? (
+            <div className="space-y-2 text-[12px] text-slate-200 mb-3">
+              {routeBreakdown.map((hop, idx) => (
+                <div
+                  key={`hop-${idx}`}
+                  className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-900/60 border border-slate-800 px-3 py-2"
+                >
+                  <div className="inline-flex items-center gap-2">
+                    <TokenLogo
+                      token={hop.from.meta}
+                      fallbackSymbol={hop.from.symbol}
+                      imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
+                    />
+                    <span className="font-semibold">{hop.from.symbol}</span>
+                  </div>
+                  <span className="text-slate-500">-&gt;</span>
+                  <div className="inline-flex items-center gap-2">
+                    <TokenLogo
+                      token={hop.to.meta}
+                      fallbackSymbol={hop.to.symbol}
+                      imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
+                    />
+                    <span className="font-semibold">{hop.to.symbol}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 text-[10px] text-slate-200">
+                    {hop.protocol}
+                    {hop.fee !== null && hop.fee !== undefined
+                      ? ` ${formatV3Fee(hop.fee)}`
+                      : ""}
+                  </span>
+                  {hop.pool ? (
+                    <span className="text-[10px] text-slate-500">
+                      pool {shortenAddress(hop.pool)}
+                    </span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-slate-500 mb-3">
+              Route details will appear once a live quote is available.
+            </div>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Expected output</span>
