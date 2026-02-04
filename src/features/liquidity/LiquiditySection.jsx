@@ -2299,16 +2299,6 @@ export default function LiquiditySection({
   const pairMissing =
     pairNotDeployed ||
     (pairError && pairError.toLowerCase().includes("pair not found"));
-  // Network badge matches active preset (updates after page reload on preset change).
-  const activeNetworkConfig = getActiveNetworkConfig();
-  const networkBadgeLabel =
-    activeNetworkConfig?.id === "mainnet"
-      ? "MegaETH"
-      : activeNetworkConfig?.label ||
-        activeNetworkConfig?.name ||
-        activeNetworkConfig?.id ||
-        "Network";
-
   // Shared helper: fetch a read-only RPC provider with rotation and chain guard.
   const getRpcProviderWithRetry = useCallback(async () => {
     let attempts = 0;
@@ -2436,9 +2426,6 @@ export default function LiquiditySection({
     fetchLpBalance();
   }, [fetchLpBalance, lpRefreshTick]);
 
-  const totalVolume = pools.reduce((a, p) => a + Number(p.volume24hUsd || 0), 0);
-  const totalFees = pools.reduce((a, p) => a + Number(p.fees24hUsd || 0), 0);
-  const totalTvl = pools.reduce((a, p) => a + Number(p.tvlUsd || 0), 0);
   const autopilotPool =
     pools.find((p) => p.id === "crx-weth" && p.isActive !== false && p.hasAddresses) ||
     pools.find((p) => p.isActive && p.hasAddresses) ||
@@ -3573,52 +3560,8 @@ export default function LiquiditySection({
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
-      {/* hero / stats */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
-        <div className="xl:col-span-2 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
-          <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
-            <div className="flex flex-col items-center gap-3 max-w-3xl">
-              <p className="text-base sm:text-lg text-slate-200">
-                Provide liquidity to enable low-slippage swaps and earn emissions.
-              </p>
-              <div className="flex items-center justify-center gap-2 flex-wrap">
-                <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
-                  Live data
-                </span>
-                <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                  {networkBadgeLabel}
-                </span>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                  Volume 24h
-                </div>
-                <div className="text-xl font-semibold">
-                  {formatNumber(totalVolume)}
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                  Fees 24h
-                </div>
-                <div className="text-xl font-semibold">
-                  {formatNumber(totalFees)}
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                  TVL
-                </div>
-                <div className="text-xl font-semibold">
-                  {formatNumber(totalTvl)}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
+      {/* hero */}
+      <div className="mb-6">
         <div className="rounded-3xl bg-gradient-to-br from-indigo-700 via-sky-600 to-cyan-400 border border-white/10 shadow-2xl shadow-indigo-900/40 p-6 relative overflow-hidden">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.12),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,0.18),transparent_40%)]" />
           <div className="relative h-full flex flex-col justify-between">
@@ -4121,7 +4064,7 @@ export default function LiquiditySection({
                   }`}
                   aria-pressed={isV2View}
                 >
-                  V2 Pools
+                  V2 Liquidity
                 </button>
                 <button
                   type="button"
@@ -5938,233 +5881,26 @@ export default function LiquiditySection({
           )}
 
           {isV2View && (
-            <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
-                Pools ({poolsCount})
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowTokenList(true)}
-                className="px-3 py-1.5 rounded-full bg-slate-900/70 border border-slate-800 text-slate-300 hover:border-sky-600/60 hover:text-slate-100"
-              >
-                Tokens ({tokensCount})
-              </button>
-            </div>
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full lg:w-auto">
-              <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-72">
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-4 w-4 text-slate-500"
+            <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-100">
+                    V2 Liquidity
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Create V2 positions and manage deposits/withdrawals.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTokenList(true)}
+                  className="px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 w-full sm:w-auto"
                 >
-                  <circle
-                    cx="11"
-                    cy="11"
-                    r="6"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  />
-                  <path
-                    d="M15.5 15.5 20 20"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <input
-                  name="v2-pool-search"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search pools..."
-                  className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
-                />
+                  Start V2 position
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setTokenSelection((prev) => prev || { baseSymbol: null, pairSymbol: null });
-                  setShowTokenList(true);
-                }}
-                className="hidden md:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30"
-              >
-                Launch pool
-              </button>
             </div>
-          </div>
-        <div className="hidden md:block px-4 sm:px-6 pb-2 text-[11px] sm:text-xs text-slate-500 border-t border-slate-800/70">
-          <div className="grid grid-cols-12 py-2">
-            <div className="col-span-4">Pools</div>
-            <div className="col-span-2 text-right">Volume</div>
-            <div className="col-span-2 text-right">Fees</div>
-            <div className="col-span-2 text-right">TVL</div>
-            <div className="col-span-1 text-right">Emission APR</div>
-            <div className="col-span-1 text-right">Action</div>
-          </div>
-        </div>
-
-        <div className="px-2 sm:px-4 pb-3">
-          {filteredPools.map((p) => {
-            const token0 = tokenRegistry[p.token0Symbol];
-            const token1 = tokenRegistry[p.token1Symbol];
-            const isSelected = selectedPoolId === p.id;
-            const rowSupports =
-              p.hasAddresses ??
-              (resolveTokenAddress(p.token0Symbol, tokenRegistry) &&
-                resolveTokenAddress(p.token1Symbol, tokenRegistry));
-
-            return (
-              <div
-                key={p.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => setSelectedPoolId(p.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setSelectedPoolId(p.id);
-                  }
-                }}
-                className={`w-full text-left flex flex-col gap-3 md:grid md:grid-cols-12 md:items-center px-2 sm:px-4 py-3 rounded-2xl transition border cursor-pointer ${
-                  isSelected
-                    ? "bg-slate-900/90 border-sky-700/60 shadow-[0_10px_30px_-18px_rgba(56,189,248,0.6)]"
-                    : "border-transparent hover:border-slate-800 hover:bg-slate-900/70"
-                }`}
-              >
-                <div className="md:col-span-4 flex items-center gap-3">
-                  <div className="flex -space-x-2">
-                    {[token0, token1].map((t, idx) => (
-                      <img
-                        key={idx}
-                        src={t?.logo}
-                        alt={`${t?.symbol || "token"} logo`}
-                        className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                      />
-                    ))}
-                  </div>
-                  <div className="flex flex-col">
-                    <div className="text-sm font-semibold">
-                      {p.token0Symbol} / {p.token1Symbol}
-                    </div>
-                    <div className="text-[11px] text-slate-500 capitalize flex items-center gap-2">
-                      {p.poolType || "volatile"} pool
-                      <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700/60 bg-slate-800/40 text-slate-200">
-                        V2
-                      </span>
-                      {(() => {
-                        const { label, className } = getStatusStyle(p.isActive);
-                        return (
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] border ${className}`}>
-                            {label}
-                          </span>
-                        );
-                      })()}
-                      {!rowSupports && (
-                        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-200 border border-amber-500/30">
-                          Data only
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 w-full text-xs text-slate-400 md:hidden">
-                  <div className="flex justify-between w-full">
-                    <span>Status</span>
-                    <span
-                      className={`text-slate-100 ${
-                        p.isActive === null
-                          ? "text-slate-300"
-                          : p.isActive
-                            ? "text-emerald-300"
-                            : "text-rose-300"
-                      }`}
-                    >
-                      {p.isActive === null
-                        ? "Loading"
-                        : p.isActive
-                          ? "Active"
-                          : "Inactive"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between w-full">
-                    <span>Volume</span>
-                    <span className="text-slate-100">
-                      {formatNumber(p.volume24hUsd)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between w-full">
-                    <span>Fees</span>
-                    <span className="text-slate-100">
-                      {formatNumber(p.fees24hUsd)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between w-full">
-                    <span>TVL</span>
-                    <span className="text-slate-100">
-                      {formatNumber(p.tvlUsd)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between w-full">
-                    <span>Emission APR</span>
-                    <span className="text-slate-100">
-                      {p.emissionApr !== undefined
-                        ? `${p.emissionApr.toFixed(2)}%`
-                        : p.feeApr
-                          ? `${p.feeApr.toFixed(2)}%`
-                          : "N/A"}
-                    </span>
-                  </div>
-                  <div className="mt-1">
-                    <button
-                      type="button"
-                      className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleOpenPoolDepositFromRow(p);
-                      }}
-                    >
-                      Deposit / Withdraw
-                    </button>
-                  </div>
-                </div>
-
-                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
-                  {formatNumber(p.volume24hUsd)}
-                </div>
-                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
-                  {formatNumber(p.fees24hUsd)}
-                </div>
-                <div className="hidden md:block md:col-span-2 text-right text-xs sm:text-sm">
-                  {formatNumber(p.tvlUsd)}
-                </div>
-                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
-                  {p.emissionApr !== undefined
-                    ? `${p.emissionApr.toFixed(2)}%`
-                    : p.feeApr
-                      ? `${p.feeApr.toFixed(2)}%`
-                      : "N/A"}
-                </div>
-                <div className="hidden md:block md:col-span-1 text-right text-xs sm:text-sm">
-                  <button
-                    type="button"
-                    className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleOpenPoolDepositFromRow(p);
-                    }}
-                  >
-                    Deposit
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        </div>
-        )}
+          )}
         </div>
       )}
       {showTokenList && (

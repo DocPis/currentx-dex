@@ -7,6 +7,7 @@ import {
   fetchV3PoolsDayData,
 } from "../../shared/config/subgraph";
 import { TOKENS } from "../../shared/config/tokens";
+import { NETWORK_NAME } from "../../shared/config/web3";
 
 const PAGE_SIZE = 50;
 const SORT_KEYS = {
@@ -235,6 +236,18 @@ export default function PoolsSection() {
     return list;
   }, [v2Pools, v3Pools, v2DayData, v3DayData]);
 
+  const totals = useMemo(() => {
+    return combinedPools.reduce(
+      (acc, pool) => {
+        acc.liquidity += Number(pool.liquidityUsd || 0);
+        acc.volume += Number(pool.volume24hUsd || 0);
+        acc.fees += Number(pool.fees24hUsd || 0);
+        return acc;
+      },
+      { liquidity: 0, volume: 0, fees: 0 }
+    );
+  }, [combinedPools]);
+
   const filteredPools = useMemo(() => {
     if (!searchLower) return combinedPools;
     return combinedPools.filter((pool) => poolMatchesSearch(pool, searchLower));
@@ -283,6 +296,50 @@ export default function PoolsSection() {
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
+      <div className="mb-6 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
+        <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
+          <div className="flex flex-col items-center gap-3 max-w-3xl">
+            <p className="text-base sm:text-lg text-slate-200">
+              Track all pools across V2 and CL with live liquidity and fee stats.
+            </p>
+            <div className="flex items-center justify-center gap-2 flex-wrap">
+              <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
+                Live data
+              </span>
+              <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
+                {NETWORK_NAME}
+              </span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                Volume 24h
+              </div>
+              <div className="text-xl font-semibold">
+                {formatUsd(totals.volume)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                Fees 24h
+              </div>
+              <div className="text-xl font-semibold">
+                {formatUsd(totals.fees)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                TVL
+              </div>
+              <div className="text-xl font-semibold">
+                {formatUsd(totals.liquidity)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
         <div>
           <h2 className="text-2xl font-semibold text-white">Pools</h2>
