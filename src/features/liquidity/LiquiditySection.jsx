@@ -1959,7 +1959,7 @@ export default function LiquiditySection({
   // Auto refresh LP/tvl every 30s (V2 only)
   useEffect(() => {
     if (!isV2View) return undefined;
-    const id = setInterval(() => setLpRefreshTick((t) => t + 1), 30000);
+    const id = setInterval(() => setLpRefreshTick((t) => t + 1), 120000);
     return () => clearInterval(id);
   }, [isV2View]);
 
@@ -2428,7 +2428,6 @@ export default function LiquiditySection({
 
     const loadV2Positions = async () => {
       if (!isV2View) {
-        setV2LpPositions([]);
         return;
       }
       if (!address) {
@@ -2439,7 +2438,6 @@ export default function LiquiditySection({
 
       const candidates = pools.filter((p) => p.hasAddresses);
       if (!candidates.length) {
-        setV2LpPositions([]);
         return;
       }
 
@@ -2486,7 +2484,7 @@ export default function LiquiditySection({
 
         const valid = resolved.filter(Boolean);
         if (!valid.length) {
-          if (!cancelled) setV2LpPositions([]);
+          // keep previous positions on transient failures
           return;
         }
 
@@ -2531,10 +2529,12 @@ export default function LiquiditySection({
         }
 
         const positions = [];
+        let hadDecode = false;
         for (let i = 0; i < valid.length; i += 1) {
           const balanceRes = results[i * 2];
           const supplyRes = results[i * 2 + 1];
           if (!balanceRes?.success) continue;
+          hadDecode = true;
           let balanceRaw = 0n;
           let totalSupplyRaw = null;
           try {
@@ -2571,13 +2571,12 @@ export default function LiquiditySection({
           });
         }
 
-        if (!cancelled) {
+        if (!cancelled && hadDecode) {
           setV2LpPositions(positions);
         }
       } catch (err) {
         if (!cancelled) {
           setV2LpError(err?.message || "Failed to load V2 LP positions.");
-          setV2LpPositions([]);
         }
       } finally {
         if (!cancelled) setV2LpLoading(false);
