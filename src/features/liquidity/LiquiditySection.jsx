@@ -503,6 +503,29 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
   const hasV3Liquidity = Boolean(UNIV3_FACTORY_ADDRESS && UNIV3_POSITION_MANAGER_ADDRESS);
+  const v3TokenOptions = useMemo(
+    () =>
+      Object.keys(tokenRegistry).filter((sym) => {
+        const meta = tokenRegistry[sym];
+        return meta && (meta.address || sym === "ETH" || sym === "WETH");
+      }),
+    [tokenRegistry]
+  );
+
+  useEffect(() => {
+    if (!v3TokenOptions.length) return;
+    if (!v3TokenOptions.includes(v3Token0)) {
+      setV3Token0(v3TokenOptions[0]);
+    }
+    if (!v3TokenOptions.includes(v3Token1)) {
+      const next = v3TokenOptions.find((sym) => sym !== v3Token0) || v3TokenOptions[0];
+      setV3Token1(next);
+    }
+    if (v3Token0 === v3Token1 && v3TokenOptions.length > 1) {
+      const next = v3TokenOptions.find((sym) => sym !== v3Token0);
+      if (next) setV3Token1(next);
+    }
+  }, [v3Token0, v3Token1, v3TokenOptions]);
 
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
