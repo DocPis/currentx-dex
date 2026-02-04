@@ -11,15 +11,6 @@ const subgraphCache = new Map();
 const SUBGRAPH_PROXY =
   (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
   "";
-const disableTestnetSubgraph =
-  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_DISABLE_TESTNET_SUBGRAPH : "") ===
-  "true";
-
-// Allow testnet subgraph unless explicitly disabled via env flag
-if (activeNet.id === "testnet" && disableTestnetSubgraph) {
-  SUBGRAPH_URL = "";
-  SUBGRAPH_API_KEY = "";
-}
 
 // Fallback to global env when missing (align behavior across networks).
 if (!SUBGRAPH_URL) {
@@ -334,7 +325,7 @@ export async function fetchDashboardStats() {
 
 // Fetch protocol-level daily history (TVL + volume) for the last `days`
 export async function fetchProtocolHistory(days = 7) {
-  // Fetch extra days to cover gaps on testnets where some dates may be missing
+  // Fetch extra days to cover occasional gaps where some dates may be missing
   const fetchCount = Math.min(1000, Math.max(days * 3, days + 5)); // subgraph first cap is 1000
 
   const historyQuery = `

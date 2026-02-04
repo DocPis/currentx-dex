@@ -6,7 +6,7 @@ import {
   getInjectedProviderByType,
   setActiveInjectedProvider,
 } from "../config/web3";
-import { getActiveNetworkConfig, setActiveNetworkPreset } from "../config/networks";
+import { getActiveNetworkConfig } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
 
@@ -266,7 +266,7 @@ export function useWallet() {
     return primaryAccount;
   };
 
-  // No automatic preset switching: the user chooses the network from the UI.
+  // Single-network app: no preset switching.
 
   // Fallback poller to keep chainId in sync even if chainChanged events are missed
   useEffect(() => {

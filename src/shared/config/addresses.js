@@ -14,6 +14,7 @@ export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
 // Tokens
 export const WETH_ADDRESS = active.addresses.WETH_ADDRESS;
 export const USDC_ADDRESS = active.addresses.USDC_ADDRESS;
+export const USDT0_ADDRESS = active.addresses.USDT0_ADDRESS;
 export const CUSD_ADDRESS = active.addresses.CUSD_ADDRESS;
 export const STCUSD_ADDRESS = active.addresses.STCUSD_ADDRESS;
 export const SUSDE_ADDRESS = active.addresses.SUSDE_ADDRESS;
@@ -41,7 +42,7 @@ export const UNIV2_FACTORY_ADDRESS = active.addresses.UNIV2_FACTORY_ADDRESS;
 export const UNIV2_ROUTER_ADDRESS = active.addresses.UNIV2_ROUTER_ADDRESS;
 export const UNIV2_PAIR_CODE_HASH = active.addresses.UNIV2_PAIR_CODE_HASH;
 
-// Uniswap V3 factory (mainnet-only unless provided in testnet preset/env)
+// Uniswap V3 factory (mainnet-only unless provided in preset/env)
 export const UNIV3_FACTORY_ADDRESS = active.addresses.UNIV3_FACTORY_ADDRESS;
 export const UNIV3_QUOTER_V2_ADDRESS = active.addresses.UNIV3_QUOTER_V2_ADDRESS;
 export const UNIV3_TICK_LENS_ADDRESS = active.addresses.UNIV3_TICK_LENS_ADDRESS;

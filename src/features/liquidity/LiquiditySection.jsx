@@ -51,6 +51,17 @@ const V3_FEE_OPTIONS = [
   { fee: 3000, label: "0.30%" },
   { fee: 10000, label: "1.00%" },
 ];
+const V3_TICK_SPACING = {
+  100: 1,
+  500: 10,
+  3000: 60,
+  10000: 200,
+};
+const IPFS_GATEWAYS = [
+  "https://ipfs.io/ipfs/",
+  "https://cloudflare-ipfs.com/ipfs/",
+  "https://gateway.pinata.cloud/ipfs/",
+];
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TICK_BASE = 1.0001;
 const CHART_PADDING = 0.12;
@@ -119,6 +130,145 @@ const formatPrice = (value) => {
   if (num >= 1) return num.toLocaleString("en-US", { maximumFractionDigits: 6 });
   if (num >= 0.0001) return num.toPrecision(6);
   return num.toExponential(3);
+};
+
+const clampPercent = (value) => Math.min(100, Math.max(0, value));
+const getTickSpacingFromFee = (fee) => V3_TICK_SPACING[Number(fee)] || null;
+
+const normalizeIpfsUri = (uri, gateway = IPFS_GATEWAYS[0]) => {
+  if (!uri || typeof uri !== "string") return "";
+  if (uri.startsWith("ipfs://")) {
+    const trimmed = uri.replace("ipfs://", "");
+    const clean = trimmed.startsWith("ipfs/") ? trimmed.slice(5) : trimmed;
+    return `${gateway}${clean}`;
+  }
+  return uri;
+};
+
+const buildIpfsCandidates = (uri) => {
+  if (!uri || typeof uri !== "string") return [];
+  if (!uri.startsWith("ipfs://")) return [uri];
+  const trimmed = uri.replace("ipfs://", "");
+  const clean = trimmed.startsWith("ipfs/") ? trimmed.slice(5) : trimmed;
+  return IPFS_GATEWAYS.map((gateway) => `${gateway}${clean}`);
+};
+
+const decodeBase64ToUtf8 = (b64) => {
+  if (!b64) return "";
+  const normalized = b64.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = normalized.length % 4;
+  const padded = normalized + (pad ? "=".repeat(4 - pad) : "");
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  if (typeof TextDecoder !== "undefined") {
+    return new TextDecoder().decode(bytes);
+  }
+  return decodeURIComponent(escape(binary));
+};
+
+const parseTokenUri = (raw) => {
+  if (!raw || typeof raw !== "string") return null;
+  try {
+    if (raw.startsWith("data:application/json")) {
+      const [, data] = raw.split(",");
+      if (raw.includes("base64")) {
+        const json = decodeBase64ToUtf8(data || "");
+        return JSON.parse(json);
+      }
+      const json = decodeURIComponent(data || "");
+      return JSON.parse(json);
+    }
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("{")) {
+      return JSON.parse(trimmed);
+    }
+    // Some contracts return raw base64 JSON without a data: prefix.
+    const base64Candidate = trimmed.replace(/\s/g, "");
+    if (/^[A-Za-z0-9+/=_-]+$/.test(base64Candidate) && base64Candidate.length > 32) {
+      try {
+        const decoded = decodeBase64ToUtf8(base64Candidate);
+        if (decoded.trim().startsWith("{")) {
+          return JSON.parse(decoded);
+        }
+      } catch {
+        // ignore base64 decode errors
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const resolveImageFromMeta = (meta) => {
+  if (!meta || typeof meta !== "object") return "";
+  let img =
+    meta.image ||
+    meta.image_url ||
+    meta.imageUri ||
+    meta.imageURI ||
+    "";
+  if (typeof img === "string" && img.trim().startsWith("<svg")) {
+    return `data:image/svg+xml;utf8,${encodeURIComponent(img)}`;
+  }
+  if (typeof img === "string") {
+    const trimmed = img.trim();
+    if (/^[A-Za-z0-9+/=_-]+$/.test(trimmed) && trimmed.length > 32) {
+      try {
+        const decoded = decodeBase64ToUtf8(trimmed);
+        if (decoded.trim().startsWith("<svg")) {
+          return `data:image/svg+xml;utf8,${encodeURIComponent(decoded)}`;
+        }
+      } catch {
+        // ignore decode errors
+      }
+    }
+  }
+  if (!img && meta.image_data) {
+    const raw = String(meta.image_data || "");
+    if (raw.startsWith("data:image")) {
+      img = raw;
+    } else if (raw.trim().startsWith("<svg")) {
+      img = `data:image/svg+xml;utf8,${encodeURIComponent(raw)}`;
+    } else {
+      img = raw;
+    }
+  }
+  return normalizeIpfsUri(img);
+};
+
+const guessImageUri = (raw) => {
+  if (!raw || typeof raw !== "string") return "";
+  if (raw.startsWith("data:image")) return raw;
+  if (raw.startsWith("ipfs://")) return normalizeIpfsUri(raw);
+  const lower = raw.toLowerCase();
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".svg") || lower.endsWith(".webp")) {
+    return raw;
+  }
+  return "";
+};
+
+const withTimeout = (promise, ms, label = "Request") =>
+  new Promise((resolve, reject) => {
+    const id = setTimeout(() => {
+      reject(new Error(`${label} timed out`));
+    }, ms);
+    promise
+      .then((value) => {
+        clearTimeout(id);
+        resolve(value);
+      })
+      .catch((err) => {
+        clearTimeout(id);
+        reject(err);
+      });
+  });
+
+const formatPositionTitle = (pos, isFullRange) => {
+  if (!pos) return "CurrentX Position";
+  return `CurrentX - ${formatFeeTier(pos.fee)} - ${pos.token0Symbol}/${pos.token1Symbol}${
+    isFullRange ? " - MIN<>MAX" : ""
+  }`;
 };
 
 const formatAmount = (value, decimals = 18) => {
@@ -518,6 +668,14 @@ export default function LiquiditySection({
   const [v3Positions, setV3Positions] = useState([]);
   const [v3PositionsLoading, setV3PositionsLoading] = useState(false);
   const [v3PositionsError, setV3PositionsError] = useState("");
+  const [selectedPositionId, setSelectedPositionId] = useState(null);
+  const [liquidityView, setLiquidityView] = useState(() => {
+    if (showV3 && !showV2) return "v3";
+    return "v2";
+  });
+  const [nftMetaById, setNftMetaById] = useState({});
+  const [nftMetaRefreshTick, setNftMetaRefreshTick] = useState(0);
+  const [showNftDebug, setShowNftDebug] = useState(false);
   const [v3RefreshTick, setV3RefreshTick] = useState(0);
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
@@ -538,11 +696,27 @@ export default function LiquiditySection({
   const [tokenSearch, setTokenSearch] = useState("");
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
+  const [v3Token0Open, setV3Token0Open] = useState(false);
+  const [v3Token1Open, setV3Token1Open] = useState(false);
+  const [v3Token0Search, setV3Token0Search] = useState("");
+  const [v3Token1Search, setV3Token1Search] = useState("");
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [v3DraggingHandle, setV3DraggingHandle] = useState(null);
+  const [v3RangeInitialized, setV3RangeInitialized] = useState(false);
+  const [v3ChartMode, setV3ChartMode] = useState("price-range");
+  const [v3ChartMenuOpen, setV3ChartMenuOpen] = useState(false);
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
   const toastTimerRef = useRef(null);
+  const nftMetaRef = useRef({});
+  const v3Token0DropdownRef = useRef(null);
+  const v3Token1DropdownRef = useRef(null);
+  const v3RangeTrackRef = useRef(null);
+  const v3DragRafRef = useRef(null);
+  const v3DragTargetRef = useRef(null);
+  const v3DragCurrentRef = useRef({ lower: null, upper: null });
+  const v3ChartMenuRef = useRef(null);
   const tokenRegistry = useMemo(() => {
     // Always include native ETH/WETH for convenience.
     const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
@@ -585,6 +759,14 @@ export default function LiquiditySection({
     [balancesProp, hasExternalBalances, hookBalances]
   );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
+  const hasBothLiquidityViews = showV2 && showV3;
+  const activeLiquidityView = hasBothLiquidityViews
+    ? liquidityView
+    : showV3
+      ? "v3"
+      : "v2";
+  const isV2View = showV2 && activeLiquidityView === "v2";
+  const isV3View = showV3 && activeLiquidityView === "v3";
   const hasV3Liquidity =
     showV3 && Boolean(UNIV3_FACTORY_ADDRESS && UNIV3_POSITION_MANAGER_ADDRESS);
   const v3TokenOptions = useMemo(
@@ -597,7 +779,23 @@ export default function LiquiditySection({
   );
 
   useEffect(() => {
-    if (!showV3) return;
+    if (showV2 && !showV3 && liquidityView !== "v2") {
+      setLiquidityView("v2");
+      return;
+    }
+    if (showV3 && !showV2 && liquidityView !== "v3") {
+      setLiquidityView("v3");
+      return;
+    }
+    if (showV2 && showV3) {
+      if (liquidityView !== "v2" && liquidityView !== "v3") {
+        setLiquidityView("v2");
+      }
+    }
+  }, [showV2, showV3, liquidityView]);
+
+  useEffect(() => {
+    if (!isV3View) return;
     if (!v3TokenOptions.length) return;
     if (!v3TokenOptions.includes(v3Token0)) {
       setV3Token0(v3TokenOptions[0]);
@@ -610,15 +808,16 @@ export default function LiquiditySection({
       const next = v3TokenOptions.find((sym) => sym !== v3Token0);
       if (next) setV3Token1(next);
     }
-  }, [showV3, v3Token0, v3Token1, v3TokenOptions]);
+  }, [isV3View, v3Token0, v3Token1, v3TokenOptions]);
 
   useEffect(() => {
-    if (!showV3) return;
+    if (!isV3View) return;
     setV3RangeMode("full");
     setV3RangeLower("");
     setV3RangeUpper("");
     setV3PoolError("");
-  }, [showV3, v3Token0, v3Token1, v3FeeTier]);
+    setV3RangeInitialized(false);
+  }, [isV3View, v3Token0, v3Token1, v3FeeTier]);
 
   const v3Token0Meta = tokenRegistry[v3Token0];
   const v3Token1Meta = tokenRegistry[v3Token1];
@@ -700,9 +899,21 @@ export default function LiquiditySection({
       setV3RangeMode("custom");
       setV3RangeLower(lower.toFixed(6));
       setV3RangeUpper(upper.toFixed(6));
+      setV3RangeInitialized(true);
     },
     [v3CurrentPrice]
   );
+
+  useEffect(() => {
+    if (!isV3View || v3RangeInitialized) return;
+    if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice)) return;
+    const lower = v3CurrentPrice * 0.95;
+    const upper = v3CurrentPrice * 1.05;
+    setV3RangeMode("custom");
+    setV3RangeLower(lower.toFixed(6));
+    setV3RangeUpper(upper.toFixed(6));
+    setV3RangeInitialized(true);
+  }, [isV3View, v3CurrentPrice, v3RangeInitialized]);
 
   const v3Chart = useMemo(() => {
     if (!v3CurrentPrice && !v3HasCustomRange) return null;
@@ -734,6 +945,74 @@ export default function LiquiditySection({
     };
   }, [v3CurrentPrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
 
+  const v3DepositRatio = useMemo(() => {
+    const amount0Num = safeNumber(v3Amount0);
+    const amount1Num = safeNumber(v3Amount1);
+    if (!amount0Num && !amount1Num) return null;
+    const v0 = amount0Num || 0;
+    const v1 = amount1Num || 0;
+    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
+      const value0 = v0 * v3CurrentPrice;
+      const total = value0 + v1;
+      if (total > 0) {
+        return {
+          token0: value0 / total,
+          token1: v1 / total,
+        };
+      }
+    }
+    const total = v0 + v1;
+    if (total <= 0) return null;
+    return {
+      token0: v0 / total,
+      token1: v1 / total,
+    };
+  }, [v3Amount0, v3Amount1, v3CurrentPrice]);
+
+  const v3TotalDeposit = useMemo(() => {
+    const amount0Num = safeNumber(v3Amount0);
+    const amount1Num = safeNumber(v3Amount1);
+    if (!amount0Num && !amount1Num) return null;
+    const v0 = amount0Num || 0;
+    const v1 = amount1Num || 0;
+    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
+      return v0 * v3CurrentPrice + v1;
+    }
+    return v0 + v1;
+  }, [v3Amount0, v3Amount1, v3CurrentPrice]);
+
+  const adjustV3RangeValue = useCallback(
+    (side, direction) => {
+      if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice)) return;
+      const step = v3CurrentPrice * 0.005; // 0.5% step
+      const lower = v3RangeLowerNum ?? v3CurrentPrice * (1 - 0.02);
+      const upper = v3RangeUpperNum ?? v3CurrentPrice * (1 + 0.02);
+      if (side === "lower") {
+        const next = Math.max(0, lower + direction * step);
+        const safeNext = upper ? Math.min(next, upper * 0.999) : next;
+        setV3RangeMode("custom");
+        setV3RangeLower(safeNext.toFixed(6));
+      } else {
+        const next = upper + direction * step;
+        const safeNext = lower ? Math.max(next, lower * 1.001) : next;
+        setV3RangeMode("custom");
+        setV3RangeUpper(safeNext.toFixed(6));
+      }
+    },
+    [v3CurrentPrice, v3RangeLowerNum, v3RangeUpperNum]
+  );
+
+  const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
+  const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
+  const v3LowerPct = useMemo(() => {
+    if (!v3CurrentPrice || !v3RangeLowerNum) return null;
+    return ((v3RangeLowerNum / v3CurrentPrice) - 1) * 100;
+  }, [v3CurrentPrice, v3RangeLowerNum]);
+  const v3UpperPct = useMemo(() => {
+    if (!v3CurrentPrice || !v3RangeUpperNum) return null;
+    return ((v3RangeUpperNum / v3CurrentPrice) - 1) * 100;
+  }, [v3CurrentPrice, v3RangeUpperNum]);
+
   const getStatusStyle = (status) => {
     if (status === null) {
       return {
@@ -755,6 +1034,12 @@ export default function LiquiditySection({
   };
 
   useEffect(() => {
+    if (!showV2) {
+      setBasePools([]);
+      setOnchainTokens({});
+      return undefined;
+    }
+    if (!isV2View) return undefined;
     let cancelled = false;
     const loadBasePools = async () => {
       setPoolStatsReady(false);
@@ -874,12 +1159,12 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [customTokens, lpRefreshTick]);
+  }, [customTokens, lpRefreshTick, showV2, isV2View]);
 
   useEffect(() => {
     let cancelled = false;
     const loadV3Positions = async () => {
-      if (!showV3) return;
+      if (!isV3View) return;
       if (!address || !hasV3Liquidity) {
         setV3Positions([]);
         setV3PositionsError("");
@@ -940,12 +1225,123 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [showV3, address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
+  }, [isV3View, address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
+
+  const selectedPosition = useMemo(() => {
+    if (!selectedPositionId) return null;
+    return (
+      v3Positions.find((p) => String(p.tokenId) === String(selectedPositionId)) || null
+    );
+  }, [selectedPositionId, v3Positions]);
+
+  useEffect(() => {
+    setShowNftDebug(false);
+  }, [selectedPositionId]);
+
+  useEffect(() => {
+    nftMetaRef.current = nftMetaById;
+  }, [nftMetaById]);
+
+  useEffect(() => {
+    if (!selectedPositionId) return;
+    const exists = v3Positions.some(
+      (p) => String(p.tokenId) === String(selectedPositionId)
+    );
+    if (!exists) setSelectedPositionId(null);
+  }, [selectedPositionId, v3Positions]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadNftMeta = async () => {
+      if (!selectedPositionId || !hasV3Liquidity) return;
+      const cached = nftMetaRef.current[selectedPositionId];
+      if (cached?.meta || cached?.loading) return;
+      setNftMetaById((prev) => ({
+        ...prev,
+        [selectedPositionId]: {
+          loading: true,
+          error: "",
+          meta: null,
+          raw: "",
+          metaUrl: "",
+          image: "",
+        },
+      }));
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const manager = new Contract(
+          UNIV3_POSITION_MANAGER_ADDRESS,
+          UNIV3_POSITION_MANAGER_ABI,
+          provider
+        );
+        const raw = await withTimeout(
+          manager.tokenURI(selectedPositionId),
+          8000,
+          "tokenURI"
+        );
+        if (cancelled) return;
+        const rawTokenUri = typeof raw === "string" ? raw : "";
+        let parsed = parseTokenUri(raw);
+        let metaUrl = "";
+        if (!parsed && raw) {
+          const candidates = buildIpfsCandidates(raw);
+          for (const url of candidates) {
+            try {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 8000);
+              const res = await fetch(url, { signal: controller.signal });
+              clearTimeout(timeoutId);
+              if (res.ok) {
+                parsed = await res.json();
+                metaUrl = url;
+                break;
+              }
+            } catch {
+              // ignore fetch errors
+            }
+          }
+        }
+        let image = resolveImageFromMeta(parsed);
+        if (!image) {
+          image = guessImageUri(raw);
+        }
+        const meta = parsed ? { ...parsed, image } : image ? { image } : null;
+        setNftMetaById((prev) => ({
+          ...prev,
+          [selectedPositionId]: {
+            loading: false,
+            error: "",
+            meta,
+            raw: rawTokenUri,
+            metaUrl,
+            image,
+          },
+        }));
+      } catch (err) {
+        if (cancelled) return;
+        setNftMetaById((prev) => ({
+          ...prev,
+          [selectedPositionId]: {
+            loading: false,
+            error: compactRpcMessage(err?.message || err, "Unable to load NFT metadata."),
+            meta: null,
+            raw: "",
+            metaUrl: "",
+            image: "",
+          },
+        }));
+      }
+    };
+    loadNftMeta();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPositionId, hasV3Liquidity, nftMetaRefreshTick]);
 
   useEffect(() => {
     let cancelled = false;
     const loadV3PoolInfo = async () => {
-      if (!showV3) return;
+      if (!isV3View) return;
       if (
         !hasV3Liquidity ||
         !v3SelectedToken0Address ||
@@ -1028,7 +1424,7 @@ export default function LiquiditySection({
       cancelled = true;
     };
   }, [
-    showV3,
+    isV3View,
     hasV3Liquidity,
     v3SelectedToken0Address,
     v3SelectedToken1Address,
@@ -1038,7 +1434,7 @@ export default function LiquiditySection({
   useEffect(() => {
     let cancelled = false;
     const loadPoolMetrics = async () => {
-      if (!showV3) return;
+      if (!isV3View) return;
       if (!hasV3Liquidity || !v3Positions.length) {
         if (!cancelled) setV3PoolMetrics({});
         return;
@@ -1086,7 +1482,7 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [showV3, hasV3Liquidity, v3Positions]);
+  }, [isV3View, hasV3Liquidity, v3Positions]);
 
   useEffect(() => {
     if (!basePools.length) return;
@@ -1174,14 +1570,127 @@ export default function LiquiditySection({
     }
   }, [showTokenList]);
 
-  // Auto refresh LP/tvl every 30s
   useEffect(() => {
+    if (!v3Token0Open && !v3Token1Open) return undefined;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (
+        v3Token0Open &&
+        v3Token0DropdownRef.current &&
+        !v3Token0DropdownRef.current.contains(target)
+      ) {
+        setV3Token0Open(false);
+      }
+      if (
+        v3Token1Open &&
+        v3Token1DropdownRef.current &&
+        !v3Token1DropdownRef.current.contains(target)
+      ) {
+        setV3Token1Open(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [v3Token0Open, v3Token1Open]);
+
+  useEffect(() => {
+    if (!v3ChartMenuOpen) return undefined;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (
+        v3ChartMenuRef.current &&
+        !v3ChartMenuRef.current.contains(target)
+      ) {
+        setV3ChartMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [v3ChartMenuOpen]);
+
+  useEffect(() => {
+    if (!v3DraggingHandle) return undefined;
+    v3DragCurrentRef.current = {
+      ...v3DragCurrentRef.current,
+      [v3DraggingHandle]:
+        v3DraggingHandle === "lower" ? v3RangeLowerNum : v3RangeUpperNum,
+    };
+    const smoothStep = (current, target) => current + (target - current) * 0.35;
+    const flushDrag = () => {
+      const target = v3DragTargetRef.current;
+      if (!Number.isFinite(target) || target <= 0) {
+        v3DragRafRef.current = null;
+        return;
+      }
+      const key = v3DraggingHandle;
+      const current =
+        v3DragCurrentRef.current[key] ??
+        (key === "lower" ? v3RangeLowerNum : v3RangeUpperNum) ??
+        target;
+      const next = smoothStep(current, target);
+      v3DragCurrentRef.current[key] = next;
+      setV3RangeMode("custom");
+      if (key === "lower") {
+        setV3RangeLower(next.toFixed(6));
+      } else {
+        setV3RangeUpper(next.toFixed(6));
+      }
+      if (Math.abs(target - next) < Math.max(1e-6, Math.abs(target) * 0.00001)) {
+        v3DragTargetRef.current = null;
+        v3DragRafRef.current = null;
+        return;
+      }
+      v3DragRafRef.current = window.requestAnimationFrame(flushDrag);
+    };
+    const handleMove = (event) => {
+      if (!v3RangeTrackRef.current || !v3Chart) return;
+      const rect = v3RangeTrackRef.current.getBoundingClientRect();
+      const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
+      if (!Number.isFinite(pct)) return;
+      const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
+      if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
+      let bounded = nextPrice;
+      if (v3DraggingHandle === "lower") {
+        const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : bounded;
+        bounded = Math.min(bounded, maxAllowed);
+      } else {
+        const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : bounded;
+        bounded = Math.max(bounded, minAllowed);
+      }
+      v3DragTargetRef.current = bounded;
+      if (!v3DragRafRef.current) {
+        v3DragRafRef.current = window.requestAnimationFrame(flushDrag);
+      }
+    };
+    const handleUp = () => {
+      if (v3DragTargetRef.current !== null) {
+        v3DragRafRef.current = window.requestAnimationFrame(flushDrag);
+      }
+      setV3DraggingHandle(null);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+      if (v3DragRafRef.current) {
+        window.cancelAnimationFrame(v3DragRafRef.current);
+        v3DragRafRef.current = null;
+      }
+      v3DragTargetRef.current = null;
+    };
+  }, [v3DraggingHandle, v3Chart, v3RangeLowerNum, v3RangeUpperNum]);
+
+  // Auto refresh LP/tvl every 30s (V2 only)
+  useEffect(() => {
+    if (!isV2View) return undefined;
     const id = setInterval(() => setLpRefreshTick((t) => t + 1), 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [isV2View]);
 
   // Load live data for all pools (subgraph + on-chain TVL fallback)
   useEffect(() => {
+    if (!isV2View) return undefined;
     let cancelled = false;
     const loadPools = async () => {
       setPoolStatsReady(false);
@@ -1336,7 +1845,7 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [lpRefreshTick, subgraphError, tokenRegistry, tokenPrices, trackedPools, tvlError]);
+  }, [isV2View, lpRefreshTick, subgraphError, tokenRegistry, tokenPrices, trackedPools, tvlError]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -2450,7 +2959,7 @@ export default function LiquiditySection({
 
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
 
-      // Higher caps to cover first-time pair deployment gas on this testnet.
+      // Higher caps to cover first-time pair deployment gas.
       const safeGasLimitCreate = 120_000_000n;
       const safeGasLimit = 8_000_000n;
 
@@ -2865,7 +3374,7 @@ export default function LiquiditySection({
       </div>
 
       {/* dedicated token deposit flow */}
-      {tokenSelection ? (
+      {isV2View && tokenSelection ? (
         <div className="w-full flex justify-center px-4 sm:px-6 pb-10">
           <div className="w-full max-w-4xl rounded-3xl bg-[#0a1024] border border-slate-800 shadow-2xl shadow-black/50 p-6">
             <div className="flex items-center justify-between mb-5">
@@ -3158,6 +3667,7 @@ export default function LiquiditySection({
                 <div className="flex flex-col lg:flex-row lg:items-center gap-4">
                   <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
                     <input
+                      name="v2-deposit-token0"
                       value={depositToken0}
                       onChange={(e) => {
                         setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
@@ -3168,6 +3678,7 @@ export default function LiquiditySection({
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
                     />
                     <input
+                      name="v2-deposit-token1"
                       value={depositToken1}
                       onChange={(e) => {
                         setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
@@ -3201,6 +3712,7 @@ export default function LiquiditySection({
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-slate-500">Slippage %</span>
                         <input
+                          name="v2-slippage"
                           value={slippageInput}
                           onChange={(e) => setSlippageInput(e.target.value)}
                           className="w-20 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-100"
@@ -3211,6 +3723,7 @@ export default function LiquiditySection({
                   </div>
                   <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
                     <input
+                      name="v2-withdraw-lp"
                       value={withdrawLp}
                       onChange={(e) => {
                         setWithdrawLp(e.target.value);
@@ -3300,18 +3813,56 @@ export default function LiquiditySection({
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          {showV3 && (
+          {hasBothLiquidityViews && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3">
+              <div className="text-sm font-semibold text-slate-100">Liquidity view</div>
+              <div className="flex items-center gap-1 rounded-full bg-slate-950/70 border border-slate-800 p-1 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLiquidityView("v2");
+                    if (tokenSelection) {
+                      setTokenSelection(null);
+                      setSelectionDepositPoolId(null);
+                      setPairSelectorOpen(false);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded-full transition ${
+                    isV2View
+                      ? "bg-sky-500/20 text-sky-200"
+                      : "text-slate-400 hover:text-slate-100"
+                  }`}
+                  aria-pressed={isV2View}
+                >
+                  V2 Pools
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLiquidityView("v3")}
+                  className={`px-3 py-1.5 rounded-full transition ${
+                    isV3View
+                      ? "bg-emerald-500/20 text-emerald-200"
+                      : "text-slate-400 hover:text-slate-100"
+                  }`}
+                  aria-pressed={isV3View}
+                >
+                  V3 Positions
+                </button>
+              </div>
+            </div>
+          )}
+          {isV3View && (
             <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
               <div>
                 <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                  Positions
+                  Add Liquidity
                   <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
-                    CL
+                    V3
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">
-                  Add V3 liquidity and manage your positions.
+                  Create a concentrated position with custom price ranges.
                 </div>
               </div>
               {!hasV3Liquidity && (
@@ -3321,7 +3872,7 @@ export default function LiquiditySection({
               )}
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 px-4 sm:px-6 py-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr),minmax(0,0.85fr)] gap-4 px-4 sm:px-6 py-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-3">
                   Add Position
@@ -3329,45 +3880,249 @@ export default function LiquiditySection({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-slate-400">Token A</span>
-                    <select
-                      value={v3Token0}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setV3Token0(next);
-                        if (next === v3Token1 && v3TokenOptions.length > 1) {
-                          const alt = v3TokenOptions.find((sym) => sym !== next);
-                          if (alt) setV3Token1(alt);
-                        }
-                      }}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
-                    >
-                      {v3TokenOptions.map((sym) => (
-                        <option key={`v3-a-${sym}`} value={sym}>
-                          {sym}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative" ref={v3Token0DropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3Token0Open((v) => !v);
+                          setV3Token1Open(false);
+                          setV3Token0Search("");
+                        }}
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
+                        aria-haspopup="listbox"
+                        aria-expanded={v3Token0Open}
+                      >
+                        <div className="flex items-center gap-2">
+                          {v3Token0Meta?.logo ? (
+                            <img
+                              src={v3Token0Meta.logo}
+                              alt={`${v3Token0} logo`}
+                              className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token0 || "?").slice(0, 3)}
+                            </div>
+                          )}
+                          <span>{v3Token0}</span>
+                        </div>
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className={`h-4 w-4 text-slate-400 transition ${v3Token0Open ? "rotate-180" : ""}`}
+                        >
+                          <path
+                            d="M6 8l4 4 4-4"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      {v3Token0Open && (
+                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                          <div className="sticky top-0 z-10 bg-slate-900/95 border-b border-slate-800 px-3 py-2">
+                            <div className="flex items-center gap-2 bg-slate-950/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300">
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="h-4 w-4 text-slate-500"
+                              >
+                                <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
+                                <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                              </svg>
+                              <input
+                                name="v3-token0-search"
+                                value={v3Token0Search}
+                                onChange={(e) => setV3Token0Search(e.target.value)}
+                                placeholder="Search token..."
+                                className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500 text-xs"
+                              />
+                            </div>
+                          </div>
+                          {v3TokenOptions
+                            .filter((sym) => {
+                              const meta = tokenRegistry[sym];
+                              const q = v3Token0Search.trim().toLowerCase();
+                              if (!q) return true;
+                              const symbolMatch = sym.toLowerCase().includes(q);
+                              const nameMatch = (meta?.name || "").toLowerCase().includes(q);
+                              const addressMatch = (meta?.address || "").toLowerCase().includes(q);
+                              return symbolMatch || nameMatch || addressMatch;
+                            })
+                            .map((sym) => {
+                            const meta = tokenRegistry[sym];
+                            const isSelected = sym === v3Token0;
+                            return (
+                              <button
+                                key={`v3-a-${sym}`}
+                                type="button"
+                                onClick={() => {
+                                  setV3Token0(sym);
+                                  if (sym === v3Token1 && v3TokenOptions.length > 1) {
+                                    const alt = v3TokenOptions.find((s) => s !== sym);
+                                    if (alt) setV3Token1(alt);
+                                  }
+                                  setV3Token0Open(false);
+                                }}
+                                className={`w-full px-3 py-2 flex items-center gap-2 text-sm text-slate-100 hover:bg-slate-800/70 ${
+                                  isSelected ? "bg-slate-800/80" : ""
+                                }`}
+                              >
+                                {meta?.logo ? (
+                                  <img
+                                    src={meta.logo}
+                                    alt={`${sym} logo`}
+                                    className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                  />
+                                ) : (
+                                  <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                    {(sym || "?").slice(0, 3)}
+                                  </div>
+                                )}
+                                <span className="flex-1 text-left">{sym}</span>
+                                {isSelected && (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-4 w-4 text-emerald-300"
+                                  >
+                                    <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-slate-400">Token B</span>
-                    <select
-                      value={v3Token1}
-                      onChange={(e) => {
-                        const next = e.target.value;
-                        setV3Token1(next);
-                        if (next === v3Token0 && v3TokenOptions.length > 1) {
-                          const alt = v3TokenOptions.find((sym) => sym !== next);
-                          if (alt) setV3Token0(alt);
-                        }
-                      }}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
-                    >
-                      {v3TokenOptions.map((sym) => (
-                        <option key={`v3-b-${sym}`} value={sym}>
-                          {sym}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative" ref={v3Token1DropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3Token1Open((v) => !v);
+                          setV3Token0Open(false);
+                          setV3Token1Search("");
+                        }}
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
+                        aria-haspopup="listbox"
+                        aria-expanded={v3Token1Open}
+                      >
+                        <div className="flex items-center gap-2">
+                          {v3Token1Meta?.logo ? (
+                            <img
+                              src={v3Token1Meta.logo}
+                              alt={`${v3Token1} logo`}
+                              className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token1 || "?").slice(0, 3)}
+                            </div>
+                          )}
+                          <span>{v3Token1}</span>
+                        </div>
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className={`h-4 w-4 text-slate-400 transition ${v3Token1Open ? "rotate-180" : ""}`}
+                        >
+                          <path
+                            d="M6 8l4 4 4-4"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      {v3Token1Open && (
+                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                          <div className="sticky top-0 z-10 bg-slate-900/95 border-b border-slate-800 px-3 py-2">
+                            <div className="flex items-center gap-2 bg-slate-950/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300">
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="h-4 w-4 text-slate-500"
+                              >
+                                <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
+                                <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                              </svg>
+                              <input
+                                name="v3-token1-search"
+                                value={v3Token1Search}
+                                onChange={(e) => setV3Token1Search(e.target.value)}
+                                placeholder="Search token..."
+                                className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500 text-xs"
+                              />
+                            </div>
+                          </div>
+                          {v3TokenOptions
+                            .filter((sym) => {
+                              const meta = tokenRegistry[sym];
+                              const q = v3Token1Search.trim().toLowerCase();
+                              if (!q) return true;
+                              const symbolMatch = sym.toLowerCase().includes(q);
+                              const nameMatch = (meta?.name || "").toLowerCase().includes(q);
+                              const addressMatch = (meta?.address || "").toLowerCase().includes(q);
+                              return symbolMatch || nameMatch || addressMatch;
+                            })
+                            .map((sym) => {
+                            const meta = tokenRegistry[sym];
+                            const isSelected = sym === v3Token1;
+                            return (
+                              <button
+                                key={`v3-b-${sym}`}
+                                type="button"
+                                onClick={() => {
+                                  setV3Token1(sym);
+                                  if (sym === v3Token0 && v3TokenOptions.length > 1) {
+                                    const alt = v3TokenOptions.find((s) => s !== sym);
+                                    if (alt) setV3Token0(alt);
+                                  }
+                                  setV3Token1Open(false);
+                                }}
+                                className={`w-full px-3 py-2 flex items-center gap-2 text-sm text-slate-100 hover:bg-slate-800/70 ${
+                                  isSelected ? "bg-slate-800/80" : ""
+                                }`}
+                              >
+                                {meta?.logo ? (
+                                  <img
+                                    src={meta.logo}
+                                    alt={`${sym} logo`}
+                                    className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                  />
+                                ) : (
+                                  <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                    {(sym || "?").slice(0, 3)}
+                                  </div>
+                                )}
+                                <span className="flex-1 text-left">{sym}</span>
+                                {isSelected && (
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-4 w-4 text-emerald-300"
+                                  >
+                                    <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -3375,6 +4130,7 @@ export default function LiquiditySection({
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-slate-400">Fee tier</span>
                     <select
+                      name="v3-fee-tier"
                       value={v3FeeTier}
                       onChange={(e) => setV3FeeTier(Number(e.target.value))}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
@@ -3395,6 +4151,7 @@ export default function LiquiditySection({
                           setV3RangeMode("full");
                           setV3RangeLower("");
                           setV3RangeUpper("");
+                          setV3RangeInitialized(true);
                         }}
                         className={`px-3 py-1.5 rounded-full text-xs border ${
                           v3RangeMode === "full"
@@ -3441,37 +4198,79 @@ export default function LiquiditySection({
                       <span>Min price</span>
                       <span>{v3Token1} per {v3Token0}</span>
                     </div>
-                    <input
-                      value={v3RangeLower}
-                      onChange={(e) => {
-                        setV3RangeMode("custom");
-                        setV3RangeLower(e.target.value);
-                      }}
-                      disabled={v3RangeMode === "full"}
-                      placeholder="0.0"
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 disabled:opacity-60"
-                    />
+                    <div className="relative">
+                      <input
+                        name="v3-range-lower"
+                        value={v3RangeLower}
+                        onChange={(e) => {
+                          setV3RangeMode("custom");
+                          setV3RangeLower(e.target.value);
+                        }}
+                        disabled={v3RangeMode === "full"}
+                        placeholder="0.0"
+                        className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 pr-12 text-sm text-slate-100 disabled:opacity-60"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => adjustV3RangeValue("lower", 1)}
+                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => adjustV3RangeValue("lower", -1)}
+                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                        >
+                          -
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center justify-between text-xs text-slate-400">
                       <span>Max price</span>
                       <span>{v3Token1} per {v3Token0}</span>
                     </div>
-                    <input
-                      value={v3RangeUpper}
-                      onChange={(e) => {
-                        setV3RangeMode("custom");
-                        setV3RangeUpper(e.target.value);
-                      }}
-                      disabled={v3RangeMode === "full"}
-                      placeholder="0.0"
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 disabled:opacity-60"
-                    />
+                    <div className="relative">
+                      <input
+                        name="v3-range-upper"
+                        value={v3RangeUpper}
+                        onChange={(e) => {
+                          setV3RangeMode("custom");
+                          setV3RangeUpper(e.target.value);
+                        }}
+                        disabled={v3RangeMode === "full"}
+                        placeholder="0.0"
+                        className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 pr-12 text-sm text-slate-100 disabled:opacity-60"
+                      />
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => adjustV3RangeValue("upper", 1)}
+                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                        >
+                          +
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => adjustV3RangeValue("upper", -1)}
+                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                        >
+                          -
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 mb-3">
-                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 mb-2 gap-2">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 mb-3">
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
                     <span>
                       Current price:{" "}
                       {v3PoolLoading
@@ -3482,31 +4281,192 @@ export default function LiquiditySection({
                     </span>
                     <span>Fee tier {formatFeeTier(v3FeeTier)}</span>
                   </div>
-                  <div className="relative h-20 rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
-                    <div className="absolute left-4 right-4 top-1/2 -translate-y-1/2 h-2 rounded-full bg-slate-800" />
-                    {v3Chart ? (
-                      <>
+
+                  <div className="relative mt-4">
+                    <div className="relative h-52 rounded-2xl border border-slate-800 bg-[#0f0707] overflow-hidden">
+                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(248,113,113,0.24),transparent_48%),radial-gradient(circle_at_80%_0%,rgba(251,113,133,0.18),transparent_40%)]" />
+                      <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(92,12,12,0.92)_0px,rgba(92,12,12,0.92)_40px,rgba(255,114,114,0.35)_40px,rgba(255,114,114,0.35)_42px)] opacity-85" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
+                      {v3Chart ? (
                         <div
-                          className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full bg-amber-500/70"
-                          style={{
-                            left: `${v3Chart.rangeStart}%`,
-                            width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                          ref={v3RangeTrackRef}
+                          className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
+                          onClick={(event) => {
+                            if (!v3Chart) return;
+                            const rect = event.currentTarget.getBoundingClientRect();
+                            const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
+                            if (!Number.isFinite(pct)) return;
+                            const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
+                            if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
+                            const distLower = Math.abs(pct - v3Chart.rangeStart);
+                            const distUpper = Math.abs(pct - v3Chart.rangeEnd);
+                            setV3RangeMode("custom");
+                            if (distLower <= distUpper) {
+                              const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : nextPrice;
+                              setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
+                            } else {
+                              const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : nextPrice;
+                              setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
+                            }
                           }}
-                        />
-                        {v3Chart.currentPct !== null && (
+                        >
+                          {v3ChartMode !== "price-range" && (
+                            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[#0f0707]/80 text-xs text-rose-100/80 pointer-events-none">
+                              {v3ChartMode.replace("-", " ").toUpperCase()} view coming soon
+                            </div>
+                          )}
+                          <div className="absolute left-0 right-0 bottom-4 h-[2px] bg-slate-500/60" />
                           <div
-                            className="absolute top-1/2 -translate-y-1/2 h-6 w-0.5 bg-sky-400"
-                            style={{ left: `${v3Chart.currentPct}%` }}
+                            className="absolute bottom-4 h-28 rounded-md border border-rose-400/60 bg-[linear-gradient(180deg,rgba(255,98,98,0.28)_0%,rgba(120,12,12,0.65)_100%)] transition-[left,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{
+                              left: `${v3Chart.rangeStart}%`,
+                              width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                            }}
                           />
-                        )}
-                      </>
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
-                        No price data yet
-                      </div>
-                    )}
+                          {v3Chart.currentPct !== null && (
+                            <div
+                              className="absolute top-0 bottom-6 w-px border-l border-dashed border-rose-100/60 shadow-[0_0_10px_rgba(248,113,113,0.35)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.currentPct}%` }}
+                            />
+                          )}
+
+                          <div
+                            className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeStart}%` }}
+                          />
+                          <div
+                            className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeEnd}%` }}
+                          />
+
+                          <div
+                            className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeStart}%` }}
+                          >
+                            {v3RangeMode === "full"
+                              ? "MIN"
+                              : v3LowerPct !== null
+                              ? `${v3LowerPct >= 0 ? "+" : ""}${v3LowerPct.toFixed(2)}%`
+                              : "--"}
+                          </div>
+                          <div
+                            className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeEnd}%` }}
+                          >
+                            {v3RangeMode === "full"
+                              ? "MAX"
+                              : v3UpperPct !== null
+                              ? `${v3UpperPct >= 0 ? "+" : ""}${v3UpperPct.toFixed(2)}%`
+                              : "--"}
+                          </div>
+
+                          <button
+                            type="button"
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                              event.preventDefault();
+                              setV3DraggingHandle("lower");
+                            }}
+                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeStart}%` }}
+                          >
+                            <span className="absolute inset-2 rounded-full border border-rose-100/60" />
+                            <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
+                          </button>
+                          <button
+                            type="button"
+                            onPointerDown={(event) => {
+                              event.stopPropagation();
+                              event.preventDefault();
+                              setV3DraggingHandle("upper");
+                            }}
+                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeEnd}%` }}
+                          >
+                            <span className="absolute inset-2 rounded-full border border-rose-100/60" />
+                            <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
+                          </button>
+
+                          <div
+                            className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-400/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeStart}%` }}
+                          >
+                            {formatPrice(v3RangeLowerNum || 0)}
+                          </div>
+                          <div
+                            className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-400/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            style={{ left: `${v3Chart.rangeEnd}%` }}
+                          >
+                            {formatPrice(v3RangeUpperNum || 0)}
+                          </div>
+                          {v3Chart.currentPct !== null && (
+                            <div
+                              className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-500/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.currentPct}%` }}
+                            >
+                              {v3CurrentPrice ? formatPrice(v3CurrentPrice) : "--"}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
+                          No price data yet
+                        </div>
+                      )}
+                    </div>
+                    <div className="absolute right-4 -bottom-5 z-20" ref={v3ChartMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setV3ChartMenuOpen((v) => !v)}
+                        className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-[#120909]/80 px-3 py-1.5 text-[11px] uppercase tracking-[0.12em] text-rose-100/80 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+                      >
+                        {v3ChartMode.replace("-", " ")}
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
+                        >
+                          <path
+                            d="M6 8l4 4 4-4"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      {v3ChartMenuOpen && (
+                        <div className="absolute top-full right-0 mt-2 w-40 rounded-2xl border border-slate-800 bg-[#140b0b] p-2 text-xs text-rose-100/80 shadow-2xl shadow-black/60">
+                          {[
+                            { id: "price-range", label: "Price range" },
+                            { id: "tvl", label: "TVL" },
+                            { id: "price", label: "Price" },
+                            { id: "volume", label: "Volume" },
+                            { id: "fees", label: "Fees" },
+                          ].map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => {
+                                setV3ChartMode(opt.id);
+                                setV3ChartMenuOpen(false);
+                              }}
+                              className={`w-full rounded-lg px-3 py-2 text-left uppercase tracking-[0.12em] ${
+                                v3ChartMode === opt.id
+                                  ? "bg-rose-500/15 text-rose-100"
+                                  : "hover:bg-rose-500/10"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 mt-3">
                     <span>
                       {v3HasCustomRange
                         ? formatPrice(v3RangeLowerNum)
@@ -3516,70 +4476,239 @@ export default function LiquiditySection({
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Deposit {v3Token0}</span>
-                      <span>
-                        Bal: {walletBalancesLoading ? "..." : formatTokenBalance(v3Token0Balance)}
-                      </span>
-                    </div>
-                    <input
-                      value={v3Amount0}
-                      onChange={(e) => setV3Amount0(e.target.value)}
-                      placeholder="0.0"
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Deposit {v3Token1}</span>
-                      <span>
-                        Bal: {walletBalancesLoading ? "..." : formatTokenBalance(v3Token1Balance)}
-                      </span>
-                    </div>
-                    <input
-                      value={v3Amount1}
-                      onChange={(e) => setV3Amount1(e.target.value)}
-                      placeholder="0.0"
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
-                    />
-                  </div>
-                </div>
-
-                {v3MintError && (
-                  <div className="text-xs text-amber-200 mb-2">{v3MintError}</div>
-                )}
-                <button
-                  type="button"
-                  onClick={handleV3Mint}
-                  disabled={v3MintLoading || !hasV3Liquidity}
-                  className="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 disabled:opacity-60"
-                >
-                  {v3MintLoading ? "Minting..." : "Add Position"}
-                </button>
+                {/* Deposit inputs moved to the Add Liquidity panel */}
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                    Your Positions
+              <div className="flex flex-col gap-4">
+                <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950 to-sky-900/30 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Add liquidity
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Deposit amounts to mint a new V3 position.
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200">
+                      AUTO
+                    </span>
                   </div>
+
+                  <div className="mt-4 space-y-3">
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Deposit</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const num = Number(v3Token0Balance || 0);
+                            if (Number.isFinite(num) && num > 0) {
+                              setV3Amount0(num.toString());
+                              if (v3MintError) setV3MintError("");
+                              if (actionStatus) setActionStatus(null);
+                            }
+                          }}
+                          className="text-[11px] text-slate-300 hover:text-slate-100"
+                        >
+                          Max
+                        </button>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <input
+                          name="v3-deposit-0"
+                          value={v3Amount0}
+                          onChange={(e) => {
+                            setV3Amount0(e.target.value);
+                            if (v3MintError) setV3MintError("");
+                            if (actionStatus) setActionStatus(null);
+                          }}
+                          placeholder="0.0"
+                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                        />
+                        <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-100">
+                          {v3Token0Meta?.logo ? (
+                            <img
+                              src={v3Token0Meta.logo}
+                              alt={`${v3Token0} logo`}
+                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token0 || "?").slice(0, 3)}
+                            </div>
+                          )}
+                          <span>{v3Token0}</span>
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Balance{" "}
+                        {walletBalancesLoading
+                          ? "Loading..."
+                          : `${formatTokenBalance(v3Token0Balance)} ${v3Token0}`}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                      <div className="flex items-center justify-between text-[11px] text-slate-500">
+                        <span>Deposit</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const num = Number(v3Token1Balance || 0);
+                            if (Number.isFinite(num) && num > 0) {
+                              setV3Amount1(num.toString());
+                              if (v3MintError) setV3MintError("");
+                              if (actionStatus) setActionStatus(null);
+                            }
+                          }}
+                          className="text-[11px] text-slate-300 hover:text-slate-100"
+                        >
+                          Max
+                        </button>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-3">
+                        <input
+                          name="v3-deposit-1"
+                          value={v3Amount1}
+                          onChange={(e) => {
+                            setV3Amount1(e.target.value);
+                            if (v3MintError) setV3MintError("");
+                            if (actionStatus) setActionStatus(null);
+                          }}
+                          placeholder="0.0"
+                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                        />
+                        <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-100">
+                          {v3Token1Meta?.logo ? (
+                            <img
+                              src={v3Token1Meta.logo}
+                              alt={`${v3Token1} logo`}
+                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token1 || "?").slice(0, 3)}
+                            </div>
+                          )}
+                          <span>{v3Token1}</span>
+                        </div>
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        Balance{" "}
+                        {walletBalancesLoading
+                          ? "Loading..."
+                          : `${formatTokenBalance(v3Token1Balance)} ${v3Token1}`}
+                      </div>
+                    </div>
+                  </div>
+
                   <button
                     type="button"
-                    onClick={() => setV3RefreshTick((t) => t + 1)}
-                    className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                    onClick={handleV3Mint}
+                    disabled={v3MintLoading || !hasV3Liquidity}
+                    className="mt-4 w-full rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
                   >
-                    Refresh
+                    {v3MintLoading
+                      ? "Creating position..."
+                      : address
+                      ? "Create position"
+                      : "Connect Wallet"}
                   </button>
+
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Total deposit
+                      </div>
+                      <div className="text-sm font-semibold text-slate-100">
+                        {v3TotalDeposit !== null
+                          ? `${formatPrice(v3TotalDeposit)} ${v3Token1}`
+                          : "--"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Range
+                      </div>
+                      <div className="text-sm font-semibold text-slate-100">
+                        {v3RangeMode === "full"
+                          ? "Full range"
+                          : v3HasCustomRange
+                          ? `${formatPrice(v3RangeLowerNum)} - ${formatPrice(v3RangeUpperNum)}`
+                          : "Custom"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Fee tier
+                      </div>
+                      <div className="text-sm font-semibold text-slate-100">
+                        {formatFeeTier(v3FeeTier)}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
+                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                        Slippage
+                      </div>
+                      <div className="flex items-center gap-1 text-sm font-semibold text-slate-100">
+                        <input
+                          name="v3-slippage"
+                          value={slippageInput}
+                          onChange={(e) => setSlippageInput(e.target.value)}
+                          className="w-12 rounded-md border border-slate-700 bg-slate-900/70 px-1 py-0.5 text-right text-xs text-slate-100"
+                          placeholder="0.5"
+                        />
+                        <span className="text-[10px] text-slate-400">%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Deposit ratio</span>
+                      <span>{v3Ratio0Pct}% / {v3Ratio1Pct}%</span>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-slate-800 overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-sky-500/80 to-emerald-400/80"
+                        style={{ width: `${v3Ratio0Pct}%` }}
+                      />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>{v3Token0}</span>
+                      <span>{v3Token1}</span>
+                    </div>
+                  </div>
+
+                  {v3MintError && (
+                    <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                      {v3MintError}
+                    </div>
+                  )}
                 </div>
-                {v3PositionsLoading ? (
-                  <div className="text-sm text-slate-400">Loading positions...</div>
-                ) : v3PositionsError ? (
-                  <div className="text-sm text-amber-200">{v3PositionsError}</div>
-                ) : v3Positions.length ? (
-                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                    {v3Positions.map((pos) => {
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Your Positions
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setV3RefreshTick((t) => t + 1)}
+                      className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  {v3PositionsLoading ? (
+                    <div className="text-sm text-slate-400">Loading positions...</div>
+                  ) : v3PositionsError ? (
+                    <div className="text-sm text-amber-200">{v3PositionsError}</div>
+                  ) : v3Positions.length ? (
+                    <div className="flex flex-col gap-3">
+                      <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                      {v3Positions.map((pos) => {
                       const key = `${pos.token0?.toLowerCase?.() || ""}-${pos.token1?.toLowerCase?.() || ""}-${pos.fee}`;
                       const metrics = v3PoolMetrics[key];
                       const meta0 = findTokenMetaByAddress(pos.token0);
@@ -3591,21 +4720,116 @@ export default function LiquiditySection({
                       const currentPrice = metrics?.tick !== undefined && metrics?.tick !== null
                         ? tickToPrice(metrics.tick, dec0, dec1)
                         : null;
+                      const spacing = metrics?.spacing || getTickSpacingFromFee(pos.fee) || 1;
+                      const minTickForSpacing = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+                      const maxTickForSpacing = Math.floor(V3_MAX_TICK / spacing) * spacing;
+                      const isFullRange =
+                        pos.tickLower <= minTickForSpacing && pos.tickUpper >= maxTickForSpacing;
+                      const hasRange =
+                        !isFullRange &&
+                        Number.isFinite(lowerPrice) &&
+                        Number.isFinite(upperPrice) &&
+                        lowerPrice > 0 &&
+                        upperPrice > 0 &&
+                        lowerPrice < upperPrice;
+                      let rangeStart = 0;
+                      let rangeEnd = 100;
+                      let currentPct = null;
+                      if (hasRange) {
+                        const span = upperPrice - lowerPrice;
+                        const pad = span * 0.35;
+                        const padMin = Math.max(lowerPrice - pad, 0);
+                        const padMax = upperPrice + pad;
+                        const denom = padMax - padMin;
+                        if (denom > 0) {
+                          rangeStart = clampPercent(((lowerPrice - padMin) / denom) * 100);
+                          rangeEnd = clampPercent(((upperPrice - padMin) / denom) * 100);
+                          if (Number.isFinite(currentPrice)) {
+                            currentPct = clampPercent(((currentPrice - padMin) / denom) * 100);
+                          }
+                        }
+                      }
+                      const rangeSummary = isFullRange
+                        ? "Full range"
+                        : hasRange
+                        ? `${formatPrice(lowerPrice)} - ${formatPrice(upperPrice)}`
+                        : "--";
+                      const lowerLabel = isFullRange
+                        ? "0"
+                        : hasRange
+                        ? formatPrice(lowerPrice)
+                        : "--";
+                      const upperLabel = isFullRange
+                        ? "Unlimited"
+                        : hasRange
+                        ? formatPrice(upperPrice)
+                        : "--";
                       const inRange =
                         metrics?.tick !== undefined &&
                         metrics?.tick !== null &&
                         metrics.tick >= pos.tickLower &&
                         metrics.tick <= pos.tickUpper;
+                      const isSelected =
+                        selectedPositionId &&
+                        String(selectedPositionId) === String(pos.tokenId);
                       return (
                         <div
                           key={`cl-${pos.tokenId}`}
-                          className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setSelectedPositionId(pos.tokenId)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setSelectedPositionId(pos.tokenId);
+                            }
+                          }}
+                          className={`relative overflow-hidden rounded-2xl border px-4 py-3 shadow-[0_12px_40px_-28px_rgba(56,189,248,0.6)] transition ${
+                            isSelected
+                              ? "border-sky-500/60 bg-gradient-to-br from-slate-950 via-slate-900/90 to-slate-900/70 ring-1 ring-sky-500/40"
+                              : "border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950/70 to-slate-900/60 hover:border-slate-700"
+                          }`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="text-sm font-semibold text-slate-100">
-                              {pos.token0Symbol} / {pos.token1Symbol}
+                          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.16),transparent_55%)]" />
+                          <div className="relative flex flex-wrap items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="flex -space-x-2">
+                                {meta0?.logo ? (
+                                  <img
+                                    src={meta0.logo}
+                                    alt={`${pos.token0Symbol} logo`}
+                                    className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                  />
+                                ) : (
+                                  <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
+                                    {(pos.token0Symbol || "?").slice(0, 3)}
+                                  </div>
+                                )}
+                                {meta1?.logo ? (
+                                  <img
+                                    src={meta1.logo}
+                                    alt={`${pos.token1Symbol} logo`}
+                                    className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                  />
+                                ) : (
+                                  <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
+                                    {(pos.token1Symbol || "?").slice(0, 3)}
+                                  </div>
+                                )}
+                              </div>
+                              <div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {pos.token0Symbol} / {pos.token1Symbol}
+                                </div>
+                                <div className="text-[11px] text-slate-500">
+                                  Position #{pos.tokenId}
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200">
+                                Fee {formatFeeTier(pos.fee)}
+                              </span>
                               {metrics && (
                                 <span
                                   className={`px-2 py-0.5 rounded-full text-[10px] border ${
@@ -3622,28 +4846,317 @@ export default function LiquiditySection({
                               </span>
                             </div>
                           </div>
-                          <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-1">
-                            <span>Fee {formatFeeTier(pos.fee)}</span>
-                            <span>
-                              Range {formatPrice(lowerPrice)} - {formatPrice(upperPrice)}{" "}
-                              {pos.token1Symbol} per {pos.token0Symbol}
-                            </span>
-                            <span>ID #{pos.tokenId}</span>
-                          </div>
-                          <div className="text-xs text-slate-500 flex flex-wrap gap-2 mt-1">
-                            <span>
-                              Current {formatPrice(currentPrice)} {pos.token1Symbol} per{" "}
-                              {pos.token0Symbol}
-                            </span>
-                            <span>
-                              Fees {formatAmount(pos.tokensOwed0, dec0)} {pos.token0Symbol} /{" "}
-                              {formatAmount(pos.tokensOwed1, dec1)} {pos.token1Symbol}
-                            </span>
+
+                          <div className="relative mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Range</span>
+                                <span>
+                                  {pos.token1Symbol} per {pos.token0Symbol}
+                                </span>
+                              </div>
+                              <div className="mt-2 text-base font-semibold text-slate-100">
+                                {rangeSummary}
+                              </div>
+                              <div className="relative mt-3 h-12 rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden">
+                                <div className="absolute left-4 right-4 top-1/2 -translate-y-1/2 h-2 rounded-full bg-slate-800">
+                                  {isFullRange ? (
+                                    <div className="absolute inset-0 rounded-full bg-gradient-to-r from-sky-500/40 via-emerald-500/40 to-sky-500/40" />
+                                  ) : hasRange ? (
+                                    <div
+                                      className="absolute top-0 h-2 rounded-full bg-sky-500/60"
+                                      style={{
+                                        left: `${rangeStart}%`,
+                                        width: `${Math.max(2, rangeEnd - rangeStart)}%`,
+                                      }}
+                                    />
+                                  ) : null}
+                                  {!isFullRange && currentPct !== null && (
+                                    <div
+                                      className="absolute -top-1 h-4 w-0.5 bg-amber-400"
+                                      style={{ left: `${currentPct}%` }}
+                                    />
+                                  )}
+                                </div>
+                                {!hasRange && !isFullRange && (
+                                  <div className="absolute inset-0 flex items-center justify-center text-[11px] text-slate-500">
+                                    Range unavailable
+                                  </div>
+                                )}
+                              </div>
+                              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                                <span>{lowerLabel}</span>
+                                <span>{upperLabel}</span>
+                              </div>
+                            </div>
+
+                            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                              <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                <span>Current price</span>
+                                <span>{metrics ? "Live" : "Latest"}</span>
+                              </div>
+                              <div className="mt-2 text-2xl font-semibold text-slate-100">
+                                {Number.isFinite(currentPrice) ? formatPrice(currentPrice) : "--"}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {pos.token1Symbol} per {pos.token0Symbol}
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">
+                                    Fees {pos.token0Symbol}
+                                  </div>
+                                  <div className="text-sm font-semibold text-slate-100">
+                                    {formatAmount(pos.tokensOwed0, dec0)} {pos.token0Symbol}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">
+                                    Fees {pos.token1Symbol}
+                                  </div>
+                                  <div className="text-sm font-semibold text-slate-100">
+                                    {formatAmount(pos.tokensOwed1, dec1)} {pos.token1Symbol}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       );
                     })}
                   </div>
+
+                  {selectedPosition ? (
+                    <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-100">
+                            Position NFT
+                          </div>
+                          <div className="text-[11px] text-slate-500">
+                            Click a position to preview the on-chain NFT metadata.
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPositionId(null)}
+                          className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                        >
+                          Close
+                        </button>
+                      </div>
+
+                      {(() => {
+                        const meta0 = findTokenMetaByAddress(selectedPosition.token0);
+                        const meta1 = findTokenMetaByAddress(selectedPosition.token1);
+                        const dec0 = meta0?.decimals ?? 18;
+                        const dec1 = meta1?.decimals ?? 18;
+                        const spacing = getTickSpacingFromFee(selectedPosition.fee) || 1;
+                        const minTickForSpacing = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+                        const maxTickForSpacing = Math.floor(V3_MAX_TICK / spacing) * spacing;
+                        const isFullRange =
+                          selectedPosition.tickLower <= minTickForSpacing &&
+                          selectedPosition.tickUpper >= maxTickForSpacing;
+                        const lowerPrice = tickToPrice(
+                          selectedPosition.tickLower,
+                          dec0,
+                          dec1
+                        );
+                        const upperPrice = tickToPrice(
+                          selectedPosition.tickUpper,
+                          dec0,
+                          dec1
+                        );
+                        const rangeLabel = isFullRange
+                          ? "Full range"
+                          : `${formatPrice(lowerPrice)} - ${formatPrice(upperPrice)}`;
+                        const positionTitle = formatPositionTitle(
+                          selectedPosition,
+                          isFullRange
+                        );
+                        const metaState = nftMetaById[selectedPosition.tokenId] || {};
+                        const nftMeta = metaState.meta || {};
+                        const nftImage = nftMeta?.image || "";
+                        const hasImage = Boolean(nftImage);
+                        const hasMetaTrace =
+                          Boolean(metaState.raw) ||
+                          Boolean(metaState.metaUrl) ||
+                          Boolean(metaState.image);
+
+                        return (
+                          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1.2fr,0.8fr] gap-4">
+                            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                              <div className="text-xs text-slate-500 uppercase tracking-wide">
+                                Position details
+                              </div>
+                              <div className="mt-2 text-sm font-semibold text-slate-100">
+                                {positionTitle}
+                              </div>
+                              <div className="mt-2 flex items-center gap-3">
+                                <div className="flex -space-x-2">
+                                  {meta0?.logo ? (
+                                    <img
+                                      src={meta0.logo}
+                                      alt={`${selectedPosition.token0Symbol} logo`}
+                                      className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                    />
+                                  ) : (
+                                    <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
+                                      {(selectedPosition.token0Symbol || "?").slice(0, 3)}
+                                    </div>
+                                  )}
+                                  {meta1?.logo ? (
+                                    <img
+                                      src={meta1.logo}
+                                      alt={`${selectedPosition.token1Symbol} logo`}
+                                      className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                    />
+                                  ) : (
+                                    <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
+                                      {(selectedPosition.token1Symbol || "?").slice(0, 3)}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="text-sm text-slate-100">
+                                  {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
+                                </div>
+                              </div>
+                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setNftMetaById((prev) => ({
+                                      ...prev,
+                                      [selectedPosition.tokenId]: null,
+                                    }));
+                                    setNftMetaRefreshTick((v) => v + 1);
+                                  }}
+                                  className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                                >
+                                  Reload metadata
+                                </button>
+                                {hasMetaTrace && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowNftDebug((v) => !v)}
+                                    className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                                  >
+                                    {showNftDebug ? "Hide metadata" : "Show metadata"}
+                                  </button>
+                                )}
+                                {metaState.loading && (
+                                  <span className="text-slate-500">Loading tokenURI...</span>
+                                )}
+                              </div>
+                              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">Token ID</div>
+                                  <div className="font-semibold text-slate-100">
+                                    #{selectedPosition.tokenId}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">Fee tier</div>
+                                  <div className="font-semibold text-slate-100">
+                                    {formatFeeTier(selectedPosition.fee)}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">Range</div>
+                                  <div className="font-semibold text-slate-100">
+                                    {rangeLabel}
+                                  </div>
+                                </div>
+                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
+                                  <div className="text-[10px] text-slate-500">Tick range</div>
+                                  <div className="font-semibold text-slate-100">
+                                    {selectedPosition.tickLower} {"->"} {selectedPosition.tickUpper}
+                                  </div>
+                                </div>
+                              </div>
+                              {metaState.error && (
+                                <div className="mt-3 text-[11px] text-amber-200">
+                                  {metaState.error}
+                                </div>
+                              )}
+                              {showNftDebug && (
+                                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                                    tokenURI
+                                  </div>
+                                  <div className="mt-1 font-mono break-all text-slate-200">
+                                    {metaState.raw || "--"}
+                                  </div>
+                                  <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                    metadata URL
+                                  </div>
+                                  <div className="mt-1 font-mono break-all text-slate-200">
+                                    {metaState.metaUrl || "--"}
+                                  </div>
+                                  <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                    image
+                                  </div>
+                                  <div className="mt-1 font-mono break-all text-slate-200">
+                                    {metaState.image || "--"}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="flex flex-col items-center justify-center gap-3">
+                              <div
+                                className={`relative w-full max-w-[260px] sm:max-w-[300px] aspect-[3/4] rounded-2xl overflow-hidden ${
+                                  hasImage ? "border border-transparent bg-transparent" : "border border-slate-800 bg-slate-950/70"
+                                }`}
+                              >
+                                {metaState.loading && (
+                                  <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                                    Loading NFT...
+                                  </div>
+                                )}
+                                {hasImage ? (
+                                  <div className="absolute inset-0">
+                                    <img
+                                      src={nftImage}
+                                      alt={nftMeta?.name || positionTitle}
+                                      className="h-full w-full object-contain"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
+                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.25),transparent_60%)]" />
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-4">
+                                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                                        CurrentX Positions NFT
+                                      </div>
+                                      <div className="text-lg font-semibold text-slate-100">
+                                        {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
+                                      </div>
+                                      <div className="text-sm text-slate-400">
+                                        {formatFeeTier(selectedPosition.fee)}
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-center">
+                                <div className="text-[11px] text-slate-400">
+                                  Position #{selectedPosition.tokenId}
+                                </div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {isFullRange ? "MIN<>MAX" : rangeLabel}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
+                </div>
                 ) : (
                   <div className="text-sm text-slate-400">
                     No positions found.
@@ -3652,9 +5165,10 @@ export default function LiquiditySection({
               </div>
             </div>
           </div>
+          </div>
           )}
 
-          {showV2 && (
+          {isV2View && (
             <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
             <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -3692,6 +5206,7 @@ export default function LiquiditySection({
                   />
                 </svg>
                 <input
+                  name="v2-pool-search"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search pools..."
@@ -3940,6 +5455,7 @@ export default function LiquiditySection({
                   />
                 </svg>
                 <input
+                  name="v2-token-search"
                   value={tokenSearch}
                   onChange={(e) => setTokenSearch(e.target.value)}
                   placeholder="Symbol or address..."
@@ -3951,6 +5467,7 @@ export default function LiquiditySection({
                 className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full md:w-auto"
               >
                 <input
+                  name="v2-custom-token-address"
                   value={customTokenAddress}
                   onChange={(e) => {
                     setCustomTokenAddress(e.target.value);
@@ -4126,3 +5643,4 @@ export default function LiquiditySection({
     </div>
   );
 }
+

@@ -3,7 +3,6 @@ import React, { useEffect, useState } from "react";
 import Header from "./shared/ui/Header";
 import SwapSection from "./features/swap/SwapSection";
 import LiquiditySection from "./features/liquidity/LiquiditySection";
-import PositionSection from "./features/positions/PositionSection";
 import Dashboard from "./features/dashboard/Dashboard";
 import Farms from "./features/farms/Farms";
 import { useWallet } from "./shared/hooks/useWallet";
@@ -87,7 +86,6 @@ export default function App() {
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
-            { id: "position", label: "Position" },
             { id: "farms", label: "Farms" },
           ].map((item) => (
             <button
@@ -110,10 +108,12 @@ export default function App() {
           <SwapSection balances={balances} address={address} chainId={chainId} />
         )}
         {tab === "liquidity" && (
-          <LiquiditySection address={address} chainId={chainId} balances={balances} />
-        )}
-        {tab === "position" && (
-          <PositionSection address={address} chainId={chainId} balances={balances} />
+          <LiquiditySection
+            address={address}
+            chainId={chainId}
+            balances={balances}
+            showV3={true}
+          />
         )}
         {tab === "dashboard" && <Dashboard />}
         {tab === "farms" && (

@@ -54,6 +54,48 @@ const formatBalance = (v) => {
 };
 const displaySymbol = (token, fallback) =>
   (token && (token.displaySymbol || token.symbol)) || fallback;
+const TokenLogo = ({
+  token,
+  fallbackSymbol,
+  imgClassName = "h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain",
+  placeholderClassName =
+    "h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center",
+}) => {
+  const displaySym = displaySymbol(token, fallbackSymbol);
+  const primaryLogo = token?.logo || null;
+  const fallbackLogo =
+    (fallbackSymbol && TOKENS[fallbackSymbol]?.logo) ||
+    (token?.symbol && TOKENS[token.symbol]?.logo) ||
+    null;
+  const [src, setSrc] = useState(primaryLogo || fallbackLogo || null);
+
+  useEffect(() => {
+    setSrc(primaryLogo || fallbackLogo || null);
+  }, [primaryLogo, fallbackLogo]);
+
+  if (!src) {
+    return (
+      <div className={placeholderClassName}>
+        {(displaySym || "?").slice(0, 3)}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={`${displaySym || token?.symbol || "token"} logo`}
+      className={imgClassName}
+      onError={() => {
+        if (fallbackLogo && src !== fallbackLogo) {
+          setSrc(fallbackLogo);
+        } else {
+          setSrc(null);
+        }
+      }}
+    />
+  );
+};
 const paddedTopicAddress = (addr) =>
   `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 
@@ -305,10 +347,23 @@ export default function SwapSection({ balances, address, chainId }) {
   };
   const [localBalances, setLocalBalances] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
-  const tokenRegistry = useMemo(
-    () => ({ ...TOKENS, ...customTokens }),
-    [customTokens]
-  );
+  const tokenRegistry = useMemo(() => {
+    const out = { ...TOKENS };
+    Object.entries(customTokens || {}).forEach(([sym, meta]) => {
+      if (!meta) return;
+      const base = out[sym];
+      out[sym] = {
+        ...base,
+        ...meta,
+        address: meta.address || base?.address || null,
+        decimals: meta.decimals ?? base?.decimals,
+        name: meta.name || base?.name,
+        displaySymbol: meta.displaySymbol || base?.displaySymbol,
+        logo: meta.logo || base?.logo || null,
+      };
+    });
+    return out;
+  }, [customTokens]);
   useEffect(() => {
     const sync = () => {
       try {
@@ -1322,7 +1377,7 @@ export default function SwapSection({ balances, address, chainId }) {
             const est = await weth.deposit.estimateGas(wrapOpts);
             wrapOpts.gasLimit = (est * 120n) / 100n; // add 20% buffer
           } catch {
-            wrapOpts.gasLimit = fallbackGas; // covers strict RPCs (e.g. some testnets)
+            wrapOpts.gasLimit = fallbackGas; // covers strict RPCs
           }
           tx = await weth.deposit(wrapOpts);
         } else {
@@ -1592,17 +1647,12 @@ export default function SwapSection({ balances, address, chainId }) {
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >
-              {displaySellMeta?.logo ? (
-                <img
-                  src={displaySellMeta.logo}
-                  alt={`${displaySellMeta.symbol} logo`}
-                  className="h-6 w-6 rounded-full object-contain"
-                />
-              ) : (
-                <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(displaySellSymbol || "?").slice(0, 2)}
-                </div>
-              )}
+              <TokenLogo
+                token={displaySellMeta}
+                fallbackSymbol={sellToken}
+                imgClassName="h-6 w-6 rounded-full object-contain"
+                placeholderClassName="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white"
+              />
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
                   {displaySellSymbol}
@@ -1627,6 +1677,7 @@ export default function SwapSection({ balances, address, chainId }) {
               </svg>
             </button>
             <input
+              name="swap-amount-in"
               value={amountIn}
               onChange={(e) => {
                 setAmountIn(e.target.value);
@@ -1713,17 +1764,12 @@ export default function SwapSection({ balances, address, chainId }) {
               }}
               className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
             >
-              {displayBuyMeta?.logo ? (
-                <img
-                  src={displayBuyMeta.logo}
-                  alt={`${displayBuyMeta.symbol} logo`}
-                  className="h-6 w-6 rounded-full object-contain"
-                />
-              ) : (
-                <div className="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white">
-                  {(displayBuySymbol || "?").slice(0, 2)}
-                </div>
-              )}
+              <TokenLogo
+                token={displayBuyMeta}
+                fallbackSymbol={buyToken}
+                imgClassName="h-6 w-6 rounded-full object-contain"
+                placeholderClassName="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white"
+              />
               <div className="flex flex-col items-start">
                 <span className="text-sm font-semibold">
                   {displayBuySymbol}
@@ -1885,6 +1931,7 @@ export default function SwapSection({ balances, address, chainId }) {
                   </button>
                 ))}
                 <input
+                  name="swap-slippage"
                   value={slippage}
                   onChange={(e) => setSlippage(e.target.value)}
                   className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
@@ -1909,6 +1956,7 @@ export default function SwapSection({ balances, address, chainId }) {
                   </button>
                 ))}
                 <input
+                  name="swap-slippage-cap"
                   value={slippageCap}
                   onChange={(e) => setSlippageCap(e.target.value)}
                   className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
@@ -2188,6 +2236,7 @@ export default function SwapSection({ balances, address, chainId }) {
                   <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
                 <input
+                  name="swap-token-search"
                   value={tokenSearch}
                   onChange={(e) => setTokenSearch(e.target.value)}
                   placeholder="Search name or paste token address"
@@ -2207,17 +2256,12 @@ export default function SwapSection({ balances, address, chainId }) {
                     onClick={() => handleSelectToken(t.symbol)}
                     className="w-full px-4 py-3 flex items-center gap-3 bg-slate-950/50 hover:bg-slate-900/70 transition text-left"
                   >
-                    {t.logo ? (
-                      <img
-                        src={t.logo}
-                        alt={`${t.symbol} logo`}
-                        className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                      />
-                    ) : (
-                      <div className="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center">
-                        {displaySym.slice(0, 3)}
-                      </div>
-                    )}
+                    <TokenLogo
+                      token={t}
+                      fallbackSymbol={t.symbol}
+                      imgClassName="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
+                    />
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                         {displaySym}

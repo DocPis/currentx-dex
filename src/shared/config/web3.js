@@ -45,15 +45,7 @@ const RAW_RPC_SOURCES = [
   env.VITE_RPC_FALLBACK,
   env.VITE_RPC_TATUM,
   env.VITE_RPC_THIRDWEB,
-  ...(activeNetwork.id === "mainnet"
-    ? ["https://mainnet.megaeth.com/rpc"]
-    : [
-        env.VITE_TESTNET_RPC_URLS,
-        env.VITE_TESTNET_RPC_URL,
-        "https://timothy.megaeth.com/rpc",
-        "https://carrot.megaeth.com/rpc",
-        "https://megaeth-timothy.gateway.tatum.io/",
-      ]),
+  "https://mainnet.megaeth.com/rpc",
 ];
 
 const dedupe = (arr) => {

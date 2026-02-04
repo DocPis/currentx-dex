@@ -17,6 +17,8 @@ import { getActiveNetworkConfig } from "../config/networks";
 export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const activeNetworkId = (getActiveNetworkConfig()?.id || "mainnet").toLowerCase();
   const activeChainHex = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
+  const BALANCE_POLL_INTERVAL_MS = 20000;
+  const BALANCE_EPSILON = 1e-9;
   const normalizeChainHex = (value) => {
     if (value === null || value === undefined) return null;
     const str = String(value).trim();
@@ -42,9 +44,25 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const isRefreshing = useRef(false);
   const pendingAddress = useRef(null);
   const decimalsCache = useRef({});
+  const hasLoadedRef = useRef(false);
+  const lastAutoRefreshRef = useRef(0);
+
+  const balancesEqual = useCallback(
+    (a, b) => {
+      if (a === b) return true;
+      const keys = Object.keys(b || {});
+      for (const key of keys) {
+        const av = typeof a?.[key] === "number" ? a[key] : 0;
+        const bv = typeof b?.[key] === "number" ? b[key] : 0;
+        if (Math.abs(av - bv) > BALANCE_EPSILON) return false;
+      }
+      return true;
+    },
+    [BALANCE_EPSILON]
+  );
 
   const refresh = useCallback(
-    async (walletAddress = address) => {
+    async (walletAddress = address, opts = {}) => {
       if (!walletAddress) return;
       if (isRefreshing.current) {
         pendingAddress.current = walletAddress;
@@ -52,8 +70,10 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
       }
 
       isRefreshing.current = true;
+      const silent = Boolean(opts?.silent);
+      const shouldShowLoading = !silent && !hasLoadedRef.current;
       try {
-        setLoading(true);
+        if (shouldShowLoading) setLoading(true);
         const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
         const walletChainId = (chainId || "").toLowerCase();
         // Prefer the wallet provider when available, even if preset and wallet mismatch,
@@ -262,7 +282,8 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
             }
           })
         );
-        setBalances(next);
+        setBalances((prev) => (balancesEqual(prev, next) ? prev : next));
+        hasLoadedRef.current = true;
       } catch (e) {
         const msg = e?.message || "";
         const silent =
@@ -275,12 +296,12 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
           console.error("Error loading balances:", msg || e);
         }
       } finally {
-        setLoading(false);
+        if (shouldShowLoading) setLoading(false);
         isRefreshing.current = false;
         if (pendingAddress.current) {
           const nextAddress = pendingAddress.current;
           pendingAddress.current = null;
-          refresh(nextAddress);
+          refresh(nextAddress, opts);
         }
       }
     },
@@ -292,6 +313,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
       refresh(address);
     } else {
       setBalances(makeZeroBalances());
+      hasLoadedRef.current = false;
     }
   }, [address, chainId, refresh, makeZeroBalances]);
 
@@ -301,7 +323,12 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
     let provider;
     let visibilityHandler;
 
-    const handleBlock = () => refresh(address);
+    const handleBlock = () => {
+      const now = Date.now();
+      if (now - lastAutoRefreshRef.current < BALANCE_POLL_INTERVAL_MS) return;
+      lastAutoRefreshRef.current = now;
+      refresh(address, { silent: true });
+    };
 
     const setupListener = async () => {
       try {
@@ -314,7 +341,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
           } else {
             provider.off("block", handleBlock);
             provider.on("block", handleBlock);
-            refresh(address); // immediate refresh on focus
+            refresh(address, { silent: true }); // immediate refresh on focus
           }
         };
         if (typeof document !== "undefined") {

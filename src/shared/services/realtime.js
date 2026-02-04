@@ -24,8 +24,6 @@ const deriveWsCandidates = () => {
       (import.meta.env.VITE_REALTIME_RPC_WS ||
         import.meta.env.VITE_REALTIME_WS ||
         import.meta.env.VITE_MEGAETH_REALTIME_WS ||
-        import.meta.env.VITE_TESTNET_WS_URL ||
-        import.meta.env.VITE_TESTNET_WS_URLS ||
         import.meta.env.VITE_WS_URL ||
         import.meta.env.VITE_WS_URLS)) ||
     "";

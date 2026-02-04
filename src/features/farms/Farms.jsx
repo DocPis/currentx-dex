@@ -197,6 +197,7 @@ function FarmsList({ address, onConnect }) {
               <path d="M15.5 15.5 20 20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             <input
+              name="farm-search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search farms"
@@ -462,6 +463,7 @@ function FarmActions({
             <span>Wallet: {formatTokenAmount(walletLp)}</span>
           </div>
           <input
+            name="farm-deposit-amount"
             value={amountIn}
             onChange={(e) => setInput("deposit", e.target.value)}
             placeholder="0.0"
@@ -513,6 +515,7 @@ function FarmActions({
             <span>Staked: {formatTokenAmount(staked)}</span>
           </div>
           <input
+            name="farm-withdraw-amount"
             value={amountOut}
             onChange={(e) => setInput("withdraw", e.target.value)}
             placeholder="0.0"

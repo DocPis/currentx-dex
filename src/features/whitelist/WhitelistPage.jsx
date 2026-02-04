@@ -159,6 +159,7 @@ export default function WhitelistPage() {
                   Wallet address <span className="text-rose-300">*</span>
                 </div>
                 <input
+                  name="whitelist-wallet-address"
                   required
                   value={wallet}
                   onChange={(e) => setWallet(e.target.value)}
@@ -172,6 +173,7 @@ export default function WhitelistPage() {
                   Discord username
                 </div>
                 <input
+                  name="whitelist-discord-username"
                   value={discord}
                   onChange={(e) => setDiscord(e.target.value)}
                   placeholder="username"
@@ -184,6 +186,7 @@ export default function WhitelistPage() {
                   Telegram username
                 </div>
                 <input
+                  name="whitelist-telegram-username"
                   value={telegram}
                   onChange={(e) => setTelegram(e.target.value)}
                   placeholder="@username"
