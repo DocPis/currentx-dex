@@ -1490,6 +1490,146 @@ export async function fetchV3PoolsPage({ limit = 50, skip = 0 } = {}) {
   return [];
 }
 
+const chunkArray = (items = [], size = 20) => {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+};
+
+const normalizeIds = (ids = []) =>
+  Array.from(new Set((ids || []).filter(Boolean).map((id) => id.toLowerCase())));
+
+export async function fetchV2PoolsDayData(ids = []) {
+  if (SUBGRAPH_MISSING_KEY) return {};
+  const list = normalizeIds(ids);
+  if (!list.length) return {};
+
+  const chunks = chunkArray(list, 20);
+  const out = {};
+
+  for (const chunk of chunks) {
+    let schemaMissing = false;
+    const candidates = ["pairAddress", "pair"];
+    for (const field of candidates) {
+      const query = `
+        query V2PoolDayData {
+          ${chunk
+            .map(
+              (id, idx) => `
+            p${idx}: pairDayDatas(
+              first: 1
+              orderBy: date
+              orderDirection: desc
+              where: { ${field}: "${id}" }
+            ) {
+              date
+              dailyVolumeUSD
+              reserveUSD
+            }
+          `
+            )
+            .join("\n")}
+        }
+      `;
+
+      try {
+        const res = await postSubgraph(query);
+        chunk.forEach((id, idx) => {
+          const row = res?.[`p${idx}`]?.[0];
+          if (!row) return;
+          out[id] = {
+            volumeUsd: toNumberSafe(row.dailyVolumeUSD),
+            tvlUsd: toNumberSafe(row.reserveUSD),
+          };
+        });
+        schemaMissing = false;
+        break;
+      } catch (err) {
+        const message = err?.message || "";
+        if (isSchemaFieldMissing(message)) {
+          schemaMissing = true;
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (schemaMissing) {
+      return out;
+    }
+  }
+
+  return out;
+}
+
+export async function fetchV3PoolsDayData(ids = []) {
+  if (SUBGRAPH_V3_MISSING_KEY) return {};
+  const list = normalizeIds(ids);
+  if (!list.length) return {};
+
+  const chunks = chunkArray(list, 20);
+  const out = {};
+
+  for (const chunk of chunks) {
+    let schemaMissing = false;
+    const candidates = ["pool", "poolAddress"];
+    for (const field of candidates) {
+      const query = `
+        query V3PoolDayData {
+          ${chunk
+            .map(
+              (id, idx) => `
+            p${idx}: poolDayDatas(
+              first: 1
+              orderBy: date
+              orderDirection: desc
+              where: { ${field}: "${id}" }
+            ) {
+              date
+              volumeUSD
+              tvlUSD
+              totalValueLockedUSD
+            }
+          `
+            )
+            .join("\n")}
+        }
+      `;
+
+      try {
+        const res = await postSubgraphV3(query);
+        chunk.forEach((id, idx) => {
+          const row = res?.[`p${idx}`]?.[0];
+          if (!row) return;
+          const tvl =
+            row.tvlUSD !== undefined && row.tvlUSD !== null
+              ? row.tvlUSD
+              : row.totalValueLockedUSD;
+          out[id] = {
+            volumeUsd: toNumberSafe(row.volumeUSD),
+            tvlUsd: toNumberSafe(tvl),
+          };
+        });
+        schemaMissing = false;
+        break;
+      } catch (err) {
+        const message = err?.message || "";
+        if (isSchemaFieldMissing(message)) {
+          schemaMissing = true;
+          continue;
+        }
+        throw err;
+      }
+    }
+    if (schemaMissing) {
+      return out;
+    }
+  }
+
+  return out;
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();

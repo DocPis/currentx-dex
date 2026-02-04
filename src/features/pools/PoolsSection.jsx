@@ -3,10 +3,18 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   fetchV2PoolsPage,
   fetchV3PoolsPage,
+  fetchV2PoolsDayData,
+  fetchV3PoolsDayData,
 } from "../../shared/config/subgraph";
 import { TOKENS } from "../../shared/config/tokens";
 
 const PAGE_SIZE = 50;
+const SORT_KEYS = {
+  LIQUIDITY: "liquidity",
+  VOLUME: "volume",
+  FEES: "fees",
+  APR: "apr",
+};
 
 const formatNumber = (num) => {
   if (num === null || num === undefined) return "--";
@@ -19,13 +27,8 @@ const formatNumber = (num) => {
   return num.toFixed(2);
 };
 
-const formatUsd = (num) => `$${formatNumber(num)}`;
-
-const formatFeeTier = (feeTier) => {
-  const num = Number(feeTier);
-  if (!Number.isFinite(num) || num <= 0) return "--";
-  return `${(num / 10000).toFixed(2)}%`;
-};
+const formatUsd = (num) =>
+  num === null || num === undefined ? "--" : `$${formatNumber(num)}`;
 
 const buildTokenMaps = () => {
   const byAddress = {};
@@ -74,6 +77,8 @@ export default function PoolsSection() {
   const [searchTerm, setSearchTerm] = useState("");
   const [v2Pools, setV2Pools] = useState([]);
   const [v3Pools, setV3Pools] = useState([]);
+  const [v2DayData, setV2DayData] = useState({});
+  const [v3DayData, setV3DayData] = useState({});
   const [v2Skip, setV2Skip] = useState(0);
   const [v3Skip, setV3Skip] = useState(0);
   const [v2Loading, setV2Loading] = useState(false);
@@ -82,6 +87,8 @@ export default function PoolsSection() {
   const [v3HasMore, setV3HasMore] = useState(true);
   const [v2Error, setV2Error] = useState("");
   const [v3Error, setV3Error] = useState("");
+  const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
+  const [sortDir, setSortDir] = useState("desc");
 
   const loadV2 = async (append = false) => {
     if (v2Loading) return;
@@ -130,14 +137,134 @@ export default function PoolsSection() {
 
   const searchLower = searchTerm.trim().toLowerCase();
 
-  const filteredV3 = useMemo(
-    () => v3Pools.filter((pool) => poolMatchesSearch(pool, searchLower)),
-    [v3Pools, searchLower]
-  );
-  const filteredV2 = useMemo(
-    () => v2Pools.filter((pool) => poolMatchesSearch(pool, searchLower)),
-    [v2Pools, searchLower]
-  );
+  useEffect(() => {
+    let cancelled = false;
+    const loadDayData = async () => {
+      try {
+        const v2Ids = v2Pools.map((p) => p.id).filter(Boolean);
+        const v3Ids = v3Pools.map((p) => p.id).filter(Boolean);
+        const [v2Data, v3Data] = await Promise.all([
+          fetchV2PoolsDayData(v2Ids),
+          fetchV3PoolsDayData(v3Ids),
+        ]);
+        if (!cancelled) {
+          setV2DayData(v2Data || {});
+          setV3DayData(v3Data || {});
+        }
+      } catch {
+        if (!cancelled) {
+          setV2DayData({});
+          setV3DayData({});
+        }
+      }
+    };
+    if (v2Pools.length || v3Pools.length) {
+      loadDayData();
+    } else {
+      setV2DayData({});
+      setV3DayData({});
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [v2Pools, v3Pools]);
+
+  const combinedPools = useMemo(() => {
+    const list = [];
+    v3Pools.forEach((pool) => {
+      const day = v3DayData[pool.id?.toLowerCase?.() || ""] || {};
+      const liquidityUsd =
+        day.tvlUsd !== undefined && day.tvlUsd !== null
+          ? day.tvlUsd
+          : pool.tvlUsd ?? null;
+      const volume24hUsd =
+        day.volumeUsd !== undefined && day.volumeUsd !== null
+          ? day.volumeUsd
+          : null;
+      const feeRate = pool.feeTier ? Number(pool.feeTier) / 1_000_000 : 0.003;
+      const fees24hUsd =
+        volume24hUsd !== null ? volume24hUsd * feeRate : null;
+      const apr =
+        liquidityUsd && liquidityUsd > 0 && fees24hUsd !== null
+          ? (fees24hUsd * 365 * 100) / liquidityUsd
+          : null;
+      list.push({
+        ...pool,
+        type: "CL",
+        liquidityUsd,
+        volume24hUsd,
+        fees24hUsd,
+        apr,
+      });
+    });
+    v2Pools.forEach((pool) => {
+      const day = v2DayData[pool.id?.toLowerCase?.() || ""] || {};
+      const liquidityUsd =
+        day.tvlUsd !== undefined && day.tvlUsd !== null
+          ? day.tvlUsd
+          : pool.tvlUsd ?? null;
+      const volume24hUsd =
+        day.volumeUsd !== undefined && day.volumeUsd !== null
+          ? day.volumeUsd
+          : null;
+      const feeRate = 0.003;
+      const fees24hUsd =
+        volume24hUsd !== null ? volume24hUsd * feeRate : null;
+      const apr =
+        liquidityUsd && liquidityUsd > 0 && fees24hUsd !== null
+          ? (fees24hUsd * 365 * 100) / liquidityUsd
+          : null;
+      list.push({
+        ...pool,
+        type: "V2",
+        liquidityUsd,
+        volume24hUsd,
+        fees24hUsd,
+        apr,
+      });
+    });
+    return list;
+  }, [v2Pools, v3Pools, v2DayData, v3DayData]);
+
+  const filteredPools = useMemo(() => {
+    if (!searchLower) return combinedPools;
+    return combinedPools.filter((pool) => poolMatchesSearch(pool, searchLower));
+  }, [combinedPools, searchLower]);
+
+  const sortedPools = useMemo(() => {
+    const getValue = (pool) => {
+      switch (sortKey) {
+        case SORT_KEYS.VOLUME:
+          return pool.volume24hUsd ?? 0;
+        case SORT_KEYS.FEES:
+          return pool.fees24hUsd ?? 0;
+        case SORT_KEYS.APR:
+          return pool.apr ?? 0;
+        case SORT_KEYS.LIQUIDITY:
+        default:
+          return pool.liquidityUsd ?? 0;
+      }
+    };
+    const sorted = [...filteredPools].sort((a, b) => {
+      const aVal = getValue(a);
+      const bVal = getValue(b);
+      if (aVal === bVal) return 0;
+      return aVal > bVal ? -1 : 1;
+    });
+    return sortDir === "desc" ? sorted : sorted.reverse();
+  }, [filteredPools, sortKey, sortDir]);
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir((prev) => (prev === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const sortIndicator = (key) =>
+    sortKey === key ? (sortDir === "desc" ? "↓" : "↑") : "";
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
@@ -185,221 +312,148 @@ export default function PoolsSection() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                Concentrated Liquidity
-              </div>
-              <div className="text-lg font-semibold text-slate-50">
-                CL Pools ({filteredV3.length})
-              </div>
-            </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
-              V3
-            </span>
+      <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+          <div className="text-lg font-semibold text-slate-50">
+            Pools ({sortedPools.length})
           </div>
-
-          <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
-            <div className="col-span-6">Pool</div>
-            <div className="col-span-3 text-right">TVL</div>
-            <div className="col-span-2 text-right">Volume</div>
-            <div className="col-span-1 text-right">Fee</div>
-          </div>
-
-          {v3Error && (
-            <div className="px-5 py-3 text-xs text-amber-200">{v3Error}</div>
-          )}
-
-          <div className="px-3 sm:px-5 py-3 space-y-2">
-            {v3Loading && !filteredV3.length ? (
-              <div className="py-6 text-center text-sm text-slate-400">Loading CL pools...</div>
-            ) : filteredV3.length ? (
-              filteredV3.map((pool) => {
-                const meta0 = resolveTokenMeta(pool.token0Id, pool.token0Symbol);
-                const meta1 = resolveTokenMeta(pool.token1Id, pool.token1Symbol);
-                return (
-                  <div
-                    key={pool.id}
-                    className="w-full rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3"
-                  >
-                    <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
-                      <div className="md:col-span-6 flex items-center gap-3">
-                        <div className="flex -space-x-2">
-                          {[meta0, meta1].map((t, idx) => (
-                            <div
-                              key={idx}
-                              className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[10px] font-semibold text-slate-200"
-                            >
-                              {t?.logo ? (
-                                <img
-                                  src={t.logo}
-                                  alt={`${t.symbol} logo`}
-                                  className="h-full w-full object-contain"
-                                />
-                              ) : (
-                                <span>
-                                  {(idx === 0 ? pool.token0Symbol : pool.token1Symbol || "?")
-                                    .toString()
-                                    .slice(0, 3)}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        <div className="flex flex-col">
-                          <div className="text-sm font-semibold text-slate-100">
-                            {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              CL
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 text-emerald-200">
-                              {formatFeeTier(pool.feeTier)}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="md:col-span-3 text-right text-sm text-slate-100">
-                        {formatUsd(pool.tvlUsd)}
-                      </div>
-                      <div className="md:col-span-2 text-right text-sm text-slate-100">
-                        {formatUsd(pool.volumeUsd)}
-                      </div>
-                      <div className="md:col-span-1 text-right text-xs text-slate-300">
-                        {formatFeeTier(pool.feeTier)}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="py-6 text-center text-sm text-slate-400">
-                No CL pools found.
-              </div>
-            )}
-          </div>
-
-          <div className="px-5 pb-5">
-            {v3HasMore && (
-              <button
-                type="button"
-                onClick={() => loadV3(true)}
-                disabled={v3Loading}
-                className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
-              >
-                {v3Loading ? "Loading..." : "Load more CL pools"}
-              </button>
-            )}
+          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            {v2Error || v3Error ? "Partial data loaded" : "Live data"}
           </div>
         </div>
 
-        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                Classic AMM
-              </div>
-              <div className="text-lg font-semibold text-slate-50">
-                V2 Pools ({filteredV2.length})
-              </div>
+        <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
+          <div className="col-span-4">Pool</div>
+          <button
+            type="button"
+            onClick={() => handleSort(SORT_KEYS.LIQUIDITY)}
+            className="col-span-2 text-right hover:text-slate-200"
+          >
+            Liquidity {sortIndicator(SORT_KEYS.LIQUIDITY)}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSort(SORT_KEYS.VOLUME)}
+            className="col-span-2 text-right hover:text-slate-200"
+          >
+            Volume 24h {sortIndicator(SORT_KEYS.VOLUME)}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSort(SORT_KEYS.FEES)}
+            className="col-span-2 text-right hover:text-slate-200"
+          >
+            Fees 24h {sortIndicator(SORT_KEYS.FEES)}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSort(SORT_KEYS.APR)}
+            className="col-span-2 text-right hover:text-slate-200"
+          >
+            APR {sortIndicator(SORT_KEYS.APR)}
+          </button>
+        </div>
+
+        {(v2Error || v3Error) && (
+          <div className="px-5 py-3 text-xs text-amber-200">
+            {v2Error || v3Error}
+          </div>
+        )}
+
+        <div className="px-3 sm:px-5 py-3 space-y-2">
+          {v2Loading && v3Loading && !sortedPools.length ? (
+            <div className="py-6 text-center text-sm text-slate-400">
+              Loading pools...
             </div>
-            <span className="px-2 py-0.5 rounded-full text-[10px] border border-sky-400/40 bg-sky-500/10 text-sky-200">
-              V2
-            </span>
-          </div>
-
-          <div className="hidden md:grid grid-cols-12 px-5 py-2 text-[11px] uppercase tracking-wide text-slate-500 border-b border-slate-800">
-            <div className="col-span-7">Pool</div>
-            <div className="col-span-3 text-right">TVL</div>
-            <div className="col-span-2 text-right">Volume</div>
-          </div>
-
-          {v2Error && (
-            <div className="px-5 py-3 text-xs text-amber-200">{v2Error}</div>
-          )}
-
-          <div className="px-3 sm:px-5 py-3 space-y-2">
-            {v2Loading && !filteredV2.length ? (
-              <div className="py-6 text-center text-sm text-slate-400">Loading V2 pools...</div>
-            ) : filteredV2.length ? (
-              filteredV2.map((pool) => {
-                const meta0 = resolveTokenMeta(pool.token0Id, pool.token0Symbol);
-                const meta1 = resolveTokenMeta(pool.token1Id, pool.token1Symbol);
-                return (
-                  <div
-                    key={pool.id}
-                    className="w-full rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3"
-                  >
-                    <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
-                      <div className="md:col-span-7 flex items-center gap-3">
-                        <div className="flex -space-x-2">
-                          {[meta0, meta1].map((t, idx) => (
-                            <div
-                              key={idx}
-                              className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[10px] font-semibold text-slate-200"
-                            >
-                              {t?.logo ? (
-                                <img
-                                  src={t.logo}
-                                  alt={`${t.symbol} logo`}
-                                  className="h-full w-full object-contain"
-                                />
-                              ) : (
-                                <span>
-                                  {(idx === 0 ? pool.token0Symbol : pool.token1Symbol || "?")
-                                    .toString()
-                                    .slice(0, 3)}
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                        <div className="flex flex-col">
-                          <div className="text-sm font-semibold text-slate-100">
-                            {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
+          ) : sortedPools.length ? (
+            sortedPools.map((pool) => {
+              const meta0 = resolveTokenMeta(pool.token0Id, pool.token0Symbol);
+              const meta1 = resolveTokenMeta(pool.token1Id, pool.token1Symbol);
+              return (
+                <div
+                  key={`${pool.type}-${pool.id}`}
+                  className="w-full rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3"
+                >
+                  <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
+                    <div className="md:col-span-4 flex items-center gap-3">
+                      <div className="flex -space-x-2">
+                        {[meta0, meta1].map((t, idx) => (
+                          <div
+                            key={idx}
+                            className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[10px] font-semibold text-slate-200"
+                          >
+                            {t?.logo ? (
+                              <img
+                                src={t.logo}
+                                alt={`${t.symbol} logo`}
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <span>
+                                {(idx === 0 ? pool.token0Symbol : pool.token1Symbol || "?")
+                                  .toString()
+                                  .slice(0, 3)}
+                              </span>
+                            )}
                           </div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              V2
-                            </span>
-                            <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              0.30%
-                            </span>
-                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-col">
+                        <div className="text-sm font-semibold text-slate-100">
+                          {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
                         </div>
-                      </div>
-                      <div className="md:col-span-3 text-right text-sm text-slate-100">
-                        {formatUsd(pool.tvlUsd)}
-                      </div>
-                      <div className="md:col-span-2 text-right text-sm text-slate-100">
-                        {formatUsd(pool.volumeUsd)}
+                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
+                            {pool.type}
+                          </span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="py-6 text-center text-sm text-slate-400">
-                No V2 pools found.
-              </div>
-            )}
-          </div>
 
-          <div className="px-5 pb-5">
-            {v2HasMore && (
-              <button
-                type="button"
-                onClick={() => loadV2(true)}
-                disabled={v2Loading}
-                className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
-              >
-                {v2Loading ? "Loading..." : "Load more V2 pools"}
-              </button>
-            )}
-          </div>
+                    <div className="md:col-span-2 text-right text-sm text-slate-100">
+                      {formatUsd(pool.liquidityUsd)}
+                    </div>
+                    <div className="md:col-span-2 text-right text-sm text-slate-100">
+                      {pool.volume24hUsd !== null ? formatUsd(pool.volume24hUsd) : "--"}
+                    </div>
+                    <div className="md:col-span-2 text-right text-sm text-slate-100">
+                      {pool.fees24hUsd !== null ? formatUsd(pool.fees24hUsd) : "--"}
+                    </div>
+                    <div className="md:col-span-2 text-right text-sm text-slate-100">
+                      {pool.apr !== null ? `${pool.apr.toFixed(2)}%` : "--"}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="py-6 text-center text-sm text-slate-400">
+              No pools found.
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 pb-5 flex flex-col sm:flex-row gap-3">
+          {v3HasMore && (
+            <button
+              type="button"
+              onClick={() => loadV3(true)}
+              disabled={v3Loading}
+              className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
+            >
+              {v3Loading ? "Loading..." : "Load more CL pools"}
+            </button>
+          )}
+          {v2HasMore && (
+            <button
+              type="button"
+              onClick={() => loadV2(true)}
+              disabled={v2Loading}
+              className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
+            >
+              {v2Loading ? "Loading..." : "Load more V2 pools"}
+            </button>
+          )}
         </div>
       </div>
     </div>
