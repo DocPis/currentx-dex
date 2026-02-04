@@ -9,7 +9,6 @@ import {
   CRX_ADDRESS,
   CRX_WETH_LP_ADDRESS,
   MASTER_CHEF_ADDRESS,
-  USDC_ADDRESS,
   CUSD_ADDRESS,
   USDM_ADDRESS,
   WETH_ADDRESS,
@@ -72,7 +71,6 @@ async function getWethPriceUSD(provider, priceCache) {
   if (typeof cached === "number") return cached;
 
   const stables = [
-    { address: USDC_ADDRESS, decimals: TOKENS.USDC.decimals },
     { address: CUSD_ADDRESS, decimals: TOKENS.CUSD.decimals },
     { address: USDM_ADDRESS, decimals: TOKENS.USDm.decimals },
   ];
@@ -107,13 +105,6 @@ async function getTokenPriceUSD(provider, address, priceCache) {
   if (priceCache[lower] !== undefined) return priceCache[lower];
 
   try {
-    if (
-      lower === USDC_ADDRESS.toLowerCase()
-    ) {
-      priceCache[lower] = 1;
-      return 1;
-    }
-
     if (lower === CUSD_ADDRESS.toLowerCase()) {
       priceCache[lower] = 1;
       return 1;

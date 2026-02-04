@@ -24,7 +24,7 @@ import {
 import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDC", "CUSD", "USDm", "CRX", "MEGA"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "CUSD", "USDm", "CRX", "MEGA"];
 const MAX_UINT256 = (1n << 256n) - 1n;
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =

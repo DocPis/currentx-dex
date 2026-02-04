@@ -29,7 +29,6 @@ import {
   MEGAETH_CHAIN_ID_HEX,
   UNIV2_FACTORY_ADDRESS,
   UNIV2_ROUTER_ADDRESS,
-  USDC_ADDRESS,
   WETH_ADDRESS,
 } from "./addresses";
 import { getActiveNetworkConfig } from "./networks";

@@ -3,7 +3,6 @@ import { Contract, Interface, formatUnits } from "ethers";
 import { UNIV2_FACTORY_ABI, UNIV2_PAIR_ABI } from "../config/abis";
 import {
   UNIV2_FACTORY_ADDRESS,
-  USDC_ADDRESS,
   WETH_ADDRESS,
 } from "../config/addresses";
 import { TOKENS } from "../config/tokens";

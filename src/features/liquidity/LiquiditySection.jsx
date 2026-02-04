@@ -8,7 +8,6 @@ import {
   getV2PairReserves,
   rotateRpcProvider,
   WETH_ADDRESS,
-  USDC_ADDRESS,
   UNIV2_ROUTER_ADDRESS,
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
@@ -784,7 +783,7 @@ export default function LiquiditySection({
   const [depositToken1, setDepositToken1] = useState("");
   const [withdrawLp, setWithdrawLp] = useState("");
   const [v3Token0, setV3Token0] = useState("ETH");
-  const [v3Token1, setV3Token1] = useState("USDC");
+  const [v3Token1, setV3Token1] = useState("USDm");
   const [v3FeeTier, setV3FeeTier] = useState(3000);
   const [v3Amount0, setV3Amount0] = useState("");
   const [v3Amount1, setV3Amount1] = useState("");
@@ -1078,17 +1077,30 @@ export default function LiquiditySection({
     v3RangeLowerNum < v3RangeUpperNum;
 
   const v3RangeMath = useMemo(() => {
-    if (!v3HasCustomRange || !v3ReferencePrice) return null;
+    if (!v3ReferencePrice) return null;
     const dec0 = v3Token0Meta?.decimals ?? 18;
     const dec1 = v3Token1Meta?.decimals ?? 18;
-    const lowerScaled = safeParseUnits(v3RangeLower, 18);
-    const upperScaled = safeParseUnits(v3RangeUpper, 18);
+    let sqrtLowerX96 = null;
+    let sqrtUpperX96 = null;
+    if (v3RangeMode === "full") {
+      const spacing = v3PoolInfo.spacing || getTickSpacingFromFee(v3FeeTier) || 1;
+      const minTick = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+      const maxTick = Math.floor(V3_MAX_TICK / spacing) * spacing;
+      sqrtLowerX96 = tickToSqrtPriceX96(minTick);
+      sqrtUpperX96 = tickToSqrtPriceX96(maxTick);
+    } else if (v3HasCustomRange) {
+      const lowerScaled = safeParseUnits(v3RangeLower, 18);
+      const upperScaled = safeParseUnits(v3RangeUpper, 18);
+      if (!lowerScaled || !upperScaled) return null;
+      sqrtLowerX96 = encodePriceSqrtFromPrice(lowerScaled, dec0, dec1);
+      sqrtUpperX96 = encodePriceSqrtFromPrice(upperScaled, dec0, dec1);
+    } else {
+      return null;
+    }
     const currentScaled = safeParseUnits(formatAutoAmount(v3ReferencePrice), 18);
-    if (!lowerScaled || !upperScaled || !currentScaled) return null;
-    const sqrtLowerX96 = encodePriceSqrtFromPrice(lowerScaled, dec0, dec1);
-    const sqrtUpperX96 = encodePriceSqrtFromPrice(upperScaled, dec0, dec1);
+    if (!sqrtLowerX96 || !sqrtUpperX96 || !currentScaled) return null;
     const sqrtCurrentX96 = encodePriceSqrtFromPrice(currentScaled, dec0, dec1);
-    if (!sqrtLowerX96 || !sqrtUpperX96 || !sqrtCurrentX96) return null;
+    if (!sqrtCurrentX96) return null;
     return {
       dec0,
       dec1,
@@ -1097,12 +1109,15 @@ export default function LiquiditySection({
       sqrtCurrentX96,
     };
   }, [
-    v3HasCustomRange,
     v3ReferencePrice,
+    v3RangeMode,
+    v3HasCustomRange,
     v3RangeLower,
     v3RangeUpper,
     v3Token0Meta,
     v3Token1Meta,
+    v3PoolInfo.spacing,
+    v3FeeTier,
   ]);
 
   const applyV3RangePreset = useCallback(
@@ -2020,10 +2035,8 @@ export default function LiquiditySection({
           const metaB = tokenRegistry[pool.token1Symbol];
           const decimalsA = metaA?.decimals ?? 18;
           const decimalsB = metaB?.decimals ?? 18;
-          const stableA =
-            metaA?.symbol === "USDC" || metaA?.symbol === "USDm" || metaA?.symbol === "CUSD";
-          const stableB =
-            metaB?.symbol === "USDC" || metaB?.symbol === "USDm" || metaB?.symbol === "CUSD";
+          const stableA = metaA?.symbol === "USDm" || metaA?.symbol === "CUSD";
+          const stableB = metaB?.symbol === "USDm" || metaB?.symbol === "CUSD";
           let tvlUsd;
           let finalPairAddress = pairAddress;
           if (stableA) {
@@ -5134,27 +5147,36 @@ export default function LiquiditySection({
                                     </span>
                                   </div>
                                   <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                                       <div className="text-[10px] text-slate-500">Min price</div>
-                                      <div className="text-lg font-semibold text-slate-100">
+                                      <div
+                                        className="text-base sm:text-lg font-semibold text-slate-100 leading-tight break-words"
+                                        title={minLabel}
+                                      >
                                         {minLabel}
                                       </div>
                                       <div className="text-[10px] text-slate-500">
                                         {selectedPosition.token1Symbol} per {selectedPosition.token0Symbol}
                                       </div>
                                     </div>
-                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                                       <div className="text-[10px] text-slate-500">Max price</div>
-                                      <div className="text-lg font-semibold text-slate-100">
+                                      <div
+                                        className="text-base sm:text-lg font-semibold text-slate-100 leading-tight break-words"
+                                        title={maxLabel}
+                                      >
                                         {maxLabel}
                                       </div>
                                       <div className="text-[10px] text-slate-500">
                                         {selectedPosition.token1Symbol} per {selectedPosition.token0Symbol}
                                       </div>
                                     </div>
-                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                    <div className="min-w-0 rounded-lg border border-slate-800 bg-slate-950/70 p-3">
                                       <div className="text-[10px] text-slate-500">Current price</div>
-                                      <div className="text-lg font-semibold text-slate-100">
+                                      <div
+                                        className="text-base sm:text-lg font-semibold text-slate-100 leading-tight break-words"
+                                        title={currentLabel}
+                                      >
                                         {currentLabel}
                                       </div>
                                       <div className="text-[10px] text-slate-500">

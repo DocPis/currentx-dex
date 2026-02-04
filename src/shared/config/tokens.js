@@ -1,6 +1,5 @@
 ﻿// src/shared/config/tokens.js
 import ethLogo from "../../tokens/eth.svg";
-import usdcLogo from "../../tokens/usdc.png";
 import tetherLogo from "../../tokens/tether.png";
 import usdmLogo from "../../tokens/usdm.png";
 import cusdLogo from "../../tokens/cusd.svg";
@@ -22,7 +21,6 @@ import {
   CRX_ADDRESS,
   XBTC_ADDRESS,
   BTCB_ADDRESS,
-  USDC_ADDRESS,
   USDT0_ADDRESS,
   CUSD_ADDRESS,
   STCUSD_ADDRESS,
@@ -56,13 +54,6 @@ const RAW_TOKENS = {
     address: CRX_ADDRESS,
     decimals: 6,
     logo: currentxLogo,
-  },
-  USDC: {
-    symbol: "USDC",
-    name: "USD Coin",
-    address: USDC_ADDRESS,
-    decimals: 6,
-    logo: usdcLogo,
   },
   USDT0: {
     symbol: "USDT0",
