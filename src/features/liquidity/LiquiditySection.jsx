@@ -115,6 +115,7 @@ const getPoolLabel = (pool) =>
 const MIN_LP_THRESHOLD = 1e-12;
 const TOAST_DURATION_MS = 20000;
 const MAX_BPS = 5000; // 50%
+const MAX_UINT256 = (1n << 256n) - 1n;
 
 // Simple concurrency limiter to speed up parallel RPC/subgraph calls without overloading endpoints.
 const runWithConcurrency = async (items, limit, worker) => {
@@ -527,6 +528,11 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     }
   }, [v3Token0, v3Token1, v3TokenOptions]);
 
+  const v3Token0Meta = tokenRegistry[v3Token0];
+  const v3Token1Meta = tokenRegistry[v3Token1];
+  const v3Token0Balance = walletBalances?.[v3Token0] || 0;
+  const v3Token1Balance = walletBalances?.[v3Token1] || 0;
+
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
       if (!addr) return meta?.decimals ?? 18;
@@ -701,6 +707,71 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       cancelled = true;
     };
   }, [customTokens, lpRefreshTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadV3Positions = async () => {
+      if (!address || !hasV3Liquidity) {
+        setV3Positions([]);
+        setV3PositionsError("");
+        return;
+      }
+      setV3PositionsLoading(true);
+      setV3PositionsError("");
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const manager = new Contract(
+          UNIV3_POSITION_MANAGER_ADDRESS,
+          UNIV3_POSITION_MANAGER_ABI,
+          provider
+        );
+        const balanceRaw = await manager.balanceOf(address);
+        const count = Math.min(Number(balanceRaw || 0), 50);
+        if (!count) {
+          if (!cancelled) setV3Positions([]);
+          return;
+        }
+        const ids = await Promise.all(
+          Array.from({ length: count }, (_, idx) =>
+            manager.tokenOfOwnerByIndex(address, idx)
+          )
+        );
+        const positions = await Promise.all(ids.map((id) => manager.positions(id)));
+        if (cancelled) return;
+        const mapped = positions.map((pos, idx) => {
+          const token0 = pos?.token0;
+          const token1 = pos?.token1;
+          const meta0 = findTokenMetaByAddress(token0);
+          const meta1 = findTokenMetaByAddress(token1);
+          return {
+            tokenId: ids[idx]?.toString?.() || String(ids[idx]),
+            token0,
+            token1,
+            token0Symbol: meta0?.symbol || shortenAddress(token0),
+            token1Symbol: meta1?.symbol || shortenAddress(token1),
+            fee: Number(pos?.fee ?? 0),
+            tickLower: Number(pos?.tickLower ?? 0),
+            tickUpper: Number(pos?.tickUpper ?? 0),
+            liquidity: pos?.liquidity ?? 0n,
+            tokensOwed0: pos?.tokensOwed0 ?? 0n,
+            tokensOwed1: pos?.tokensOwed1 ?? 0n,
+          };
+        });
+        setV3Positions(mapped);
+      } catch (err) {
+        if (cancelled) return;
+        setV3PositionsError(
+          compactRpcMessage(err?.message || err, "Unable to load CL positions.")
+        );
+      } finally {
+        if (!cancelled) setV3PositionsLoading(false);
+      }
+    };
+    loadV3Positions();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
 
   useEffect(() => {
     if (!basePools.length) return;
@@ -1600,6 +1671,129 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     }
     setWithdrawLp(formatUnits(targetRaw, lpDecimalsState || 18));
     if (actionStatus) setActionStatus(null);
+  };
+
+  const handleV3Mint = async () => {
+    if (!address) {
+      setV3MintError("Connect your wallet to add CL liquidity.");
+      return;
+    }
+    if (!hasV3Liquidity) {
+      setV3MintError("V3 contracts not configured for this network.");
+      return;
+    }
+    if (!v3Token0 || !v3Token1 || v3Token0 === v3Token1) {
+      setV3MintError("Select two different tokens.");
+      return;
+    }
+    const metaA = v3Token0Meta;
+    const metaB = v3Token1Meta;
+    const addrA = v3Token0 === "ETH" ? WETH_ADDRESS : metaA?.address;
+    const addrB = v3Token1 === "ETH" ? WETH_ADDRESS : metaB?.address;
+    if (!addrA || !addrB) {
+      setV3MintError("Token addresses missing for this selection.");
+      return;
+    }
+    const amountA = safeParseUnits(v3Amount0, v3Token0 === "ETH" ? 18 : metaA?.decimals || 18);
+    const amountB = safeParseUnits(v3Amount1, v3Token1 === "ETH" ? 18 : metaB?.decimals || 18);
+    if (!amountA || !amountB || amountA <= 0n || amountB <= 0n) {
+      setV3MintError("Enter valid amounts for both tokens.");
+      return;
+    }
+
+    setV3MintError("");
+    setV3MintLoading(true);
+    try {
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+      let token0Addr = addrA;
+      let token1Addr = addrB;
+      let amount0Desired = amountA;
+      let amount1Desired = amountB;
+      let token0IsEth = v3Token0 === "ETH";
+      let token1IsEth = v3Token1 === "ETH";
+
+      if (token0Addr.toLowerCase() > token1Addr.toLowerCase()) {
+        [token0Addr, token1Addr] = [token1Addr, token0Addr];
+        [amount0Desired, amount1Desired] = [amount1Desired, amount0Desired];
+        [token0IsEth, token1IsEth] = [token1IsEth, token0IsEth];
+      }
+
+      const fee = Number(v3FeeTier);
+      const pool = await factory.getPool(token0Addr, token1Addr, fee);
+      if (!pool || pool === "0x0000000000000000000000000000000000000000") {
+        throw new Error("V3 pool not deployed yet. Create/initialize the pool first.");
+      }
+      const spacingRaw = await factory.feeAmountTickSpacing(fee);
+      const spacing = Number(spacingRaw || 0);
+      if (!spacing) {
+        throw new Error("Fee tier not enabled on this factory.");
+      }
+      const tickLower = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+      const tickUpper = Math.floor(V3_MAX_TICK / spacing) * spacing;
+
+      const amount0Min = applySlippage(amount0Desired, slippageBps);
+      const amount1Min = applySlippage(amount1Desired, slippageBps);
+
+      const manager = new Contract(
+        UNIV3_POSITION_MANAGER_ADDRESS,
+        UNIV3_POSITION_MANAGER_ABI,
+        signer
+      );
+
+      if (!token0IsEth && amount0Desired > 0n) {
+        const token = new Contract(token0Addr, ERC20_ABI, signer);
+        const allowance = await token.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        if (allowance < amount0Desired) {
+          const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
+          await tx.wait();
+        }
+      }
+      if (!token1IsEth && amount1Desired > 0n) {
+        const token = new Contract(token1Addr, ERC20_ABI, signer);
+        const allowance = await token.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        if (allowance < amount1Desired) {
+          const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
+          await tx.wait();
+        }
+      }
+
+      const params = {
+        token0: token0Addr,
+        token1: token1Addr,
+        fee,
+        tickLower,
+        tickUpper,
+        amount0Desired,
+        amount1Desired,
+        amount0Min,
+        amount1Min,
+        recipient: user,
+        deadline: Math.floor(Date.now() / 1000) + 60 * 20,
+      };
+      const ethValue =
+        (token0IsEth ? amount0Desired : 0n) + (token1IsEth ? amount1Desired : 0n);
+      const tx = await manager.mint(params, ethValue > 0n ? { value: ethValue } : {});
+      const receipt = await tx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt?.hash,
+        message: "CL position created.",
+      });
+      setV3Amount0("");
+      setV3Amount1("");
+      setV3RefreshTick((t) => t + 1);
+    } catch (err) {
+      setV3MintError(friendlyActionError(err, "CL deposit"));
+      setActionStatus({
+        variant: "error",
+        message: friendlyActionError(err, "CL deposit"),
+      });
+    } finally {
+      setV3MintLoading(false);
+    }
   };
 
   const handleTokenPick = (token) => {
@@ -2712,7 +2906,196 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           </div>
         </div>
       ) : (
-        <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
+        <div className="flex flex-col gap-4">
+          <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
+              <div>
+                <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                  Concentrated Liquidity
+                  <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
+                    CL
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500">
+                  Add V3 liquidity and view your CL NFT positions.
+                </div>
+              </div>
+              {!hasV3Liquidity && (
+                <div className="text-xs text-amber-200">
+                  V3 contracts not configured on this network.
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 px-4 sm:px-6 py-4">
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-3">
+                  Add CL Position
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-slate-400">Token A</span>
+                    <select
+                      value={v3Token0}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setV3Token0(next);
+                        if (next === v3Token1 && v3TokenOptions.length > 1) {
+                          const alt = v3TokenOptions.find((sym) => sym !== next);
+                          if (alt) setV3Token1(alt);
+                        }
+                      }}
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                    >
+                      {v3TokenOptions.map((sym) => (
+                        <option key={`v3-a-${sym}`} value={sym}>
+                          {sym}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-slate-400">Token B</span>
+                    <select
+                      value={v3Token1}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setV3Token1(next);
+                        if (next === v3Token0 && v3TokenOptions.length > 1) {
+                          const alt = v3TokenOptions.find((sym) => sym !== next);
+                          if (alt) setV3Token0(alt);
+                        }
+                      }}
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                    >
+                      {v3TokenOptions.map((sym) => (
+                        <option key={`v3-b-${sym}`} value={sym}>
+                          {sym}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-slate-400">Fee tier</span>
+                    <select
+                      value={v3FeeTier}
+                      onChange={(e) => setV3FeeTier(Number(e.target.value))}
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                    >
+                      {V3_FEE_OPTIONS.map((opt) => (
+                        <option key={`fee-${opt.fee}`} value={opt.fee}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-slate-400">Range</span>
+                    <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-200">
+                      Full range
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-2">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>Deposit {v3Token0}</span>
+                      <span>
+                        Bal: {walletBalancesLoading ? "..." : formatTokenBalance(v3Token0Balance)}
+                      </span>
+                    </div>
+                    <input
+                      value={v3Amount0}
+                      onChange={(e) => setV3Amount0(e.target.value)}
+                      placeholder="0.0"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>Deposit {v3Token1}</span>
+                      <span>
+                        Bal: {walletBalancesLoading ? "..." : formatTokenBalance(v3Token1Balance)}
+                      </span>
+                    </div>
+                    <input
+                      value={v3Amount1}
+                      onChange={(e) => setV3Amount1(e.target.value)}
+                      placeholder="0.0"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                    />
+                  </div>
+                </div>
+
+                {v3MintError && (
+                  <div className="text-xs text-amber-200 mb-2">{v3MintError}</div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleV3Mint}
+                  disabled={v3MintLoading || !hasV3Liquidity}
+                  className="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+                >
+                  {v3MintLoading ? "Minting..." : "Add CL Liquidity"}
+                </button>
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                    Your CL Positions
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setV3RefreshTick((t) => t + 1)}
+                    className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                {v3PositionsLoading ? (
+                  <div className="text-sm text-slate-400">Loading positions...</div>
+                ) : v3PositionsError ? (
+                  <div className="text-sm text-amber-200">{v3PositionsError}</div>
+                ) : v3Positions.length ? (
+                  <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+                    {v3Positions.map((pos) => (
+                      <div
+                        key={`cl-${pos.tokenId}`}
+                        className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="text-sm font-semibold text-slate-100">
+                            {pos.token0Symbol} / {pos.token1Symbol}
+                          </div>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
+                            CL
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-1">
+                          <span>Fee {formatFeeTier(pos.fee)}</span>
+                          <span>
+                            Range {pos.tickLower} → {pos.tickUpper}
+                          </span>
+                          <span>ID #{pos.tokenId}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-400">
+                    No CL positions found.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
