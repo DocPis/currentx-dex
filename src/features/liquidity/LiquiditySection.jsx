@@ -3240,6 +3240,10 @@ export default function LiquiditySection({
         }
 
         const fetchBalance = async (symbol, address, meta) => {
+          if (symbol === "ETH") {
+            const bal = await provider.getBalance(user);
+            return Number(formatUnits(bal, 18));
+          }
           if (!address) {
             const bal = await provider.getBalance(user);
             return Number(formatUnits(bal, 18));
