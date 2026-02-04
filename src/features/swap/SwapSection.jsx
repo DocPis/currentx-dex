@@ -6,7 +6,6 @@ import {
   getProvider,
   WETH_ADDRESS,
   UNIV2_FACTORY_ADDRESS,
-  UNIV2_ROUTER_ADDRESS,
   UNIV3_FACTORY_ADDRESS,
   UNIV3_QUOTER_V2_ADDRESS,
   UNIV3_UNIVERSAL_ROUTER_ADDRESS,
@@ -21,7 +20,6 @@ import {
 import {
   ERC20_ABI,
   UNIV2_FACTORY_ABI,
-  UNIV2_ROUTER_ABI,
   WETH_ABI,
   UNIV3_FACTORY_ABI,
   UNIV3_QUOTER_V2_ABI,
@@ -43,6 +41,7 @@ const UR_COMMANDS = {
   V3_SWAP_EXACT_IN: 0x00,
   V3_SWAP_EXACT_OUT: 0x01,
   SWEEP: 0x04,
+  V2_SWAP_EXACT_IN: 0x08,
   WRAP_ETH: 0x0b,
   UNWRAP_WETH: 0x0c,
 };
@@ -405,7 +404,11 @@ export default function SwapSection({ balances, address, chainId }) {
   const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
   const walletChainHex = normalizeChainHex(chainId);
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
-  const hasV2Support = Boolean(UNIV2_FACTORY_ADDRESS && UNIV2_ROUTER_ADDRESS);
+  const hasV2Support = Boolean(
+    UNIV2_FACTORY_ADDRESS &&
+      UNIV3_UNIVERSAL_ROUTER_ADDRESS &&
+      PERMIT2_ADDRESS
+  );
   const hasV3Support = Boolean(
     UNIV3_FACTORY_ADDRESS &&
       UNIV3_QUOTER_V2_ADDRESS &&
@@ -845,7 +848,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const buildV2Route = useCallback(
     async (opts = {}) => {
       if (!hasV2Support) {
-        throw new Error("V2 router not configured for this network.");
+        throw new Error("V2 support not configured for this network.");
       }
       const { amountWei } = opts;
       const provider = getReadOnlyProvider();
@@ -1219,7 +1222,7 @@ export default function SwapSection({ balances, address, chainId }) {
         return;
       }
       if (routePreference === "v2" && !hasV2Support) {
-        setQuoteError("V2 router not configured for this network.");
+        setQuoteError("V2 support not configured for this network.");
         return;
       }
       if (routePreference === "v3" && !hasV3Support) {
@@ -1426,13 +1429,12 @@ export default function SwapSection({ balances, address, chainId }) {
                   }
                 };
 
-                if (selectedRoute.protocol === "V2") {
-                  await check(UNIV2_ROUTER_ADDRESS, "V2 Router");
-                } else if (selectedRoute.protocol === "V3") {
+                if (
+                  selectedRoute.protocol === "V2" ||
+                  selectedRoute.protocol === "V3" ||
+                  selectedRoute.protocol === "SPLIT"
+                ) {
                   await check(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
-                } else if (selectedRoute.protocol === "SPLIT") {
-                  await check(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
-                  await check(UNIV2_ROUTER_ADDRESS, "V2 Router");
                 }
 
                 if (cancelled) return;
@@ -1680,7 +1682,7 @@ export default function SwapSection({ balances, address, chainId }) {
       }
       const routeProtocol = routePlan?.protocol || "V3";
       if (routeProtocol === "V2" && !hasV2Support) {
-        throw new Error("V2 router not configured for this network.");
+        throw new Error("V2 support not configured for this network.");
       }
       if (routeProtocol === "V3" && !hasV3Support) {
         throw new Error("V3 router not configured for this network.");
@@ -1713,13 +1715,8 @@ export default function SwapSection({ balances, address, chainId }) {
             );
           }
         };
-        if (routeProtocol === "V2") {
-          await checkAllowance(UNIV2_ROUTER_ADDRESS, "the V2 router");
-        } else if (routeProtocol === "V3") {
+        if (routeProtocol === "V2" || routeProtocol === "V3" || routeProtocol === "SPLIT") {
           await checkAllowance(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
-        } else if (routeProtocol === "SPLIT") {
-          await checkAllowance(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
-          await checkAllowance(UNIV2_ROUTER_ADDRESS, "the V2 router");
         }
       }
 
@@ -1849,95 +1846,125 @@ export default function SwapSection({ balances, address, chainId }) {
           UNIV3_UNIVERSAL_ROUTER_ABI,
           signer
         );
-        const v2Router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
+        const commands = [];
+        const inputs = [];
+        const isEthIn = sellToken === "ETH";
+        const isEthOut = buyToken === "ETH";
+        const payerIsUser = !isEthIn;
+        let totalMinOut = 0n;
+
+        if (isEthIn) {
+          commands.push(UR_COMMANDS.WRAP_ETH);
+          inputs.push(
+            abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, amountWei])
+          );
+        }
 
         for (const leg of legs) {
-          if (leg.protocol === "V3") {
-            const legAmountIn = leg.amountIn ?? amountWei;
-            let legAmountOut = leg.amountOut;
-            if (!legAmountOut) {
+          if (!leg) continue;
+          const legAmountIn = leg.amountIn ?? amountWei;
+          let legAmountOut = leg.amountOut;
+          if (!legAmountOut) {
+            if (leg.protocol === "V3") {
               legAmountOut = await quoteV3Route(readProvider, legAmountIn, leg);
-            }
-            const minOut = (legAmountOut * BigInt(10000 - slippageBps)) / 10000n;
-            const encodedPath = encodeV3Path(leg.path || [], leg.fees || []);
-            const commands = [];
-            const inputs = [];
-            if (sellToken === "ETH") {
-              commands.push(UR_COMMANDS.WRAP_ETH);
-              inputs.push(
-                abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, legAmountIn])
-              );
-              const swapRecipient =
-                buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
-              commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
-              inputs.push(
-                abi.encode(
-                  ["address", "uint256", "uint256", "bytes", "bool"],
-                  [swapRecipient, legAmountIn, minOut, encodedPath, false]
-                )
-              );
-              if (buyToken === "ETH") {
-                commands.push(UR_COMMANDS.UNWRAP_WETH);
-                inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
-              }
-            } else {
-              const swapRecipient =
-                buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
-              commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
-              inputs.push(
-                abi.encode(
-                  ["address", "uint256", "uint256", "bytes", "bool"],
-                  [swapRecipient, legAmountIn, minOut, encodedPath, true]
-                )
-              );
-              if (buyToken === "ETH") {
-                commands.push(UR_COMMANDS.UNWRAP_WETH);
-                inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
-              }
-            }
-            const commandBytes = buildCommandBytes(commands);
-            const callOpts = sellToken === "ETH" ? { value: legAmountIn } : {};
-            const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
-            await tx.wait();
-          } else if (leg.protocol === "V2") {
-            const legAmountIn = leg.amountIn ?? amountWei;
-            let legAmountOut = leg.amountOut;
-            if (!legAmountOut) {
+            } else if (leg.protocol === "V2") {
               legAmountOut = await getV2Quote(readProvider, legAmountIn, leg.path || []);
             }
-            const minOut = (legAmountOut * BigInt(10000 - slippageBps)) / 10000n;
-            let tx;
-            if (sellToken === "ETH") {
-              tx = await v2Router.swapExactETHForTokens(
-                minOut,
-                leg.path || [],
-                user,
-                deadline,
-                { value: legAmountIn }
-              );
-            } else if (buyToken === "ETH") {
-              tx = await v2Router.swapExactTokensForETH(
-                legAmountIn,
-                minOut,
-                leg.path || [],
-                user,
-                deadline
-              );
-            } else {
-              tx = await v2Router.swapExactTokensForTokens(
-                legAmountIn,
-                minOut,
-                leg.path || [],
-                user,
-                deadline
-              );
-            }
-            await tx.wait();
+          }
+          if (!legAmountOut) {
+            throw new Error("Unable to compute split leg output.");
+          }
+          const minOut = (legAmountOut * BigInt(10000 - slippageBps)) / 10000n;
+          totalMinOut += minOut;
+          const recipient = isEthOut ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+
+          if (leg.protocol === "V3") {
+            const encodedPath = encodeV3Path(leg.path || [], leg.fees || []);
+            commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+            inputs.push(
+              abi.encode(
+                ["address", "uint256", "uint256", "bytes", "bool"],
+                [recipient, legAmountIn, minOut, encodedPath, payerIsUser]
+              )
+            );
+          } else if (leg.protocol === "V2") {
+            commands.push(UR_COMMANDS.V2_SWAP_EXACT_IN);
+            inputs.push(
+              abi.encode(
+                ["address", "uint256", "uint256", "address[]", "bool"],
+                [recipient, legAmountIn, minOut, leg.path || [], payerIsUser]
+              )
+            );
           }
         }
 
+        if (isEthOut) {
+          commands.push(UR_COMMANDS.UNWRAP_WETH);
+          inputs.push(abi.encode(["address", "uint256"], [user, totalMinOut]));
+        }
+
+        const commandBytes = buildCommandBytes(commands);
+        const callOpts = isEthIn ? { value: amountWei } : {};
+        const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
+
+        pendingTxHashRef.current = tx.hash;
+        listenForTx(tx.hash, {
+          routeLabels: routeLabelsSnapshot,
+          buyDecimals: decimalsOut,
+          buySymbol: displayBuySymbol,
+          minReceivedRaw: totalMinOut,
+          expectedRaw: quoteOutRaw,
+          buyAddress: buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address,
+          user,
+          captureWithdrawal: buyToken === "ETH",
+        });
+
+        const receipt = await tx.wait();
+        pendingExecutionRef.current = {
+          expectedRaw: quoteOutRaw,
+          minRaw: totalMinOut,
+          priceImpactSnapshot: priceImpact,
+          slippagePct: effectiveSlippagePct,
+          routeLabels: routeLabelsSnapshot,
+          buyDecimals: decimalsOut,
+          buySymbol: displayBuySymbol,
+        };
+        const targetAddress =
+          buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+        const actualOutRaw = findActualOutput(receipt, targetAddress, user, {
+          captureWithdrawal: buyToken === "ETH",
+        });
+        const resolvedExpected = pendingExecutionRef.current.expectedRaw || quoteOutRaw;
+        const resolvedMin = pendingExecutionRef.current.minRaw || totalMinOut;
+        const resolvedActual = actualOutRaw || resolvedExpected || resolvedMin;
+        const expectedFloat = resolvedExpected
+          ? Number(formatUnits(resolvedExpected, decimalsOut))
+          : null;
+        const actualFloat = resolvedActual
+          ? Number(formatUnits(resolvedActual, decimalsOut))
+          : null;
+        const minFloat = resolvedMin
+          ? Number(formatUnits(resolvedMin, decimalsOut))
+          : null;
+        const grade = computeOutcomeGrade(expectedFloat, actualFloat, minFloat);
+        pushExecutionProof({
+          expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
+          executed: formatDisplayAmount(actualFloat, displayBuySymbol),
+          minReceived: formatDisplayAmount(minFloat, displayBuySymbol),
+          priceImpact: pendingExecutionRef.current.priceImpactSnapshot ?? priceImpact,
+          slippage: pendingExecutionRef.current.slippagePct ?? effectiveSlippagePct,
+          gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
+          txHash: receipt?.hash,
+          deltaPct: grade.deltaPct,
+          route: pendingExecutionRef.current.routeLabels,
+          grade,
+        });
         setSwapStatus({
-          message: "Split swap executed (2 tx).",
+          message: `Split swap executed. Min received: ${formatUnits(
+            totalMinOut,
+            buyMeta?.decimals ?? 18
+          )} ${buyToken}`,
+          hash: receipt.hash,
           variant: "success",
         });
         return;
@@ -1958,18 +1985,44 @@ export default function SwapSection({ balances, address, chainId }) {
           throw new Error("Unable to compute minimum output.");
         }
         const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
-        const router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
         const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
-        let tx;
-        if (sellToken === "ETH") {
-          tx = await router.swapExactETHForTokens(minOut, path, user, deadline, {
-            value: amountWei,
-          });
-        } else if (buyToken === "ETH") {
-          tx = await router.swapExactTokensForETH(amountWei, minOut, path, user, deadline);
-        } else {
-          tx = await router.swapExactTokensForTokens(amountWei, minOut, path, user, deadline);
+        const abi = AbiCoder.defaultAbiCoder();
+        const universal = new Contract(
+          UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+          UNIV3_UNIVERSAL_ROUTER_ABI,
+          signer
+        );
+        const commands = [];
+        const inputs = [];
+        const isEthIn = sellToken === "ETH";
+        const isEthOut = buyToken === "ETH";
+        const payerIsUser = !isEthIn;
+
+        if (isEthIn) {
+          commands.push(UR_COMMANDS.WRAP_ETH);
+          inputs.push(
+            abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, amountWei])
+          );
         }
+
+        const recipient = isEthOut ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+        commands.push(UR_COMMANDS.V2_SWAP_EXACT_IN);
+        inputs.push(
+          abi.encode(
+            ["address", "uint256", "uint256", "address[]", "bool"],
+            [recipient, amountWei, minOut, path, payerIsUser]
+          )
+        );
+
+        if (isEthOut) {
+          commands.push(UR_COMMANDS.UNWRAP_WETH);
+          inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
+        }
+
+        const commandBytes = buildCommandBytes(commands);
+        const callOpts = isEthIn ? { value: amountWei } : {};
+        const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
+
         pendingTxHashRef.current = tx.hash;
         listenForTx(tx.hash, {
           routeLabels: routeLabelsSnapshot,
@@ -1977,8 +2030,9 @@ export default function SwapSection({ balances, address, chainId }) {
           buySymbol: displayBuySymbol,
           minReceivedRaw: minOut,
           expectedRaw: amountOut,
-          buyAddress: buyToken === "ETH" ? null : buyMeta?.address,
+          buyAddress: buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address,
           user,
+          captureWithdrawal: buyToken === "ETH",
         });
         const receipt = await tx.wait();
         pendingExecutionRef.current = {
@@ -1991,10 +2045,10 @@ export default function SwapSection({ balances, address, chainId }) {
           buySymbol: displayBuySymbol,
         };
         const targetAddress =
-          buyToken === "ETH" ? null : buyMeta?.address;
-        const actualOutRaw = targetAddress
-          ? findActualOutput(receipt, targetAddress, user, {})
-          : null;
+          buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+        const actualOutRaw = findActualOutput(receipt, targetAddress, user, {
+          captureWithdrawal: buyToken === "ETH",
+        });
         const resolvedExpected = pendingExecutionRef.current.expectedRaw || amountOut;
         const resolvedMin = pendingExecutionRef.current.minRaw || minOut;
         const resolvedActual = actualOutRaw || resolvedExpected || resolvedMin;
@@ -2569,7 +2623,7 @@ export default function SwapSection({ balances, address, chainId }) {
           )}
           {quoteMeta?.protocol === "SPLIT" ? (
             <div className="text-[11px] text-amber-200 mb-2">
-              Split routing executes two swaps (V2 + V3). You will sign two transactions.
+              Split routing executes both routes inside the Universal Router (single transaction).
             </div>
           ) : null}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
