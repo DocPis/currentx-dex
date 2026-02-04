@@ -2624,11 +2624,14 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                       <div className="text-sm font-semibold text-slate-100">
                         {p.token0Symbol} / {p.token1Symbol}
                       </div>
-                      <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                        {p.poolType || "volatile"} pool
-                        {(() => {
-                          const { label, className } = getStatusStyle(p.isActive);
-                          return (
+                    <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                      {p.poolType || "volatile"} pool
+                      <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700/60 bg-slate-800/40 text-slate-200">
+                        V2
+                      </span>
+                      {(() => {
+                        const { label, className } = getStatusStyle(p.isActive);
+                        return (
                             <span className={`px-2 py-0.5 rounded-full text-[10px] border ${className}`}>
                               {label}
                             </span>
@@ -3079,7 +3082,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                         <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-1">
                           <span>Fee {formatFeeTier(pos.fee)}</span>
                           <span>
-                            Range {pos.tickLower} → {pos.tickUpper}
+                            Range {pos.tickLower} -> {pos.tickUpper}
                           </span>
                           <span>ID #{pos.tokenId}</span>
                         </div>
@@ -3206,6 +3209,9 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                     </div>
                     <div className="text-[11px] text-slate-500 capitalize flex items-center gap-2">
                       {p.poolType || "volatile"} pool
+                      <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700/60 bg-slate-800/40 text-slate-200">
+                        V2
+                      </span>
                       {(() => {
                         const { label, className } = getStatusStyle(p.isActive);
                         return (
@@ -3316,7 +3322,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
             );
           })}
         </div>
-
+        </div>
         </div>
       )}
       {showTokenList && (
