@@ -138,6 +138,7 @@ const formatPrice = (value) => {
 
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
 const getTickSpacingFromFee = (fee) => V3_TICK_SPACING[Number(fee)] || null;
+const isAddressLike = (value) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
 
 const normalizeIpfsUri = (uri, gateway = IPFS_GATEWAYS[0]) => {
   if (!uri || typeof uri !== "string") return "";
@@ -1399,10 +1400,10 @@ export default function LiquiditySection({
         });
         setBasePools(deduped);
         setOnchainTokens(tokenMap);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          setBasePools([]);
-          setOnchainTokens({});
+          // Keep the last known pools on transient RPC failures.
+          console.warn("Failed to refresh V2 pools:", err?.message || err);
         }
       }
       if (!cancelled) setPoolStatsReady(true);
@@ -2461,6 +2462,9 @@ export default function LiquiditySection({
           if (!token0Addr || !token1Addr) return null;
 
           let pairAddress = pool.pairAddress || pool.pairId || null;
+          if (!isAddressLike(pairAddress)) {
+            pairAddress = null;
+          }
           if (!pairAddress && factory) {
             try {
               pairAddress = await factory.getPair(token0Addr, token1Addr);
