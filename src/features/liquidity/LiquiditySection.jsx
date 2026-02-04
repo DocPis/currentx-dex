@@ -1620,6 +1620,8 @@ export default function LiquiditySection({
 
   useEffect(() => {
     if (!v3DraggingHandle) return undefined;
+    const prevCursor = document.body.style.cursor;
+    document.body.style.cursor = "ew-resize";
     v3DragCurrentRef.current = {
       ...v3DragCurrentRef.current,
       [v3DraggingHandle]:
@@ -1683,6 +1685,7 @@ export default function LiquiditySection({
     return () => {
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
+      document.body.style.cursor = prevCursor;
       if (v3DragRafRef.current) {
         window.cancelAnimationFrame(v3DragRafRef.current);
         v3DragRafRef.current = null;
@@ -4279,8 +4282,8 @@ export default function LiquiditySection({
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 mb-3">
-                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2">
+                <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5 mb-6">
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2 mb-3">
                     <span>
                       Current price:{" "}
                       {v3PoolLoading
@@ -4292,8 +4295,8 @@ export default function LiquiditySection({
                     <span>Fee tier {formatFeeTier(v3FeeTier)}</span>
                   </div>
 
-                  <div className="relative mt-4">
-                    <div className="relative h-52 rounded-2xl border border-slate-800 bg-[#0f0707] overflow-hidden">
+                  <div className="relative">
+                    <div className="relative h-60 rounded-3xl border border-slate-800 bg-[#0f0707] overflow-hidden">
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(248,113,113,0.24),transparent_48%),radial-gradient(circle_at_80%_0%,rgba(251,113,133,0.18),transparent_40%)]" />
                       <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(92,12,12,0.92)_0px,rgba(92,12,12,0.92)_40px,rgba(255,114,114,0.35)_40px,rgba(255,114,114,0.35)_42px)] opacity-85" />
                       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
@@ -4377,7 +4380,7 @@ export default function LiquiditySection({
                               event.preventDefault();
                               setV3DraggingHandle("lower");
                             }}
-                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
                             style={{ left: `${v3Chart.rangeStart}%` }}
                           >
                             <span className="absolute inset-2 rounded-full border border-rose-100/60" />
@@ -4390,25 +4393,14 @@ export default function LiquiditySection({
                               event.preventDefault();
                               setV3DraggingHandle("upper");
                             }}
-                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
                             style={{ left: `${v3Chart.rangeEnd}%` }}
                           >
                             <span className="absolute inset-2 rounded-full border border-rose-100/60" />
                             <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
                           </button>
 
-                          <div
-                            className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-400/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeStart}%` }}
-                          >
-                            {formatPrice(v3RangeLowerNum || 0)}
-                          </div>
-                          <div
-                            className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-400/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeEnd}%` }}
-                          >
-                            {formatPrice(v3RangeUpperNum || 0)}
-                          </div>
+                          {/* Prices moved to the card below */}
                         </div>
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
@@ -4416,7 +4408,7 @@ export default function LiquiditySection({
                         </div>
                       )}
                     </div>
-                    <div className="absolute right-4 -bottom-5 z-20" ref={v3ChartMenuRef}>
+                    <div className="absolute right-4 -bottom-16 z-20" ref={v3ChartMenuRef}>
                       <button
                         type="button"
                         onClick={() => setV3ChartMenuOpen((v) => !v)}
@@ -4467,14 +4459,35 @@ export default function LiquiditySection({
                       )}
                     </div>
                   </div>
+                </div>
 
-                  <div className="flex items-center justify-between text-[11px] text-slate-500 mt-3">
-                    <span>
-                      {v3HasCustomRange
-                        ? formatPrice(v3RangeLowerNum)
-                        : "Full range"}
-                    </span>
-                    <span>{v3HasCustomRange ? formatPrice(v3RangeUpperNum) : ""}</span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Min</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-100">
+                      {v3HasCustomRange ? formatPrice(v3RangeLowerNum) : "--"}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {v3Token1} per {v3Token0}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Current</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-100">
+                      {v3CurrentPrice ? formatPrice(v3CurrentPrice) : "--"}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {v3Token1} per {v3Token0}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Max</div>
+                    <div className="mt-2 text-lg font-semibold text-slate-100">
+                      {v3HasCustomRange ? formatPrice(v3RangeUpperNum) : "--"}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {v3Token1} per {v3Token0}
+                    </div>
                   </div>
                 </div>
 
