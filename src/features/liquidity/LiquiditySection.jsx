@@ -586,6 +586,13 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     }
   }, [v3Token0, v3Token1, v3TokenOptions]);
 
+  useEffect(() => {
+    setV3RangeMode("full");
+    setV3RangeLower("");
+    setV3RangeUpper("");
+    setV3PoolError("");
+  }, [v3Token0, v3Token1, v3FeeTier]);
+
   const v3Token0Meta = tokenRegistry[v3Token0];
   const v3Token1Meta = tokenRegistry[v3Token1];
   const v3Token0Balance = walletBalances?.[v3Token0] || 0;
@@ -627,6 +634,78 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     },
     [tokenRegistry]
   );
+
+  const v3PoolToken0Meta = useMemo(
+    () => findTokenMetaByAddress(v3PoolInfo.token0),
+    [findTokenMetaByAddress, v3PoolInfo.token0]
+  );
+  const v3PoolToken1Meta = useMemo(
+    () => findTokenMetaByAddress(v3PoolInfo.token1),
+    [findTokenMetaByAddress, v3PoolInfo.token1]
+  );
+  const v3PoolIsReversed = useMemo(() => {
+    if (!v3PoolInfo.token0 || !v3SelectedToken0Address) return false;
+    return v3PoolInfo.token0.toLowerCase() !== v3SelectedToken0Address.toLowerCase();
+  }, [v3PoolInfo.token0, v3SelectedToken0Address]);
+  const v3CurrentPrice = useMemo(() => {
+    if (v3PoolInfo.tick === null || v3PoolInfo.tick === undefined) return null;
+    const dec0 = v3PoolToken0Meta?.decimals ?? 18;
+    const dec1 = v3PoolToken1Meta?.decimals ?? 18;
+    const basePrice = tickToPrice(v3PoolInfo.tick, dec0, dec1);
+    if (!basePrice) return null;
+    return v3PoolIsReversed ? 1 / basePrice : basePrice;
+  }, [v3PoolInfo.tick, v3PoolIsReversed, v3PoolToken0Meta, v3PoolToken1Meta]);
+  const v3RangeLowerNum = safeNumber(v3RangeLower);
+  const v3RangeUpperNum = safeNumber(v3RangeUpper);
+  const v3HasCustomRange =
+    v3RangeMode === "custom" &&
+    v3RangeLowerNum !== null &&
+    v3RangeUpperNum !== null &&
+    v3RangeLowerNum > 0 &&
+    v3RangeUpperNum > 0 &&
+    v3RangeLowerNum < v3RangeUpperNum;
+
+  const applyV3RangePreset = useCallback(
+    (pct) => {
+      if (!v3CurrentPrice) return;
+      const lower = v3CurrentPrice * (1 - pct);
+      const upper = v3CurrentPrice * (1 + pct);
+      setV3RangeMode("custom");
+      setV3RangeLower(lower.toFixed(6));
+      setV3RangeUpper(upper.toFixed(6));
+    },
+    [v3CurrentPrice]
+  );
+
+  const v3Chart = useMemo(() => {
+    if (!v3CurrentPrice && !v3HasCustomRange) return null;
+    let min = v3HasCustomRange
+      ? v3RangeLowerNum * (1 - CHART_PADDING)
+      : v3CurrentPrice * (1 - CHART_PADDING);
+    let max = v3HasCustomRange
+      ? v3RangeUpperNum * (1 + CHART_PADDING)
+      : v3CurrentPrice * (1 + CHART_PADDING);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0 || min >= max) {
+      return null;
+    }
+    const clampPct = (value) => Math.min(100, Math.max(0, value));
+    const currentPct = v3CurrentPrice
+      ? clampPct(((v3CurrentPrice - min) / (max - min)) * 100)
+      : null;
+    const rangeStart = v3HasCustomRange
+      ? clampPct(((v3RangeLowerNum - min) / (max - min)) * 100)
+      : 0;
+    const rangeEnd = v3HasCustomRange
+      ? clampPct(((v3RangeUpperNum - min) / (max - min)) * 100)
+      : 100;
+    return {
+      min,
+      max,
+      currentPct,
+      rangeStart,
+      rangeEnd,
+    };
+  }, [v3CurrentPrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
 
   const getStatusStyle = (status) => {
     if (status === null) {
@@ -834,6 +913,149 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       cancelled = true;
     };
   }, [address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadV3PoolInfo = async () => {
+      if (
+        !hasV3Liquidity ||
+        !v3SelectedToken0Address ||
+        !v3SelectedToken1Address ||
+        v3SelectedToken0Address.toLowerCase() === v3SelectedToken1Address.toLowerCase()
+      ) {
+        if (!cancelled) {
+          setV3PoolInfo({
+            address: "",
+            token0: "",
+            token1: "",
+            tick: null,
+            sqrtPriceX96: null,
+            spacing: null,
+          });
+          setV3PoolError("");
+        }
+        return;
+      }
+      setV3PoolLoading(true);
+      setV3PoolError("");
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+        const poolAddr = await factory.getPool(
+          v3SelectedToken0Address,
+          v3SelectedToken1Address,
+          Number(v3FeeTier)
+        );
+        if (!poolAddr || poolAddr === ZERO_ADDRESS) {
+          if (!cancelled) {
+            setV3PoolInfo({
+              address: "",
+              token0: "",
+              token1: "",
+              tick: null,
+              sqrtPriceX96: null,
+              spacing: null,
+            });
+            setV3PoolError("Pool not deployed yet for this pair/tier.");
+          }
+          return;
+        }
+        const pool = new Contract(poolAddr, UNIV3_POOL_ABI, provider);
+        const [slot0, token0, token1, spacing] = await Promise.all([
+          pool.slot0(),
+          pool.token0(),
+          pool.token1(),
+          pool.tickSpacing(),
+        ]);
+        if (cancelled) return;
+        setV3PoolInfo({
+          address: poolAddr,
+          token0,
+          token1,
+          tick: Number(slot0?.tick ?? 0),
+          sqrtPriceX96: slot0?.sqrtPriceX96 ?? null,
+          spacing: Number(spacing ?? 0),
+        });
+      } catch (err) {
+        if (!cancelled) {
+          setV3PoolInfo({
+            address: "",
+            token0: "",
+            token1: "",
+            tick: null,
+            sqrtPriceX96: null,
+            spacing: null,
+          });
+          setV3PoolError(
+            compactRpcMessage(err?.message || err, "Unable to load pool price.")
+          );
+        }
+      } finally {
+        if (!cancelled) setV3PoolLoading(false);
+      }
+    };
+    loadV3PoolInfo();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasV3Liquidity,
+    v3SelectedToken0Address,
+    v3SelectedToken1Address,
+    v3FeeTier,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadPoolMetrics = async () => {
+      if (!hasV3Liquidity || !v3Positions.length) {
+        if (!cancelled) setV3PoolMetrics({});
+        return;
+      }
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+        const uniqueKeys = Array.from(
+          new Set(
+            v3Positions.map(
+              (pos) => `${pos.token0?.toLowerCase()}-${pos.token1?.toLowerCase()}-${pos.fee}`
+            )
+          )
+        );
+        const results = await runWithConcurrency(uniqueKeys, 3, async (key) => {
+          const [token0, token1, feeRaw] = key.split("-");
+          const fee = Number(feeRaw || 0);
+          const poolAddr = await factory.getPool(token0, token1, fee);
+          if (!poolAddr || poolAddr === ZERO_ADDRESS) return [key, null];
+          const pool = new Contract(poolAddr, UNIV3_POOL_ABI, provider);
+          const [slot0, spacing] = await Promise.all([pool.slot0(), pool.tickSpacing()]);
+          return [
+            key,
+            {
+              address: poolAddr,
+              tick: Number(slot0?.tick ?? 0),
+              sqrtPriceX96: slot0?.sqrtPriceX96 ?? null,
+              spacing: Number(spacing ?? 0),
+            },
+          ];
+        });
+        if (cancelled) return;
+        const next = {};
+        results.forEach((entry) => {
+          if (!entry) return;
+          const [key, value] = entry;
+          if (value) next[key] = value;
+        });
+        setV3PoolMetrics(next);
+      } catch {
+        if (!cancelled) setV3PoolMetrics({});
+      }
+    };
+    loadPoolMetrics();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasV3Liquidity, v3Positions]);
 
   useEffect(() => {
     if (!basePools.length) return;
@@ -1776,6 +1998,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       let amount1Desired = amountB;
       let token0IsEth = v3Token0 === "ETH";
       let token1IsEth = v3Token1 === "ETH";
+      const isReversed = addrA.toLowerCase() !== addrB.toLowerCase() &&
+        addrA.toLowerCase() > addrB.toLowerCase();
 
       if (token0Addr.toLowerCase() > token1Addr.toLowerCase()) {
         [token0Addr, token1Addr] = [token1Addr, token0Addr];
@@ -1793,8 +2017,45 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       if (!spacing) {
         throw new Error("Fee tier not enabled on this factory.");
       }
-      const tickLower = Math.ceil(V3_MIN_TICK / spacing) * spacing;
-      const tickUpper = Math.floor(V3_MAX_TICK / spacing) * spacing;
+      let tickLower = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+      let tickUpper = Math.floor(V3_MAX_TICK / spacing) * spacing;
+      if (v3RangeMode === "custom") {
+        const lowerInput = safeNumber(v3RangeLower);
+        const upperInput = safeNumber(v3RangeUpper);
+        if (
+          lowerInput === null ||
+          upperInput === null ||
+          lowerInput <= 0 ||
+          upperInput <= 0 ||
+          lowerInput >= upperInput
+        ) {
+          throw new Error("Enter a valid price range for your CL position.");
+        }
+        const meta0 = findTokenMetaByAddress(token0Addr);
+        const meta1 = findTokenMetaByAddress(token1Addr);
+        const dec0 = await readDecimals(provider, token0Addr, meta0);
+        const dec1 = await readDecimals(provider, token1Addr, meta1);
+        let lowerForPool = lowerInput;
+        let upperForPool = upperInput;
+        if (isReversed) {
+          lowerForPool = 1 / upperInput;
+          upperForPool = 1 / lowerInput;
+        }
+        const rawLower = priceToTick(lowerForPool, dec0, dec1);
+        const rawUpper = priceToTick(upperForPool, dec0, dec1);
+        if (rawLower === null || rawUpper === null) {
+          throw new Error("Unable to derive ticks from the selected range.");
+        }
+        tickLower = Math.floor(rawLower / spacing) * spacing;
+        tickUpper = Math.ceil(rawUpper / spacing) * spacing;
+        const minTick = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+        const maxTick = Math.floor(V3_MAX_TICK / spacing) * spacing;
+        tickLower = Math.max(tickLower, minTick);
+        tickUpper = Math.min(tickUpper, maxTick);
+        if (tickLower >= tickUpper) {
+          throw new Error("Selected range is too narrow after tick rounding.");
+        }
+      }
 
       const amount0Min = applySlippage(amount0Desired, slippageBps);
       const amount1Min = applySlippage(amount1Desired, slippageBps);
@@ -3128,28 +3389,70 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                   <div className="text-sm text-amber-200">{v3PositionsError}</div>
                 ) : v3Positions.length ? (
                   <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
-                    {v3Positions.map((pos) => (
-                      <div
-                        key={`cl-${pos.tokenId}`}
-                        className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="text-sm font-semibold text-slate-100">
-                            {pos.token0Symbol} / {pos.token1Symbol}
+                    {v3Positions.map((pos) => {
+                      const key = `${pos.token0?.toLowerCase?.() || ""}-${pos.token1?.toLowerCase?.() || ""}-${pos.fee}`;
+                      const metrics = v3PoolMetrics[key];
+                      const meta0 = findTokenMetaByAddress(pos.token0);
+                      const meta1 = findTokenMetaByAddress(pos.token1);
+                      const dec0 = meta0?.decimals ?? 18;
+                      const dec1 = meta1?.decimals ?? 18;
+                      const lowerPrice = tickToPrice(pos.tickLower, dec0, dec1);
+                      const upperPrice = tickToPrice(pos.tickUpper, dec0, dec1);
+                      const currentPrice = metrics?.tick !== undefined && metrics?.tick !== null
+                        ? tickToPrice(metrics.tick, dec0, dec1)
+                        : null;
+                      const inRange =
+                        metrics?.tick !== undefined &&
+                        metrics?.tick !== null &&
+                        metrics.tick >= pos.tickLower &&
+                        metrics.tick <= pos.tickUpper;
+                      return (
+                        <div
+                          key={`cl-${pos.tokenId}`}
+                          className="rounded-xl border border-slate-800 bg-slate-950/50 px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm font-semibold text-slate-100">
+                              {pos.token0Symbol} / {pos.token1Symbol}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {metrics && (
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                                    inRange
+                                      ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+                                      : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                                  }`}
+                                >
+                                  {inRange ? "In range" : "Out of range"}
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
+                                CL
+                              </span>
+                            </div>
                           </div>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
-                            CL
-                          </span>
+                          <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-1">
+                            <span>Fee {formatFeeTier(pos.fee)}</span>
+                            <span>
+                              Range {formatPrice(lowerPrice)} - {formatPrice(upperPrice)}{" "}
+                              {pos.token1Symbol} per {pos.token0Symbol}
+                            </span>
+                            <span>ID #{pos.tokenId}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 flex flex-wrap gap-2 mt-1">
+                            <span>
+                              Current {formatPrice(currentPrice)} {pos.token1Symbol} per{" "}
+                              {pos.token0Symbol}
+                            </span>
+                            <span>
+                              Fees {formatAmount(pos.tokensOwed0, dec0)} {pos.token0Symbol} /{" "}
+                              {formatAmount(pos.tokensOwed1, dec1)} {pos.token1Symbol}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-400 flex flex-wrap gap-2 mt-1">
-                          <span>Fee {formatFeeTier(pos.fee)}</span>
-                          <span>
-                            Range {pos.tickLower} -> {pos.tickUpper}
-                          </span>
-                          <span>ID #{pos.tokenId}</span>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="text-sm text-slate-400">
