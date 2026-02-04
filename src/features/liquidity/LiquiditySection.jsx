@@ -930,7 +930,7 @@ export default function LiquiditySection({
       } catch (err) {
         if (cancelled) return;
         setV3PositionsError(
-          compactRpcMessage(err?.message || err, "Unable to load CL positions.")
+          compactRpcMessage(err?.message || err, "Unable to load positions.")
         );
       } finally {
         if (!cancelled) setV3PositionsLoading(false);
@@ -1990,7 +1990,7 @@ export default function LiquiditySection({
 
   const handleV3Mint = async () => {
     if (!address) {
-      setV3MintError("Connect your wallet to add CL liquidity.");
+      setV3MintError("Connect your wallet to add a position.");
       return;
     }
     if (!hasV3Liquidity) {
@@ -2027,7 +2027,7 @@ export default function LiquiditySection({
         const walletNet = await provider.getNetwork();
         if (Number(walletNet?.chainId || 0) !== targetChain) {
           throw new Error(
-            "Wallet network differs from the selected network. Switch network to add CL liquidity."
+            "Wallet network differs from the selected network. Switch network to add a position."
           );
         }
       }
@@ -2066,7 +2066,7 @@ export default function LiquiditySection({
           upperInput <= 0 ||
           lowerInput >= upperInput
         ) {
-          throw new Error("Enter a valid price range for your CL position.");
+          throw new Error("Enter a valid price range for your position.");
         }
         const meta0 = findTokenMetaByAddress(token0Addr);
         const meta1 = findTokenMetaByAddress(token1Addr);
@@ -2170,16 +2170,16 @@ export default function LiquiditySection({
       setActionStatus({
         variant: "success",
         hash: receipt?.hash,
-        message: "CL position created.",
+        message: "Position created.",
       });
       setV3Amount0("");
       setV3Amount1("");
       setV3RefreshTick((t) => t + 1);
     } catch (err) {
-      setV3MintError(friendlyActionError(err, "CL deposit"));
+      setV3MintError(friendlyActionError(err, "Position deposit"));
       setActionStatus({
         variant: "error",
-        message: friendlyActionError(err, "CL deposit"),
+        message: friendlyActionError(err, "Position deposit"),
       });
     } finally {
       setV3MintLoading(false);
@@ -3305,13 +3305,13 @@ export default function LiquiditySection({
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
               <div>
                 <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                  Concentrated Liquidity
+                  Positions
                   <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
                     CL
                   </span>
                 </div>
                 <div className="text-xs text-slate-500">
-                  Add V3 liquidity and view your CL NFT positions.
+                  Add V3 liquidity and manage your positions.
                 </div>
               </div>
               {!hasV3Liquidity && (
@@ -3324,7 +3324,7 @@ export default function LiquiditySection({
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 px-4 sm:px-6 py-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-3">
-                  Add CL Position
+                  Add Position
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
@@ -3556,14 +3556,14 @@ export default function LiquiditySection({
                   disabled={v3MintLoading || !hasV3Liquidity}
                   className="w-full px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-semibold shadow-lg shadow-emerald-500/30 disabled:opacity-60"
                 >
-                  {v3MintLoading ? "Minting..." : "Add CL Liquidity"}
+                  {v3MintLoading ? "Minting..." : "Add Position"}
                 </button>
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                    Your CL Positions
+                    Your Positions
                   </div>
                   <button
                     type="button"
@@ -3646,7 +3646,7 @@ export default function LiquiditySection({
                   </div>
                 ) : (
                   <div className="text-sm text-slate-400">
-                    No CL positions found.
+                    No positions found.
                   </div>
                 )}
               </div>
