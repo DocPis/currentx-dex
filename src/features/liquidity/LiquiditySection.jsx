@@ -3320,9 +3320,131 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                   </div>
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-slate-400">Range</span>
-                    <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm text-slate-200">
-                      Full range
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3RangeMode("full");
+                          setV3RangeLower("");
+                          setV3RangeUpper("");
+                        }}
+                        className={`px-3 py-1.5 rounded-full text-xs border ${
+                          v3RangeMode === "full"
+                            ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
+                            : "border-slate-800 bg-slate-900 text-slate-300"
+                        }`}
+                      >
+                        Full range
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!v3CurrentPrice}
+                        onClick={() => applyV3RangePreset(0.1)}
+                        className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
+                      >
+                        ±10%
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!v3CurrentPrice}
+                        onClick={() => applyV3RangePreset(0.25)}
+                        className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
+                      >
+                        ±25%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setV3RangeMode("custom")}
+                        className={`px-3 py-1.5 rounded-full text-xs border ${
+                          v3RangeMode === "custom"
+                            ? "border-sky-400/40 bg-sky-500/10 text-sky-100"
+                            : "border-slate-800 bg-slate-900 text-slate-300"
+                        }`}
+                      >
+                        Custom
+                      </button>
                     </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>Min price</span>
+                      <span>{v3Token1} per {v3Token0}</span>
+                    </div>
+                    <input
+                      value={v3RangeLower}
+                      onChange={(e) => {
+                        setV3RangeMode("custom");
+                        setV3RangeLower(e.target.value);
+                      }}
+                      disabled={v3RangeMode === "full"}
+                      placeholder="0.0"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 disabled:opacity-60"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center justify-between text-xs text-slate-400">
+                      <span>Max price</span>
+                      <span>{v3Token1} per {v3Token0}</span>
+                    </div>
+                    <input
+                      value={v3RangeUpper}
+                      onChange={(e) => {
+                        setV3RangeMode("custom");
+                        setV3RangeUpper(e.target.value);
+                      }}
+                      disabled={v3RangeMode === "full"}
+                      placeholder="0.0"
+                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100 disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-3 mb-3">
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 mb-2 gap-2">
+                    <span>
+                      Current price:{" "}
+                      {v3PoolLoading
+                        ? "Loading..."
+                        : v3CurrentPrice
+                        ? `${formatPrice(v3CurrentPrice)} ${v3Token1} per ${v3Token0}`
+                        : v3PoolError || "Pool not deployed"}
+                    </span>
+                    <span>Fee tier {formatFeeTier(v3FeeTier)}</span>
+                  </div>
+                  <div className="relative h-20 rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+                    <div className="absolute left-4 right-4 top-1/2 -translate-y-1/2 h-2 rounded-full bg-slate-800" />
+                    {v3Chart ? (
+                      <>
+                        <div
+                          className="absolute top-1/2 -translate-y-1/2 h-2 rounded-full bg-amber-500/70"
+                          style={{
+                            left: `${v3Chart.rangeStart}%`,
+                            width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                          }}
+                        />
+                        {v3Chart.currentPct !== null && (
+                          <div
+                            className="absolute top-1/2 -translate-y-1/2 h-6 w-0.5 bg-sky-400"
+                            style={{ left: `${v3Chart.currentPct}%` }}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
+                        No price data yet
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
+                    <span>
+                      {v3HasCustomRange
+                        ? formatPrice(v3RangeLowerNum)
+                        : "Full range"}
+                    </span>
+                    <span>{v3HasCustomRange ? formatPrice(v3RangeUpperNum) : ""}</span>
                   </div>
                 </div>
 
