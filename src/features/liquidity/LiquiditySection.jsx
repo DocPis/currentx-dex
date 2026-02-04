@@ -775,7 +775,6 @@ export default function LiquiditySection({
   const [poolStats, setPoolStats] = useState({});
   const [poolStatsReady, setPoolStatsReady] = useState(false);
   const [selectedPoolId, setSelectedPoolId] = useState(null);
-  const [searchTerm, setSearchTerm] = useState("");
   const [pairInfo, setPairInfo] = useState(null);
   const [pairError, setPairError] = useState("");
   const [pairNotDeployed, setPairNotDeployed] = useState(false);
@@ -850,6 +849,9 @@ export default function LiquiditySection({
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
+  const [v2LpPositions, setV2LpPositions] = useState([]);
+  const [v2LpLoading, setV2LpLoading] = useState(false);
+  const [v2LpError, setV2LpError] = useState("");
   const toastTimerRef = useRef(null);
   const nftMetaRef = useRef({});
   const v3Token0DropdownRef = useRef(null);
@@ -2146,18 +2148,6 @@ export default function LiquiditySection({
     });
   }, [basePools, poolStats, poolStatsReady, tokenRegistry]);
 
-  const filteredPools = useMemo(() => {
-    if (!searchTerm) return pools;
-    const q = searchTerm.toLowerCase();
-    return pools.filter((p) => {
-      return (
-        p.id.toLowerCase().includes(q) ||
-        p.token0Symbol.toLowerCase().includes(q) ||
-        p.token1Symbol.toLowerCase().includes(q)
-      );
-    });
-  }, [pools, searchTerm]);
-
   const tokenEntries = useMemo(() => {
     const tvlMap = {};
     pools.forEach((p) => {
@@ -2210,8 +2200,6 @@ export default function LiquiditySection({
     });
   }, [tokenEntries, tokenSearch]);
 
-  const poolsCount = pools.length;
-  const tokensCount = tokenEntries.length;
   const baseSelected = tokenSelection?.baseSymbol
     ? tokenRegistry[tokenSelection.baseSymbol]
     : null;
@@ -2272,6 +2260,7 @@ export default function LiquiditySection({
     );
     return [...pools, ...extras];
   }, [pools, selectionPools]);
+
 
   const selectedPool = useMemo(() => {
     const found = allPools.find((p) => p.id === selectedPoolId);
@@ -2425,6 +2414,170 @@ export default function LiquiditySection({
   useEffect(() => {
     fetchLpBalance();
   }, [fetchLpBalance, lpRefreshTick]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadV2Positions = async () => {
+      if (!isV2View) {
+        setV2LpPositions([]);
+        return;
+      }
+      if (!address) {
+        setV2LpPositions([]);
+        setV2LpError("");
+        return;
+      }
+
+      const candidates = pools.filter((p) => p.hasAddresses);
+      if (!candidates.length) {
+        setV2LpPositions([]);
+        return;
+      }
+
+      setV2LpLoading(true);
+      setV2LpError("");
+      try {
+        let provider;
+        try {
+          provider = await getProvider();
+        } catch {
+          provider = await getRpcProviderWithRetry();
+        }
+
+        const factory =
+          UNIV2_FACTORY_ADDRESS && provider
+            ? new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider)
+            : null;
+        const iface = new Interface(ERC20_ABI);
+
+        const resolved = await runWithConcurrency(candidates, 4, async (pool) => {
+          const token0Addr =
+            pool.token0Address ||
+            resolveTokenAddress(pool.token0Symbol, tokenRegistry);
+          const token1Addr =
+            pool.token1Address ||
+            resolveTokenAddress(pool.token1Symbol, tokenRegistry);
+          if (!token0Addr || !token1Addr) return null;
+
+          let pairAddress = pool.pairAddress || pool.pairId || null;
+          if (!pairAddress && factory) {
+            try {
+              pairAddress = await factory.getPair(token0Addr, token1Addr);
+            } catch {
+              pairAddress = null;
+            }
+          }
+          if (!pairAddress || pairAddress === ZERO_ADDRESS) return null;
+
+          return { pool, pairAddress };
+        });
+
+        const valid = resolved.filter(Boolean);
+        if (!valid.length) {
+          if (!cancelled) setV2LpPositions([]);
+          return;
+        }
+
+        const calls = [];
+        valid.forEach(({ pairAddress }) => {
+          calls.push({
+            target: pairAddress,
+            callData: iface.encodeFunctionData("balanceOf", [address]),
+          });
+          calls.push({
+            target: pairAddress,
+            callData: iface.encodeFunctionData("totalSupply", []),
+          });
+        });
+
+        let results = [];
+        if (await hasMulticall(provider).catch(() => false)) {
+          results = await multicall(calls, provider);
+        } else {
+          results = await Promise.all(
+            calls.map(async (call) => {
+              try {
+                const erc = new Contract(call.target, ERC20_ABI, provider);
+                const data = call.callData;
+                if (data.startsWith(iface.getFunction("balanceOf").selector)) {
+                  const bal = await erc.balanceOf(address);
+                  return {
+                    success: true,
+                    returnData: iface.encodeFunctionResult("balanceOf", [bal]),
+                  };
+                }
+                const totalSupply = await erc.totalSupply();
+                return {
+                  success: true,
+                  returnData: iface.encodeFunctionResult("totalSupply", [totalSupply]),
+                };
+              } catch {
+                return { success: false, returnData: "0x" };
+              }
+            })
+          );
+        }
+
+        const positions = [];
+        for (let i = 0; i < valid.length; i += 1) {
+          const balanceRes = results[i * 2];
+          const supplyRes = results[i * 2 + 1];
+          if (!balanceRes?.success) continue;
+          let balanceRaw = 0n;
+          let totalSupplyRaw = null;
+          try {
+            balanceRaw = iface.decodeFunctionResult("balanceOf", balanceRes.returnData)[0];
+          } catch {
+            balanceRaw = 0n;
+          }
+          if (!balanceRaw || balanceRaw <= 0n) continue;
+          if (supplyRes?.success) {
+            try {
+              totalSupplyRaw = iface.decodeFunctionResult("totalSupply", supplyRes.returnData)[0];
+            } catch {
+              totalSupplyRaw = null;
+            }
+          }
+          const lpBalance = Number(formatUnits(balanceRaw, 18));
+          const share =
+            totalSupplyRaw && totalSupplyRaw > 0n
+              ? Number(balanceRaw) / Number(totalSupplyRaw)
+              : null;
+          const tvlUsd = Number(valid[i].pool.tvlUsd || 0);
+          const positionUsd =
+            share !== null && Number.isFinite(tvlUsd) && tvlUsd > 0
+              ? share * tvlUsd
+              : null;
+
+          positions.push({
+            ...valid[i].pool,
+            pairAddress: valid[i].pairAddress,
+            lpBalance,
+            lpBalanceRaw: balanceRaw,
+            lpShare: share,
+            positionUsd,
+          });
+        }
+
+        if (!cancelled) {
+          setV2LpPositions(positions);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setV2LpError(err?.message || "Failed to load V2 LP positions.");
+          setV2LpPositions([]);
+        }
+      } finally {
+        if (!cancelled) setV2LpLoading(false);
+      }
+    };
+
+    loadV2Positions();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isV2View, pools, tokenRegistry, lpRefreshTick, getRpcProviderWithRetry]);
 
   const autopilotPool =
     pools.find((p) => p.id === "crx-weth" && p.isActive !== false && p.hasAddresses) ||
@@ -5881,25 +6034,116 @@ export default function LiquiditySection({
           )}
 
           {isV2View && (
-            <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <div className="text-sm font-semibold text-slate-100">
-                    V2 Liquidity
+            <>
+              <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-100">
+                      V2 Liquidity
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Create V2 positions and manage deposits/withdrawals.
+                    </div>
                   </div>
-                  <div className="text-xs text-slate-500">
-                    Create V2 positions and manage deposits/withdrawals.
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowTokenList(true)}
+                    className="px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 w-full sm:w-auto"
+                  >
+                    Start V2 position
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowTokenList(true)}
-                  className="px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 w-full sm:w-auto"
-                >
-                  Start V2 position
-                </button>
               </div>
-            </div>
+
+              <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-100">
+                      Your V2 LP Positions
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Wallet LP balances across available V2 pools.
+                    </div>
+                  </div>
+                  {address && (
+                    <button
+                      type="button"
+                      onClick={() => setLpRefreshTick((v) => v + 1)}
+                      className="px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-xs text-slate-200 hover:border-slate-500"
+                    >
+                      Refresh
+                    </button>
+                  )}
+                </div>
+
+                {!address ? (
+                  <div className="text-sm text-slate-400">
+                    Connect your wallet to see V2 LP positions.
+                  </div>
+                ) : v2LpLoading ? (
+                  <div className="text-sm text-slate-400">Loading positions...</div>
+                ) : v2LpError ? (
+                  <div className="text-sm text-amber-200">{v2LpError}</div>
+                ) : v2LpPositions.length ? (
+                  <div className="space-y-3">
+                    {v2LpPositions.map((pos) => {
+                      const token0 = tokenRegistry[pos.token0Symbol];
+                      const token1 = tokenRegistry[pos.token1Symbol];
+                      const sharePct =
+                        pos.lpShare !== null && pos.lpShare !== undefined
+                          ? (pos.lpShare * 100).toFixed(2)
+                          : null;
+                      return (
+                        <div
+                          key={`${pos.id}-lp`}
+                          className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="flex -space-x-2">
+                              {[token0, token1].map((t, idx) => (
+                                <img
+                                  key={idx}
+                                  src={t?.logo}
+                                  alt={`${t?.symbol || "token"} logo`}
+                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                />
+                              ))}
+                            </div>
+                            <div>
+                              <div className="text-sm font-semibold text-slate-100">
+                                {pos.token0Symbol} / {pos.token1Symbol}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                LP balance: {pos.lpBalance ? pos.lpBalance.toFixed(6) : "--"}
+                                {sharePct ? ` · Share ${sharePct}%` : ""}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-right">
+                            <div className="text-sm text-slate-100">
+                              {pos.positionUsd !== null && pos.positionUsd !== undefined
+                                ? `$${formatNumber(pos.positionUsd)}`
+                                : "--"}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenPoolDepositFromRow(pos)}
+                              className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                            >
+                              Manage
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-sm text-slate-400">
+                    No V2 LP positions found for this wallet.
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
