@@ -1257,7 +1257,12 @@ export default function SwapSection({ balances, address, chainId }) {
 
       quoteDebounceRef.current = setTimeout(async () => {
         try {
-          setQuoteLoading(true);
+          const hadQuote = lastQuoteOutRef.current !== null;
+          if (!hadQuote) {
+            setQuoteLoading(true);
+          } else {
+            setQuoteLoading(false);
+          }
           const provider = address
             ? getReadOnlyProvider()
             : getReadOnlyProvider(false, true);
