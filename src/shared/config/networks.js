@@ -6,6 +6,8 @@ const DEFAULT_MAINNET_SUBGRAPH_URL =
   env.VITE_UNIV2_SUBGRAPH ||
   "https://gateway.thegraph.com/api/subgraphs/id/AokDW2tqCMiFvVqXUEfiwY94mNXoBQfsszwd5bnPiNcr";
 const DEFAULT_MAINNET_SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
+const DEFAULT_MAINNET_V3_SUBGRAPH_URL = env.VITE_UNIV3_SUBGRAPH || "";
+const DEFAULT_MAINNET_V3_SUBGRAPH_API_KEY = env.VITE_UNIV3_SUBGRAPH_API_KEY || "";
 
 const dedupeList = (arr = []) => {
   const seen = new Set();
@@ -35,6 +37,8 @@ const mainnetPreset = {
     "https://megaeth.blockscout.com",
   subgraphUrl: DEFAULT_MAINNET_SUBGRAPH_URL,
   subgraphApiKey: DEFAULT_MAINNET_SUBGRAPH_API_KEY,
+  v3SubgraphUrl: DEFAULT_MAINNET_V3_SUBGRAPH_URL,
+  v3SubgraphApiKey: DEFAULT_MAINNET_V3_SUBGRAPH_API_KEY,
   rpcUrls: dedupeList([
     env.VITE_RPC_URL,
     env.VITE_RPC_URLS,

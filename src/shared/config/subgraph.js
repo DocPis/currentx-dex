@@ -5,9 +5,12 @@ const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const activeNet = getActiveNetworkConfig() || {};
 let SUBGRAPH_URL = activeNet.subgraphUrl;
 let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
+let SUBGRAPH_V3_URL = activeNet.v3SubgraphUrl || "";
+let SUBGRAPH_V3_API_KEY = activeNet.v3SubgraphApiKey || "";
 const SUBGRAPH_CACHE_TTL_MS = 20000;
 const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
+const subgraphCacheV3 = new Map();
 const SUBGRAPH_PROXY =
   (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
   "";
@@ -19,10 +22,20 @@ if (!SUBGRAPH_URL) {
 if (!SUBGRAPH_API_KEY) {
   SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 }
+if (!SUBGRAPH_V3_URL) {
+  SUBGRAPH_V3_URL = env.VITE_UNIV3_SUBGRAPH || "";
+}
+if (!SUBGRAPH_V3_API_KEY) {
+  SUBGRAPH_V3_API_KEY = env.VITE_UNIV3_SUBGRAPH_API_KEY || "";
+}
 const SUBGRAPH_MISSING_KEY =
   SUBGRAPH_URL &&
   !SUBGRAPH_API_KEY &&
   (SUBGRAPH_URL.includes("thegraph.com") || SUBGRAPH_URL.includes("gateway"));
+const SUBGRAPH_V3_MISSING_KEY =
+  SUBGRAPH_V3_URL &&
+  !SUBGRAPH_V3_API_KEY &&
+  (SUBGRAPH_V3_URL.includes("thegraph.com") || SUBGRAPH_V3_URL.includes("gateway"));
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -81,6 +94,88 @@ async function postSubgraph(query, variables = {}) {
         throw new Error(json.errors[0]?.message || "Subgraph error");
       }
       subgraphCache.set(cacheKey, { ts: now, data: json.data });
+      return json.data;
+    } catch (err) {
+      const msg = (err?.message || "").toLowerCase();
+      const transient =
+        msg.includes("fetch") ||
+        msg.includes("network") ||
+        msg.includes("timeout") ||
+        msg.includes("rate");
+      const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
+      if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
+        attemptedProxy = true;
+        // retry immediately with proxy
+        attempt -= 1;
+        continue;
+      }
+      lastError = err;
+      if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
+        await sleep(250 * (attempt + 1));
+        continue;
+      }
+      break;
+    }
+  }
+
+  throw lastError || new Error("Subgraph unavailable");
+}
+
+async function postSubgraphV3(query, variables = {}) {
+  if (!SUBGRAPH_V3_URL) {
+    throw new Error("Missing VITE_UNIV3_SUBGRAPH env var");
+  }
+
+  const cacheKey = JSON.stringify({ q: query, v: variables });
+  const cached = subgraphCacheV3.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.ts < SUBGRAPH_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
+  const buildHeaders = (useProxy) => {
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    if (SUBGRAPH_V3_API_KEY && !useProxy) {
+      headers.Authorization = `Bearer ${SUBGRAPH_V3_API_KEY}`;
+    }
+    return headers;
+  };
+
+  let lastError = null;
+  let attemptedProxy = false;
+  for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
+    try {
+      const useProxy = attemptedProxy && Boolean(SUBGRAPH_PROXY);
+      const url = useProxy
+        ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_V3_URL)}`
+        : SUBGRAPH_V3_URL;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: buildHeaders(useProxy),
+        body: JSON.stringify({ query, variables }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        const rateLimited =
+          res.status === 429 ||
+          text.toLowerCase().includes("rate") ||
+          text.toLowerCase().includes("limit");
+        lastError = new Error(rateLimited ? "Subgraph rate-limited. Please retry shortly." : `Subgraph HTTP ${res.status}`);
+        if (attempt < SUBGRAPH_MAX_RETRIES && (res.status >= 500 || rateLimited)) {
+          await sleep(250 * (attempt + 1));
+          continue;
+        }
+        throw lastError;
+      }
+
+      const json = await res.json();
+      if (json.errors?.length) {
+        throw new Error(json.errors[0]?.message || "Subgraph error");
+      }
+      subgraphCacheV3.set(cacheKey, { ts: now, data: json.data });
       return json.data;
     } catch (err) {
       const msg = (err?.message || "").toLowerCase();
@@ -511,7 +606,7 @@ export async function fetchRecentTransactions(limit = 12) {
 }
 
 // Fetch token USD prices using derivedETH + bundle price (Uniswap V2 schema)
-export async function fetchTokenPrices(addresses = []) {
+async function fetchTokenPricesV2(addresses = []) {
   if (SUBGRAPH_MISSING_KEY) return {};
   const ids = Array.from(
     new Set(
@@ -559,6 +654,94 @@ export async function fetchTokenPrices(addresses = []) {
     if (noTokensField) return {};
     throw err;
   }
+}
+
+async function fetchTokenPricesV3(addresses = []) {
+  if (SUBGRAPH_V3_MISSING_KEY) return {};
+  const ids = Array.from(
+    new Set(
+      (addresses || [])
+        .filter(Boolean)
+        .map((a) => a.toLowerCase())
+    )
+  );
+  if (!ids.length) return {};
+
+  const queries = [
+    `
+      query Tokens($ids: [Bytes!]!) {
+        tokens(where: { id_in: $ids }) {
+          id
+          symbol
+          derivedETH
+        }
+        bundles(first: 1) {
+          ethPriceUSD
+        }
+      }
+    `,
+    `
+      query Tokens($ids: [Bytes!]!) {
+        tokens(where: { id_in: $ids }) {
+          id
+          symbol
+          derivedETH
+        }
+        bundles(first: 1) {
+          ethPrice
+        }
+      }
+    `,
+  ];
+
+  for (const query of queries) {
+    try {
+      const res = await postSubgraphV3(query, { ids });
+      const bundlePrice = Number(
+        res?.bundles?.[0]?.ethPriceUSD || res?.bundles?.[0]?.ethPrice || 0
+      );
+      const out = {};
+      (res?.tokens || []).forEach((t) => {
+        const derivedEth = Number(t?.derivedETH || 0);
+        if (!Number.isFinite(derivedEth) || derivedEth <= 0) return;
+        const usd =
+          bundlePrice && Number.isFinite(bundlePrice)
+            ? derivedEth * bundlePrice
+            : null;
+        if (usd !== null && Number.isFinite(usd)) {
+          out[(t.id || "").toLowerCase()] = usd;
+        }
+      });
+      return out;
+    } catch (err) {
+      const message = err?.message || "";
+      const noTokensField =
+        message.includes("Cannot query field \"tokens\"") ||
+        message.includes("Type `Query` has no field `tokens`");
+      if (noTokensField) return {};
+      // try the next schema variant
+    }
+  }
+
+  return {};
+}
+
+export async function fetchTokenPrices(addresses = []) {
+  const ids = Array.from(
+    new Set(
+      (addresses || [])
+        .filter(Boolean)
+        .map((a) => a.toLowerCase())
+    )
+  );
+  if (!ids.length) return {};
+
+  const v2Prices = await fetchTokenPricesV2(ids);
+  const missing = ids.filter((id) => v2Prices[id] === undefined);
+  if (!missing.length) return v2Prices;
+
+  const v3Prices = await fetchTokenPricesV3(missing);
+  return { ...v2Prices, ...v3Prices };
 }
 
 // Fetch top pairs by all-time volume (falling back gracefully if unavailable)
