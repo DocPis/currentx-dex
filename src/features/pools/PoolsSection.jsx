@@ -30,6 +30,12 @@ const formatNumber = (num) => {
 const formatUsd = (num) =>
   num === null || num === undefined ? "--" : `$${formatNumber(num)}`;
 
+const formatFeePercent = (feeTier, fallback = "0.30%") => {
+  const num = Number(feeTier);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return `${(num / 10000).toFixed(2)}%`;
+};
+
 const buildTokenMaps = () => {
   const byAddress = {};
   const bySymbol = {};
@@ -89,6 +95,7 @@ export default function PoolsSection() {
   const [v3Error, setV3Error] = useState("");
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
+  const [typeFilter, setTypeFilter] = useState("all"); // all | cl | v2
 
   const loadV2 = async (append = false) => {
     if (v2Loading) return;
@@ -180,7 +187,7 @@ export default function PoolsSection() {
       const volume24hUsd =
         day.volumeUsd !== undefined && day.volumeUsd !== null
           ? day.volumeUsd
-          : null;
+          : pool.volumeUsd ?? null;
       const feeRate = pool.feeTier ? Number(pool.feeTier) / 1_000_000 : 0.003;
       const fees24hUsd =
         volume24hUsd !== null ? volume24hUsd * feeRate : null;
@@ -191,6 +198,7 @@ export default function PoolsSection() {
       list.push({
         ...pool,
         type: "CL",
+        feeLabel: formatFeePercent(pool.feeTier, "0.30%"),
         liquidityUsd,
         volume24hUsd,
         fees24hUsd,
@@ -206,7 +214,7 @@ export default function PoolsSection() {
       const volume24hUsd =
         day.volumeUsd !== undefined && day.volumeUsd !== null
           ? day.volumeUsd
-          : null;
+          : pool.volumeUsd ?? null;
       const feeRate = 0.003;
       const fees24hUsd =
         volume24hUsd !== null ? volume24hUsd * feeRate : null;
@@ -217,6 +225,7 @@ export default function PoolsSection() {
       list.push({
         ...pool,
         type: "V2",
+        feeLabel: "0.30%",
         liquidityUsd,
         volume24hUsd,
         fees24hUsd,
@@ -230,6 +239,12 @@ export default function PoolsSection() {
     if (!searchLower) return combinedPools;
     return combinedPools.filter((pool) => poolMatchesSearch(pool, searchLower));
   }, [combinedPools, searchLower]);
+
+  const filteredByType = useMemo(() => {
+    if (typeFilter === "all") return filteredPools;
+    const target = typeFilter === "cl" ? "CL" : "V2";
+    return filteredPools.filter((pool) => pool.type === target);
+  }, [filteredPools, typeFilter]);
 
   const sortedPools = useMemo(() => {
     const getValue = (pool) => {
@@ -245,14 +260,14 @@ export default function PoolsSection() {
           return pool.liquidityUsd ?? 0;
       }
     };
-    const sorted = [...filteredPools].sort((a, b) => {
+    const sorted = [...filteredByType].sort((a, b) => {
       const aVal = getValue(a);
       const bVal = getValue(b);
       if (aVal === bVal) return 0;
       return aVal > bVal ? -1 : 1;
     });
     return sortDir === "desc" ? sorted : sorted.reverse();
-  }, [filteredPools, sortKey, sortDir]);
+  }, [filteredByType, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -298,6 +313,26 @@ export default function PoolsSection() {
               placeholder="Search by symbol or address..."
               className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
             />
+          </div>
+          <div className="flex items-center gap-2">
+            {[
+              { id: "all", label: "All" },
+              { id: "cl", label: "CL" },
+              { id: "v2", label: "V2" },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setTypeFilter(item.id)}
+                className={`px-3 py-2 rounded-full text-xs border transition ${
+                  typeFilter === item.id
+                    ? "border-sky-500/60 bg-slate-900 text-white"
+                    : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
           <button
             type="button"
@@ -398,17 +433,17 @@ export default function PoolsSection() {
                           </div>
                         ))}
                       </div>
-                      <div className="flex flex-col">
-                        <div className="text-sm font-semibold text-slate-100">
-                          {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
-                        </div>
-                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                          <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                            {pool.type}
-                          </span>
+                        <div className="flex flex-col">
+                          <div className="text-sm font-semibold text-slate-100">
+                            {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
+                          </div>
+                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
+                              {pool.type} {pool.feeLabel ? pool.feeLabel : ""}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
                       {formatUsd(pool.liquidityUsd)}
