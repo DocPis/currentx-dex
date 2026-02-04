@@ -107,6 +107,46 @@ const formatTokenBalance = (v) => {
   });
 };
 
+const safeNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const formatPrice = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  if (num >= 1_000_000) return num.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (num >= 1) return num.toLocaleString("en-US", { maximumFractionDigits: 6 });
+  if (num >= 0.0001) return num.toPrecision(6);
+  return num.toExponential(3);
+};
+
+const formatAmount = (value, decimals = 18) => {
+  try {
+    const num = Number(formatUnits(value || 0n, decimals));
+    if (!Number.isFinite(num) || num <= 0) return "0";
+    if (num >= 1) return num.toLocaleString("en-US", { maximumFractionDigits: 4 });
+    return num.toPrecision(4);
+  } catch {
+    return "0";
+  }
+};
+
+const tickToPrice = (tick, decimals0, decimals1) => {
+  if (tick === null || tick === undefined) return null;
+  const base = Math.exp(Number(tick) * Math.log(TICK_BASE));
+  const scale = Math.pow(10, (decimals0 || 18) - (decimals1 || 18));
+  const price = base * scale;
+  return Number.isFinite(price) ? price : null;
+};
+
+const priceToTick = (price, decimals0, decimals1) => {
+  if (!price || !Number.isFinite(price) || price <= 0) return null;
+  const scale = Math.pow(10, (decimals0 || 18) - (decimals1 || 18));
+  const raw = Math.log(price / scale) / Math.log(TICK_BASE);
+  return Number.isFinite(raw) ? raw : null;
+};
+
 const resolveTokenAddress = (symbol, registry = TOKENS) => {
   if (!symbol) return null;
   if (symbol === "ETH") return WETH_ADDRESS;
