@@ -5,10 +5,14 @@ import {
   TOKENS,
   getProvider,
   WETH_ADDRESS,
+  UNIV2_FACTORY_ADDRESS,
+  UNIV2_ROUTER_ADDRESS,
   UNIV3_FACTORY_ADDRESS,
   UNIV3_QUOTER_V2_ADDRESS,
   UNIV3_UNIVERSAL_ROUTER_ADDRESS,
   PERMIT2_ADDRESS,
+  getV2Quote,
+  getV2QuoteWithMeta,
   getRegisteredCustomTokens,
   getReadOnlyProvider,
   EXPLORER_BASE_URL,
@@ -16,6 +20,8 @@ import {
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
+  UNIV2_FACTORY_ABI,
+  UNIV2_ROUTER_ABI,
   WETH_ABI,
   UNIV3_FACTORY_ABI,
   UNIV3_QUOTER_V2_ABI,
@@ -40,6 +46,12 @@ const UR_COMMANDS = {
   WRAP_ETH: 0x0b,
   UNWRAP_WETH: 0x0c,
 };
+const ROUTE_PREFS = [
+  { id: "smart", label: "Smart" },
+  { id: "v2", label: "V2" },
+  { id: "v3", label: "V3" },
+  { id: "split", label: "Split" },
+];
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -393,6 +405,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
   const walletChainHex = normalizeChainHex(chainId);
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
+  const hasV2Support = Boolean(UNIV2_FACTORY_ADDRESS && UNIV2_ROUTER_ADDRESS);
   const hasV3Support = Boolean(
     UNIV3_FACTORY_ADDRESS &&
       UNIV3_QUOTER_V2_ADDRESS &&
@@ -412,6 +425,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
+  const [routePreference, setRoutePreference] = useState("smart");
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -420,8 +434,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
   const [approvalMode, setApprovalMode] = useState("exact"); // "exact" | "unlimited"
-  const [approveNeeded, setApproveNeeded] = useState(false);
-  const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance, spender }
+  const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label }
   const [approveLoading, setApproveLoading] = useState(false);
   const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
   const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
@@ -439,6 +452,9 @@ export default function SwapSection({ balances, address, chainId }) {
   const allowanceDebounceRef = useRef(null);
   const pendingTxHashRef = useRef(null);
   const autoRefreshTimerRef = useRef(null);
+
+  const approvalTarget = approvalTargets[0] || null;
+  const approveNeeded = approvalTargets.length > 0;
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -801,6 +817,138 @@ export default function SwapSection({ balances, address, chainId }) {
       sellToken,
     ]
   );
+  const quoteV2Route = useCallback(
+    async (provider, amountWei, routeMeta) => {
+      if (!provider || !routeMeta?.path) throw new Error("Missing V2 route.");
+      if (routeMeta.kind === "direct") {
+        const meta = await getV2QuoteWithMeta(
+          provider,
+          amountWei,
+          routeMeta.path[0],
+          routeMeta.path[1]
+        );
+        return {
+          amountOut: meta.amountOut,
+          priceImpact: meta.priceImpactPct ?? null,
+          pairs: [meta.pairAddress].filter(Boolean),
+        };
+      }
+      const amountOut = await getV2Quote(provider, amountWei, routeMeta.path);
+      return {
+        amountOut,
+        priceImpact: null,
+        pairs: routeMeta.pairs || [],
+      };
+    },
+    []
+  );
+  const buildV2Route = useCallback(
+    async (opts = {}) => {
+      if (!hasV2Support) {
+        throw new Error("V2 router not configured for this network.");
+      }
+      const { amountWei } = opts;
+      const provider = getReadOnlyProvider();
+      const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
+      const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+      const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+      if (!a || !b) throw new Error("Select tokens with valid addresses.");
+
+      const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
+      const hasDirect = directPair && directPair !== ZERO_ADDRESS;
+      const canHop = a !== WETH_ADDRESS && b !== WETH_ADDRESS;
+      let hopPairA = null;
+      let hopPairB = null;
+      let hasHop = false;
+      if (canHop) {
+        hopPairA = await factory.getPair(a, WETH_ADDRESS).catch(() => ZERO_ADDRESS);
+        hopPairB = await factory.getPair(WETH_ADDRESS, b).catch(() => ZERO_ADDRESS);
+        hasHop =
+          hopPairA &&
+          hopPairB &&
+          hopPairA !== ZERO_ADDRESS &&
+          hopPairB !== ZERO_ADDRESS;
+      }
+
+      if (!hasDirect && !hasHop) {
+        throw new Error("No V2 pools found for this pair.");
+      }
+
+      const directRoute = hasDirect
+        ? {
+            protocol: "V2",
+            kind: "direct",
+            path: [a, b],
+            pairs: [directPair].filter(Boolean),
+          }
+        : null;
+      const hopRoute = hasHop
+        ? {
+            protocol: "V2",
+            kind: "hop",
+            path: [a, WETH_ADDRESS, b],
+            pairs: [hopPairA, hopPairB].filter(Boolean),
+          }
+        : null;
+
+      if (!amountWei) {
+        return directRoute || hopRoute;
+      }
+
+      let directQuote = null;
+      let hopQuote = null;
+      if (directRoute) {
+        directQuote = await quoteV2Route(provider, amountWei, directRoute).catch(
+          () => null
+        );
+      }
+      if (hopRoute) {
+        hopQuote = await quoteV2Route(provider, amountWei, hopRoute).catch(
+          () => null
+        );
+      }
+
+      if (directQuote && hopQuote) {
+        if (hopQuote.amountOut > directQuote.amountOut) {
+          return {
+            ...hopRoute,
+            amountOut: hopQuote.amountOut,
+            priceImpact: hopQuote.priceImpact,
+          };
+        }
+        return {
+          ...directRoute,
+          amountOut: directQuote.amountOut,
+          priceImpact: directQuote.priceImpact,
+        };
+      }
+
+      if (directQuote) {
+        return {
+          ...directRoute,
+          amountOut: directQuote.amountOut,
+          priceImpact: directQuote.priceImpact,
+        };
+      }
+      if (hopQuote) {
+        return {
+          ...hopRoute,
+          amountOut: hopQuote.amountOut,
+          priceImpact: hopQuote.priceImpact,
+        };
+      }
+
+      throw new Error("No V2 route available for this pair.");
+    },
+    [
+      buyMeta?.address,
+      buyToken,
+      hasV2Support,
+      quoteV2Route,
+      sellMeta?.address,
+      sellToken,
+    ]
+  );
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
     (sellToken === "WETH" && buyToken === "ETH");
@@ -894,41 +1042,72 @@ export default function SwapSection({ balances, address, chainId }) {
     },
     [tokenRegistry]
   );
-  const routeBreakdown = useMemo(() => {
+  const routeSegments = useMemo(() => {
     if (isDirectEthWeth) {
       return [
         {
           protocol: "WRAP",
-          fee: null,
-          pool: null,
-          from: resolveRouteToken(sellToken),
-          to: resolveRouteToken(buyToken),
+          sharePct: 100,
+          hops: [
+            {
+              protocol: "WRAP",
+              fee: null,
+              pool: null,
+              from: resolveRouteToken(sellToken),
+              to: resolveRouteToken(buyToken),
+            },
+          ],
         },
       ];
     }
-    const path = Array.isArray(quoteMeta?.path) ? quoteMeta.path : [];
-    const fees = Array.isArray(quoteMeta?.fees) ? quoteMeta.fees : [];
-    if (!path.length || !fees.length) return [];
-    const hops = [];
-    const hopCount = Math.min(fees.length, path.length - 1);
-    for (let i = 0; i < hopCount; i += 1) {
-      hops.push({
-        protocol: "V3",
-        fee: fees[i],
-        pool: quoteMeta?.pools?.[i] || null,
-        from: resolveRouteToken(path[i]),
-        to: resolveRouteToken(path[i + 1]),
-      });
+    if (!quoteMeta) return [];
+
+    const buildSegment = (route, sharePct = 100) => {
+      if (!route) return null;
+      const path = Array.isArray(route.path) ? route.path : [];
+      const fees = Array.isArray(route.fees) ? route.fees : [];
+      const pools = Array.isArray(route.pools) ? route.pools : [];
+      const pairs = Array.isArray(route.pairs) ? route.pairs : [];
+      const protocol = route.protocol || (fees.length ? "V3" : "V2");
+      const hops = [];
+      if (path.length >= 2) {
+        const hopCount = path.length - 1;
+        for (let i = 0; i < hopCount; i += 1) {
+          hops.push({
+            protocol,
+            fee: protocol === "V3" ? fees[i] : 3000,
+            pool: protocol === "V3" ? pools[i] || null : pairs[i] || null,
+            from: resolveRouteToken(path[i]),
+            to: resolveRouteToken(path[i + 1]),
+          });
+        }
+      }
+      return {
+        protocol,
+        sharePct,
+        hops,
+        kind: route.kind,
+      };
+    };
+
+    if (quoteMeta.protocol === "SPLIT" && Array.isArray(quoteMeta.routes)) {
+      return quoteMeta.routes
+        .map((route) => buildSegment(route, route.sharePct ?? 50))
+        .filter(Boolean);
     }
-    return hops;
+
+    const single = buildSegment(quoteMeta, 100);
+    return single ? [single] : [];
   }, [buyToken, isDirectEthWeth, quoteMeta, resolveRouteToken, sellToken]);
   const routeModeLabel = isDirectEthWeth
     ? "Wrap/Unwrap"
-    : quoteMeta?.kind === "direct"
-      ? "Direct"
-      : quoteMeta?.kind === "hop"
-        ? "2-hop"
-        : "";
+    : quoteMeta?.protocol === "SPLIT"
+      ? "Split"
+      : quoteMeta?.kind === "direct"
+        ? "Direct"
+        : quoteMeta?.kind === "hop"
+          ? "2-hop"
+          : "";
 
   // Re-run quotes when LP reserves move (Sync events via miniBlocks)
   useEffect(() => {
@@ -1007,8 +1186,7 @@ export default function SwapSection({ balances, address, chainId }) {
         setQuoteError("Wallet network differs from selected network. Switch network to quote.");
         setQuoteOut(null);
         setQuoteOutRaw(null);
-        setApproveNeeded(false);
-        setApprovalTarget(null);
+        setApprovalTargets([]);
         setQuoteRoute([]);
         setQuotePairs([]);
         setQuoteMeta(null);
@@ -1023,8 +1201,7 @@ export default function SwapSection({ balances, address, chainId }) {
       setQuoteOut(null);
       setQuoteOutRaw(null);
       setPriceImpact(null);
-      setApproveNeeded(false);
-      setApprovalTarget(null);
+      setApprovalTargets([]);
       setQuoteRoute([]);
       setQuotePairs([]);
       setQuoteMeta(null);
@@ -1037,8 +1214,20 @@ export default function SwapSection({ balances, address, chainId }) {
         setQuoteError("Select tokens with valid addresses.");
         return;
       }
-      if (!hasV3Support) {
+      if (!hasV2Support && !hasV3Support) {
+        setQuoteError("No router configured for this network.");
+        return;
+      }
+      if (routePreference === "v2" && !hasV2Support) {
+        setQuoteError("V2 router not configured for this network.");
+        return;
+      }
+      if (routePreference === "v3" && !hasV3Support) {
         setQuoteError("V3 router not configured for this network.");
+        return;
+      }
+      if (routePreference === "split" && (!hasV2Support || !hasV3Support)) {
+        setQuoteError("Split routing requires both V2 and V3 routers.");
         return;
       }
 
@@ -1048,8 +1237,7 @@ export default function SwapSection({ balances, address, chainId }) {
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
         // Direct wrap/unwrap never needs approvals; reset any previous state.
-        setApproveNeeded(false);
-        setApprovalTarget(null);
+        setApprovalTargets([]);
         setQuoteRoute([sellToken, buyToken]);
         setQuotePairs([]);
         setQuoteMeta(null);
@@ -1073,16 +1261,124 @@ export default function SwapSection({ balances, address, chainId }) {
           const buyDecimals = requireDecimals(buyToken, buyMeta);
           const amountWei = parseUnits(amountIn, sellDecimals);
 
-          const routeMeta = await buildV3Route({ amountWei });
-          setQuoteMeta(routeMeta);
-          setQuoteRoute(routeMeta.path || []);
-          setQuotePairs([]); // disable V2 Sync-based live updates
-          const amountOut = await quoteV3Route(provider, amountWei, routeMeta);
+          let v3Route = null;
+          let v2Route = null;
+          if (hasV3Support && routePreference !== "v2") {
+            try {
+              const route = await buildV3Route({ amountWei, mode: executionMode });
+              const amountOut = await quoteV3Route(provider, amountWei, route);
+              v3Route = { ...route, protocol: "V3", amountOut };
+            } catch {
+              v3Route = null;
+            }
+          }
+          if (hasV2Support && routePreference !== "v3") {
+            try {
+              const route = await buildV2Route({ amountWei });
+              if (route && route.amountOut !== undefined && route.amountOut !== null) {
+                v2Route = route;
+              } else if (route) {
+                const v2Quote = await quoteV2Route(provider, amountWei, route);
+                v2Route = {
+                  ...route,
+                  amountOut: v2Quote.amountOut,
+                  priceImpact: v2Quote.priceImpact,
+                  pairs: v2Quote.pairs || route.pairs,
+                };
+              }
+            } catch {
+              v2Route = null;
+            }
+          }
+
           if (cancelled) return;
+
+          let splitRoute = null;
+          if ((routePreference === "split" || routePreference === "smart") && v2Route && v3Route) {
+            try {
+              const half = amountWei / 2n;
+              const rest = amountWei - half;
+              const v3HalfOut = await quoteV3Route(provider, half, v3Route);
+              const v2HalfOut = await getV2Quote(provider, rest, v2Route.path);
+              splitRoute = {
+                protocol: "SPLIT",
+                kind: "split",
+                amountOut: v3HalfOut + v2HalfOut,
+                routes: [
+                  {
+                    ...v3Route,
+                    amountIn: half,
+                    amountOut: v3HalfOut,
+                    sharePct: Number((half * 10000n) / amountWei) / 100,
+                  },
+                  {
+                    ...v2Route,
+                    amountIn: rest,
+                    amountOut: v2HalfOut,
+                    sharePct: Number((rest * 10000n) / amountWei) / 100,
+                  },
+                ],
+              };
+            } catch {
+              splitRoute = null;
+            }
+          }
+
+          const pickBest = (...routes) => {
+            const filtered = routes.filter(Boolean);
+            if (!filtered.length) return null;
+            return filtered.reduce((best, next) => {
+              if (!best) return next;
+              return next.amountOut > best.amountOut ? next : best;
+            }, null);
+          };
+
+          let selectedRoute = null;
+          if (routePreference === "v2") {
+            selectedRoute = v2Route;
+          } else if (routePreference === "v3") {
+            selectedRoute = v3Route;
+          } else if (routePreference === "split") {
+            selectedRoute = splitRoute;
+          } else {
+            selectedRoute = pickBest(splitRoute, v3Route, v2Route);
+          }
+
+          if (!selectedRoute) {
+            const msg =
+              routePreference === "split"
+                ? "Split route unavailable for this pair."
+                : routePreference === "v2"
+                  ? "No V2 route available for this pair."
+                  : routePreference === "v3"
+                    ? "No V3 route available for this pair."
+                    : "No route available for this pair.";
+            setQuoteError(msg);
+            return;
+          }
+
+          const amountOut = selectedRoute.amountOut;
+          if (!amountOut) {
+            setQuoteError("Unable to compute quote.");
+            return;
+          }
 
           const formatted = formatUnits(amountOut, buyDecimals);
           setQuoteOut(formatted);
           setQuoteOutRaw(amountOut);
+          setQuoteMeta(selectedRoute);
+          setQuoteRoute(selectedRoute.path || [sellToken, buyToken]);
+
+          const v2Pairs =
+            selectedRoute.protocol === "V2"
+              ? selectedRoute.pairs || []
+              : selectedRoute.protocol === "SPLIT"
+                ? (selectedRoute.routes || [])
+                    .filter((r) => r.protocol === "V2")
+                    .flatMap((r) => r.pairs || [])
+                : [];
+          setQuotePairs(v2Pairs);
+
           setLastQuoteAt(Date.now());
           const prevRaw = lastQuoteOutRef.current;
           lastQuoteOutRef.current = amountOut;
@@ -1099,10 +1395,8 @@ export default function SwapSection({ balances, address, chainId }) {
             setQuoteVolatilityPct(0);
           }
 
-          // Price impact not computed for V3 yet (pool state needed).
-          setPriceImpact(null);
+          setPriceImpact(selectedRoute.priceImpact ?? null);
 
-          // Precompute allowance requirement for ERC20 sells (needs signer). Skip for direct wrap/unwrap.
           if (allowanceDebounceRef.current) {
             clearTimeout(allowanceDebounceRef.current);
             allowanceDebounceRef.current = null;
@@ -1114,31 +1408,43 @@ export default function SwapSection({ balances, address, chainId }) {
                 const signer = await signerProvider.getSigner();
                 const user = await signer.getAddress();
                 const token = new Contract(sellAddress, ERC20_ABI, signer);
-                const allowance = await token.allowance(user, PERMIT2_ADDRESS);
-                const desiredAllowance = approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+                const desiredAllowance =
+                  approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+
+                const targets = [];
+                const check = async (spender, label) => {
+                  if (!spender) return;
+                  const allowance = await token.allowance(user, spender);
+                  if (allowance < amountWei) {
+                    targets.push({
+                      symbol: sellToken,
+                      address: sellAddress,
+                      desiredAllowance,
+                      spender,
+                      label,
+                    });
+                  }
+                };
+
+                if (selectedRoute.protocol === "V2") {
+                  await check(UNIV2_ROUTER_ADDRESS, "V2 Router");
+                } else if (selectedRoute.protocol === "V3") {
+                  await check(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+                } else if (selectedRoute.protocol === "SPLIT") {
+                  await check(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+                  await check(UNIV2_ROUTER_ADDRESS, "V2 Router");
+                }
+
                 if (cancelled) return;
-                const needsApproval = allowance < amountWei;
-                setApproveNeeded(needsApproval);
-                setApprovalTarget(
-                  needsApproval
-                    ? {
-                        symbol: sellToken,
-                        address: sellAddress,
-                        desiredAllowance,
-                        spender: PERMIT2_ADDRESS,
-                      }
-                    : null
-                );
+                setApprovalTargets(targets);
               } catch {
                 if (cancelled) return;
-                setApproveNeeded(false);
-                setApprovalTarget(null);
+                setApprovalTargets([]);
               }
             }, 200);
           } else {
             if (cancelled) return;
-            setApproveNeeded(false);
-            setApprovalTarget(null);
+            setApprovalTargets([]);
           }
         } catch (e) {
           if (cancelled) return;
@@ -1161,10 +1467,13 @@ export default function SwapSection({ balances, address, chainId }) {
     buyMeta?.address,
     buyMeta?.decimals,
     buyToken,
+    buildV2Route,
     buildV3Route,
+    quoteV2Route,
     quoteV3Route,
     isDirectEthWeth,
     isSupported,
+    hasV2Support,
     hasV3Support,
     approvalMode,
     sellMeta?.address,
@@ -1172,6 +1481,7 @@ export default function SwapSection({ balances, address, chainId }) {
     sellToken,
     liveRouteTick,
     quoteLockedUntil,
+    routePreference,
     displaySellSymbol,
     displayBuySymbol,
     isChainMatch,
@@ -1222,6 +1532,25 @@ export default function SwapSection({ balances, address, chainId }) {
       ? displayRoute
       : [displaySellSymbol, displayBuySymbol];
   const isQuoteLocked = quoteLockedUntil && quoteLockedUntil > Date.now();
+  const quoteSourceLabel = (() => {
+    if (quoteLoading) return "Loading quote...";
+    if (quoteError) return quoteError;
+    if (!amountIn) return "Enter an amount to fetch a quote";
+    if (isDirectEthWeth) return "Direct wrap/unwrap (no fee)";
+    if (quoteMeta?.protocol === "V2") return "Live quote via Uniswap V2";
+    if (quoteMeta?.protocol === "SPLIT") return "Smart split route across V2 + V3";
+    if (quoteMeta?.protocol === "V3") return "Live quote via Uniswap V3 (Universal Router)";
+    return "Fetching best route...";
+  })();
+  const routeProtocolLabel = isDirectEthWeth
+    ? "Wrap/Unwrap"
+    : quoteMeta?.protocol === "SPLIT"
+      ? "V2 + V3"
+      : quoteMeta?.protocol || "V3";
+  const hopCount = routeSegments.reduce((sum, seg) => sum + (seg.hops?.length || 0), 0);
+  const approvalSummary = approvalTargets.length
+    ? approvalTargets.map((t) => t.label || "Approval").join(" + ")
+    : "";
 
   useEffect(() => {
     if (!swapStatus) return undefined;
@@ -1271,8 +1600,7 @@ export default function SwapSection({ balances, address, chainId }) {
       const spender = approvalTarget.spender || PERMIT2_ADDRESS;
       const tx = await token.approve(spender, approvalTarget.desiredAllowance);
       await tx.wait();
-      setApproveNeeded(false);
-      setApprovalTarget(null);
+      setApprovalTargets((prev) => prev.slice(1));
       setSwapStatus({
         variant: "success",
         message: `Approval updated for ${approvalTarget.symbol}.`,
@@ -1285,8 +1613,7 @@ export default function SwapSection({ balances, address, chainId }) {
         const normalized = typeof status === "bigint" ? Number(status) : status;
         const symbol = approvalTarget?.symbol || "token";
         if (normalized === 1) {
-          setApproveNeeded(false);
-          setApprovalTarget(null);
+          setApprovalTargets((prev) => prev.slice(1));
           setSwapStatus({
             variant: "success",
             hash: txHash,
@@ -1340,11 +1667,26 @@ export default function SwapSection({ balances, address, chainId }) {
       if (!isSupported) {
         throw new Error("Select tokens with valid addresses.");
       }
-      if (!hasV3Support) {
-        throw new Error("V3 router not configured for this network.");
+      if (!hasV2Support && !hasV3Support) {
+        throw new Error("No router configured for this network.");
       }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
+      }
+
+      const routePlan = isDirectEthWeth ? { protocol: "WRAP" } : quoteMeta;
+      if (!routePlan && !isDirectEthWeth) {
+        throw new Error("Route not available. Fetch a quote first.");
+      }
+      const routeProtocol = routePlan?.protocol || "V3";
+      if (routeProtocol === "V2" && !hasV2Support) {
+        throw new Error("V2 router not configured for this network.");
+      }
+      if (routeProtocol === "V3" && !hasV3Support) {
+        throw new Error("V3 router not configured for this network.");
+      }
+      if (routeProtocol === "SPLIT" && (!hasV2Support || !hasV3Support)) {
+        throw new Error("Split routing requires both V2 and V3 routers.");
       }
 
       const decimalsOut = requireDecimals(buyToken, buyMeta);
@@ -1363,21 +1705,31 @@ export default function SwapSection({ balances, address, chainId }) {
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, PERMIT2_ADDRESS);
-        if (allowance < amountWei) {
-          throw new Error(
-            `Approval required for ${sellToken}. Please approve Permit2 before swapping.`
-          );
+        const checkAllowance = async (spender, label) => {
+          const allowance = await token.allowance(user, spender);
+          if (allowance < amountWei) {
+            throw new Error(
+              `Approval required for ${sellToken}. Please approve ${label} before swapping.`
+            );
+          }
+        };
+        if (routeProtocol === "V2") {
+          await checkAllowance(UNIV2_ROUTER_ADDRESS, "the V2 router");
+        } else if (routeProtocol === "V3") {
+          await checkAllowance(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+        } else if (routeProtocol === "SPLIT") {
+          await checkAllowance(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+          await checkAllowance(UNIV2_ROUTER_ADDRESS, "the V2 router");
         }
       }
 
       // Pre-flight re-quote if the market moved too fast (anti-sandwich guard).
       let guardedRouteMeta = null;
       let guardedAmountOut = quoteOutRaw;
-      if (!isDirectEthWeth) {
+      if (!isDirectEthWeth && routeProtocol === "V3") {
         const readProvider = getReadOnlyProvider();
         const candidateRoute =
-          quoteMeta || (await buildV3Route({ amountWei, mode: executionMode }));
+          routePlan || (await buildV3Route({ amountWei, mode: executionMode }));
         const freshOut = await quoteV3Route(readProvider, amountWei, candidateRoute);
         const freshOutNum = Number(formatUnits(freshOut, decimalsOut));
         const currentOutNum =
@@ -1393,11 +1745,12 @@ export default function SwapSection({ balances, address, chainId }) {
         setQuoteVolatilityPct(deltaPct);
 
         if (deltaPct > reQuoteThreshold) {
+          const refreshedRoute = { ...candidateRoute, protocol: "V3", amountOut: freshOut };
           setQuoteOut(formatUnits(freshOut, decimalsOut));
           setQuoteOutRaw(freshOut);
-          setQuoteRoute(candidateRoute?.path || []);
+          setQuoteRoute(refreshedRoute?.path || []);
           setQuotePairs([]);
-          setQuoteMeta(candidateRoute);
+          setQuoteMeta(refreshedRoute);
           setLastQuoteAt(Date.now());
           setPriceImpact(null);
           setQuoteVolatilityPct(deltaPct);
@@ -1483,7 +1836,205 @@ export default function SwapSection({ balances, address, chainId }) {
         return;
       }
 
-      const routeMeta = guardedRouteMeta || quoteMeta || (await buildV3Route({ amountWei }));
+      if (routeProtocol === "SPLIT") {
+        const legs = Array.isArray(routePlan?.routes) ? routePlan.routes : [];
+        if (!legs.length) {
+          throw new Error("Split route unavailable. Please re-quote.");
+        }
+        const readProvider = getReadOnlyProvider();
+        const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
+        const abi = AbiCoder.defaultAbiCoder();
+        const universal = new Contract(
+          UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+          UNIV3_UNIVERSAL_ROUTER_ABI,
+          signer
+        );
+        const v2Router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
+
+        for (const leg of legs) {
+          if (leg.protocol === "V3") {
+            const legAmountIn = leg.amountIn ?? amountWei;
+            let legAmountOut = leg.amountOut;
+            if (!legAmountOut) {
+              legAmountOut = await quoteV3Route(readProvider, legAmountIn, leg);
+            }
+            const minOut = (legAmountOut * BigInt(10000 - slippageBps)) / 10000n;
+            const encodedPath = encodeV3Path(leg.path || [], leg.fees || []);
+            const commands = [];
+            const inputs = [];
+            if (sellToken === "ETH") {
+              commands.push(UR_COMMANDS.WRAP_ETH);
+              inputs.push(
+                abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, legAmountIn])
+              );
+              const swapRecipient =
+                buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+              commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+              inputs.push(
+                abi.encode(
+                  ["address", "uint256", "uint256", "bytes", "bool"],
+                  [swapRecipient, legAmountIn, minOut, encodedPath, false]
+                )
+              );
+              if (buyToken === "ETH") {
+                commands.push(UR_COMMANDS.UNWRAP_WETH);
+                inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
+              }
+            } else {
+              const swapRecipient =
+                buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+              commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+              inputs.push(
+                abi.encode(
+                  ["address", "uint256", "uint256", "bytes", "bool"],
+                  [swapRecipient, legAmountIn, minOut, encodedPath, true]
+                )
+              );
+              if (buyToken === "ETH") {
+                commands.push(UR_COMMANDS.UNWRAP_WETH);
+                inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
+              }
+            }
+            const commandBytes = buildCommandBytes(commands);
+            const callOpts = sellToken === "ETH" ? { value: legAmountIn } : {};
+            const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
+            await tx.wait();
+          } else if (leg.protocol === "V2") {
+            const legAmountIn = leg.amountIn ?? amountWei;
+            let legAmountOut = leg.amountOut;
+            if (!legAmountOut) {
+              legAmountOut = await getV2Quote(readProvider, legAmountIn, leg.path || []);
+            }
+            const minOut = (legAmountOut * BigInt(10000 - slippageBps)) / 10000n;
+            let tx;
+            if (sellToken === "ETH") {
+              tx = await v2Router.swapExactETHForTokens(
+                minOut,
+                leg.path || [],
+                user,
+                deadline,
+                { value: legAmountIn }
+              );
+            } else if (buyToken === "ETH") {
+              tx = await v2Router.swapExactTokensForETH(
+                legAmountIn,
+                minOut,
+                leg.path || [],
+                user,
+                deadline
+              );
+            } else {
+              tx = await v2Router.swapExactTokensForTokens(
+                legAmountIn,
+                minOut,
+                leg.path || [],
+                user,
+                deadline
+              );
+            }
+            await tx.wait();
+          }
+        }
+
+        setSwapStatus({
+          message: "Split swap executed (2 tx).",
+          variant: "success",
+        });
+        return;
+      }
+
+      if (routeProtocol === "V2") {
+        const routeMeta = routePlan || {};
+        const path = routeMeta?.path || [];
+        if (!Array.isArray(path) || path.length < 2) {
+          throw new Error("Invalid V2 path.");
+        }
+        const readProvider = getReadOnlyProvider();
+        let amountOut = routeMeta.amountOut;
+        if (!amountOut) {
+          amountOut = await getV2Quote(readProvider, amountWei, path);
+        }
+        if (!amountOut) {
+          throw new Error("Unable to compute minimum output.");
+        }
+        const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
+        const router = new Contract(UNIV2_ROUTER_ADDRESS, UNIV2_ROUTER_ABI, signer);
+        const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
+        let tx;
+        if (sellToken === "ETH") {
+          tx = await router.swapExactETHForTokens(minOut, path, user, deadline, {
+            value: amountWei,
+          });
+        } else if (buyToken === "ETH") {
+          tx = await router.swapExactTokensForETH(amountWei, minOut, path, user, deadline);
+        } else {
+          tx = await router.swapExactTokensForTokens(amountWei, minOut, path, user, deadline);
+        }
+        pendingTxHashRef.current = tx.hash;
+        listenForTx(tx.hash, {
+          routeLabels: routeLabelsSnapshot,
+          buyDecimals: decimalsOut,
+          buySymbol: displayBuySymbol,
+          minReceivedRaw: minOut,
+          expectedRaw: amountOut,
+          buyAddress: buyToken === "ETH" ? null : buyMeta?.address,
+          user,
+        });
+        const receipt = await tx.wait();
+        pendingExecutionRef.current = {
+          expectedRaw: amountOut,
+          minRaw: minOut,
+          priceImpactSnapshot: priceImpact,
+          slippagePct: effectiveSlippagePct,
+          routeLabels: routeLabelsSnapshot,
+          buyDecimals: decimalsOut,
+          buySymbol: displayBuySymbol,
+        };
+        const targetAddress =
+          buyToken === "ETH" ? null : buyMeta?.address;
+        const actualOutRaw = targetAddress
+          ? findActualOutput(receipt, targetAddress, user, {})
+          : null;
+        const resolvedExpected = pendingExecutionRef.current.expectedRaw || amountOut;
+        const resolvedMin = pendingExecutionRef.current.minRaw || minOut;
+        const resolvedActual = actualOutRaw || resolvedExpected || resolvedMin;
+        const expectedFloat = resolvedExpected
+          ? Number(formatUnits(resolvedExpected, decimalsOut))
+          : null;
+        const actualFloat = resolvedActual
+          ? Number(formatUnits(resolvedActual, decimalsOut))
+          : null;
+        const minFloat = resolvedMin
+          ? Number(formatUnits(resolvedMin, decimalsOut))
+          : null;
+        const grade = computeOutcomeGrade(expectedFloat, actualFloat, minFloat);
+        pushExecutionProof({
+          expected: formatDisplayAmount(expectedFloat, displayBuySymbol),
+          executed: formatDisplayAmount(actualFloat, displayBuySymbol),
+          minReceived: formatDisplayAmount(minFloat, displayBuySymbol),
+          priceImpact: pendingExecutionRef.current.priceImpactSnapshot ?? priceImpact,
+          slippage: pendingExecutionRef.current.slippagePct ?? effectiveSlippagePct,
+          gasUsed: receipt?.gasUsed ? Number(receipt.gasUsed) : null,
+          txHash: receipt?.hash,
+          deltaPct: grade.deltaPct,
+          route: pendingExecutionRef.current.routeLabels,
+          grade,
+        });
+        setSwapStatus({
+          message: `Swap executed. Min received: ${formatUnits(
+            minOut,
+            buyMeta?.decimals ?? 18
+          )} ${buyToken}`,
+          hash: receipt.hash,
+          variant: "success",
+        });
+        return;
+      }
+
+      const routeMeta =
+        guardedRouteMeta ||
+        (routePlan?.protocol === "V3" ? routePlan : null) ||
+        (await buildV3Route({ amountWei }));
       const path = routeMeta?.path || [];
       if (!routeMeta?.fees || !routeMeta.fees.length) {
         throw new Error("Missing V3 fee tier for this route.");
@@ -1854,14 +2405,7 @@ export default function SwapSection({ balances, address, chainId }) {
                 {quoteOut !== null ? Number(quoteOut).toFixed(6) : "0.00"}
               </div>
               <div className="text-[11px] text-slate-500">
-                {quoteLoading
-                  ? "Loading quote..."
-              : quoteError ||
-                (amountIn
-                  ? isDirectEthWeth
-                    ? "Direct wrap/unwrap (no fee)"
-                    : "Live quote via Uniswap V3 (Universal Router)"
-                  : "Enter an amount to fetch a quote")}
+                {quoteSourceLabel}
               </div>
             </div>
           </div>
@@ -1899,6 +2443,33 @@ export default function SwapSection({ balances, address, chainId }) {
               </div>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-2">
+            <span>Routing:</span>
+            <div className="inline-flex flex-wrap items-center gap-1 rounded-full bg-slate-900/70 border border-slate-800 p-1">
+              {ROUTE_PREFS.map((opt) => {
+                const disabled =
+                  (opt.id === "v2" && !hasV2Support) ||
+                  (opt.id === "v3" && !hasV3Support) ||
+                  (opt.id === "split" && (!hasV2Support || !hasV3Support));
+                return (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setRoutePreference(opt.id)}
+                    className={`px-3 py-1 rounded-full transition ${
+                      routePreference === opt.id
+                        ? "bg-sky-500/20 text-sky-100"
+                        : "text-slate-400 hover:text-slate-100"
+                    } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                    title={disabled ? "Route not available on this network" : ""}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200 mb-2">
             <span className="text-slate-400">Path:</span>
             {activeRouteLabels.map((label, idx) => (
@@ -1915,56 +2486,79 @@ export default function SwapSection({ balances, address, chainId }) {
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-3">
             <span>Protocol:</span>
             <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-              {isDirectEthWeth ? "Wrap/Unwrap" : "V3"}
+              {routeProtocolLabel}
             </span>
             {routeModeLabel && (
               <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
                 {routeModeLabel}
               </span>
             )}
-            {routeBreakdown.length > 0 && (
+            {hopCount > 0 && (
               <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                {routeBreakdown.length} hop{routeBreakdown.length > 1 ? "s" : ""}
+                {hopCount} hop{hopCount > 1 ? "s" : ""}
               </span>
             )}
           </div>
-          {routeBreakdown.length ? (
-            <div className="space-y-2 text-[12px] text-slate-200 mb-3">
-              {routeBreakdown.map((hop, idx) => (
-                <div
-                  key={`hop-${idx}`}
-                  className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-900/60 border border-slate-800 px-3 py-2"
-                >
-                  <div className="inline-flex items-center gap-2">
-                    <TokenLogo
-                      token={hop.from.meta}
-                      fallbackSymbol={hop.from.symbol}
-                      imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                      placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
-                    />
-                    <span className="font-semibold">{hop.from.symbol}</span>
-                  </div>
-                  <span className="text-slate-500">-&gt;</span>
-                  <div className="inline-flex items-center gap-2">
-                    <TokenLogo
-                      token={hop.to.meta}
-                      fallbackSymbol={hop.to.symbol}
-                      imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                      placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
-                    />
-                    <span className="font-semibold">{hop.to.symbol}</span>
-                  </div>
-                  <span className="px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 text-[10px] text-slate-200">
-                    {hop.protocol}
-                    {hop.fee !== null && hop.fee !== undefined
-                      ? ` ${formatV3Fee(hop.fee)}`
-                      : ""}
-                  </span>
-                  {hop.pool ? (
-                    <span className="text-[10px] text-slate-500">
-                      pool {shortenAddress(hop.pool)}
+          {routeSegments.length ? (
+            <div className="space-y-3 text-[12px] text-slate-200 mb-3">
+              {routeSegments.map((segment, segIdx) => (
+                <div key={`segment-${segIdx}`} className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                    <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                      {segment.protocol}
                     </span>
-                  ) : null}
+                    {segment.sharePct !== null && segment.sharePct !== undefined && segment.sharePct !== 100 ? (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                        {segment.sharePct.toFixed(2)}%
+                      </span>
+                    ) : null}
+                    {segment.kind ? (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                        {segment.kind === "hop"
+                          ? "2-hop"
+                          : segment.kind === "direct"
+                            ? "Direct"
+                            : segment.kind}
+                      </span>
+                    ) : null}
+                  </div>
+                  {segment.hops.map((hop, idx) => (
+                    <div
+                      key={`hop-${segIdx}-${idx}`}
+                      className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-900/60 border border-slate-800 px-3 py-2"
+                    >
+                      <div className="inline-flex items-center gap-2">
+                        <TokenLogo
+                          token={hop.from.meta}
+                          fallbackSymbol={hop.from.symbol}
+                          imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                          placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
+                        />
+                        <span className="font-semibold">{hop.from.symbol}</span>
+                      </div>
+                      <span className="text-slate-500">-&gt;</span>
+                      <div className="inline-flex items-center gap-2">
+                        <TokenLogo
+                          token={hop.to.meta}
+                          fallbackSymbol={hop.to.symbol}
+                          imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                          placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
+                        />
+                        <span className="font-semibold">{hop.to.symbol}</span>
+                      </div>
+                      <span className="px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 text-[10px] text-slate-200">
+                        {hop.protocol}
+                        {hop.fee !== null && hop.fee !== undefined
+                          ? ` ${formatV3Fee(hop.fee)}`
+                          : ""}
+                      </span>
+                      {hop.pool ? (
+                        <span className="text-[10px] text-slate-500">
+                          pool {shortenAddress(hop.pool)}
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
@@ -1973,6 +2567,11 @@ export default function SwapSection({ balances, address, chainId }) {
               Route details will appear once a live quote is available.
             </div>
           )}
+          {quoteMeta?.protocol === "SPLIT" ? (
+            <div className="text-[11px] text-amber-200 mb-2">
+              Split routing executes two swaps (V2 + V3). You will sign two transactions.
+            </div>
+          ) : null}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Expected output</span>
@@ -2145,7 +2744,7 @@ export default function SwapSection({ balances, address, chainId }) {
                   </span>
                   {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">
-                      Needs approval: {amountIn} {sellToken} to Permit2 (Universal Router).
+                      Needs approval: {amountIn} {sellToken} to {approvalSummary || "router"}.
                     </span>
                   ) : (
                     <span className="text-slate-400">
@@ -2166,7 +2765,7 @@ export default function SwapSection({ balances, address, chainId }) {
               >
                 {approveLoading
                   ? "Approving..."
-                  : `Approve ${approvalTarget?.symbol || sellToken}`}
+                  : `Approve ${approvalTarget?.symbol || sellToken}${approvalTarget?.label ? ` (${approvalTarget.label})` : ""}`}
               </button>
             ) : null}
             <button

@@ -5331,33 +5331,9 @@ export default function LiquiditySection({
                                   </div>
                                 </div>
 
-                                <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setNftMetaById((prev) => ({
-                                        ...prev,
-                                        [selectedPosition.tokenId]: null,
-                                      }));
-                                      setNftMetaRefreshTick((v) => v + 1);
-                                    }}
-                                    className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                                  >
-                                    Reload metadata
-                                  </button>
-                                  {hasMetaTrace && (
-                                    <button
-                                      type="button"
-                                      onClick={() => setShowNftDebug((v) => !v)}
-                                      className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                                    >
-                                      {showNftDebug ? "Hide metadata" : "Show metadata"}
-                                    </button>
-                                  )}
-                                  {metaState.loading && (
-                                    <span className="text-slate-500">Loading tokenURI...</span>
-                                  )}
-                                </div>
+                                {metaState.loading && (
+                                  <div className="mt-4 text-[11px] text-slate-500">Loading tokenURI...</div>
+                                )}
                                 {metaState.error && (
                                   <div className="mt-3 text-[11px] text-amber-200">
                                     {metaState.error}
