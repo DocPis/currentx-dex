@@ -526,6 +526,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     []
   );
 
+  const findTokenMetaByAddress = useCallback(
+    (addr) => {
+      if (!addr) return null;
+      const lower = addr.toLowerCase();
+      return Object.values(tokenRegistry).find(
+        (t) => t?.address && t.address.toLowerCase() === lower
+      );
+    },
+    [tokenRegistry]
+  );
+
   const getStatusStyle = (status) => {
     if (status === null) {
       return {
