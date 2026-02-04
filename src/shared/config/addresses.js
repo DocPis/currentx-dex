@@ -50,3 +50,5 @@ export const UNIV3_POSITION_MANAGER_ADDRESS = active.addresses.UNIV3_POSITION_MA
 export const UNIV3_MULTICALL_ADDRESS = active.addresses.UNIV3_MULTICALL_ADDRESS;
 export const UNIV3_MIGRATOR_ADDRESS = active.addresses.UNIV3_MIGRATOR_ADDRESS;
 export const UNIV3_POOL_INIT_CODE_HASH = active.addresses.UNIV3_POOL_INIT_CODE_HASH;
+export const UNIV3_UNIVERSAL_ROUTER_ADDRESS = active.addresses.UNIV3_UNIVERSAL_ROUTER_ADDRESS;
+export const PERMIT2_ADDRESS = active.addresses.PERMIT2_ADDRESS;

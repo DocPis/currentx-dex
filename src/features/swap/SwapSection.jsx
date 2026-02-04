@@ -1,14 +1,14 @@
 // src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, Interface, formatUnits, id, parseUnits } from "ethers";
+import { Contract, Interface, formatUnits, id, parseUnits, AbiCoder } from "ethers";
 import {
   TOKENS,
   getProvider,
-  getV2QuoteWithMeta,
-  getV2Quote,
   WETH_ADDRESS,
-  UNIV2_ROUTER_ADDRESS,
-  UNIV2_FACTORY_ADDRESS,
+  UNIV3_FACTORY_ADDRESS,
+  UNIV3_QUOTER_V2_ADDRESS,
+  UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+  PERMIT2_ADDRESS,
   getRegisteredCustomTokens,
   getReadOnlyProvider,
   EXPLORER_BASE_URL,
@@ -17,8 +17,9 @@ import {
 import {
   ERC20_ABI,
   WETH_ABI,
-  UNIV2_ROUTER_ABI,
-  UNIV2_FACTORY_ABI,
+  UNIV3_FACTORY_ABI,
+  UNIV3_QUOTER_V2_ABI,
+  UNIV3_UNIVERSAL_ROUTER_ABI,
 } from "../../shared/config/abis";
 import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
@@ -31,6 +32,14 @@ const SYNC_TOPIC =
 const TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
 const WETH_WITHDRAWAL_TOPIC = id("Withdrawal(address,uint256)").toLowerCase();
 const WETH_DEPOSIT_TOPIC = id("Deposit(address,uint256)").toLowerCase();
+const V3_FEE_TIERS = [100, 500, 3000, 10000];
+const UR_COMMANDS = {
+  V3_SWAP_EXACT_IN: 0x00,
+  V3_SWAP_EXACT_OUT: 0x01,
+  SWEEP: 0x04,
+  WRAP_ETH: 0x0b,
+  UNWRAP_WETH: 0x0c,
+};
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -221,7 +230,8 @@ const friendlySwapError = (e) => {
   }
   if (
     lower.includes("insufficient output amount") ||
-    lower.includes("uniswapv2router: insufficient_output_amount")
+    lower.includes("uniswapv2router: insufficient_output_amount") ||
+    lower.includes("universalrouter")
   ) {
     return "Slippage too tight or not enough liquidity for this route.";
   }
@@ -247,7 +257,7 @@ const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
     return `No pool found for ${sellSymbol}/${buySymbol} on the selected network. Create it first or try another pair.`;
   }
   if (lower.includes("could not find") || lower.includes("not found")) {
-    return `Pair ${sellSymbol}/${buySymbol} not found on this network.`;
+    return `Pool ${sellSymbol}/${buySymbol} not found on this network.`;
   }
   if (lower.includes("timeout") || lower.includes("rate limit") || lower.includes("429")) {
     return "RPC is slow or rate-limited. Switch RPC or retry in a few seconds.";
@@ -323,6 +333,12 @@ export default function SwapSection({ balances, address, chainId }) {
   const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
   const walletChainHex = normalizeChainHex(chainId);
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
+  const hasV3Support = Boolean(
+    UNIV3_FACTORY_ADDRESS &&
+      UNIV3_QUOTER_V2_ADDRESS &&
+      UNIV3_UNIVERSAL_ROUTER_ADDRESS &&
+      PERMIT2_ADDRESS
+  );
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("CRX");
   const [amountIn, setAmountIn] = useState("");
@@ -334,7 +350,8 @@ export default function SwapSection({ balances, address, chainId }) {
   const [slippage, setSlippage] = useState("0.5");
   const [slippageCap, setSlippageCap] = useState("3");
   const [quoteRoute, setQuoteRoute] = useState([]);
-  const [quotePairs, setQuotePairs] = useState([]); // tracked LPs for realtime refresh
+  const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
+  const [quoteMeta, setQuoteMeta] = useState(null);
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -344,7 +361,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const [swapPulse, setSwapPulse] = useState(false);
   const [approvalMode, setApprovalMode] = useState("exact"); // "exact" | "unlimited"
   const [approveNeeded, setApproveNeeded] = useState(false);
-  const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance }
+  const [approvalTarget, setApprovalTarget] = useState(null); // { symbol, address, desiredAllowance, spender }
   const [approveLoading, setApproveLoading] = useState(false);
   const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
   const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
@@ -568,97 +585,161 @@ export default function SwapSection({ balances, address, chainId }) {
     [pushExecutionProof]
   );
 
-  const computeRoutePriceImpact = useCallback(
-    async (provider, amountInWei, path) => {
-      if (!provider || !Array.isArray(path) || path.length < 2) return null;
-      let amountIn = amountInWei;
-      let midPrice = 1;
-      let firstDecimals = null;
-      let lastDecimals = null;
-
-      for (let i = 0; i < path.length - 1; i += 1) {
-        const a = path[i];
-        const b = path[i + 1];
-        const meta = await getV2QuoteWithMeta(provider, amountIn, a, b);
-        const decIn = meta.decimalsIn ?? 18;
-        const decOut = meta.decimalsOut ?? 18;
-        if (i === 0) firstDecimals = decIn;
-        if (i === path.length - 2) lastDecimals = decOut;
-
-        const reserveInNorm = Number(formatUnits(meta.reserveIn, decIn));
-        const reserveOutNorm = Number(formatUnits(meta.reserveOut, decOut));
-        if (
-          !reserveInNorm ||
-          !reserveOutNorm ||
-          !Number.isFinite(reserveInNorm) ||
-          !Number.isFinite(reserveOutNorm)
-        ) {
-          return null;
-        }
-        midPrice *= reserveOutNorm / reserveInNorm;
-
-        amountIn = meta.amountOut;
+  const encodeV3Path = useCallback((tokens, fees) => {
+    if (
+      !Array.isArray(tokens) ||
+      !Array.isArray(fees) ||
+      tokens.length !== fees.length + 1
+    ) {
+      throw new Error("Invalid V3 path.");
+    }
+    const parts = [];
+    for (let i = 0; i < fees.length; i += 1) {
+      const token = (tokens[i] || "").toLowerCase().replace(/^0x/, "");
+      const next = (tokens[i + 1] || "").toLowerCase().replace(/^0x/, "");
+      const fee = Number(fees[i]);
+      if (!token || !next || !Number.isFinite(fee)) {
+        throw new Error("Invalid V3 path.");
       }
+      const feeHex = fee.toString(16).padStart(6, "0");
+      if (i === 0) parts.push(token);
+      parts.push(feeHex);
+      parts.push(next);
+    }
+    return `0x${parts.join("")}`;
+  }, []);
 
-      if (!midPrice || !Number.isFinite(midPrice)) return null;
-      const execPrice =
-        Number(formatUnits(amountIn, lastDecimals ?? 18)) /
-        Number(formatUnits(amountInWei, firstDecimals ?? 18));
-      if (!execPrice || !Number.isFinite(execPrice)) return null;
-      const impact = ((midPrice - execPrice) / midPrice) * 100;
-      return impact >= 0 ? impact : 0;
+  const buildCommandBytes = useCallback((cmds = []) => {
+    const hex = cmds
+      .map((c) => Number(c).toString(16).padStart(2, "0"))
+      .join("");
+    return `0x${hex}`;
+  }, []);
+
+  const findV3Pool = useCallback(async (factory, tokenA, tokenB) => {
+    for (const fee of V3_FEE_TIERS) {
+      try {
+        const pool = await factory.getPool(tokenA, tokenB, fee);
+        if (pool && pool !== ZERO_ADDRESS) {
+          return { fee, pool };
+        }
+      } catch {
+        // ignore fee probe errors
+      }
+    }
+    return null;
+  }, []);
+
+  const quoteV3Route = useCallback(
+    async (provider, amountWei, routeMeta) => {
+      if (!provider || !routeMeta) throw new Error("Missing V3 route.");
+      const quoter = new Contract(
+        UNIV3_QUOTER_V2_ADDRESS,
+        UNIV3_QUOTER_V2_ABI,
+        provider
+      );
+      if (routeMeta.kind === "direct") {
+        const params = {
+          tokenIn: routeMeta.path[0],
+          tokenOut: routeMeta.path[1],
+          amountIn: amountWei,
+          fee: routeMeta.fees[0],
+          sqrtPriceLimitX96: 0,
+        };
+        const res = await quoter.quoteExactInputSingle.staticCall(params);
+        return res?.[0] ?? res?.amountOut;
+      }
+      const encodedPath = encodeV3Path(routeMeta.path, routeMeta.fees);
+      const res = await quoter.quoteExactInput.staticCall(encodedPath, amountWei);
+      return res?.[0] ?? res?.amountOut;
     },
-    []
+    [encodeV3Path]
   );
 
-  const buildPath = useCallback(
+  const buildV3Route = useCallback(
     async (opts = {}) => {
+      if (!hasV3Support) {
+        throw new Error("V3 router not configured for this network.");
+      }
       const { amountWei, mode } = opts;
       const provider = getReadOnlyProvider();
-      const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
+      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
       const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
       const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
-      const direct = await factory.getPair(a, b);
-      const hopA = await factory.getPair(a, WETH_ADDRESS);
-      const hopB = await factory.getPair(WETH_ADDRESS, b);
-      const hasDirect = direct && direct !== ZERO_ADDRESS;
-      const hasHop = hopA && hopA !== ZERO_ADDRESS && hopB && hopB !== ZERO_ADDRESS;
+      const direct = await findV3Pool(factory, a, b);
+      const hopA = await findV3Pool(factory, a, WETH_ADDRESS);
+      const hopB = await findV3Pool(factory, WETH_ADDRESS, b);
+      const hasDirect = Boolean(direct?.pool);
+      const hasHop = Boolean(hopA?.pool && hopB?.pool);
       const effectiveMode = mode || executionMode;
 
       if (!hasDirect && !hasHop) {
-        throw new Error("No route available for this pair.");
+        throw new Error("No V3 pools found for this pair.");
       }
 
-      // Protected: favor fewer hops to reduce gas/latency.
       if (effectiveMode === "protected") {
-        if (hasDirect) return { path: [a, b], pairs: [direct] };
-        if (hasHop) return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
+        if (hasDirect) {
+          return { kind: "direct", path: [a, b], pools: [direct.pool], fees: [direct.fee] };
+        }
+        if (hasHop) {
+          return {
+            kind: "hop",
+            path: [a, WETH_ADDRESS, b],
+            pools: [hopA.pool, hopB.pool],
+            fees: [hopA.fee, hopB.fee],
+          };
+        }
       }
 
-      // Turbo or default: choose best output, but bias to direct if gain < 0.15% (gas/latency saver).
       if (hasDirect && hasHop && amountWei) {
         const [directOut, hopOut] = await Promise.all([
-          getV2Quote(provider, amountWei, [a, b]),
-          getV2Quote(provider, amountWei, [a, WETH_ADDRESS, b]),
+          quoteV3Route(provider, amountWei, {
+            kind: "direct",
+            path: [a, b],
+            fees: [direct.fee],
+          }),
+          quoteV3Route(provider, amountWei, {
+            kind: "hop",
+            path: [a, WETH_ADDRESS, b],
+            fees: [hopA.fee, hopB.fee],
+          }),
         ]);
-        const betterIsHop = hopOut > directOut;
-        const diffPct =
-          directOut > 0n
-            ? Number((hopOut - directOut) * 1_000_000n / directOut) / 10_000 // ~percent with 4dp
-            : 0;
-        if (betterIsHop && diffPct > 0.15) {
-          return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
+        if (hopOut > directOut) {
+          return {
+            kind: "hop",
+            path: [a, WETH_ADDRESS, b],
+            pools: [hopA.pool, hopB.pool],
+            fees: [hopA.fee, hopB.fee],
+          };
         }
-        return { path: [a, b], pairs: [direct] };
+        return { kind: "direct", path: [a, b], pools: [direct.pool], fees: [direct.fee] };
       }
 
-      if (hasDirect) return { path: [a, b], pairs: [direct] };
-      if (hasHop) return { path: [a, WETH_ADDRESS, b], pairs: [hopA, hopB] };
-      throw new Error("No route available for this pair.");
+      if (hasDirect) {
+        return { kind: "direct", path: [a, b], pools: [direct.pool], fees: [direct.fee] };
+      }
+      if (hasHop) {
+        return {
+          kind: "hop",
+          path: [a, WETH_ADDRESS, b],
+          pools: [hopA.pool, hopB.pool],
+          fees: [hopA.fee, hopB.fee],
+        };
+      }
+      throw new Error("No V3 route available for this pair.");
     },
-    [buyMeta?.address, buyToken, executionMode, sellMeta?.address, sellToken]
+    [
+      buyMeta?.address,
+      buyToken,
+      executionMode,
+      findV3Pool,
+      hasV3Support,
+      quoteV3Route,
+      sellMeta?.address,
+      sellToken,
+    ]
   );
   const isDirectEthWeth =
     (sellToken === "ETH" && buyToken === "WETH") ||
@@ -819,6 +900,7 @@ export default function SwapSection({ balances, address, chainId }) {
         setApprovalTarget(null);
         setQuoteRoute([]);
         setQuotePairs([]);
+        setQuoteMeta(null);
         setLastQuoteAt(null);
         return;
       }
@@ -834,6 +916,7 @@ export default function SwapSection({ balances, address, chainId }) {
       setApprovalTarget(null);
       setQuoteRoute([]);
       setQuotePairs([]);
+      setQuoteMeta(null);
       setLastQuoteAt(null);
       setQuoteVolatilityPct(0);
       lastQuoteOutRef.current = null;
@@ -841,6 +924,10 @@ export default function SwapSection({ balances, address, chainId }) {
       if (!amountIn || Number.isNaN(Number(amountIn))) return;
       if (!isSupported) {
         setQuoteError("Select tokens with valid addresses.");
+        return;
+      }
+      if (!hasV3Support) {
+        setQuoteError("V3 router not configured for this network.");
         return;
       }
 
@@ -854,6 +941,7 @@ export default function SwapSection({ balances, address, chainId }) {
         setApprovalTarget(null);
         setQuoteRoute([sellToken, buyToken]);
         setQuotePairs([]);
+        setQuoteMeta(null);
         setLastQuoteAt(Date.now());
         return;
       }
@@ -874,10 +962,11 @@ export default function SwapSection({ balances, address, chainId }) {
           const buyDecimals = requireDecimals(buyToken, buyMeta);
           const amountWei = parseUnits(amountIn, sellDecimals);
 
-          const { path, pairs } = await buildPath({ amountWei });
-          setQuoteRoute(path);
-          setQuotePairs(pairs || []);
-          const amountOut = await getV2Quote(provider, amountWei, path);
+          const routeMeta = await buildV3Route({ amountWei });
+          setQuoteMeta(routeMeta);
+          setQuoteRoute(routeMeta.path || []);
+          setQuotePairs([]); // disable V2 Sync-based live updates
+          const amountOut = await quoteV3Route(provider, amountWei, routeMeta);
           if (cancelled) return;
 
           const formatted = formatUnits(amountOut, buyDecimals);
@@ -899,13 +988,8 @@ export default function SwapSection({ balances, address, chainId }) {
             setQuoteVolatilityPct(0);
           }
 
-          // price impact across full route (multi-hop aware)
-          try {
-            const impact = await computeRoutePriceImpact(provider, amountWei, path);
-            if (!cancelled) setPriceImpact(impact);
-          } catch {
-            setPriceImpact(null);
-          }
+          // Price impact not computed for V3 yet (pool state needed).
+          setPriceImpact(null);
 
           // Precompute allowance requirement for ERC20 sells (needs signer). Skip for direct wrap/unwrap.
           if (allowanceDebounceRef.current) {
@@ -919,7 +1003,7 @@ export default function SwapSection({ balances, address, chainId }) {
                 const signer = await signerProvider.getSigner();
                 const user = await signer.getAddress();
                 const token = new Contract(sellAddress, ERC20_ABI, signer);
-                const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+                const allowance = await token.allowance(user, PERMIT2_ADDRESS);
                 const desiredAllowance = approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
                 if (cancelled) return;
                 const needsApproval = allowance < amountWei;
@@ -930,6 +1014,7 @@ export default function SwapSection({ balances, address, chainId }) {
                         symbol: sellToken,
                         address: sellAddress,
                         desiredAllowance,
+                        spender: PERMIT2_ADDRESS,
                       }
                     : null
                 );
@@ -965,10 +1050,11 @@ export default function SwapSection({ balances, address, chainId }) {
     buyMeta?.address,
     buyMeta?.decimals,
     buyToken,
-    buildPath,
-    computeRoutePriceImpact,
+    buildV3Route,
+    quoteV3Route,
     isDirectEthWeth,
     isSupported,
+    hasV3Support,
     approvalMode,
     sellMeta?.address,
     sellMeta?.decimals,
@@ -1071,10 +1157,8 @@ export default function SwapSection({ balances, address, chainId }) {
       provider = await getProvider();
       const signer = await provider.getSigner();
       const token = new Contract(approvalTarget.address, ERC20_ABI, signer);
-      const tx = await token.approve(
-        UNIV2_ROUTER_ADDRESS,
-        approvalTarget.desiredAllowance
-      );
+      const spender = approvalTarget.spender || PERMIT2_ADDRESS;
+      const tx = await token.approve(spender, approvalTarget.desiredAllowance);
       await tx.wait();
       setApproveNeeded(false);
       setApprovalTarget(null);
@@ -1145,6 +1229,9 @@ export default function SwapSection({ balances, address, chainId }) {
       if (!isSupported) {
         throw new Error("Select tokens with valid addresses.");
       }
+      if (!hasV3Support) {
+        throw new Error("V3 router not configured for this network.");
+      }
       if (!quoteOutRaw) {
         throw new Error("Fetching quote, please retry");
       }
@@ -1165,10 +1252,10 @@ export default function SwapSection({ balances, address, chainId }) {
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, UNIV2_ROUTER_ADDRESS);
+        const allowance = await token.allowance(user, PERMIT2_ADDRESS);
         if (allowance < amountWei) {
           throw new Error(
-            `Approval required for ${sellToken}. Please approve the token before swapping.`
+            `Approval required for ${sellToken}. Please approve Permit2 before swapping.`
           );
         }
       }
@@ -1178,11 +1265,9 @@ export default function SwapSection({ balances, address, chainId }) {
       let guardedAmountOut = quoteOutRaw;
       if (!isDirectEthWeth) {
         const readProvider = getReadOnlyProvider();
-        const candidateRoute = quoteRoute.length
-          ? { path: quoteRoute, pairs: quotePairs }
-          : await buildPath({ amountWei, mode: executionMode });
-        const pathForCheck = candidateRoute?.path || [];
-        const freshOut = await getV2Quote(readProvider, amountWei, pathForCheck);
+        const candidateRoute =
+          quoteMeta || (await buildV3Route({ amountWei, mode: executionMode }));
+        const freshOut = await quoteV3Route(readProvider, amountWei, candidateRoute);
         const freshOutNum = Number(formatUnits(freshOut, decimalsOut));
         const currentOutNum =
           quoteOut !== null && Number.isFinite(Number(quoteOut))
@@ -1199,15 +1284,11 @@ export default function SwapSection({ balances, address, chainId }) {
         if (deltaPct > reQuoteThreshold) {
           setQuoteOut(formatUnits(freshOut, decimalsOut));
           setQuoteOutRaw(freshOut);
-          setQuoteRoute(pathForCheck);
-          setQuotePairs(candidateRoute?.pairs || []);
+          setQuoteRoute(candidateRoute?.path || []);
+          setQuotePairs([]);
+          setQuoteMeta(candidateRoute);
           setLastQuoteAt(Date.now());
-          try {
-            const impact = await computeRoutePriceImpact(readProvider, amountWei, pathForCheck);
-            setPriceImpact(impact);
-          } catch {
-            // ignore impact recompute failures
-          }
+          setPriceImpact(null);
           setQuoteVolatilityPct(deltaPct);
           setSwapStatus({
             message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
@@ -1291,55 +1372,70 @@ export default function SwapSection({ balances, address, chainId }) {
         return;
       }
 
-      const routeMeta =
-        guardedRouteMeta ||
-        (quoteRoute.length
-          ? { path: quoteRoute, pairs: quotePairs }
-          : await buildPath({ amountWei }));
+      const routeMeta = guardedRouteMeta || quoteMeta || (await buildV3Route({ amountWei }));
       const path = routeMeta?.path || [];
+      if (!routeMeta?.fees || !routeMeta.fees.length) {
+        throw new Error("Missing V3 fee tier for this route.");
+      }
       let amountOut = guardedAmountOut;
       if (!amountOut) {
         const readProvider = getReadOnlyProvider();
-        amountOut = await getV2Quote(readProvider, amountWei, path);
+        amountOut = await quoteV3Route(readProvider, amountWei, routeMeta);
       }
       if (!amountOut) {
         throw new Error("Unable to compute minimum output.");
       }
 
       const minOut = (amountOut * BigInt(10000 - slippageBps)) / 10000n;
-      const router = new Contract(
-        UNIV2_ROUTER_ADDRESS,
-        UNIV2_ROUTER_ABI,
+      const universal = new Contract(
+        UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+        UNIV3_UNIVERSAL_ROUTER_ABI,
         signer
       );
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20; // 20 minutes
+      const abi = AbiCoder.defaultAbiCoder();
+      const encodedPath = encodeV3Path(path, routeMeta?.fees || []);
 
-      let tx;
+      const commands = [];
+      const inputs = [];
+
       if (sellToken === "ETH") {
-        tx = await router.swapExactETHForTokens(
-          minOut,
-          path,
-          user,
-          deadline,
-          { value: amountWei }
+        commands.push(UR_COMMANDS.WRAP_ETH);
+        inputs.push(
+          abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, amountWei])
         );
-      } else if (buyToken === "ETH") {
-        tx = await router.swapExactTokensForETH(
-          amountWei,
-          minOut,
-          path,
-          user,
-          deadline
+        const swapRecipient =
+          buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+        commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+        inputs.push(
+          abi.encode(
+            ["address", "uint256", "uint256", "bytes", "bool"],
+            [swapRecipient, amountWei, minOut, encodedPath, false]
+          )
         );
+        if (buyToken === "ETH") {
+          commands.push(UR_COMMANDS.UNWRAP_WETH);
+          inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
+        }
       } else {
-        tx = await router.swapExactTokensForTokens(
-          amountWei,
-          minOut,
-          path,
-          user,
-          deadline
+        const swapRecipient =
+          buyToken === "ETH" ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
+        commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+        inputs.push(
+          abi.encode(
+            ["address", "uint256", "uint256", "bytes", "bool"],
+            [swapRecipient, amountWei, minOut, encodedPath, true]
+          )
         );
+        if (buyToken === "ETH") {
+          commands.push(UR_COMMANDS.UNWRAP_WETH);
+          inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
+        }
       }
+
+      const commandBytes = buildCommandBytes(commands);
+      const callOpts = sellToken === "ETH" ? { value: amountWei } : {};
+      const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
       pendingTxHashRef.current = tx.hash;
       listenForTx(tx.hash, {
@@ -1662,7 +1758,7 @@ export default function SwapSection({ balances, address, chainId }) {
                 (amountIn
                   ? isDirectEthWeth
                     ? "Direct wrap/unwrap (no fee)"
-                    : "Live quote via Uniswap V2 (MegaETH)"
+                    : "Live quote via Uniswap V3 (Universal Router)"
                   : "Enter an amount to fetch a quote")}
               </div>
             </div>
@@ -1884,7 +1980,7 @@ export default function SwapSection({ balances, address, chainId }) {
                   </span>
                   {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">
-                      Needs approval: {amountIn} {sellToken} to Uniswap router.
+                      Needs approval: {amountIn} {sellToken} to Permit2 (Universal Router).
                     </span>
                   ) : (
                     <span className="text-slate-400">
