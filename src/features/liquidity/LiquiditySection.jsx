@@ -31,6 +31,7 @@ import {
   UNIV2_PAIR_ABI,
   UNIV2_ROUTER_ABI,
   UNIV3_FACTORY_ABI,
+  UNIV3_POOL_ABI,
   UNIV3_POSITION_MANAGER_ABI,
 } from "../../shared/config/abis";
 import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
