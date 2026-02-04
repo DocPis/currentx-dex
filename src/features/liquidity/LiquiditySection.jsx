@@ -917,13 +917,23 @@ export default function LiquiditySection({
 
   const v3Chart = useMemo(() => {
     if (!v3CurrentPrice && !v3HasCustomRange) return null;
-    let min = v3HasCustomRange
-      ? v3RangeLowerNum * (1 - CHART_PADDING)
-      : v3CurrentPrice * (1 - CHART_PADDING);
-    let max = v3HasCustomRange
-      ? v3RangeUpperNum * (1 + CHART_PADDING)
-      : v3CurrentPrice * (1 + CHART_PADDING);
-    if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0 || min >= max) {
+    let min;
+    let max;
+    if (v3HasCustomRange && v3CurrentPrice) {
+      const lowerSpan = v3CurrentPrice - v3RangeLowerNum;
+      const upperSpan = v3RangeUpperNum - v3CurrentPrice;
+      const span = Math.max(lowerSpan, upperSpan, v3CurrentPrice * CHART_PADDING);
+      const paddedSpan = span * (1 + CHART_PADDING);
+      min = v3CurrentPrice - paddedSpan;
+      max = v3CurrentPrice + paddedSpan;
+    } else if (v3HasCustomRange) {
+      min = v3RangeLowerNum * (1 - CHART_PADDING);
+      max = v3RangeUpperNum * (1 + CHART_PADDING);
+    } else {
+      min = v3CurrentPrice * (1 - CHART_PADDING);
+      max = v3CurrentPrice * (1 + CHART_PADDING);
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
       return null;
     }
     const clampPct = (value) => Math.min(100, Math.max(0, value));
@@ -4399,14 +4409,6 @@ export default function LiquiditySection({
                           >
                             {formatPrice(v3RangeUpperNum || 0)}
                           </div>
-                          {v3Chart.currentPct !== null && (
-                            <div
-                              className="absolute -bottom-1 translate-x-[-50%] text-[11px] text-slate-500/80 transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.currentPct}%` }}
-                            >
-                              {v3CurrentPrice ? formatPrice(v3CurrentPrice) : "--"}
-                            </div>
-                          )}
                         </div>
                       ) : (
                         <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
