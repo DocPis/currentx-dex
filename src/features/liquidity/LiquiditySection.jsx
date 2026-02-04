@@ -1398,8 +1398,15 @@ export default function LiquiditySection({
           seen.add(p.id);
           deduped.push(p);
         });
-        setBasePools(deduped);
-        setOnchainTokens(tokenMap);
+        setBasePools((prev) => {
+          const map = new Map((prev || []).map((p) => [p.id, p]));
+          deduped.forEach((p) => {
+            const existing = map.get(p.id) || {};
+            map.set(p.id, { ...existing, ...p });
+          });
+          return Array.from(map.values());
+        });
+        setOnchainTokens((prev) => ({ ...(prev || {}), ...tokenMap }));
       } catch (err) {
         if (!cancelled) {
           // Keep the last known pools on transient RPC failures.
@@ -6088,12 +6095,17 @@ export default function LiquiditySection({
                   <div className="text-sm text-slate-400">
                     Connect your wallet to see V2 LP positions.
                   </div>
-                ) : v2LpLoading ? (
+                ) : v2LpLoading && !v2LpPositions.length ? (
                   <div className="text-sm text-slate-400">Loading positions...</div>
                 ) : v2LpError ? (
                   <div className="text-sm text-amber-200">{v2LpError}</div>
                 ) : v2LpPositions.length ? (
                   <div className="space-y-3">
+                    {v2LpLoading && (
+                      <div className="text-[11px] text-slate-500">
+                        Refreshing balances...
+                      </div>
+                    )}
                     {v2LpPositions.map((pos) => {
                       const token0 = tokenRegistry[pos.token0Symbol];
                       const token1 = tokenRegistry[pos.token1Symbol];
