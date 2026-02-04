@@ -4950,31 +4950,64 @@ export default function LiquiditySection({
                             const amount1Display =
                               amount1 !== null ? formatAmount(amount1, dec1) : "--";
 
-                            const price0 =
+                            const rawPrice0 =
                               tokenPrices[(selectedPosition.token0 || "").toLowerCase?.() || ""];
-                            const price1 =
+                            const rawPrice1 =
                               tokenPrices[(selectedPosition.token1 || "").toLowerCase?.() || ""];
+                            const isStableSymbol = (symbol) =>
+                              symbol === "USDm" || symbol === "CUSD" || symbol === "USDT0";
+                            const stable0 = isStableSymbol(meta0?.symbol || selectedPosition.token0Symbol);
+                            const stable1 = isStableSymbol(meta1?.symbol || selectedPosition.token1Symbol);
+                            let price0 =
+                              rawPrice0 !== undefined && Number.isFinite(rawPrice0)
+                                ? Number(rawPrice0)
+                                : stable0
+                                ? 1
+                                : null;
+                            let price1 =
+                              rawPrice1 !== undefined && Number.isFinite(rawPrice1)
+                                ? Number(rawPrice1)
+                                : stable1
+                                ? 1
+                                : null;
+                            const hasCurrentPrice =
+                              currentPrice !== null &&
+                              currentPrice !== undefined &&
+                              Number.isFinite(currentPrice) &&
+                              currentPrice > 0;
+                            if (price0 === null && price1 !== null && hasCurrentPrice) {
+                              price0 = price1 * Number(currentPrice);
+                            }
+                            if (price1 === null && price0 !== null && hasCurrentPrice) {
+                              price1 = price0 / Number(currentPrice);
+                            }
                             const amount0Num =
                               amount0 !== null ? Number(formatUnits(amount0, dec0)) : null;
                             const amount1Num =
                               amount1 !== null ? Number(formatUnits(amount1, dec1)) : null;
                             const value0 =
-                              price0 !== undefined && amount0Num !== null && Number.isFinite(amount0Num)
+                              price0 !== null && amount0Num !== null && Number.isFinite(amount0Num)
                                 ? amount0Num * price0
                                 : null;
                             const value1 =
-                              price1 !== undefined && amount1Num !== null && Number.isFinite(amount1Num)
+                              price1 !== null && amount1Num !== null && Number.isFinite(amount1Num)
                                 ? amount1Num * price1
                                 : null;
                             const liquidityUsd =
-                              value0 !== null && value1 !== null ? value0 + value1 : null;
+                              value0 !== null || value1 !== null
+                                ? (value0 || 0) + (value1 || 0)
+                                : null;
                             const share0 =
-                              liquidityUsd && value0 !== null
+                              liquidityUsd && value0 !== null && value1 !== null
                                 ? Math.round((value0 / liquidityUsd) * 100)
+                                : liquidityUsd && value0 !== null && value1 === null
+                                ? 100
                                 : null;
                             const share1 =
-                              liquidityUsd && value1 !== null
+                              liquidityUsd && value1 !== null && value0 !== null
                                 ? Math.max(0, 100 - (share0 || 0))
+                                : liquidityUsd && value1 !== null && value0 === null
+                                ? 100
                                 : null;
 
                             const fees0 = selectedPosition.tokensOwed0 ?? 0n;
@@ -4982,20 +5015,22 @@ export default function LiquiditySection({
                             const fees0Display = formatAmount(fees0, dec0);
                             const fees1Display = formatAmount(fees1, dec1);
                             const fees0Num =
-                              price0 !== undefined ? Number(formatUnits(fees0, dec0)) : null;
+                              price0 !== null ? Number(formatUnits(fees0, dec0)) : null;
                             const fees1Num =
-                              price1 !== undefined ? Number(formatUnits(fees1, dec1)) : null;
+                              price1 !== null ? Number(formatUnits(fees1, dec1)) : null;
                             const feesValue0 =
-                              price0 !== undefined && fees0Num !== null && Number.isFinite(fees0Num)
+                              price0 !== null && fees0Num !== null && Number.isFinite(fees0Num)
                                 ? fees0Num * price0
                                 : null;
                             const feesValue1 =
-                              price1 !== undefined && fees1Num !== null && Number.isFinite(fees1Num)
+                              price1 !== null && fees1Num !== null && Number.isFinite(fees1Num)
                                 ? fees1Num * price1
                                 : null;
                             const feesUsd =
-                              feesValue0 !== null && feesValue1 !== null
-                                ? feesValue0 + feesValue1
+                              feesValue0 !== null || feesValue1 !== null
+                                ? (feesValue0 || 0) + (feesValue1 || 0)
+                                : fees0 === 0n && fees1 === 0n
+                                ? 0
                                 : null;
 
                             const minLabel = isFullRange ? "0" : formatPrice(lowerPrice);
