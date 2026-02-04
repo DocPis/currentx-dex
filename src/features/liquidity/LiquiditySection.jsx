@@ -132,6 +132,24 @@ const formatAmount = (value, decimals = 18) => {
   }
 };
 
+const sqrtBigInt = (value) => {
+  if (value < 0n) return 0n;
+  if (value < 2n) return value;
+  let x0 = value / 2n;
+  let x1 = (x0 + value / x0) / 2n;
+  while (x1 < x0) {
+    x0 = x1;
+    x1 = (x0 + value / x0) / 2n;
+  }
+  return x0;
+};
+
+const encodePriceSqrt = (amount1, amount0) => {
+  if (!amount0 || !amount1 || amount0 <= 0n || amount1 <= 0n) return null;
+  const ratio = (amount1 << 192n) / amount0;
+  return sqrtBigInt(ratio);
+};
+
 const tickToPrice = (tick, decimals0, decimals1) => {
   if (tick === null || tick === undefined) return null;
   const base = Math.exp(Number(tick) * Math.log(TICK_BASE));
@@ -2018,10 +2036,6 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       }
 
       const fee = Number(v3FeeTier);
-      const pool = await factory.getPool(token0Addr, token1Addr, fee);
-      if (!pool || pool === "0x0000000000000000000000000000000000000000") {
-        throw new Error("V3 pool not deployed yet. Create/initialize the pool first.");
-      }
       const spacingRaw = await factory.feeAmountTickSpacing(fee);
       const spacing = Number(spacingRaw || 0);
       if (!spacing) {
@@ -2075,6 +2089,34 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         UNIV3_POSITION_MANAGER_ABI,
         signer
       );
+
+      let poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
+      let needsInit = !poolAddress || poolAddress === ZERO_ADDRESS;
+      if (!needsInit) {
+        try {
+          const pool = new Contract(poolAddress, UNIV3_POOL_ABI, readProvider);
+          const slot0 = await pool.slot0();
+          if (!slot0?.sqrtPriceX96 || slot0.sqrtPriceX96 === 0n) {
+            needsInit = true;
+          }
+        } catch {
+          // If we cannot read slot0, skip init and let mint fail with a clearer error.
+        }
+      }
+      if (needsInit) {
+        const sqrtPriceX96 = encodePriceSqrt(amount1Desired, amount0Desired);
+        if (!sqrtPriceX96) {
+          throw new Error("Set both deposit amounts to initialize the pool.");
+        }
+        const initTx = await manager.createAndInitializePoolIfNecessary(
+          token0Addr,
+          token1Addr,
+          fee,
+          sqrtPriceX96
+        );
+        await initTx.wait();
+        poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
+      }
 
       if (!token0IsEth && amount0Desired > 0n) {
         const tokenRead = new Contract(token0Addr, ERC20_ABI, readProvider);
