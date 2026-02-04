@@ -51,6 +51,9 @@ const V3_FEE_OPTIONS = [
   { fee: 3000, label: "0.30%" },
   { fee: 10000, label: "1.00%" },
 ];
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const TICK_BASE = 1.0001;
+const CHART_PADDING = 0.12;
 
 const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
 const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
