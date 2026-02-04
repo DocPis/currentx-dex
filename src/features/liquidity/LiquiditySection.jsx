@@ -471,7 +471,13 @@ const fetchAllowances = async (provider, owner, spender, tokenAddresses = []) =>
   return out;
 };
 
-export default function LiquiditySection({ address, chainId, balances: balancesProp }) {
+export default function LiquiditySection({
+  address,
+  chainId,
+  balances: balancesProp,
+  showV2 = true,
+  showV3 = false,
+}) {
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
@@ -579,7 +585,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     [balancesProp, hasExternalBalances, hookBalances]
   );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
-  const hasV3Liquidity = Boolean(UNIV3_FACTORY_ADDRESS && UNIV3_POSITION_MANAGER_ADDRESS);
+  const hasV3Liquidity =
+    showV3 && Boolean(UNIV3_FACTORY_ADDRESS && UNIV3_POSITION_MANAGER_ADDRESS);
   const v3TokenOptions = useMemo(
     () =>
       Object.keys(tokenRegistry).filter((sym) => {
@@ -590,6 +597,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   );
 
   useEffect(() => {
+    if (!showV3) return;
     if (!v3TokenOptions.length) return;
     if (!v3TokenOptions.includes(v3Token0)) {
       setV3Token0(v3TokenOptions[0]);
@@ -602,14 +610,15 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const next = v3TokenOptions.find((sym) => sym !== v3Token0);
       if (next) setV3Token1(next);
     }
-  }, [v3Token0, v3Token1, v3TokenOptions]);
+  }, [showV3, v3Token0, v3Token1, v3TokenOptions]);
 
   useEffect(() => {
+    if (!showV3) return;
     setV3RangeMode("full");
     setV3RangeLower("");
     setV3RangeUpper("");
     setV3PoolError("");
-  }, [v3Token0, v3Token1, v3FeeTier]);
+  }, [showV3, v3Token0, v3Token1, v3FeeTier]);
 
   const v3Token0Meta = tokenRegistry[v3Token0];
   const v3Token1Meta = tokenRegistry[v3Token1];
@@ -870,6 +879,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   useEffect(() => {
     let cancelled = false;
     const loadV3Positions = async () => {
+      if (!showV3) return;
       if (!address || !hasV3Liquidity) {
         setV3Positions([]);
         setV3PositionsError("");
@@ -930,11 +940,12 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     return () => {
       cancelled = true;
     };
-  }, [address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
+  }, [showV3, address, hasV3Liquidity, findTokenMetaByAddress, v3RefreshTick]);
 
   useEffect(() => {
     let cancelled = false;
     const loadV3PoolInfo = async () => {
+      if (!showV3) return;
       if (
         !hasV3Liquidity ||
         !v3SelectedToken0Address ||
@@ -1017,6 +1028,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       cancelled = true;
     };
   }, [
+    showV3,
     hasV3Liquidity,
     v3SelectedToken0Address,
     v3SelectedToken1Address,
@@ -1026,6 +1038,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   useEffect(() => {
     let cancelled = false;
     const loadPoolMetrics = async () => {
+      if (!showV3) return;
       if (!hasV3Liquidity || !v3Positions.length) {
         if (!cancelled) setV3PoolMetrics({});
         return;
@@ -1073,7 +1086,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
     return () => {
       cancelled = true;
     };
-  }, [hasV3Liquidity, v3Positions]);
+  }, [showV3, hasV3Liquidity, v3Positions]);
 
   useEffect(() => {
     if (!basePools.length) return;
@@ -3287,7 +3300,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40">
+          {showV3 && (
+            <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
               <div>
                 <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
@@ -3396,7 +3410,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                         onClick={() => applyV3RangePreset(0.1)}
                         className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
                       >
-                        ±10%
+                        +/-10%
                       </button>
                       <button
                         type="button"
@@ -3404,7 +3418,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
                         onClick={() => applyV3RangePreset(0.25)}
                         className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
                       >
-                        ±25%
+                        +/-25%
                       </button>
                       <button
                         type="button"
@@ -3638,8 +3652,10 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
               </div>
             </div>
           </div>
+          )}
 
-          <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
+          {showV2 && (
+            <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40 mb-4">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-3">
             <div className="flex flex-wrap items-center gap-3 text-sm">
               <span className="px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-200">
@@ -3864,7 +3880,7 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
           })}
         </div>
         </div>
-        </div>
+        )}
       )}
       {showTokenList && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm px-4 py-8 overflow-y-auto">
