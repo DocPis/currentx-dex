@@ -475,6 +475,20 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const [v3FeeTier, setV3FeeTier] = useState(3000);
   const [v3Amount0, setV3Amount0] = useState("");
   const [v3Amount1, setV3Amount1] = useState("");
+  const [v3RangeMode, setV3RangeMode] = useState("full");
+  const [v3RangeLower, setV3RangeLower] = useState("");
+  const [v3RangeUpper, setV3RangeUpper] = useState("");
+  const [v3PoolInfo, setV3PoolInfo] = useState({
+    address: "",
+    token0: "",
+    token1: "",
+    tick: null,
+    sqrtPriceX96: null,
+    spacing: null,
+  });
+  const [v3PoolLoading, setV3PoolLoading] = useState(false);
+  const [v3PoolError, setV3PoolError] = useState("");
+  const [v3PoolMetrics, setV3PoolMetrics] = useState({});
   const [v3MintError, setV3MintError] = useState("");
   const [v3MintLoading, setV3MintLoading] = useState(false);
   const [v3Positions, setV3Positions] = useState([]);
