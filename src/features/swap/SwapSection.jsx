@@ -1189,15 +1189,21 @@ export default function SwapSection({ balances, address, chainId }) {
       quoteDebounceRef.current = null;
     }
     const fetchQuote = async () => {
-      if (!isChainMatch) {
-        setQuoteError("Wallet network differs from selected network. Switch network to quote.");
+      const resetQuoteState = () => {
         setQuoteOut(null);
         setQuoteOutRaw(null);
+        setPriceImpact(null);
         setApprovalTargets([]);
         setQuoteRoute([]);
         setQuotePairs([]);
         setQuoteMeta(null);
         setLastQuoteAt(null);
+        setQuoteVolatilityPct(0);
+        lastQuoteOutRef.current = null;
+      };
+      if (!isChainMatch) {
+        setQuoteError("Wallet network differs from selected network. Switch network to quote.");
+        resetQuoteState();
         return;
       }
       const now = Date.now();
@@ -1205,36 +1211,33 @@ export default function SwapSection({ balances, address, chainId }) {
         return;
       }
       setQuoteError("");
-      setQuoteOut(null);
-      setQuoteOutRaw(null);
-      setPriceImpact(null);
-      setApprovalTargets([]);
-      setQuoteRoute([]);
-      setQuotePairs([]);
-      setQuoteMeta(null);
-      setLastQuoteAt(null);
-      setQuoteVolatilityPct(0);
-      lastQuoteOutRef.current = null;
-
-      if (!amountIn || Number.isNaN(Number(amountIn))) return;
+      if (!amountIn || Number.isNaN(Number(amountIn))) {
+        resetQuoteState();
+        return;
+      }
       if (!isSupported) {
         setQuoteError("Select tokens with valid addresses.");
+        resetQuoteState();
         return;
       }
       if (!hasV2Support && !hasV3Support) {
         setQuoteError("No router configured for this network.");
+        resetQuoteState();
         return;
       }
       if (routePreference === "v2" && !hasV2Support) {
         setQuoteError("V2 support not configured for this network.");
+        resetQuoteState();
         return;
       }
       if (routePreference === "v3" && !hasV3Support) {
         setQuoteError("V3 router not configured for this network.");
+        resetQuoteState();
         return;
       }
       if (routePreference === "split" && (!hasV2Support || !hasV3Support)) {
         setQuoteError("Split routing requires both V2 and V3 routers.");
+        resetQuoteState();
         return;
       }
 
