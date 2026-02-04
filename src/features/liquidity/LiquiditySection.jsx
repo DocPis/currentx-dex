@@ -3931,7 +3931,8 @@ export default function LiquiditySection({
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr),minmax(0,0.85fr)] gap-4 px-4 sm:px-6 py-4">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+              <div className="flex flex-col gap-4 h-full">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
                 <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-3">
                   Add Position
                 </div>
@@ -4590,6 +4591,244 @@ export default function LiquiditySection({
                 {/* Deposit inputs moved to the Add Liquidity panel */}
               </div>
 
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 flex flex-col flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Position preview
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      Click a position to open it here at full size.
+                    </div>
+                  </div>
+                  {selectedPosition && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPositionId(null)}
+                      className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                    >
+                      Close
+                    </button>
+                  )}
+                </div>
+
+                {!selectedPosition ? (
+                  <div className="mt-5 flex-1 min-h-[260px] rounded-2xl border border-slate-800 bg-slate-950/60 px-6 py-8 text-center text-sm text-slate-400 flex items-center justify-center">
+                    Select a position on the right to expand it here.
+                  </div>
+                ) : (
+                  (() => {
+                    const meta0 = findTokenMetaByAddress(selectedPosition.token0);
+                    const meta1 = findTokenMetaByAddress(selectedPosition.token1);
+                    const dec0 = meta0?.decimals ?? 18;
+                    const dec1 = meta1?.decimals ?? 18;
+                    const spacing = getTickSpacingFromFee(selectedPosition.fee) || 1;
+                    const minTickForSpacing = Math.ceil(V3_MIN_TICK / spacing) * spacing;
+                    const maxTickForSpacing = Math.floor(V3_MAX_TICK / spacing) * spacing;
+                    const isFullRange =
+                      selectedPosition.tickLower <= minTickForSpacing &&
+                      selectedPosition.tickUpper >= maxTickForSpacing;
+                    const lowerPrice = tickToPrice(
+                      selectedPosition.tickLower,
+                      dec0,
+                      dec1
+                    );
+                    const upperPrice = tickToPrice(
+                      selectedPosition.tickUpper,
+                      dec0,
+                      dec1
+                    );
+                    const rangeLabel = isFullRange
+                      ? "Full range"
+                      : `${formatPrice(lowerPrice)} - ${formatPrice(upperPrice)}`;
+                    const positionTitle = formatPositionTitle(
+                      selectedPosition,
+                      isFullRange
+                    );
+                    const metaState = nftMetaById[selectedPosition.tokenId] || {};
+                    const nftMeta = metaState.meta || {};
+                    const nftImage = nftMeta?.image || "";
+                    const hasImage = Boolean(nftImage);
+                    const hasMetaTrace =
+                      Boolean(metaState.raw) ||
+                      Boolean(metaState.metaUrl) ||
+                      Boolean(metaState.image);
+
+                    return (
+                      <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.45fr,1fr] gap-5">
+                        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                          <div className="text-xs text-slate-500 uppercase tracking-wide">
+                            Position details
+                          </div>
+                          <div className="mt-2 text-base font-semibold text-slate-100">
+                            {positionTitle}
+                          </div>
+                          <div className="mt-3 flex items-center gap-3">
+                            <div className="flex -space-x-2">
+                              {meta0?.logo ? (
+                                <img
+                                  src={meta0.logo}
+                                  alt={`${selectedPosition.token0Symbol} logo`}
+                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                />
+                              ) : (
+                                <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
+                                  {(selectedPosition.token0Symbol || "?").slice(0, 3)}
+                                </div>
+                              )}
+                              {meta1?.logo ? (
+                                <img
+                                  src={meta1.logo}
+                                  alt={`${selectedPosition.token1Symbol} logo`}
+                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                />
+                              ) : (
+                                <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
+                                  {(selectedPosition.token1Symbol || "?").slice(0, 3)}
+                                </div>
+                              )}
+                            </div>
+                            <div className="text-sm text-slate-100">
+                              {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
+                            </div>
+                          </div>
+                          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNftMetaById((prev) => ({
+                                  ...prev,
+                                  [selectedPosition.tokenId]: null,
+                                }));
+                                setNftMetaRefreshTick((v) => v + 1);
+                              }}
+                              className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                            >
+                              Reload metadata
+                            </button>
+                            {hasMetaTrace && (
+                              <button
+                                type="button"
+                                onClick={() => setShowNftDebug((v) => !v)}
+                                className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                              >
+                                {showNftDebug ? "Hide metadata" : "Show metadata"}
+                              </button>
+                            )}
+                            {metaState.loading && (
+                              <span className="text-slate-500">Loading tokenURI...</span>
+                            )}
+                          </div>
+                          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-300">
+                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                              <div className="text-[10px] text-slate-500">Token ID</div>
+                              <div className="font-semibold text-slate-100">
+                                #{selectedPosition.tokenId}
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                              <div className="text-[10px] text-slate-500">Fee tier</div>
+                              <div className="font-semibold text-slate-100">
+                                {formatFeeTier(selectedPosition.fee)}
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                              <div className="text-[10px] text-slate-500">Range</div>
+                              <div className="font-semibold text-slate-100">
+                                {rangeLabel}
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
+                              <div className="text-[10px] text-slate-500">Tick range</div>
+                              <div className="font-semibold text-slate-100">
+                                {selectedPosition.tickLower} {"->"} {selectedPosition.tickUpper}
+                              </div>
+                            </div>
+                          </div>
+                          {metaState.error && (
+                            <div className="mt-3 text-[11px] text-amber-200">
+                              {metaState.error}
+                            </div>
+                          )}
+                          {showNftDebug && (
+                            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                                tokenURI
+                              </div>
+                              <div className="mt-1 font-mono break-all text-slate-200">
+                                {metaState.raw || "--"}
+                              </div>
+                              <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                metadata URL
+                              </div>
+                              <div className="mt-1 font-mono break-all text-slate-200">
+                                {metaState.metaUrl || "--"}
+                              </div>
+                              <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                image
+                              </div>
+                              <div className="mt-1 font-mono break-all text-slate-200">
+                                {metaState.image || "--"}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-col items-center justify-center gap-4">
+                          <div
+                            className={`relative w-full max-w-none aspect-[3/4] rounded-2xl overflow-hidden ${
+                              hasImage ? "border border-transparent bg-transparent" : "border border-slate-800 bg-slate-950/70"
+                            }`}
+                          >
+                            {metaState.loading && (
+                              <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                                Loading NFT...
+                              </div>
+                            )}
+                            {hasImage ? (
+                              <div className="absolute inset-0">
+                                <img
+                                  src={nftImage}
+                                  alt={nftMeta?.name || positionTitle}
+                                  className="h-full w-full object-contain"
+                                />
+                              </div>
+                            ) : (
+                              <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
+                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.25),transparent_60%)]" />
+                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
+                                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                                    CurrentX Positions NFT
+                                  </div>
+                                  <div className="text-lg font-semibold text-slate-100">
+                                    {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
+                                  </div>
+                                  <div className="text-sm text-slate-400">
+                                    {formatFeeTier(selectedPosition.fee)}
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-center">
+                            <div className="text-[11px] text-slate-400">
+                              Position #{selectedPosition.tokenId}
+                            </div>
+                            <div className="text-sm font-semibold text-slate-100">
+                              {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              {isFullRange ? "MIN<>MAX" : rangeLabel}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()
+                )}
+              </div>
+            </div>
+
               <div className="flex flex-col gap-4">
                 <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950 to-sky-900/30 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -5113,236 +5352,6 @@ export default function LiquiditySection({
                     })}
                   </div>
 
-                  {selectedPosition ? (
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-100">
-                            Position NFT
-                          </div>
-                          <div className="text-[11px] text-slate-500">
-                            Click a position to preview the on-chain NFT metadata.
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedPositionId(null)}
-                          className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
-                        >
-                          Close
-                        </button>
-                      </div>
-
-                      {(() => {
-                        const meta0 = findTokenMetaByAddress(selectedPosition.token0);
-                        const meta1 = findTokenMetaByAddress(selectedPosition.token1);
-                        const dec0 = meta0?.decimals ?? 18;
-                        const dec1 = meta1?.decimals ?? 18;
-                        const spacing = getTickSpacingFromFee(selectedPosition.fee) || 1;
-                        const minTickForSpacing = Math.ceil(V3_MIN_TICK / spacing) * spacing;
-                        const maxTickForSpacing = Math.floor(V3_MAX_TICK / spacing) * spacing;
-                        const isFullRange =
-                          selectedPosition.tickLower <= minTickForSpacing &&
-                          selectedPosition.tickUpper >= maxTickForSpacing;
-                        const lowerPrice = tickToPrice(
-                          selectedPosition.tickLower,
-                          dec0,
-                          dec1
-                        );
-                        const upperPrice = tickToPrice(
-                          selectedPosition.tickUpper,
-                          dec0,
-                          dec1
-                        );
-                        const rangeLabel = isFullRange
-                          ? "Full range"
-                          : `${formatPrice(lowerPrice)} - ${formatPrice(upperPrice)}`;
-                        const positionTitle = formatPositionTitle(
-                          selectedPosition,
-                          isFullRange
-                        );
-                        const metaState = nftMetaById[selectedPosition.tokenId] || {};
-                        const nftMeta = metaState.meta || {};
-                        const nftImage = nftMeta?.image || "";
-                        const hasImage = Boolean(nftImage);
-                        const hasMetaTrace =
-                          Boolean(metaState.raw) ||
-                          Boolean(metaState.metaUrl) ||
-                          Boolean(metaState.image);
-
-                        return (
-                          <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1.2fr,0.8fr] gap-4">
-                            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
-                              <div className="text-xs text-slate-500 uppercase tracking-wide">
-                                Position details
-                              </div>
-                              <div className="mt-2 text-sm font-semibold text-slate-100">
-                                {positionTitle}
-                              </div>
-                              <div className="mt-2 flex items-center gap-3">
-                                <div className="flex -space-x-2">
-                                  {meta0?.logo ? (
-                                    <img
-                                      src={meta0.logo}
-                                      alt={`${selectedPosition.token0Symbol} logo`}
-                                      className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                    />
-                                  ) : (
-                                    <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
-                                      {(selectedPosition.token0Symbol || "?").slice(0, 3)}
-                                    </div>
-                                  )}
-                                  {meta1?.logo ? (
-                                    <img
-                                      src={meta1.logo}
-                                      alt={`${selectedPosition.token1Symbol} logo`}
-                                      className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                    />
-                                  ) : (
-                                    <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
-                                      {(selectedPosition.token1Symbol || "?").slice(0, 3)}
-                                    </div>
-                                  )}
-                                </div>
-                                <div className="text-sm text-slate-100">
-                                  {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
-                                </div>
-                              </div>
-                              <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setNftMetaById((prev) => ({
-                                      ...prev,
-                                      [selectedPosition.tokenId]: null,
-                                    }));
-                                    setNftMetaRefreshTick((v) => v + 1);
-                                  }}
-                                  className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                                >
-                                  Reload metadata
-                                </button>
-                                {hasMetaTrace && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setShowNftDebug((v) => !v)}
-                                    className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                                  >
-                                    {showNftDebug ? "Hide metadata" : "Show metadata"}
-                                  </button>
-                                )}
-                                {metaState.loading && (
-                                  <span className="text-slate-500">Loading tokenURI...</span>
-                                )}
-                              </div>
-                              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-300">
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                  <div className="text-[10px] text-slate-500">Token ID</div>
-                                  <div className="font-semibold text-slate-100">
-                                    #{selectedPosition.tokenId}
-                                  </div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                  <div className="text-[10px] text-slate-500">Fee tier</div>
-                                  <div className="font-semibold text-slate-100">
-                                    {formatFeeTier(selectedPosition.fee)}
-                                  </div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                  <div className="text-[10px] text-slate-500">Range</div>
-                                  <div className="font-semibold text-slate-100">
-                                    {rangeLabel}
-                                  </div>
-                                </div>
-                                <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-2">
-                                  <div className="text-[10px] text-slate-500">Tick range</div>
-                                  <div className="font-semibold text-slate-100">
-                                    {selectedPosition.tickLower} {"->"} {selectedPosition.tickUpper}
-                                  </div>
-                                </div>
-                              </div>
-                              {metaState.error && (
-                                <div className="mt-3 text-[11px] text-amber-200">
-                                  {metaState.error}
-                                </div>
-                              )}
-                              {showNftDebug && (
-                                <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
-                                  <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                                    tokenURI
-                                  </div>
-                                  <div className="mt-1 font-mono break-all text-slate-200">
-                                    {metaState.raw || "--"}
-                                  </div>
-                                  <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
-                                    metadata URL
-                                  </div>
-                                  <div className="mt-1 font-mono break-all text-slate-200">
-                                    {metaState.metaUrl || "--"}
-                                  </div>
-                                  <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
-                                    image
-                                  </div>
-                                  <div className="mt-1 font-mono break-all text-slate-200">
-                                    {metaState.image || "--"}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="flex flex-col items-center justify-center gap-3">
-                              <div
-                                className={`relative w-full max-w-[260px] sm:max-w-[300px] aspect-[3/4] rounded-2xl overflow-hidden ${
-                                  hasImage ? "border border-transparent bg-transparent" : "border border-slate-800 bg-slate-950/70"
-                                }`}
-                              >
-                                {metaState.loading && (
-                                  <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-                                    Loading NFT...
-                                  </div>
-                                )}
-                                {hasImage ? (
-                                  <div className="absolute inset-0">
-                                    <img
-                                      src={nftImage}
-                                      alt={nftMeta?.name || positionTitle}
-                                      className="h-full w-full object-contain"
-                                    />
-                                  </div>
-                                ) : (
-                                  <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
-                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.25),transparent_60%)]" />
-                                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-4">
-                                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                                        CurrentX Positions NFT
-                                      </div>
-                                      <div className="text-lg font-semibold text-slate-100">
-                                        {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
-                                      </div>
-                                      <div className="text-sm text-slate-400">
-                                        {formatFeeTier(selectedPosition.fee)}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-center">
-                                <div className="text-[11px] text-slate-400">
-                                  Position #{selectedPosition.tokenId}
-                                </div>
-                                <div className="text-sm font-semibold text-slate-100">
-                                  {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                  {isFullRange ? "MIN<>MAX" : rangeLabel}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  ) : null}
                 </div>
                 ) : (
                   <div className="text-sm text-slate-400">
