@@ -360,6 +360,54 @@ const getAmountsForLiquidity = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liqu
   return { amount0: 0n, amount1 };
 };
 
+const getLiquidityForAmount0 = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, amount0) => {
+  if (
+    !sqrtPriceX96 ||
+    !sqrtPriceAX96 ||
+    !sqrtPriceBX96 ||
+    !amount0 ||
+    amount0 <= 0n
+  ) {
+    return 0n;
+  }
+  let sqrtA = sqrtPriceAX96;
+  let sqrtB = sqrtPriceBX96;
+  if (sqrtA > sqrtB) {
+    [sqrtA, sqrtB] = [sqrtB, sqrtA];
+  }
+  if (sqrtPriceX96 <= sqrtA) {
+    return (amount0 * sqrtA * sqrtB) / ((sqrtB - sqrtA) * Q96);
+  }
+  if (sqrtPriceX96 < sqrtB) {
+    return (amount0 * sqrtPriceX96 * sqrtB) / ((sqrtB - sqrtPriceX96) * Q96);
+  }
+  return 0n;
+};
+
+const getLiquidityForAmount1 = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, amount1) => {
+  if (
+    !sqrtPriceX96 ||
+    !sqrtPriceAX96 ||
+    !sqrtPriceBX96 ||
+    !amount1 ||
+    amount1 <= 0n
+  ) {
+    return 0n;
+  }
+  let sqrtA = sqrtPriceAX96;
+  let sqrtB = sqrtPriceBX96;
+  if (sqrtA > sqrtB) {
+    [sqrtA, sqrtB] = [sqrtB, sqrtA];
+  }
+  if (sqrtPriceX96 >= sqrtB) {
+    return (amount1 * Q96) / (sqrtB - sqrtA);
+  }
+  if (sqrtPriceX96 > sqrtA) {
+    return (amount1 * Q96) / (sqrtPriceX96 - sqrtA);
+  }
+  return 0n;
+};
+
 const tickToPrice = (tick, decimals0, decimals1) => {
   if (tick === null || tick === undefined) return null;
   const base = Math.exp(Number(tick) * Math.log(TICK_BASE));
@@ -434,6 +482,15 @@ const formatAutoAmount = (value) => {
   if (abs < 0.0001) decimals = 10;
   else if (abs < 0.01) decimals = 8;
   return trimTrailingZeros(num.toFixed(decimals));
+};
+
+const formatAmountFromRaw = (raw, decimals) => {
+  try {
+    const num = Number(formatUnits(raw ?? 0n, decimals ?? 18));
+    return formatAutoAmount(num);
+  } catch {
+    return "";
+  }
 };
 
 const safeLower = (v) => (typeof v === "string" ? v.toLowerCase() : "");
@@ -1019,6 +1076,34 @@ export default function LiquiditySection({
     v3RangeLowerNum > 0 &&
     v3RangeUpperNum > 0 &&
     v3RangeLowerNum < v3RangeUpperNum;
+
+  const v3RangeMath = useMemo(() => {
+    if (!v3HasCustomRange || !v3ReferencePrice) return null;
+    const dec0 = v3Token0Meta?.decimals ?? 18;
+    const dec1 = v3Token1Meta?.decimals ?? 18;
+    const lowerScaled = safeParseUnits(v3RangeLower, 18);
+    const upperScaled = safeParseUnits(v3RangeUpper, 18);
+    const currentScaled = safeParseUnits(formatAutoAmount(v3ReferencePrice), 18);
+    if (!lowerScaled || !upperScaled || !currentScaled) return null;
+    const sqrtLowerX96 = encodePriceSqrtFromPrice(lowerScaled, dec0, dec1);
+    const sqrtUpperX96 = encodePriceSqrtFromPrice(upperScaled, dec0, dec1);
+    const sqrtCurrentX96 = encodePriceSqrtFromPrice(currentScaled, dec0, dec1);
+    if (!sqrtLowerX96 || !sqrtUpperX96 || !sqrtCurrentX96) return null;
+    return {
+      dec0,
+      dec1,
+      sqrtLowerX96,
+      sqrtUpperX96,
+      sqrtCurrentX96,
+    };
+  }, [
+    v3HasCustomRange,
+    v3ReferencePrice,
+    v3RangeLower,
+    v3RangeUpper,
+    v3Token0Meta,
+    v3Token1Meta,
+  ]);
 
   const applyV3RangePreset = useCallback(
     (pct) => {
@@ -5269,6 +5354,15 @@ export default function LiquiditySection({
                   </div>
 
                   <div className="mt-4 space-y-3">
+                    {v3RangeMath && (
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] text-slate-400">
+                        {v3RangeMath.sqrtCurrentX96 <= v3RangeMath.sqrtLowerX96
+                          ? "Price below range → single-sided deposit (token0)."
+                          : v3RangeMath.sqrtCurrentX96 >= v3RangeMath.sqrtUpperX96
+                          ? "Price above range → single-sided deposit (token1)."
+                          : "Price in range → dual-sided deposit."}
+                      </div>
+                    )}
                     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span>Deposit</span>
@@ -5283,7 +5377,31 @@ export default function LiquiditySection({
                             if (v3MintError) setV3MintError("");
                             if (actionStatus) setActionStatus(null);
                             const num = safeNumber(next);
-                            if (!v3ReferencePrice || !Number.isFinite(num) || num <= 0) return;
+                            if (!Number.isFinite(num) || num <= 0) return;
+                            if (v3RangeMath) {
+                              const amount0Raw = safeParseUnits(next, v3RangeMath.dec0);
+                              if (!amount0Raw || amount0Raw <= 0n) return;
+                              const liquidity = getLiquidityForAmount0(
+                                v3RangeMath.sqrtCurrentX96,
+                                v3RangeMath.sqrtLowerX96,
+                                v3RangeMath.sqrtUpperX96,
+                                amount0Raw
+                              );
+                              if (!liquidity || liquidity <= 0n) {
+                                setV3Amount1("0");
+                                return;
+                              }
+                              const amounts = getAmountsForLiquidity(
+                                v3RangeMath.sqrtCurrentX96,
+                                v3RangeMath.sqrtLowerX96,
+                                v3RangeMath.sqrtUpperX96,
+                                liquidity
+                              );
+                              const out1 = amounts?.amount1 ?? 0n;
+                              setV3Amount1(formatAmountFromRaw(out1, v3RangeMath.dec1));
+                              return;
+                            }
+                            if (!v3ReferencePrice) return;
                             const computed = num * v3ReferencePrice;
                             setV3Amount1(formatAutoAmount(computed));
                           }}
@@ -5327,7 +5445,31 @@ export default function LiquiditySection({
                             if (v3MintError) setV3MintError("");
                             if (actionStatus) setActionStatus(null);
                             const num = safeNumber(next);
-                            if (!v3ReferencePrice || !Number.isFinite(num) || num <= 0) return;
+                            if (!Number.isFinite(num) || num <= 0) return;
+                            if (v3RangeMath) {
+                              const amount1Raw = safeParseUnits(next, v3RangeMath.dec1);
+                              if (!amount1Raw || amount1Raw <= 0n) return;
+                              const liquidity = getLiquidityForAmount1(
+                                v3RangeMath.sqrtCurrentX96,
+                                v3RangeMath.sqrtLowerX96,
+                                v3RangeMath.sqrtUpperX96,
+                                amount1Raw
+                              );
+                              if (!liquidity || liquidity <= 0n) {
+                                setV3Amount0("0");
+                                return;
+                              }
+                              const amounts = getAmountsForLiquidity(
+                                v3RangeMath.sqrtCurrentX96,
+                                v3RangeMath.sqrtLowerX96,
+                                v3RangeMath.sqrtUpperX96,
+                                liquidity
+                              );
+                              const out0 = amounts?.amount0 ?? 0n;
+                              setV3Amount0(formatAmountFromRaw(out0, v3RangeMath.dec0));
+                              return;
+                            }
+                            if (!v3ReferencePrice) return;
                             const computed = num / v3ReferencePrice;
                             setV3Amount0(formatAutoAmount(computed));
                           }}
