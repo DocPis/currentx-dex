@@ -45,13 +45,6 @@ const UR_COMMANDS = {
   WRAP_ETH: 0x0b,
   UNWRAP_WETH: 0x0c,
 };
-const ROUTE_PREFS = [
-  { id: "smart", label: "Smart" },
-  { id: "v2", label: "V2" },
-  { id: "v3", label: "V3" },
-  { id: "split", label: "Split" },
-];
-
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 const formatBalance = (v) => {
@@ -124,6 +117,17 @@ const formatV3Fee = (fee) => {
   const num = Number(fee);
   if (!Number.isFinite(num) || num <= 0) return "--";
   return `${(num / 10000).toFixed(2)}%`;
+};
+const computeProbeAmount = (amountWei, decimals) => {
+  if (!amountWei || amountWei <= 0n) return 0n;
+  const safeDecimals = Number.isFinite(decimals) ? Math.max(0, decimals) : 18;
+  const minUnit =
+    safeDecimals >= 6 ? 10n ** BigInt(safeDecimals - 6) : 1n;
+  let probe = amountWei / 1000n;
+  if (probe <= 0n) probe = minUnit;
+  if (probe > amountWei) probe = amountWei;
+  if (probe <= 0n) probe = amountWei;
+  return probe;
 };
 
 const formatDisplayAmount = (val, symbol) => {
@@ -428,7 +432,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
-  const [routePreference, setRoutePreference] = useState("smart");
+  const routePreference = "smart";
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -1296,6 +1300,63 @@ export default function SwapSection({ balances, address, chainId }) {
 
           if (cancelled) return;
 
+          const estimateRouteSlippage = async (route) => {
+            try {
+              if (!route || !route.amountOut) return null;
+              const routeAmountIn = route.amountIn ?? amountWei;
+              if (!routeAmountIn || routeAmountIn <= 0n) return null;
+              const probeAmount = computeProbeAmount(routeAmountIn, sellDecimals);
+              if (!probeAmount || probeAmount <= 0n) return null;
+              let probeOut = null;
+              if (route.protocol === "V3") {
+                probeOut = await quoteV3Route(provider, probeAmount, route);
+              } else if (route.protocol === "V2") {
+                probeOut = await getV2Quote(provider, probeAmount, route.path || []);
+              } else {
+                return null;
+              }
+              if (!probeOut || probeOut <= 0n) return null;
+              const expectedOut = (probeOut * routeAmountIn) / probeAmount;
+              if (!expectedOut || expectedOut <= 0n) return null;
+              const slipBps =
+                expectedOut > route.amountOut
+                  ? Number(((expectedOut - route.amountOut) * 10000n) / expectedOut)
+                  : 0;
+              return Math.max(0, slipBps / 100);
+            } catch {
+              return null;
+            }
+          };
+
+          const estimateSplitSlippage = async (route) => {
+            try {
+              if (!route || !route.amountOut || !Array.isArray(route.routes)) return null;
+              let expectedOut = 0n;
+              for (const leg of route.routes) {
+                if (!leg || !leg.amountIn) continue;
+                const legAmountIn = leg.amountIn;
+                const probeAmount = computeProbeAmount(legAmountIn, sellDecimals);
+                if (!probeAmount || probeAmount <= 0n) continue;
+                let probeOut = null;
+                if (leg.protocol === "V3") {
+                  probeOut = await quoteV3Route(provider, probeAmount, leg);
+                } else if (leg.protocol === "V2") {
+                  probeOut = await getV2Quote(provider, probeAmount, leg.path || []);
+                }
+                if (!probeOut || probeOut <= 0n) continue;
+                expectedOut += (probeOut * legAmountIn) / probeAmount;
+              }
+              if (!expectedOut || expectedOut <= 0n) return null;
+              const slipBps =
+                expectedOut > route.amountOut
+                  ? Number(((expectedOut - route.amountOut) * 10000n) / expectedOut)
+                  : 0;
+              return Math.max(0, slipBps / 100);
+            } catch {
+              return null;
+            }
+          };
+
           let splitRoute = null;
           if ((routePreference === "split" || routePreference === "smart") && v2Route && v3Route) {
             try {
@@ -1327,9 +1388,33 @@ export default function SwapSection({ balances, address, chainId }) {
             }
           }
 
+          if (v3Route) {
+            const slippage = await estimateRouteSlippage(v3Route);
+            v3Route = { ...v3Route, estimatedSlippage: slippage };
+          }
+          if (v2Route) {
+            const slippage = await estimateRouteSlippage(v2Route);
+            v2Route = { ...v2Route, estimatedSlippage: slippage };
+          }
+          if (splitRoute) {
+            const slippage = await estimateSplitSlippage(splitRoute);
+            splitRoute = { ...splitRoute, estimatedSlippage: slippage };
+          }
+
           const pickBest = (...routes) => {
             const filtered = routes.filter(Boolean);
             if (!filtered.length) return null;
+            const withSlippage = filtered.filter((r) =>
+              Number.isFinite(r.estimatedSlippage)
+            );
+            if (withSlippage.length) {
+              return withSlippage.reduce((best, next) => {
+                if (!best) return next;
+                if (next.estimatedSlippage < best.estimatedSlippage) return next;
+                if (next.estimatedSlippage > best.estimatedSlippage) return best;
+                return next.amountOut > best.amountOut ? next : best;
+              }, null);
+            }
             return filtered.reduce((best, next) => {
               if (!best) return next;
               return next.amountOut > best.amountOut ? next : best;
@@ -1398,7 +1483,11 @@ export default function SwapSection({ balances, address, chainId }) {
             setQuoteVolatilityPct(0);
           }
 
-          setPriceImpact(selectedRoute.priceImpact ?? null);
+          const routeImpact =
+            selectedRoute.estimatedSlippage ??
+            selectedRoute.priceImpact ??
+            null;
+          setPriceImpact(routeImpact);
 
           if (allowanceDebounceRef.current) {
             clearTimeout(allowanceDebounceRef.current);
@@ -1539,10 +1628,10 @@ export default function SwapSection({ balances, address, chainId }) {
     if (quoteError) return quoteError;
     if (!amountIn) return "Enter an amount to fetch a quote";
     if (isDirectEthWeth) return "Direct wrap/unwrap (no fee)";
-    if (quoteMeta?.protocol === "V2") return "Live quote via Uniswap V2";
-    if (quoteMeta?.protocol === "SPLIT") return "Smart split route across V2 + V3";
-    if (quoteMeta?.protocol === "V3") return "Live quote via Uniswap V3 (Universal Router)";
-    return "Fetching best route...";
+    if (quoteMeta?.protocol === "V2") return "Live quote via CurrentX API (V2)";
+    if (quoteMeta?.protocol === "SPLIT") return "Smart split via CurrentX API (V2 + V3)";
+    if (quoteMeta?.protocol === "V3") return "Live quote via CurrentX API (V3)";
+    return "Fetching best route via CurrentX API...";
   })();
   const routeProtocolLabel = isDirectEthWeth
     ? "Wrap/Unwrap"
@@ -2469,7 +2558,7 @@ export default function SwapSection({ balances, address, chainId }) {
           <div className="flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2 text-slate-100">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-sm font-semibold">Route (Live)</span>
+              <span className="text-sm font-semibold">Route (CurrentX API)</span>
             </div>
             <div className="flex items-center gap-2">
               <div
@@ -2499,30 +2588,10 @@ export default function SwapSection({ balances, address, chainId }) {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-2">
             <span>Routing:</span>
-            <div className="inline-flex flex-wrap items-center gap-1 rounded-full bg-slate-900/70 border border-slate-800 p-1">
-              {ROUTE_PREFS.map((opt) => {
-                const disabled =
-                  (opt.id === "v2" && !hasV2Support) ||
-                  (opt.id === "v3" && !hasV3Support) ||
-                  (opt.id === "split" && (!hasV2Support || !hasV3Support));
-                return (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => setRoutePreference(opt.id)}
-                    className={`px-3 py-1 rounded-full transition ${
-                      routePreference === opt.id
-                        ? "bg-sky-500/20 text-sky-100"
-                        : "text-slate-400 hover:text-slate-100"
-                    } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                    title={disabled ? "Route not available on this network" : ""}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </div>
+            <span className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-1 text-slate-100">
+              Auto (lowest slippage)
+              <span className="text-[10px] text-slate-400">CurrentX API</span>
+            </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200 mb-2">
             <span className="text-slate-400">Path:</span>
