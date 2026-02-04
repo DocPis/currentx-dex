@@ -425,6 +425,17 @@ const formatUsdValue = (v) => {
   return `$${num.toFixed(6)}`;
 };
 
+const formatAutoAmount = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "";
+  if (num === 0) return "0";
+  const abs = Math.abs(num);
+  let decimals = 6;
+  if (abs < 0.0001) decimals = 10;
+  else if (abs < 0.01) decimals = 8;
+  return trimTrailingZeros(num.toFixed(decimals));
+};
+
 const safeLower = (v) => (typeof v === "string" ? v.toLowerCase() : "");
 
 const safeParseUnits = (value, decimals) => {
@@ -5267,9 +5278,14 @@ export default function LiquiditySection({
                           name="v3-deposit-0"
                           value={v3Amount0}
                           onChange={(e) => {
-                            setV3Amount0(e.target.value);
+                            const next = e.target.value;
+                            setV3Amount0(next);
                             if (v3MintError) setV3MintError("");
                             if (actionStatus) setActionStatus(null);
+                            const num = safeNumber(next);
+                            if (!v3ReferencePrice || !Number.isFinite(num) || num <= 0) return;
+                            const computed = num * v3ReferencePrice;
+                            setV3Amount1(formatAutoAmount(computed));
                           }}
                           placeholder="0.0"
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
@@ -5306,9 +5322,14 @@ export default function LiquiditySection({
                           name="v3-deposit-1"
                           value={v3Amount1}
                           onChange={(e) => {
-                            setV3Amount1(e.target.value);
+                            const next = e.target.value;
+                            setV3Amount1(next);
                             if (v3MintError) setV3MintError("");
                             if (actionStatus) setActionStatus(null);
+                            const num = safeNumber(next);
+                            if (!v3ReferencePrice || !Number.isFinite(num) || num <= 0) return;
+                            const computed = num / v3ReferencePrice;
+                            setV3Amount0(formatAutoAmount(computed));
                           }}
                           placeholder="0.0"
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
