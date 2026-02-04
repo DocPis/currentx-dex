@@ -1,9 +1,9 @@
 // src/features/dashboard/Dashboard.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  fetchDashboardStats,
-  fetchProtocolHistory,
-  fetchTopPairsBreakdown,
+  fetchDashboardStatsCombined,
+  fetchProtocolHistoryCombined,
+  fetchTopPairsBreakdownCombined,
 } from "../../shared/config/subgraph";
 
 // Start the protocol TVL counter from "today" (UTC midnight) and keep counting forward.
@@ -376,10 +376,10 @@ export default function Dashboard() {
         );
 
         const [s, tvlHist, volHist, pairs] = await Promise.all([
-          fetchDashboardStats(),
-          fetchProtocolHistory(tvlDays),
-          fetchProtocolHistory(7),
-          fetchTopPairsBreakdown(4),
+          fetchDashboardStatsCombined(),
+          fetchProtocolHistoryCombined(tvlDays),
+          fetchProtocolHistoryCombined(7),
+          fetchTopPairsBreakdownCombined(4),
         ]);
 
         if (cancelled) return;

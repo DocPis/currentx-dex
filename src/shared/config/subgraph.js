@@ -418,6 +418,148 @@ export async function fetchDashboardStats() {
   }
 }
 
+const isSchemaFieldMissing = (message = "") =>
+  message.includes("Cannot query field") || message.includes("has no field");
+
+// Fetch V3 factory stats (TVL + volume). Uses several schema variants for safety.
+export async function fetchDashboardStatsV3() {
+  if (SUBGRAPH_V3_MISSING_KEY) return null;
+
+  const candidates = [
+    {
+      field: "factories",
+      query: `
+        query DashboardV3 {
+          factories(first: 1) {
+            totalValueLockedUSD
+            totalVolumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalValueLockedUSD || 0),
+        totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+      }),
+    },
+    {
+      field: "factories",
+      query: `
+        query DashboardV3 {
+          factories(first: 1) {
+            totalLiquidityUSD
+            totalVolumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalLiquidityUSD || 0),
+        totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+      }),
+    },
+    {
+      field: "factories",
+      query: `
+        query DashboardV3 {
+          factories(first: 1) {
+            totalValueLockedUSD
+            volumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalValueLockedUSD || 0),
+        totalVolumeUsd: Number(factory?.volumeUSD || 0),
+      }),
+    },
+    {
+      field: "uniswapV3Factories",
+      query: `
+        query DashboardV3 {
+          uniswapV3Factories(first: 1) {
+            totalValueLockedUSD
+            totalVolumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalValueLockedUSD || 0),
+        totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+      }),
+    },
+    {
+      field: "uniswapFactories",
+      query: `
+        query DashboardV3 {
+          uniswapFactories(first: 1) {
+            totalLiquidityUSD
+            totalVolumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalLiquidityUSD || 0),
+        totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+      }),
+    },
+    {
+      field: "factory",
+      query: `
+        query DashboardV3 {
+          factory {
+            totalValueLockedUSD
+            totalVolumeUSD
+          }
+        }
+      `,
+      map: (factory) => ({
+        totalLiquidityUsd: Number(factory?.totalValueLockedUSD || 0),
+        totalVolumeUsd: Number(factory?.totalVolumeUSD || 0),
+      }),
+      single: true,
+    },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const res = await postSubgraphV3(candidate.query);
+      const factory = candidate.single
+        ? res?.[candidate.field]
+        : res?.[candidate.field]?.[0];
+      if (!factory) return null;
+      return candidate.map(factory);
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return null;
+}
+
+export async function fetchDashboardStatsCombined() {
+  const [v2, v3] = await Promise.all([
+    fetchDashboardStats(),
+    fetchDashboardStatsV3(),
+  ]);
+
+  if (!v2 && !v3) return null;
+
+  const totalLiquidityUsd =
+    Number(v2?.totalLiquidityUsd || 0) + Number(v3?.totalLiquidityUsd || 0);
+  const totalVolumeUsd =
+    Number(v2?.totalVolumeUsd || 0) + Number(v3?.totalVolumeUsd || 0);
+
+  return {
+    totalLiquidityUsd,
+    totalVolumeUsd,
+    v2,
+    v3,
+  };
+}
+
 // Fetch protocol-level daily history (TVL + volume) for the last `days`
 export async function fetchProtocolHistory(days = 7) {
   // Fetch extra days to cover occasional gaps where some dates may be missing
@@ -489,6 +631,210 @@ export async function fetchProtocolHistory(days = 7) {
     }
     throw err;
   }
+}
+
+export async function fetchProtocolHistoryV3(days = 7) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+
+  const fetchCount = Math.min(1000, Math.max(days * 3, days + 5));
+
+  const candidates = [
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            tvlUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.tvlUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            totalValueLockedUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalValueLockedUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd: null,
+      }),
+    },
+    {
+      field: "factoryDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          factoryDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            totalValueLockedUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "factoryDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          factoryDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalValueLockedUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd: null,
+      }),
+    },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const res = await postSubgraphV3(candidate.query, { days: fetchCount });
+      const rows = res?.[candidate.field] || [];
+      if (!rows.length) return [];
+      return rows.map(candidate.map);
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return [];
+}
+
+const mergeProtocolHistory = (v2 = [], v3 = []) => {
+  const map = new Map();
+
+  const addEntry = (entry) => {
+    if (!entry) return;
+    const date = Number(entry.date || 0);
+    if (!date) return;
+    const dayId = Math.floor(date / 86400000);
+    const existing = map.get(dayId) || {
+      date,
+      tvlUsd: 0,
+      volumeUsd: 0,
+      cumulativeVolumeUsd: 0,
+      _cumCount: 0,
+    };
+    existing.date = Math.max(existing.date || 0, date);
+    existing.tvlUsd += Number(entry.tvlUsd || 0);
+    existing.volumeUsd += Number(entry.volumeUsd || 0);
+    if (entry.cumulativeVolumeUsd !== null && entry.cumulativeVolumeUsd !== undefined) {
+      existing.cumulativeVolumeUsd += Number(entry.cumulativeVolumeUsd || 0);
+      existing._cumCount += 1;
+    }
+    map.set(dayId, existing);
+  };
+
+  v2.forEach(addEntry);
+  v3.forEach(addEntry);
+
+  const sources = [
+    { entries: v2, hasCum: v2.some((d) => typeof d.cumulativeVolumeUsd === "number") },
+    { entries: v3, hasCum: v3.some((d) => typeof d.cumulativeVolumeUsd === "number") },
+  ].filter((s) => s.entries?.length);
+
+  const requireCumulative = sources.length > 0 && sources.every((s) => s.hasCum);
+  const expectedCumCount = requireCumulative ? sources.length : 0;
+
+  return Array.from(map.values())
+    .map((entry) => ({
+      date: entry.date,
+      tvlUsd: entry.tvlUsd,
+      volumeUsd: entry.volumeUsd,
+      cumulativeVolumeUsd:
+        requireCumulative && entry._cumCount >= expectedCumCount
+          ? entry.cumulativeVolumeUsd
+          : null,
+    }))
+    .sort((a, b) => b.date - a.date);
+};
+
+export async function fetchProtocolHistoryCombined(days = 7) {
+  const [v2, v3] = await Promise.all([
+    fetchProtocolHistory(days),
+    fetchProtocolHistoryV3(days),
+  ]);
+  return mergeProtocolHistory(v2, v3);
 }
 
 // Fetch latest on-chain activity (swaps, mints, burns) sorted by timestamp desc
@@ -848,6 +1194,134 @@ export async function fetchTopPairsBreakdown(limit = 4) {
       rank: idx + 1,
     };
   });
+}
+
+const formatFeeTierLabel = (feeTier) => {
+  const num = Number(feeTier);
+  if (!Number.isFinite(num) || num <= 0) return "";
+  const pct = num / 10000;
+  return `${pct}%`;
+};
+
+// Fetch top V3 pools by all-time volume (fallback to TVL if needed)
+export async function fetchTopPoolsBreakdownV3(limit = 4) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+  const candidates = [
+    {
+      query: `
+        query TopPoolsV3($limit: Int!) {
+          pools(
+            first: $limit
+            orderBy: volumeUSD
+            orderDirection: desc
+          ) {
+            id
+            volumeUSD
+            totalValueLockedUSD
+            feeTier
+            token0 { symbol }
+            token1 { symbol }
+          }
+        }
+      `,
+      map: (pool, idx) => {
+        const t0 = pool?.token0?.symbol || "Token0";
+        const t1 = pool?.token1?.symbol || "Token1";
+        const feeLabel = formatFeeTierLabel(pool?.feeTier);
+        const label = feeLabel ? `${t0}-${t1} (${feeLabel})` : `${t0}-${t1}`;
+        return {
+          id: (pool?.id || `${label}-${idx}`).toLowerCase(),
+          label,
+          volumeUsd: Number(pool?.volumeUSD || 0),
+          tvlUsd: Number(pool?.totalValueLockedUSD || 0),
+        };
+      },
+    },
+    {
+      query: `
+        query TopPoolsV3($limit: Int!) {
+          pools(
+            first: $limit
+            orderBy: volumeUSD
+            orderDirection: desc
+          ) {
+            id
+            volumeUSD
+            feeTier
+            token0 { symbol }
+            token1 { symbol }
+          }
+        }
+      `,
+      map: (pool, idx) => {
+        const t0 = pool?.token0?.symbol || "Token0";
+        const t1 = pool?.token1?.symbol || "Token1";
+        const feeLabel = formatFeeTierLabel(pool?.feeTier);
+        const label = feeLabel ? `${t0}-${t1} (${feeLabel})` : `${t0}-${t1}`;
+        return {
+          id: (pool?.id || `${label}-${idx}`).toLowerCase(),
+          label,
+          volumeUsd: Number(pool?.volumeUSD || 0),
+          tvlUsd: 0,
+        };
+      },
+    },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const res = await postSubgraphV3(candidate.query, { limit: finalLimit });
+      const pools = res?.pools || [];
+      if (!pools.length) return [];
+      return pools.map(candidate.map);
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return [];
+}
+
+export async function fetchTopPairsBreakdownCombined(limit = 4) {
+  const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+  const [v2Pairs, v3Pools] = await Promise.all([
+    fetchTopPairsBreakdown(finalLimit),
+    fetchTopPoolsBreakdownV3(finalLimit),
+  ]);
+
+  const combined = [...(v2Pairs || []), ...(v3Pools || [])].filter(
+    (p) => (p.volumeUsd || 0) > 0 || (p.tvlUsd || 0) > 0
+  );
+
+  if (!combined.length) return [];
+
+  const volumeSum = combined.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
+  const tvlSum = combined.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
+  const useTvl = volumeSum === 0;
+  const baseTotal = useTvl ? tvlSum : volumeSum;
+
+  return combined
+    .sort((a, b) =>
+      useTvl
+        ? (b.tvlUsd || 0) - (a.tvlUsd || 0)
+        : (b.volumeUsd || 0) - (a.volumeUsd || 0)
+    )
+    .slice(0, finalLimit)
+    .map((p, idx) => {
+      const baseValue = useTvl ? p.tvlUsd : p.volumeUsd;
+      const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
+      return {
+        ...p,
+        share,
+        rank: idx + 1,
+      };
+    });
 }
 
 // Fetch recent pair day data for a token pair (sorted desc by date)
