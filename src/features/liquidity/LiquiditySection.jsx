@@ -123,6 +123,11 @@ const safeNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const trimTrailingZeros = (value) => {
+  if (typeof value !== "string" || !value.includes(".")) return value;
+  return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
+};
+
 const formatPrice = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return "--";
@@ -349,8 +354,8 @@ const formatUsdPrice = (v) => {
   if (!Number.isFinite(num) || num <= 0) return "--";
   if (num >= 1e6) return `~$${(num / 1e6).toFixed(2)}M`;
   if (num >= 1_000) return `~$${num.toFixed(0)}`;
-  if (num >= 1) return `$${num.toFixed(2)}`;
-  if (num >= 0.01) return `$${num.toFixed(4)}`;
+  if (num >= 1) return `$${trimTrailingZeros(num.toFixed(2))}`;
+  if (num >= 0.01) return `$${trimTrailingZeros(num.toFixed(4))}`;
   return `$${num.toFixed(6)}`;
 };
 
