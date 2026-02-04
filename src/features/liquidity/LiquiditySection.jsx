@@ -1991,7 +1991,17 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const user = await signer.getAddress();
-      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+      const targetChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
+      if (targetChain) {
+        const walletNet = await provider.getNetwork();
+        if (Number(walletNet?.chainId || 0) !== targetChain) {
+          throw new Error(
+            "Wallet network differs from the selected network. Switch network to add CL liquidity."
+          );
+        }
+      }
+      const readProvider = getReadOnlyProvider(false, true) || provider;
+      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, readProvider);
       let token0Addr = addrA;
       let token1Addr = addrB;
       let amount0Desired = amountA;
@@ -2033,8 +2043,8 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
         }
         const meta0 = findTokenMetaByAddress(token0Addr);
         const meta1 = findTokenMetaByAddress(token1Addr);
-        const dec0 = await readDecimals(provider, token0Addr, meta0);
-        const dec1 = await readDecimals(provider, token1Addr, meta1);
+        const dec0 = await readDecimals(readProvider, token0Addr, meta0);
+        const dec1 = await readDecimals(readProvider, token1Addr, meta1);
         let lowerForPool = lowerInput;
         let upperForPool = upperInput;
         if (isReversed) {
@@ -2067,17 +2077,19 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
       );
 
       if (!token0IsEth && amount0Desired > 0n) {
-        const token = new Contract(token0Addr, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        const tokenRead = new Contract(token0Addr, ERC20_ABI, readProvider);
+        const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
         if (allowance < amount0Desired) {
+          const token = new Contract(token0Addr, ERC20_ABI, signer);
           const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
           await tx.wait();
         }
       }
       if (!token1IsEth && amount1Desired > 0n) {
-        const token = new Contract(token1Addr, ERC20_ABI, signer);
-        const allowance = await token.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        const tokenRead = new Contract(token1Addr, ERC20_ABI, readProvider);
+        const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
         if (allowance < amount1Desired) {
+          const token = new Contract(token1Addr, ERC20_ABI, signer);
           const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
           await tx.wait();
         }
