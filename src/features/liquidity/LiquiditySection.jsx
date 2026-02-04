@@ -590,6 +590,10 @@ export default function LiquiditySection({ address, chainId, balances: balancesP
   const v3Token1Meta = tokenRegistry[v3Token1];
   const v3Token0Balance = walletBalances?.[v3Token0] || 0;
   const v3Token1Balance = walletBalances?.[v3Token1] || 0;
+  const v3SelectedToken0Address =
+    v3Token0 === "ETH" ? WETH_ADDRESS : v3Token0Meta?.address;
+  const v3SelectedToken1Address =
+    v3Token1 === "ETH" ? WETH_ADDRESS : v3Token1Meta?.address;
 
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
