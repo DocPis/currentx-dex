@@ -3881,6 +3881,7 @@ export default function LiquiditySection({
         </div>
         </div>
         )}
+        </div>
       )}
       {showTokenList && (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 backdrop-blur-sm px-4 py-8 overflow-y-auto">
