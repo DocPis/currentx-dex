@@ -1324,6 +1324,172 @@ export async function fetchTopPairsBreakdownCombined(limit = 4) {
     });
 }
 
+const toNumberSafe = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+};
+
+export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
+  if (SUBGRAPH_MISSING_KEY) return [];
+  const first = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const offset = Math.max(0, Number(skip) || 0);
+
+  const candidates = [
+    `
+      query V2Pools($first: Int!, $skip: Int!) {
+        pairs(
+          first: $first
+          skip: $skip
+          orderBy: reserveUSD
+          orderDirection: desc
+        ) {
+          id
+          reserveUSD
+          volumeUSD
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+    `
+      query V2Pools($first: Int!, $skip: Int!) {
+        pairs(
+          first: $first
+          skip: $skip
+          orderBy: volumeUSD
+          orderDirection: desc
+        ) {
+          id
+          reserveUSD
+          volumeUSD
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+    `
+      query V2Pools($first: Int!, $skip: Int!) {
+        pairs(
+          first: $first
+          skip: $skip
+        ) {
+          id
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+  ];
+
+  for (const query of candidates) {
+    try {
+      const res = await postSubgraph(query, { first, skip: offset });
+      const pairs = res?.pairs || [];
+      return pairs.map((pair) => ({
+        id: pair?.id || "",
+        token0Symbol: pair?.token0?.symbol || "",
+        token1Symbol: pair?.token1?.symbol || "",
+        token0Id: pair?.token0?.id || "",
+        token1Id: pair?.token1?.id || "",
+        tvlUsd: toNumberSafe(pair?.reserveUSD),
+        volumeUsd: toNumberSafe(pair?.volumeUSD),
+        type: "V2",
+      }));
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return [];
+}
+
+export async function fetchV3PoolsPage({ limit = 50, skip = 0 } = {}) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+  const first = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const offset = Math.max(0, Number(skip) || 0);
+
+  const candidates = [
+    `
+      query V3Pools($first: Int!, $skip: Int!) {
+        pools(
+          first: $first
+          skip: $skip
+          orderBy: totalValueLockedUSD
+          orderDirection: desc
+        ) {
+          id
+          totalValueLockedUSD
+          volumeUSD
+          feeTier
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+    `
+      query V3Pools($first: Int!, $skip: Int!) {
+        pools(
+          first: $first
+          skip: $skip
+          orderBy: volumeUSD
+          orderDirection: desc
+        ) {
+          id
+          totalValueLockedUSD
+          volumeUSD
+          feeTier
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+    `
+      query V3Pools($first: Int!, $skip: Int!) {
+        pools(
+          first: $first
+          skip: $skip
+        ) {
+          id
+          volumeUSD
+          feeTier
+          token0 { id symbol }
+          token1 { id symbol }
+        }
+      }
+    `,
+  ];
+
+  for (const query of candidates) {
+    try {
+      const res = await postSubgraphV3(query, { first, skip: offset });
+      const pools = res?.pools || [];
+      return pools.map((pool) => ({
+        id: pool?.id || "",
+        token0Symbol: pool?.token0?.symbol || "",
+        token1Symbol: pool?.token1?.symbol || "",
+        token0Id: pool?.token0?.id || "",
+        token1Id: pool?.token1?.id || "",
+        tvlUsd: toNumberSafe(pool?.totalValueLockedUSD),
+        volumeUsd: toNumberSafe(pool?.volumeUSD),
+        feeTier: pool?.feeTier,
+        type: "CL",
+      }));
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return [];
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();

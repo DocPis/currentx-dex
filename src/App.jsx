@@ -5,6 +5,7 @@ import SwapSection from "./features/swap/SwapSection";
 import LiquiditySection from "./features/liquidity/LiquiditySection";
 import Dashboard from "./features/dashboard/Dashboard";
 import Farms from "./features/farms/Farms";
+import PoolsSection from "./features/pools/PoolsSection";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
@@ -86,6 +87,7 @@ export default function App() {
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
+            { id: "pools", label: "Pools" },
             { id: "farms", label: "Farms" },
           ].map((item) => (
             <button
@@ -115,6 +117,7 @@ export default function App() {
             showV3={true}
           />
         )}
+        {tab === "pools" && <PoolsSection />}
         {tab === "dashboard" && <Dashboard />}
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />
