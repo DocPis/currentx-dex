@@ -299,10 +299,65 @@ const sqrtBigInt = (value) => {
   return x0;
 };
 
+const Q96 = 2n ** 96n;
+const PRICE_SCALE = 10n ** 18n;
+
 const encodePriceSqrt = (amount1, amount0) => {
   if (!amount0 || !amount1 || amount0 <= 0n || amount1 <= 0n) return null;
   const ratio = (amount1 << 192n) / amount0;
   return sqrtBigInt(ratio);
+};
+
+const invertPriceScaled = (priceScaled) => {
+  if (!priceScaled || priceScaled <= 0n) return null;
+  return (PRICE_SCALE * PRICE_SCALE) / priceScaled;
+};
+
+const encodePriceSqrtFromPrice = (priceScaled, decimals0, decimals1) => {
+  if (!priceScaled || priceScaled <= 0n) return null;
+  const base0 = 10n ** BigInt(decimals0 ?? 18);
+  const base1 = 10n ** BigInt(decimals1 ?? 18);
+  const ratioX192 = ((priceScaled * base1) << 192n) / (base0 * PRICE_SCALE);
+  return sqrtBigInt(ratioX192);
+};
+
+const tickToSqrtPriceX96 = (tick) => {
+  if (!Number.isFinite(tick)) return null;
+  const ratio = Math.pow(1.0001, Number(tick));
+  if (!Number.isFinite(ratio) || ratio <= 0) return null;
+  const sqrt = Math.sqrt(ratio);
+  if (!Number.isFinite(sqrt) || sqrt <= 0) return null;
+  const scaled = sqrt * Number(Q96);
+  if (!Number.isFinite(scaled) || scaled <= 0) return null;
+  return BigInt(Math.floor(scaled));
+};
+
+const getAmountsForLiquidity = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liquidity) => {
+  if (
+    !sqrtPriceX96 ||
+    !sqrtPriceAX96 ||
+    !sqrtPriceBX96 ||
+    !liquidity ||
+    liquidity <= 0n
+  ) {
+    return null;
+  }
+  let sqrtA = sqrtPriceAX96;
+  let sqrtB = sqrtPriceBX96;
+  if (sqrtA > sqrtB) {
+    [sqrtA, sqrtB] = [sqrtB, sqrtA];
+  }
+  if (sqrtPriceX96 <= sqrtA) {
+    const amount0 = (liquidity * (sqrtB - sqrtA) * Q96) / (sqrtB * sqrtA);
+    return { amount0, amount1: 0n };
+  }
+  if (sqrtPriceX96 < sqrtB) {
+    const amount0 = (liquidity * (sqrtB - sqrtPriceX96) * Q96) / (sqrtB * sqrtPriceX96);
+    const amount1 = (liquidity * (sqrtPriceX96 - sqrtA)) / Q96;
+    return { amount0, amount1 };
+  }
+  const amount1 = (liquidity * (sqrtB - sqrtA)) / Q96;
+  return { amount0: 0n, amount1 };
 };
 
 const tickToPrice = (tick, decimals0, decimals1) => {
@@ -354,6 +409,17 @@ const formatUsdPrice = (v) => {
   if (!Number.isFinite(num) || num <= 0) return "--";
   if (num >= 1e6) return `~$${(num / 1e6).toFixed(2)}M`;
   if (num >= 1_000) return `~$${num.toFixed(0)}`;
+  if (num >= 1) return `$${trimTrailingZeros(num.toFixed(2))}`;
+  if (num >= 0.01) return `$${trimTrailingZeros(num.toFixed(4))}`;
+  return `$${num.toFixed(6)}`;
+};
+
+const formatUsdValue = (v) => {
+  const num = Number(v);
+  if (!Number.isFinite(num)) return "--";
+  if (num <= 0) return "$0.00";
+  if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+  if (num >= 1_000) return `$${num.toFixed(0)}`;
   if (num >= 1) return `$${trimTrailingZeros(num.toFixed(2))}`;
   if (num >= 0.01) return `$${trimTrailingZeros(num.toFixed(4))}`;
   return `$${num.toFixed(6)}`;
@@ -657,6 +723,7 @@ export default function LiquiditySection({
   const [v3RangeMode, setV3RangeMode] = useState("full");
   const [v3RangeLower, setV3RangeLower] = useState("");
   const [v3RangeUpper, setV3RangeUpper] = useState("");
+  const [v3StartPrice, setV3StartPrice] = useState("");
   const [v3PoolInfo, setV3PoolInfo] = useState({
     address: "",
     token0: "",
@@ -835,6 +902,7 @@ export default function LiquiditySection({
     setV3RangeLower("");
     setV3RangeUpper("");
     setV3PoolError("");
+    setV3StartPrice("");
     setV3RangeInitialized(false);
   }, [isV3View, v3Token0, v3Token1, v3FeeTier]);
 
@@ -893,13 +961,44 @@ export default function LiquiditySection({
     return v3PoolInfo.token0.toLowerCase() !== v3SelectedToken0Address.toLowerCase();
   }, [v3PoolInfo.token0, v3SelectedToken0Address]);
   const v3CurrentPrice = useMemo(() => {
+    if (!v3PoolInfo.sqrtPriceX96 || v3PoolInfo.sqrtPriceX96 === 0n) return null;
     if (v3PoolInfo.tick === null || v3PoolInfo.tick === undefined) return null;
     const dec0 = v3PoolToken0Meta?.decimals ?? 18;
     const dec1 = v3PoolToken1Meta?.decimals ?? 18;
     const basePrice = tickToPrice(v3PoolInfo.tick, dec0, dec1);
     if (!basePrice) return null;
     return v3PoolIsReversed ? 1 / basePrice : basePrice;
-  }, [v3PoolInfo.tick, v3PoolIsReversed, v3PoolToken0Meta, v3PoolToken1Meta]);
+  }, [
+    v3PoolInfo.tick,
+    v3PoolInfo.sqrtPriceX96,
+    v3PoolIsReversed,
+    v3PoolToken0Meta,
+    v3PoolToken1Meta,
+  ]);
+  const v3StartPriceNum = safeNumber(v3StartPrice);
+  const v3HasStartPrice = v3StartPriceNum !== null && v3StartPriceNum > 0;
+  const v3PoolInitialized =
+    Boolean(v3PoolInfo.address) &&
+    v3PoolInfo.sqrtPriceX96 !== null &&
+    v3PoolInfo.sqrtPriceX96 !== undefined &&
+    v3PoolInfo.sqrtPriceX96 !== 0n;
+  const v3PoolNeedsInit = Boolean(
+    isV3View &&
+      hasV3Liquidity &&
+      v3SelectedToken0Address &&
+      v3SelectedToken1Address &&
+      v3SelectedToken0Address.toLowerCase() !== v3SelectedToken1Address.toLowerCase() &&
+      !v3PoolInitialized
+  );
+  const v3ReferencePrice = useMemo(() => {
+    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
+      return v3CurrentPrice;
+    }
+    if (v3PoolNeedsInit && v3HasStartPrice) {
+      return v3StartPriceNum;
+    }
+    return null;
+  }, [v3CurrentPrice, v3PoolNeedsInit, v3HasStartPrice, v3StartPriceNum]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
   const v3HasCustomRange =
@@ -912,52 +1011,52 @@ export default function LiquiditySection({
 
   const applyV3RangePreset = useCallback(
     (pct) => {
-      if (!v3CurrentPrice) return;
-      const lower = v3CurrentPrice * (1 - pct);
-      const upper = v3CurrentPrice * (1 + pct);
+      if (!v3ReferencePrice) return;
+      const lower = v3ReferencePrice * (1 - pct);
+      const upper = v3ReferencePrice * (1 + pct);
       setV3RangeMode("custom");
       setV3RangeLower(lower.toFixed(6));
       setV3RangeUpper(upper.toFixed(6));
       setV3RangeInitialized(true);
     },
-    [v3CurrentPrice]
+    [v3ReferencePrice]
   );
 
   useEffect(() => {
     if (!isV3View || v3RangeInitialized) return;
-    if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice)) return;
-    const lower = v3CurrentPrice * 0.95;
-    const upper = v3CurrentPrice * 1.05;
+    if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
+    const lower = v3ReferencePrice * 0.95;
+    const upper = v3ReferencePrice * 1.05;
     setV3RangeMode("custom");
     setV3RangeLower(lower.toFixed(6));
     setV3RangeUpper(upper.toFixed(6));
     setV3RangeInitialized(true);
-  }, [isV3View, v3CurrentPrice, v3RangeInitialized]);
+  }, [isV3View, v3ReferencePrice, v3RangeInitialized]);
 
   const v3Chart = useMemo(() => {
-    if (!v3CurrentPrice && !v3HasCustomRange) return null;
+    if (!v3ReferencePrice && !v3HasCustomRange) return null;
     let min;
     let max;
-    if (v3HasCustomRange && v3CurrentPrice) {
-      const lowerSpan = v3CurrentPrice - v3RangeLowerNum;
-      const upperSpan = v3RangeUpperNum - v3CurrentPrice;
-      const span = Math.max(lowerSpan, upperSpan, v3CurrentPrice * CHART_PADDING);
+    if (v3HasCustomRange && v3ReferencePrice) {
+      const lowerSpan = v3ReferencePrice - v3RangeLowerNum;
+      const upperSpan = v3RangeUpperNum - v3ReferencePrice;
+      const span = Math.max(lowerSpan, upperSpan, v3ReferencePrice * CHART_PADDING);
       const paddedSpan = span * (1 + CHART_PADDING);
-      min = v3CurrentPrice - paddedSpan;
-      max = v3CurrentPrice + paddedSpan;
+      min = v3ReferencePrice - paddedSpan;
+      max = v3ReferencePrice + paddedSpan;
     } else if (v3HasCustomRange) {
       min = v3RangeLowerNum * (1 - CHART_PADDING);
       max = v3RangeUpperNum * (1 + CHART_PADDING);
     } else {
-      min = v3CurrentPrice * (1 - CHART_PADDING);
-      max = v3CurrentPrice * (1 + CHART_PADDING);
+      min = v3ReferencePrice * (1 - CHART_PADDING);
+      max = v3ReferencePrice * (1 + CHART_PADDING);
     }
     if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
       return null;
     }
     const clampPct = (value) => Math.min(100, Math.max(0, value));
-    const currentPct = v3CurrentPrice
-      ? clampPct(((v3CurrentPrice - min) / (max - min)) * 100)
+    const currentPct = v3ReferencePrice
+      ? clampPct(((v3ReferencePrice - min) / (max - min)) * 100)
       : null;
     const rangeStart = v3HasCustomRange
       ? clampPct(((v3RangeLowerNum - min) / (max - min)) * 100)
@@ -972,7 +1071,7 @@ export default function LiquiditySection({
       rangeStart,
       rangeEnd,
     };
-  }, [v3CurrentPrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
+  }, [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
 
   const v3DepositRatio = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
@@ -980,8 +1079,8 @@ export default function LiquiditySection({
     if (!amount0Num && !amount1Num) return null;
     const v0 = amount0Num || 0;
     const v1 = amount1Num || 0;
-    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
-      const value0 = v0 * v3CurrentPrice;
+    if (v3ReferencePrice && Number.isFinite(v3ReferencePrice) && v3ReferencePrice > 0) {
+      const value0 = v0 * v3ReferencePrice;
       const total = value0 + v1;
       if (total > 0) {
         return {
@@ -996,7 +1095,7 @@ export default function LiquiditySection({
       token0: v0 / total,
       token1: v1 / total,
     };
-  }, [v3Amount0, v3Amount1, v3CurrentPrice]);
+  }, [v3Amount0, v3Amount1, v3ReferencePrice]);
 
   const v3TotalDeposit = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
@@ -1004,18 +1103,18 @@ export default function LiquiditySection({
     if (!amount0Num && !amount1Num) return null;
     const v0 = amount0Num || 0;
     const v1 = amount1Num || 0;
-    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
-      return v0 * v3CurrentPrice + v1;
+    if (v3ReferencePrice && Number.isFinite(v3ReferencePrice) && v3ReferencePrice > 0) {
+      return v0 * v3ReferencePrice + v1;
     }
     return v0 + v1;
-  }, [v3Amount0, v3Amount1, v3CurrentPrice]);
+  }, [v3Amount0, v3Amount1, v3ReferencePrice]);
 
   const adjustV3RangeValue = useCallback(
     (side, direction) => {
-      if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice)) return;
-      const step = v3CurrentPrice * 0.0001; // 0.01% step
-      const lower = v3RangeLowerNum ?? v3CurrentPrice * (1 - 0.02);
-      const upper = v3RangeUpperNum ?? v3CurrentPrice * (1 + 0.02);
+      if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
+      const step = v3ReferencePrice * 0.0001; // 0.01% step
+      const lower = v3RangeLowerNum ?? v3ReferencePrice * (1 - 0.02);
+      const upper = v3RangeUpperNum ?? v3ReferencePrice * (1 + 0.02);
       if (side === "lower") {
         const next = Math.max(0, lower + direction * step);
         const safeNext = upper ? Math.min(next, upper * 0.999) : next;
@@ -1028,7 +1127,7 @@ export default function LiquiditySection({
         setV3RangeUpper(safeNext.toFixed(6));
       }
     },
-    [v3CurrentPrice, v3RangeLowerNum, v3RangeUpperNum]
+    [v3ReferencePrice, v3RangeLowerNum, v3RangeUpperNum]
   );
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
@@ -1045,13 +1144,13 @@ export default function LiquiditySection({
       : 50;
   const v3PoolBalanceRatio1 = 100 - v3PoolBalanceRatio0;
   const v3LowerPct = useMemo(() => {
-    if (!v3CurrentPrice || !v3RangeLowerNum) return null;
-    return ((v3RangeLowerNum / v3CurrentPrice) - 1) * 100;
-  }, [v3CurrentPrice, v3RangeLowerNum]);
+    if (!v3ReferencePrice || !v3RangeLowerNum) return null;
+    return ((v3RangeLowerNum / v3ReferencePrice) - 1) * 100;
+  }, [v3ReferencePrice, v3RangeLowerNum]);
   const v3UpperPct = useMemo(() => {
-    if (!v3CurrentPrice || !v3RangeUpperNum) return null;
-    return ((v3RangeUpperNum / v3CurrentPrice) - 1) * 100;
-  }, [v3CurrentPrice, v3RangeUpperNum]);
+    if (!v3ReferencePrice || !v3RangeUpperNum) return null;
+    return ((v3RangeUpperNum / v3ReferencePrice) - 1) * 100;
+  }, [v3ReferencePrice, v3RangeUpperNum]);
 
   const getStatusStyle = (status) => {
     if (status === null) {
@@ -2681,9 +2780,30 @@ export default function LiquiditySection({
         }
       }
       if (needsInit) {
-        const sqrtPriceX96 = encodePriceSqrt(amount1Desired, amount0Desired);
+        const meta0 = findTokenMetaByAddress(token0Addr);
+        const meta1 = findTokenMetaByAddress(token1Addr);
+        const dec0 = await readDecimals(readProvider, token0Addr, meta0);
+        const dec1 = await readDecimals(readProvider, token1Addr, meta1);
+        const startPriceRaw = (v3StartPrice || "").trim();
+        let sqrtPriceX96 = null;
+        if (startPriceRaw) {
+          let startPriceScaled = safeParseUnits(startPriceRaw, 18);
+          if (!startPriceScaled || startPriceScaled <= 0n) {
+            throw new Error("Enter a valid starting price to initialize the pool.");
+          }
+          if (isReversed) {
+            startPriceScaled = invertPriceScaled(startPriceScaled);
+            if (!startPriceScaled) {
+              throw new Error("Starting price too small to initialize the pool.");
+            }
+          }
+          sqrtPriceX96 = encodePriceSqrtFromPrice(startPriceScaled, dec0, dec1);
+        }
         if (!sqrtPriceX96) {
-          throw new Error("Set both deposit amounts to initialize the pool.");
+          sqrtPriceX96 = encodePriceSqrt(amount1Desired, amount0Desired);
+        }
+        if (!sqrtPriceX96) {
+          throw new Error("Set a valid starting price or deposit amounts to initialize the pool.");
         }
         const initTx = await manager.createAndInitializePoolIfNecessary(
           token0Addr,
@@ -4222,7 +4342,7 @@ export default function LiquiditySection({
                       </button>
                       <button
                         type="button"
-                        disabled={!v3CurrentPrice}
+                        disabled={!v3ReferencePrice}
                         onClick={() => applyV3RangePreset(0.1)}
                         className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
                       >
@@ -4230,7 +4350,7 @@ export default function LiquiditySection({
                       </button>
                       <button
                         type="button"
-                        disabled={!v3CurrentPrice}
+                        disabled={!v3ReferencePrice}
                         onClick={() => applyV3RangePreset(0.25)}
                         className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
                       >
@@ -4250,6 +4370,31 @@ export default function LiquiditySection({
                     </div>
                   </div>
                 </div>
+
+                {v3PoolNeedsInit && (
+                  <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-wide text-amber-200">
+                      Pool initialization required
+                    </div>
+                    <div className="mt-1 text-[11px] text-amber-200/80">
+                      Set a starting price for the pool. If left empty, we will infer it
+                      from your deposit amounts.
+                    </div>
+                    <div className="mt-3 flex flex-col gap-1">
+                      <div className="flex items-center justify-between text-xs text-amber-200/80">
+                        <span>Starting price</span>
+                        <span>{v3Token1} per {v3Token0}</span>
+                      </div>
+                      <input
+                        name="v3-start-price"
+                        value={v3StartPrice}
+                        onChange={(e) => setV3StartPrice(e.target.value)}
+                        placeholder="0.0"
+                        className="bg-slate-900 border border-amber-500/30 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder:text-amber-200/40"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
@@ -4273,7 +4418,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("lower", 1)}
-                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          disabled={!v3ReferencePrice || v3RangeMode === "full"}
                           className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                         >
                           +
@@ -4281,7 +4426,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("lower", -1)}
-                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          disabled={!v3ReferencePrice || v3RangeMode === "full"}
                           className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                         >
                           -
@@ -4310,7 +4455,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("upper", 1)}
-                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          disabled={!v3ReferencePrice || v3RangeMode === "full"}
                           className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                         >
                           +
@@ -4318,7 +4463,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("upper", -1)}
-                          disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                          disabled={!v3ReferencePrice || v3RangeMode === "full"}
                           className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                         >
                           -
@@ -4331,11 +4476,14 @@ export default function LiquiditySection({
                 <div className="rounded-3xl border border-slate-800 bg-slate-950/60 px-5 pt-5 pb-6 mb-6">
                   <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2 mb-3">
                     <span>
-                      Current price:{" "}
                       {v3PoolLoading
                         ? "Loading..."
                         : v3CurrentPrice
-                        ? `${formatPrice(v3CurrentPrice)} ${v3Token1} per ${v3Token0}`
+                        ? `Current price: ${formatPrice(v3CurrentPrice)} ${v3Token1} per ${v3Token0}`
+                        : v3PoolNeedsInit
+                        ? v3HasStartPrice
+                          ? `Starting price: ${formatPrice(v3StartPriceNum)} ${v3Token1} per ${v3Token0}`
+                          : v3PoolError || "Pool not initialized. Set a starting price."
                         : v3PoolError || "Pool not deployed"}
                     </span>
                     <span>Fee tier {formatFeeTier(v3FeeTier)}</span>
@@ -4523,7 +4671,7 @@ export default function LiquiditySection({
                       <button
                         type="button"
                         onClick={() => adjustV3RangeValue("lower", 1)}
-                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
                         className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                       >
                         +
@@ -4531,7 +4679,7 @@ export default function LiquiditySection({
                       <button
                         type="button"
                         onClick={() => adjustV3RangeValue("lower", -1)}
-                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
                         className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                       >
                         -
@@ -4561,7 +4709,7 @@ export default function LiquiditySection({
                       <button
                         type="button"
                         onClick={() => adjustV3RangeValue("upper", 1)}
-                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
                         className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                       >
                         +
@@ -4569,7 +4717,7 @@ export default function LiquiditySection({
                       <button
                         type="button"
                         onClick={() => adjustV3RangeValue("upper", -1)}
-                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
                         className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
                       >
                         -
@@ -4657,121 +4805,326 @@ export default function LiquiditySection({
                     return (
                       <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.45fr,1fr] gap-5">
                         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-                          <div className="text-xs text-slate-500 uppercase tracking-wide">
-                            Position details
-                          </div>
-                          <div className="mt-2 text-base font-semibold text-slate-100">
-                            {positionTitle}
-                          </div>
-                          <div className="mt-3 flex items-center gap-3">
-                            <div className="flex -space-x-2">
-                              {meta0?.logo ? (
-                                <img
-                                  src={meta0.logo}
-                                  alt={`${selectedPosition.token0Symbol} logo`}
-                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                />
-                              ) : (
-                                <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
-                                  {(selectedPosition.token0Symbol || "?").slice(0, 3)}
+                          {(() => {
+                            const key = `${selectedPosition.token0?.toLowerCase?.() || ""}-${
+                              selectedPosition.token1?.toLowerCase?.() || ""
+                            }-${selectedPosition.fee}`;
+                            const metrics = v3PoolMetrics[key];
+                            const currentTick =
+                              metrics?.tick !== undefined && metrics?.tick !== null
+                                ? metrics.tick
+                                : null;
+                            const currentPrice = Number.isFinite(currentTick)
+                              ? tickToPrice(currentTick, dec0, dec1)
+                              : null;
+                            const inRange =
+                              currentTick !== null &&
+                              currentTick >= selectedPosition.tickLower &&
+                              currentTick <= selectedPosition.tickUpper;
+
+                            const sqrtLowerX96 = tickToSqrtPriceX96(selectedPosition.tickLower);
+                            const sqrtUpperX96 = tickToSqrtPriceX96(selectedPosition.tickUpper);
+                            const sqrtCurrentX96 = metrics?.sqrtPriceX96 ?? null;
+                            const liquidityAmounts =
+                              sqrtCurrentX96 && sqrtLowerX96 && sqrtUpperX96
+                                ? getAmountsForLiquidity(
+                                    sqrtCurrentX96,
+                                    sqrtLowerX96,
+                                    sqrtUpperX96,
+                                    selectedPosition.liquidity
+                                  )
+                                : null;
+                            const amount0 = liquidityAmounts?.amount0 ?? null;
+                            const amount1 = liquidityAmounts?.amount1 ?? null;
+                            const amount0Display =
+                              amount0 !== null ? formatAmount(amount0, dec0) : "--";
+                            const amount1Display =
+                              amount1 !== null ? formatAmount(amount1, dec1) : "--";
+
+                            const price0 =
+                              tokenPrices[(selectedPosition.token0 || "").toLowerCase?.() || ""];
+                            const price1 =
+                              tokenPrices[(selectedPosition.token1 || "").toLowerCase?.() || ""];
+                            const amount0Num =
+                              amount0 !== null ? Number(formatUnits(amount0, dec0)) : null;
+                            const amount1Num =
+                              amount1 !== null ? Number(formatUnits(amount1, dec1)) : null;
+                            const value0 =
+                              price0 !== undefined && amount0Num !== null && Number.isFinite(amount0Num)
+                                ? amount0Num * price0
+                                : null;
+                            const value1 =
+                              price1 !== undefined && amount1Num !== null && Number.isFinite(amount1Num)
+                                ? amount1Num * price1
+                                : null;
+                            const liquidityUsd =
+                              value0 !== null && value1 !== null ? value0 + value1 : null;
+                            const share0 =
+                              liquidityUsd && value0 !== null
+                                ? Math.round((value0 / liquidityUsd) * 100)
+                                : null;
+                            const share1 =
+                              liquidityUsd && value1 !== null
+                                ? Math.max(0, 100 - (share0 || 0))
+                                : null;
+
+                            const fees0 = selectedPosition.tokensOwed0 ?? 0n;
+                            const fees1 = selectedPosition.tokensOwed1 ?? 0n;
+                            const fees0Display = formatAmount(fees0, dec0);
+                            const fees1Display = formatAmount(fees1, dec1);
+                            const fees0Num =
+                              price0 !== undefined ? Number(formatUnits(fees0, dec0)) : null;
+                            const fees1Num =
+                              price1 !== undefined ? Number(formatUnits(fees1, dec1)) : null;
+                            const feesValue0 =
+                              price0 !== undefined && fees0Num !== null && Number.isFinite(fees0Num)
+                                ? fees0Num * price0
+                                : null;
+                            const feesValue1 =
+                              price1 !== undefined && fees1Num !== null && Number.isFinite(fees1Num)
+                                ? fees1Num * price1
+                                : null;
+                            const feesUsd =
+                              feesValue0 !== null && feesValue1 !== null
+                                ? feesValue0 + feesValue1
+                                : null;
+
+                            const minLabel = isFullRange ? "0" : formatPrice(lowerPrice);
+                            const maxLabel = isFullRange ? "∞" : formatPrice(upperPrice);
+                            const currentLabel =
+                              currentPrice && Number.isFinite(currentPrice)
+                                ? formatPrice(currentPrice)
+                                : "--";
+
+                            return (
+                              <>
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div>
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                                      Position
+                                    </div>
+                                    <div className="mt-1 text-lg font-semibold text-slate-100">
+                                      {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">
+                                      Position #{selectedPosition.tokenId} · Fee {formatFeeTier(selectedPosition.fee)}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200">
+                                      {formatFeeTier(selectedPosition.fee)}
+                                    </span>
+                                    {metrics && (
+                                      <span
+                                        className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                                          inRange
+                                            ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+                                            : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                                        }`}
+                                      >
+                                        {inRange ? "In range" : "Out of range"}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
-                              {meta1?.logo ? (
-                                <img
-                                  src={meta1.logo}
-                                  alt={`${selectedPosition.token1Symbol} logo`}
-                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                />
-                              ) : (
-                                <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 text-[11px] font-semibold text-slate-200 flex items-center justify-center">
-                                  {(selectedPosition.token1Symbol || "?").slice(0, 3)}
+
+                                <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                                      Liquidity
+                                    </div>
+                                    <div className="mt-2 text-2xl font-semibold text-slate-100">
+                                      {liquidityUsd !== null ? formatUsdValue(liquidityUsd) : "--"}
+                                    </div>
+                                    <div className="mt-3 space-y-2 text-sm text-slate-200">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {meta0?.logo ? (
+                                            <img
+                                              src={meta0.logo}
+                                              alt={`${selectedPosition.token0Symbol} logo`}
+                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                            />
+                                          ) : (
+                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                              {(selectedPosition.token0Symbol || "?").slice(0, 2)}
+                                            </div>
+                                          )}
+                                          <span>{selectedPosition.token0Symbol}</span>
+                                        </div>
+                                        <div className="text-right">
+                                          <div className="font-semibold">{amount0Display}</div>
+                                          <div className="text-[11px] text-slate-500">
+                                            {share0 !== null ? `${share0}%` : "--"}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {meta1?.logo ? (
+                                            <img
+                                              src={meta1.logo}
+                                              alt={`${selectedPosition.token1Symbol} logo`}
+                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                            />
+                                          ) : (
+                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                              {(selectedPosition.token1Symbol || "?").slice(0, 2)}
+                                            </div>
+                                          )}
+                                          <span>{selectedPosition.token1Symbol}</span>
+                                        </div>
+                                        <div className="text-right">
+                                          <div className="font-semibold">{amount1Display}</div>
+                                          <div className="text-[11px] text-slate-500">
+                                            {share1 !== null ? `${share1}%` : "--"}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                                      Unclaimed fees
+                                    </div>
+                                    <div className="mt-2 text-2xl font-semibold text-slate-100">
+                                      {feesUsd !== null ? formatUsdValue(feesUsd) : "--"}
+                                    </div>
+                                    <div className="mt-3 space-y-2 text-sm text-slate-200">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {meta0?.logo ? (
+                                            <img
+                                              src={meta0.logo}
+                                              alt={`${selectedPosition.token0Symbol} logo`}
+                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                            />
+                                          ) : (
+                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                              {(selectedPosition.token0Symbol || "?").slice(0, 2)}
+                                            </div>
+                                          )}
+                                          <span>{selectedPosition.token0Symbol}</span>
+                                        </div>
+                                        <div className="font-semibold">{fees0Display}</div>
+                                      </div>
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          {meta1?.logo ? (
+                                            <img
+                                              src={meta1.logo}
+                                              alt={`${selectedPosition.token1Symbol} logo`}
+                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                            />
+                                          ) : (
+                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                              {(selectedPosition.token1Symbol || "?").slice(0, 2)}
+                                            </div>
+                                          )}
+                                          <span>{selectedPosition.token1Symbol}</span>
+                                        </div>
+                                        <div className="font-semibold">{fees1Display}</div>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                            <div className="text-sm text-slate-100">
-                              {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
-                            </div>
-                          </div>
-                          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNftMetaById((prev) => ({
-                                  ...prev,
-                                  [selectedPosition.tokenId]: null,
-                                }));
-                                setNftMetaRefreshTick((v) => v + 1);
-                              }}
-                              className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                            >
-                              Reload metadata
-                            </button>
-                            {hasMetaTrace && (
-                              <button
-                                type="button"
-                                onClick={() => setShowNftDebug((v) => !v)}
-                                className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
-                              >
-                                {showNftDebug ? "Hide metadata" : "Show metadata"}
-                              </button>
-                            )}
-                            {metaState.loading && (
-                              <span className="text-slate-500">Loading tokenURI...</span>
-                            )}
-                          </div>
-                          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs text-slate-300">
-                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                              <div className="text-[10px] text-slate-500">Token ID</div>
-                              <div className="font-semibold text-slate-100">
-                                #{selectedPosition.tokenId}
-                              </div>
-                            </div>
-                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                              <div className="text-[10px] text-slate-500">Fee tier</div>
-                              <div className="font-semibold text-slate-100">
-                                {formatFeeTier(selectedPosition.fee)}
-                              </div>
-                            </div>
-                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                              <div className="text-[10px] text-slate-500">Range</div>
-                              <div className="font-semibold text-slate-100">
-                                {rangeLabel}
-                              </div>
-                            </div>
-                            <div className="rounded-lg border border-slate-800 bg-slate-950/60 p-3">
-                              <div className="text-[10px] text-slate-500">Tick range</div>
-                              <div className="font-semibold text-slate-100">
-                                {selectedPosition.tickLower} {"->"} {selectedPosition.tickUpper}
-                              </div>
-                            </div>
-                          </div>
-                          {metaState.error && (
-                            <div className="mt-3 text-[11px] text-amber-200">
-                              {metaState.error}
-                            </div>
-                          )}
-                          {showNftDebug && (
-                            <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
-                              <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                                tokenURI
-                              </div>
-                              <div className="mt-1 font-mono break-all text-slate-200">
-                                {metaState.raw || "--"}
-                              </div>
-                              <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
-                                metadata URL
-                              </div>
-                              <div className="mt-1 font-mono break-all text-slate-200">
-                                {metaState.metaUrl || "--"}
-                              </div>
-                              <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
-                                image
-                              </div>
-                              <div className="mt-1 font-mono break-all text-slate-200">
-                                {metaState.image || "--"}
-                              </div>
-                            </div>
-                          )}
+
+                                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                                    <span>Price range</span>
+                                    <span className={inRange ? "text-emerald-300" : "text-rose-300"}>
+                                      {inRange ? "In range" : "Out of range"}
+                                    </span>
+                                  </div>
+                                  <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                      <div className="text-[10px] text-slate-500">Min price</div>
+                                      <div className="text-lg font-semibold text-slate-100">
+                                        {minLabel}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500">
+                                        {selectedPosition.token1Symbol} per {selectedPosition.token0Symbol}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                      <div className="text-[10px] text-slate-500">Max price</div>
+                                      <div className="text-lg font-semibold text-slate-100">
+                                        {maxLabel}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500">
+                                        {selectedPosition.token1Symbol} per {selectedPosition.token0Symbol}
+                                      </div>
+                                    </div>
+                                    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3">
+                                      <div className="text-[10px] text-slate-500">Current price</div>
+                                      <div className="text-lg font-semibold text-slate-100">
+                                        {currentLabel}
+                                      </div>
+                                      <div className="text-[10px] text-slate-500">
+                                        {selectedPosition.token1Symbol} per {selectedPosition.token0Symbol}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setNftMetaById((prev) => ({
+                                        ...prev,
+                                        [selectedPosition.tokenId]: null,
+                                      }));
+                                      setNftMetaRefreshTick((v) => v + 1);
+                                    }}
+                                    className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                                  >
+                                    Reload metadata
+                                  </button>
+                                  {hasMetaTrace && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setShowNftDebug((v) => !v)}
+                                      className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/60 hover:border-slate-500"
+                                    >
+                                      {showNftDebug ? "Hide metadata" : "Show metadata"}
+                                    </button>
+                                  )}
+                                  {metaState.loading && (
+                                    <span className="text-slate-500">Loading tokenURI...</span>
+                                  )}
+                                </div>
+                                {metaState.error && (
+                                  <div className="mt-3 text-[11px] text-amber-200">
+                                    {metaState.error}
+                                  </div>
+                                )}
+                                {showNftDebug && (
+                                  <div className="mt-4 rounded-lg border border-slate-800 bg-slate-950/70 p-3 text-[11px] text-slate-300">
+                                    <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                                      tokenURI
+                                    </div>
+                                    <div className="mt-1 font-mono break-all text-slate-200">
+                                      {metaState.raw || "--"}
+                                    </div>
+                                    <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                      metadata URL
+                                    </div>
+                                    <div className="mt-1 font-mono break-all text-slate-200">
+                                      {metaState.metaUrl || "--"}
+                                    </div>
+                                    <div className="mt-2 text-[10px] uppercase tracking-wide text-slate-500">
+                                      image
+                                    </div>
+                                    <div className="mt-1 font-mono break-all text-slate-200">
+                                      {metaState.image || "--"}
+                                    </div>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
 
                         <div className="flex flex-col items-center justify-center gap-4">
