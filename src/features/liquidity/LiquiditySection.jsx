@@ -679,7 +679,10 @@ export default function LiquiditySection({
   const [v3RefreshTick, setV3RefreshTick] = useState(0);
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
-  const [slippageInput, setSlippageInput] = useState("0.5");
+  const DEFAULT_SLIPPAGE = "0.5";
+  const [slippageInput, setSlippageInput] = useState(DEFAULT_SLIPPAGE);
+  const [slippageMode, setSlippageMode] = useState("auto");
+  const [slippageMenuOpen, setSlippageMenuOpen] = useState(false);
   const [actionStatus, setActionStatus] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [depositQuoteError, setDepositQuoteError] = useState("");
@@ -717,6 +720,7 @@ export default function LiquiditySection({
   const v3DragTargetRef = useRef(null);
   const v3DragCurrentRef = useRef({ lower: null, upper: null });
   const v3ChartMenuRef = useRef(null);
+  const slippageMenuRef = useRef(null);
   const tokenRegistry = useMemo(() => {
     // Always include native ETH/WETH for convenience.
     const out = { ETH: TOKENS.ETH, WETH: TOKENS.WETH };
@@ -745,6 +749,16 @@ export default function LiquiditySection({
   }, [customTokens, onchainTokens]);
   const tokenDecimalsCache = useRef({});
   const slippageBps = useMemo(() => clampBps(slippageInput), [slippageInput]);
+  const slippageDisplay = slippageInput?.trim?.() ? slippageInput : DEFAULT_SLIPPAGE;
+  const slippagePresets = useMemo(
+    () => [
+      { id: "0.0", label: "0.0%", value: "0.0", mode: "custom" },
+      { id: "auto", label: "AUTO", value: DEFAULT_SLIPPAGE, mode: "auto" },
+      { id: "0.5", label: "0.5%", value: "0.5", mode: "custom" },
+      { id: "0.3", label: "0.3%", value: "0.3", mode: "custom" },
+    ],
+    [DEFAULT_SLIPPAGE]
+  );
   const hasExternalBalances = Boolean(balancesProp);
   const { balances: hookBalances, loading: hookBalancesLoading } = useBalances(
     address,
@@ -994,7 +1008,7 @@ export default function LiquiditySection({
   const adjustV3RangeValue = useCallback(
     (side, direction) => {
       if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice)) return;
-      const step = v3CurrentPrice * 0.005; // 0.5% step
+      const step = v3CurrentPrice * 0.0001; // 0.01% step
       const lower = v3RangeLowerNum ?? v3CurrentPrice * (1 - 0.02);
       const upper = v3RangeUpperNum ?? v3CurrentPrice * (1 + 0.02);
       if (side === "lower") {
@@ -1014,6 +1028,17 @@ export default function LiquiditySection({
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
+  const v3PoolBalance0 = null;
+  const v3PoolBalance1 = null;
+  const v3PoolBalance0Num = safeNumber(v3PoolBalance0);
+  const v3PoolBalance1Num = safeNumber(v3PoolBalance1);
+  const v3PoolBalanceRatio0 =
+    v3PoolBalance0Num !== null &&
+    v3PoolBalance1Num !== null &&
+    v3PoolBalance0Num + v3PoolBalance1Num > 0
+      ? clampPercent((v3PoolBalance0Num / (v3PoolBalance0Num + v3PoolBalance1Num)) * 100)
+      : 50;
+  const v3PoolBalanceRatio1 = 100 - v3PoolBalanceRatio0;
   const v3LowerPct = useMemo(() => {
     if (!v3CurrentPrice || !v3RangeLowerNum) return null;
     return ((v3RangeLowerNum / v3CurrentPrice) - 1) * 100;
@@ -1617,6 +1642,18 @@ export default function LiquiditySection({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [v3ChartMenuOpen]);
+
+  useEffect(() => {
+    if (!slippageMenuOpen) return undefined;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (slippageMenuRef.current && !slippageMenuRef.current.contains(target)) {
+        setSlippageMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [slippageMenuOpen]);
 
   useEffect(() => {
     if (!v3DraggingHandle) return undefined;
@@ -3727,7 +3764,10 @@ export default function LiquiditySection({
                         <input
                           name="v2-slippage"
                           value={slippageInput}
-                          onChange={(e) => setSlippageInput(e.target.value)}
+                          onChange={(e) => {
+                            setSlippageInput(e.target.value);
+                            setSlippageMode("custom");
+                          }}
                           className="w-20 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-100"
                           placeholder="0.5"
                         />
@@ -4282,7 +4322,7 @@ export default function LiquiditySection({
                   </div>
                 </div>
 
-                <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5 mb-6">
+                <div className="rounded-3xl border border-slate-800 bg-slate-950/60 px-5 pt-5 pb-6 mb-6">
                   <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2 mb-3">
                     <span>
                       Current price:{" "}
@@ -4408,30 +4448,36 @@ export default function LiquiditySection({
                         </div>
                       )}
                     </div>
-                    <div className="absolute right-4 -bottom-16 z-20" ref={v3ChartMenuRef}>
-                      <button
-                        type="button"
-                        onClick={() => setV3ChartMenuOpen((v) => !v)}
-                        className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-[#120909]/80 px-3 py-1.5 text-[11px] uppercase tracking-[0.12em] text-rose-100/80 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
-                      >
-                        {v3ChartMode.replace("-", " ")}
-                        <svg
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
-                          className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
+                    <div className="mt-4 flex justify-end" ref={v3ChartMenuRef}>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setV3ChartMenuOpen((v) => !v)}
+                          className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-[#120909]/80 px-3 py-1.5 text-[11px] uppercase tracking-[0.12em] text-rose-100/80 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
                         >
-                          <path
-                            d="M6 8l4 4 4-4"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          />
-                        </svg>
-                      </button>
-                      {v3ChartMenuOpen && (
-                        <div className="absolute top-full right-0 mt-2 w-40 rounded-2xl border border-slate-800 bg-[#140b0b] p-2 text-xs text-rose-100/80 shadow-2xl shadow-black/60">
+                          {v3ChartMode.replace("-", " ")}
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
+                          >
+                            <path
+                              d="M6 8l4 4 4-4"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                        <div
+                          className={`absolute top-full right-0 mt-1 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-[#140b0b] p-1 text-[9px] text-rose-100/80 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
+                            v3ChartMenuOpen
+                              ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
+                              : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
+                          }`}
+                        >
                           {[
                             { id: "price-range", label: "Price range" },
                             { id: "tvl", label: "TVL" },
@@ -4446,7 +4492,7 @@ export default function LiquiditySection({
                                 setV3ChartMode(opt.id);
                                 setV3ChartMenuOpen(false);
                               }}
-                              className={`w-full rounded-lg px-3 py-2 text-left uppercase tracking-[0.12em] ${
+                              className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
                                 v3ChartMode === opt.id
                                   ? "bg-rose-500/15 text-rose-100"
                                   : "hover:bg-rose-500/10"
@@ -4456,38 +4502,83 @@ export default function LiquiditySection({
                             </button>
                           ))}
                         </div>
-                      )}
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5 mb-4">
+                  <div className="relative rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">Min</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-100">
+                    <div className="mt-2 text-xl font-semibold text-slate-100">
                       {v3HasCustomRange ? formatPrice(v3RangeLowerNum) : "--"}
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      {v3Token1} per {v3Token0}
+                    <div className="absolute right-3 top-10 flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => adjustV3RangeValue("lower", 1)}
+                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustV3RangeValue("lower", -1)}
+                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                      >
+                        -
+                      </button>
                     </div>
                   </div>
-                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Current</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-100">
-                      {v3CurrentPrice ? formatPrice(v3CurrentPrice) : "--"}
+                  <div className="relative rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
+                    <div className="flex items-center justify-between pr-10">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Max</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3RangeMode("full");
+                          setV3RangeLower("");
+                          setV3RangeUpper("");
+                          setV3RangeInitialized(true);
+                        }}
+                        className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700/60 bg-slate-950/70 text-slate-300"
+                      >
+                        Full range
+                      </button>
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      {v3Token1} per {v3Token0}
-                    </div>
-                  </div>
-                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-4 py-3">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Max</div>
-                    <div className="mt-2 text-lg font-semibold text-slate-100">
+                    <div className="mt-2 text-xl font-semibold text-slate-100">
                       {v3HasCustomRange ? formatPrice(v3RangeUpperNum) : "--"}
                     </div>
-                    <div className="text-[11px] text-slate-500">
-                      {v3Token1} per {v3Token0}
+                    <div className="absolute right-3 top-10 flex flex-col gap-1">
+                      <button
+                        type="button"
+                        onClick={() => adjustV3RangeValue("upper", 1)}
+                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                      >
+                        +
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => adjustV3RangeValue("upper", -1)}
+                        disabled={!v3CurrentPrice || v3RangeMode === "full"}
+                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                      >
+                        -
+                      </button>
                     </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
+                    <div className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-slate-500">
+                      APR
+                      <span className="text-[10px] text-slate-600">ⓘ</span>
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-slate-100">
+                      {formatFeeTier(v3FeeTier)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">Estimated</div>
                   </div>
                 </div>
 
@@ -4505,29 +4596,74 @@ export default function LiquiditySection({
                         Deposit amounts to mint a new V3 position.
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200">
-                      AUTO
-                    </span>
+                    <div className="relative" ref={slippageMenuRef}>
+                      <button
+                        type="button"
+                        onClick={() => setSlippageMenuOpen((open) => !open)}
+                        className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-200 hover:border-slate-500"
+                      >
+                        <span>
+                          {slippageMode === "auto" ? "AUTO" : `${slippageDisplay}%`}
+                        </span>
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-3.5 w-3.5"
+                        >
+                          <path
+                            d="M10 7.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6ZM3.2 10l1.6-.9a4.9 4.9 0 0 1 .4-1l-1-1.5 1.7-1.7 1.5 1a4.9 4.9 0 0 1 1-.4l.9-1.6h2.4l.9 1.6c.35.08.68.2 1 .34l1.5-1 1.7 1.7-1 1.5c.14.32.26.65.34 1l1.6.9v2.4l-1.6.9a4.9 4.9 0 0 1-.34 1l1 1.5-1.7 1.7-1.5-1c-.32.14-.65.26-1 .34l-.9 1.6H9.1l-.9-1.6a4.9 4.9 0 0 1-1-.34l-1.5 1-1.7-1.7 1-1.5a4.9 4.9 0 0 1-.34-1L3.2 12.4V10Z"
+                            stroke="currentColor"
+                            strokeWidth="1.2"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <div
+                        className={`absolute right-0 mt-2 w-56 rounded-xl border border-slate-800 bg-[#140b0b] p-3 text-xs text-rose-100/80 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
+                          slippageMenuOpen
+                            ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
+                            : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-400">
+                          <span>Slippage</span>
+                          <span className="text-[10px] text-slate-600">i</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {slippagePresets.map((preset) => {
+                            const isAuto = preset.mode === "auto";
+                            const isActive = isAuto
+                              ? slippageMode === "auto"
+                              : slippageMode !== "auto" && slippageDisplay === preset.value;
+                            return (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => {
+                                  setSlippageInput(preset.value);
+                                  setSlippageMode(preset.mode);
+                                  setSlippageMenuOpen(false);
+                                }}
+                                className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                                  isActive
+                                    ? "border-rose-400/70 bg-rose-500/20 text-rose-100"
+                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                {preset.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="mt-4 space-y-3">
                     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span>Deposit</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const num = Number(v3Token0Balance || 0);
-                            if (Number.isFinite(num) && num > 0) {
-                              setV3Amount0(num.toString());
-                              if (v3MintError) setV3MintError("");
-                              if (actionStatus) setActionStatus(null);
-                            }
-                          }}
-                          className="text-[11px] text-slate-300 hover:text-slate-100"
-                        >
-                          Max
-                        </button>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-3">
                         <input
@@ -4541,19 +4677,19 @@ export default function LiquiditySection({
                           placeholder="0.0"
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
                         />
-                        <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-100">
+                        <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                           {v3Token0Meta?.logo ? (
                             <img
                               src={v3Token0Meta.logo}
                               alt={`${v3Token0} logo`}
-                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
                             />
                           ) : (
                             <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
                               {(v3Token0 || "?").slice(0, 3)}
                             </div>
                           )}
-                          <span>{v3Token0}</span>
+                          <span className="leading-none">{v3Token0}</span>
                         </div>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-500">
@@ -4567,20 +4703,6 @@ export default function LiquiditySection({
                     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span>Deposit</span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const num = Number(v3Token1Balance || 0);
-                            if (Number.isFinite(num) && num > 0) {
-                              setV3Amount1(num.toString());
-                              if (v3MintError) setV3MintError("");
-                              if (actionStatus) setActionStatus(null);
-                            }
-                          }}
-                          className="text-[11px] text-slate-300 hover:text-slate-100"
-                        >
-                          Max
-                        </button>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-3">
                         <input
@@ -4594,19 +4716,19 @@ export default function LiquiditySection({
                           placeholder="0.0"
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
                         />
-                        <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-100">
+                        <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                           {v3Token1Meta?.logo ? (
                             <img
                               src={v3Token1Meta.logo}
                               alt={`${v3Token1} logo`}
-                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
                             />
                           ) : (
                             <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
                               {(v3Token1 || "?").slice(0, 3)}
                             </div>
                           )}
-                          <span>{v3Token1}</span>
+                          <span className="leading-none">{v3Token1}</span>
                         </div>
                       </div>
                       <div className="mt-1 text-[11px] text-slate-500">
@@ -4631,68 +4753,113 @@ export default function LiquiditySection({
                       : "Connect Wallet"}
                   </button>
 
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Total deposit
-                      </div>
-                      <div className="text-sm font-semibold text-slate-100">
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Total deposit</span>
+                      <span className="text-sm font-semibold text-slate-100">
                         {v3TotalDeposit !== null
                           ? `${formatPrice(v3TotalDeposit)} ${v3Token1}`
                           : "--"}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Deposit ratio</span>
+                      <div className="flex items-center gap-3 text-sm font-semibold text-slate-100">
+                        <div className="flex items-center gap-1">
+                          {v3Token0Meta?.logo ? (
+                            <img
+                              src={v3Token0Meta.logo}
+                              alt={`${v3Token0} logo`}
+                              className="h-4 w-4 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-4 w-4 rounded-full border border-slate-800 bg-slate-900 text-[7px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token0 || "?").slice(0, 2)}
+                            </div>
+                          )}
+                          <span>{v3Ratio0Pct}%</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {v3Token1Meta?.logo ? (
+                            <img
+                              src={v3Token1Meta.logo}
+                              alt={`${v3Token1} logo`}
+                              className="h-4 w-4 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                            />
+                          ) : (
+                            <div className="h-4 w-4 rounded-full border border-slate-800 bg-slate-900 text-[7px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token1 || "?").slice(0, 2)}
+                            </div>
+                          )}
+                          <span>{v3Ratio1Pct}%</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Range
-                      </div>
-                      <div className="text-sm font-semibold text-slate-100">
-                        {v3RangeMode === "full"
-                          ? "Full range"
-                          : v3HasCustomRange
-                          ? `${formatPrice(v3RangeLowerNum)} - ${formatPrice(v3RangeUpperNum)}`
-                          : "Custom"}
-                      </div>
-                    </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Fee tier
-                      </div>
-                      <div className="text-sm font-semibold text-slate-100">
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Fees</span>
+                      <span className="text-sm font-semibold text-slate-100">
                         {formatFeeTier(v3FeeTier)}
-                      </div>
+                      </span>
                     </div>
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-2">
-                      <div className="text-[10px] uppercase tracking-wide text-slate-500">
-                        Slippage
-                      </div>
-                      <div className="flex items-center gap-1 text-sm font-semibold text-slate-100">
-                        <input
-                          name="v3-slippage"
-                          value={slippageInput}
-                          onChange={(e) => setSlippageInput(e.target.value)}
-                          className="w-12 rounded-md border border-slate-700 bg-slate-900/70 px-1 py-0.5 text-right text-xs text-slate-100"
-                          placeholder="0.5"
-                        />
-                        <span className="text-[10px] text-slate-400">%</span>
-                      </div>
+                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                      <span>Slippage</span>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {slippageDisplay}%
+                      </span>
                     </div>
                   </div>
 
                   <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Deposit ratio</span>
-                      <span>{v3Ratio0Pct}% / {v3Ratio1Pct}%</span>
+                      <span>Pool balances</span>
+                      <span className="text-[10px] text-slate-600">i</span>
                     </div>
-                    <div className="mt-2 h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="mt-2 flex items-center justify-between text-sm font-semibold text-slate-100">
+                      <span>
+                        {v3PoolBalance0Num !== null
+                          ? `${formatPrice(v3PoolBalance0Num)} ${v3Token0}`
+                          : `-- ${v3Token0}`}
+                      </span>
+                      <span>
+                        {v3PoolBalance1Num !== null
+                          ? `${formatPrice(v3PoolBalance1Num)} ${v3Token1}`
+                          : `-- ${v3Token1}`}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-slate-900/60 overflow-hidden flex">
                       <div
-                        className="h-full bg-gradient-to-r from-sky-500/80 to-emerald-400/80"
-                        style={{ width: `${v3Ratio0Pct}%` }}
+                        className="h-full bg-gradient-to-r from-violet-500/80 to-sky-500/80"
+                        style={{ width: `${v3PoolBalanceRatio0}%` }}
+                      />
+                      <div
+                        className="h-full bg-emerald-400/80"
+                        style={{ width: `${v3PoolBalanceRatio1}%` }}
                       />
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>{v3Token0}</span>
-                      <span>{v3Token1}</span>
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+                      <span>{v3PoolBalance0Num !== null ? formatUsdPrice(v3PoolBalance0Num) : "--"}</span>
+                      <span>{v3PoolBalance1Num !== null ? formatUsdPrice(v3PoolBalance1Num) : "--"}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                      Pool stats
+                    </div>
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                          Net APR
+                        </div>
+                        <div className="text-xl font-semibold text-emerald-400">0.00%</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-wide text-slate-500">
+                          TVL
+                        </div>
+                        <div className="text-lg font-semibold text-slate-100">--</div>
+                        <div className="text-[11px] text-emerald-400">--</div>
+                      </div>
                     </div>
                   </div>
 
