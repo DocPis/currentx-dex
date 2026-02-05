@@ -130,10 +130,27 @@ const trimTrailingZeros = (value) => {
 const formatPrice = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return "--";
-  if (num >= 1_000_000) return num.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  if (num >= 1) return num.toLocaleString("en-US", { maximumFractionDigits: 6 });
-  if (num >= 0.0001) return num.toPrecision(6);
-  return num.toExponential(3);
+  const abs = Math.abs(num);
+  const units = [
+    { value: 1e21, suffix: "Sx" },
+    { value: 1e18, suffix: "Qi" },
+    { value: 1e15, suffix: "Q" },
+    { value: 1e12, suffix: "T" },
+    { value: 1e9, suffix: "B" },
+    { value: 1e6, suffix: "M" },
+    { value: 1e3, suffix: "K" },
+  ];
+  for (const unit of units) {
+    if (abs >= unit.value) {
+      const scaled = num / unit.value;
+      const decimals = scaled >= 100 ? 2 : scaled >= 10 ? 3 : 4;
+      return `${trimTrailingZeros(scaled.toFixed(decimals))}${unit.suffix}`;
+    }
+  }
+  if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
+  if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
+  if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
+  return num.toExponential(2);
 };
 
 const clampPercent = (value) => Math.min(100, Math.max(0, value));

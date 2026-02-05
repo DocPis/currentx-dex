@@ -51,14 +51,39 @@ const UR_COMMANDS = {
 };
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+const trimTrailingZeros = (value) => {
+  if (typeof value !== "string" || !value.includes(".")) return value;
+  return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
+};
+const formatCompactNumber = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  const abs = Math.abs(num);
+  const units = [
+    { value: 1e21, suffix: "Sx" },
+    { value: 1e18, suffix: "Qi" },
+    { value: 1e15, suffix: "Q" },
+    { value: 1e12, suffix: "T" },
+    { value: 1e9, suffix: "B" },
+    { value: 1e6, suffix: "M" },
+    { value: 1e3, suffix: "K" },
+  ];
+  for (const unit of units) {
+    if (abs >= unit.value) {
+      const scaled = num / unit.value;
+      const decimals = scaled >= 100 ? 2 : scaled >= 10 ? 3 : 4;
+      return `${trimTrailingZeros(scaled.toFixed(decimals))}${unit.suffix}`;
+    }
+  }
+  if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
+  if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
+  if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
+  return num.toExponential(2);
+};
 const formatBalance = (v) => {
   const n = Number(v || 0);
   if (!Number.isFinite(n) || n <= 0) return "0";
-  return n.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
-    useGrouping: false,
-  });
+  return formatCompactNumber(n);
 };
 const displaySymbol = (token, fallback) =>
   (token && (token.displaySymbol || token.symbol)) || fallback;
@@ -137,11 +162,7 @@ const computeProbeAmount = (amountWei, decimals) => {
 const formatDisplayAmount = (val, symbol) => {
   const num = Number(val);
   if (!Number.isFinite(num)) return "--";
-  const str = num.toLocaleString("en-US", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 6,
-    useGrouping: false,
-  });
+  const str = formatCompactNumber(num);
   return symbol ? `${str} ${symbol}` : str;
 };
 
@@ -1783,7 +1804,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     ? (quoteOutRaw * BigInt(10000 - slippageBps)) / 10000n
     : null;
   const minReceivedDisplay = minReceivedRaw
-    ? `${Number(formatUnits(minReceivedRaw, buyMeta?.decimals ?? 18)).toFixed(6)} ${buyToken}`
+    ? formatDisplayAmount(
+        Number(formatUnits(minReceivedRaw, buyMeta?.decimals ?? 18)),
+        displayBuySymbol
+      )
     : "--";
   const activeRouteLabels =
     displayRoute && displayRoute.length
@@ -2708,7 +2732,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
             <span className="font-medium text-slate-300">
-              Balance: {(effectiveBalances[sellToken] || 0).toFixed(4)} {displaySellSymbol}
+              Balance: {formatBalance(effectiveBalances[sellToken])} {displaySellSymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -2773,7 +2797,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               </button>
             ))}
             <div className="px-2 py-1 text-slate-400">
-              {(sellBalance || 0).toFixed(4)} {displaySellSymbol} available
+              {formatBalance(sellBalance)} {displaySellSymbol} available
             </div>
           </div>
         </div>
@@ -2825,7 +2849,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Buy</span>
             <span className="font-medium text-slate-300">
-              Balance: {(effectiveBalances[buyToken] || 0).toFixed(2)} {displayBuySymbol}
+              Balance: {formatBalance(effectiveBalances[buyToken])} {displayBuySymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -2868,7 +2892,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </button>
             <div className="flex-1 text-right w-full">
               <div className="text-2xl sm:text-3xl font-semibold text-slate-50">
-                {quoteOut !== null ? Number(quoteOut).toFixed(6) : "0.00"}
+                {quoteOut !== null ? formatCompactNumber(quoteOut) : "0.00"}
               </div>
               <div className="text-[11px] text-slate-500">
                 {quoteSourceLabel}
@@ -2932,7 +2956,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Expected</span>
               <span className="font-semibold">
-                {quoteOut !== null ? `${Number(quoteOut).toFixed(5)} ${displayBuySymbol}` : "--"}
+                {quoteOut !== null ? formatDisplayAmount(quoteOut, displayBuySymbol) : "--"}
               </span>
             </div>
             <div className="flex flex-col gap-1">

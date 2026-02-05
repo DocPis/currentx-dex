@@ -525,7 +525,9 @@ export async function fetchDashboardStatsV3() {
       const factory = candidate.single
         ? res?.[candidate.field]
         : res?.[candidate.field]?.[0];
-      if (!factory) return null;
+      if (!factory) {
+        continue;
+      }
       return candidate.map(factory);
     } catch (err) {
       const message = err?.message || "";
@@ -766,7 +768,9 @@ export async function fetchProtocolHistoryV3(days = 7) {
     try {
       const res = await postSubgraphV3(candidate.query, { days: fetchCount });
       const rows = res?.[candidate.field] || [];
-      if (!rows.length) return [];
+      if (!rows.length) {
+        continue;
+      }
       return rows.map(candidate.map);
     } catch (err) {
       const message = err?.message || "";
