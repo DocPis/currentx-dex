@@ -1075,6 +1075,12 @@ export default function LiquiditySection({
       sqrtCurrentX96,
     };
   }, [v3ActionModal.position, v3PoolMetrics, findTokenMetaByAddress]);
+  const v3ActionRangeSide = useMemo(() => {
+    if (!v3ActionRangeMath) return "dual";
+    if (v3ActionRangeMath.sqrtCurrentX96 <= v3ActionRangeMath.sqrtLowerX96) return "token0";
+    if (v3ActionRangeMath.sqrtCurrentX96 >= v3ActionRangeMath.sqrtUpperX96) return "token1";
+    return "dual";
+  }, [v3ActionRangeMath]);
 
   const computeV3ActionFromAmount0 = useCallback(
     (value) => {
@@ -1164,6 +1170,15 @@ export default function LiquiditySection({
     computeV3ActionFromAmount0,
     computeV3ActionFromAmount1,
   ]);
+  useEffect(() => {
+    if (v3ActionRangeSide === "token0") {
+      if (v3ActionAmount1 && v3ActionAmount1 !== "0") setV3ActionAmount1("0");
+      return;
+    }
+    if (v3ActionRangeSide === "token1") {
+      if (v3ActionAmount0 && v3ActionAmount0 !== "0") setV3ActionAmount0("0");
+    }
+  }, [v3ActionRangeSide, v3ActionAmount0, v3ActionAmount1]);
 
   const v3PoolToken0Meta = useMemo(
     () => findTokenMetaByAddress(v3PoolInfo.token0),
@@ -1279,6 +1294,12 @@ export default function LiquiditySection({
     v3PoolInfo.spacing,
     v3FeeTier,
   ]);
+  const v3RangeSide = useMemo(() => {
+    if (!v3RangeMath) return "dual";
+    if (v3RangeMath.sqrtCurrentX96 <= v3RangeMath.sqrtLowerX96) return "token0";
+    if (v3RangeMath.sqrtCurrentX96 >= v3RangeMath.sqrtUpperX96) return "token1";
+    return "dual";
+  }, [v3RangeMath]);
 
   const applyV3RangePreset = useCallback(
     (pct) => {
@@ -1292,6 +1313,15 @@ export default function LiquiditySection({
     },
     [v3ReferencePrice]
   );
+  useEffect(() => {
+    if (v3RangeSide === "token0") {
+      if (v3Amount1 && v3Amount1 !== "0") setV3Amount1("0");
+      return;
+    }
+    if (v3RangeSide === "token1") {
+      if (v3Amount0 && v3Amount0 !== "0") setV3Amount0("0");
+    }
+  }, [v3RangeSide, v3Amount0, v3Amount1]);
 
   useEffect(() => {
     if (!isV3View || v3RangeInitialized) return;
@@ -3132,10 +3162,33 @@ export default function LiquiditySection({
       setV3MintError("Token addresses missing for this selection.");
       return;
     }
-    const amountA = safeParseUnits(v3Amount0, v3Token0 === "ETH" ? 18 : metaA?.decimals || 18);
-    const amountB = safeParseUnits(v3Amount1, v3Token1 === "ETH" ? 18 : metaB?.decimals || 18);
-    if (!amountA || !amountB || amountA <= 0n || amountB <= 0n) {
-      setV3MintError("Enter valid amounts for both tokens.");
+    const amountAParsed = safeParseUnits(v3Amount0 || "0", v3Token0 === "ETH" ? 18 : metaA?.decimals || 18);
+    const amountBParsed = safeParseUnits(v3Amount1 || "0", v3Token1 === "ETH" ? 18 : metaB?.decimals || 18);
+    if ((v3Amount0 && amountAParsed === null) || (v3Amount1 && amountBParsed === null)) {
+      setV3MintError("Enter valid amounts.");
+      return;
+    }
+    const amountA = amountAParsed || 0n;
+    const amountB = amountBParsed || 0n;
+    if (v3RangeMath) {
+      if (v3RangeSide === "dual") {
+        if (amountA <= 0n || amountB <= 0n) {
+          setV3MintError("Enter valid amounts for both tokens.");
+          return;
+        }
+      } else if (v3RangeSide === "token0") {
+        if (amountA <= 0n) {
+          setV3MintError(`Enter an amount for ${v3Token0}.`);
+          return;
+        }
+      } else if (v3RangeSide === "token1") {
+        if (amountB <= 0n) {
+          setV3MintError(`Enter an amount for ${v3Token1}.`);
+          return;
+        }
+      }
+    } else if (amountA <= 0n && amountB <= 0n) {
+      setV3MintError("Enter an amount for at least one token.");
       return;
     }
 
@@ -3408,7 +3461,24 @@ export default function LiquiditySection({
     const dec1 = meta1?.decimals ?? 18;
     const amount0Desired = safeParseUnits(v3ActionAmount0 || "0", dec0) || 0n;
     const amount1Desired = safeParseUnits(v3ActionAmount1 || "0", dec1) || 0n;
-    if (amount0Desired <= 0n && amount1Desired <= 0n) {
+    if (v3ActionRangeMath) {
+      if (v3ActionRangeSide === "dual") {
+        if (amount0Desired <= 0n || amount1Desired <= 0n) {
+          setV3ActionError("Enter valid amounts for both tokens.");
+          return;
+        }
+      } else if (v3ActionRangeSide === "token0") {
+        if (amount0Desired <= 0n) {
+          setV3ActionError(`Enter an amount for ${position.token0Symbol}.`);
+          return;
+        }
+      } else if (v3ActionRangeSide === "token1") {
+        if (amount1Desired <= 0n) {
+          setV3ActionError(`Enter an amount for ${position.token1Symbol}.`);
+          return;
+        }
+      }
+    } else if (amount0Desired <= 0n && amount1Desired <= 0n) {
       setV3ActionError("Enter an amount for at least one token.");
       return;
     }
@@ -5974,7 +6044,8 @@ export default function LiquiditySection({
                             setV3Amount1(formatAutoAmount(computed));
                           }}
                           placeholder="0.0"
-                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                          disabled={v3RangeSide === "token1"}
+                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                         />
                         <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                           {v3Token0Meta?.logo ? (
@@ -6042,7 +6113,8 @@ export default function LiquiditySection({
                             setV3Amount0(formatAutoAmount(computed));
                           }}
                           placeholder="0.0"
-                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                          disabled={v3RangeSide === "token0"}
+                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                         />
                         <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                           {v3Token1Meta?.logo ? (
@@ -6764,8 +6836,13 @@ export default function LiquiditySection({
                 { label: "50%", pct: 0.5 },
                 { label: "Max", pct: 1 },
               ];
+              const rangeSide = v3ActionRangeSide;
+              const canUseSide0 = rangeSide !== "token1";
+              const canUseSide1 = rangeSide !== "token0";
               const applyQuickFill = (side, pct) => {
                 if (walletBalancesLoading) return;
+                if (side === 0 && !canUseSide0) return;
+                if (side === 1 && !canUseSide1) return;
                 const balance = side === 0 ? balance0Num : balance1Num;
                 if (!Number.isFinite(balance) || balance <= 0) return;
                 const next = formatAutoAmount(balance * pct);
@@ -6832,7 +6909,8 @@ export default function LiquiditySection({
                               }
                             }}
                             placeholder="0.0"
-                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                            disabled={!canUseSide0}
+                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
                           <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                             {meta0?.logo ? (
@@ -6864,7 +6942,7 @@ export default function LiquiditySection({
                                 key={`increase-0-${btn.label}`}
                                 type="button"
                                 onClick={() => applyQuickFill(0, btn.pct)}
-                                disabled={walletBalancesLoading || !hasBalance0}
+                                disabled={walletBalancesLoading || !hasBalance0 || !canUseSide0}
                                 className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
                               >
                                 {btn.label}
@@ -6893,7 +6971,8 @@ export default function LiquiditySection({
                               }
                             }}
                             placeholder="0.0"
-                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                            disabled={!canUseSide1}
+                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
                           <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
                             {meta1?.logo ? (
@@ -6925,7 +7004,7 @@ export default function LiquiditySection({
                                 key={`increase-1-${btn.label}`}
                                 type="button"
                                 onClick={() => applyQuickFill(1, btn.pct)}
-                                disabled={walletBalancesLoading || !hasBalance1}
+                                disabled={walletBalancesLoading || !hasBalance1 || !canUseSide1}
                                 className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
                               >
                                 {btn.label}
