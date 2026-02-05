@@ -436,6 +436,7 @@ const MIN_LP_THRESHOLD = 1e-12;
 const TOAST_DURATION_MS = 20000;
 const MAX_BPS = 5000; // 50%
 const MAX_UINT256 = (1n << 256n) - 1n;
+const MAX_UINT128 = (1n << 128n) - 1n;
 
 // Simple concurrency limiter to speed up parallel RPC/subgraph calls without overloading endpoints.
 const runWithConcurrency = async (items, limit, worker) => {
@@ -807,6 +808,16 @@ export default function LiquiditySection({
   const [v3Positions, setV3Positions] = useState([]);
   const [v3PositionsLoading, setV3PositionsLoading] = useState(false);
   const [v3PositionsError, setV3PositionsError] = useState("");
+  const [v3ActionModal, setV3ActionModal] = useState({
+    open: false,
+    type: null,
+    position: null,
+  });
+  const [v3ActionAmount0, setV3ActionAmount0] = useState("");
+  const [v3ActionAmount1, setV3ActionAmount1] = useState("");
+  const [v3RemovePct, setV3RemovePct] = useState("100");
+  const [v3ActionLoading, setV3ActionLoading] = useState(false);
+  const [v3ActionError, setV3ActionError] = useState("");
   const [selectedPositionId, setSelectedPositionId] = useState(null);
   const [liquidityView, setLiquidityView] = useState(() => {
     if (showV3 && !showV2) return "v3";
@@ -1451,14 +1462,36 @@ export default function LiquiditySection({
           )
         );
         const positions = await Promise.all(ids.map((id) => manager.positions(id)));
+        const feesById = new Map();
+        await runWithConcurrency(ids, 4, async (id) => {
+          try {
+            const params = {
+              tokenId: id,
+              recipient: address,
+              amount0Max: MAX_UINT128,
+              amount1Max: MAX_UINT128,
+            };
+            const res = await manager.collect.staticCall(params, { from: address });
+            const amount0 = res?.amount0 ?? res?.[0] ?? 0n;
+            const amount1 = res?.amount1 ?? res?.[1] ?? 0n;
+            feesById.set(id?.toString?.() || String(id), {
+              tokensOwed0: amount0,
+              tokensOwed1: amount1,
+            });
+          } catch {
+            // fallback to stored tokensOwed if callStatic fails
+          }
+        });
         if (cancelled) return;
         const mapped = positions.map((pos, idx) => {
           const token0 = pos?.token0;
           const token1 = pos?.token1;
           const meta0 = findTokenMetaByAddress(token0);
           const meta1 = findTokenMetaByAddress(token1);
+          const idStr = ids[idx]?.toString?.() || String(ids[idx]);
+          const feeSnapshot = feesById.get(idStr);
           return {
-            tokenId: ids[idx]?.toString?.() || String(ids[idx]),
+            tokenId: idStr,
             token0,
             token1,
             token0Symbol: meta0?.symbol || shortenAddress(token0),
@@ -1467,8 +1500,8 @@ export default function LiquiditySection({
             tickLower: Number(pos?.tickLower ?? 0),
             tickUpper: Number(pos?.tickUpper ?? 0),
             liquidity: pos?.liquidity ?? 0n,
-            tokensOwed0: pos?.tokensOwed0 ?? 0n,
-            tokensOwed1: pos?.tokensOwed1 ?? 0n,
+            tokensOwed0: feeSnapshot?.tokensOwed0 ?? pos?.tokensOwed0 ?? 0n,
+            tokensOwed1: feeSnapshot?.tokensOwed1 ?? pos?.tokensOwed1 ?? 0n,
           };
         });
         setV3Positions(mapped);
@@ -3126,6 +3159,205 @@ export default function LiquiditySection({
       });
     } finally {
       setV3MintLoading(false);
+    }
+  };
+
+  const openV3ActionModal = (type, position) => {
+    if (!position) return;
+    setV3ActionModal({ open: true, type, position });
+    setV3ActionAmount0("");
+    setV3ActionAmount1("");
+    setV3RemovePct("100");
+    setV3ActionError("");
+  };
+
+  const closeV3ActionModal = () => {
+    setV3ActionModal({ open: false, type: null, position: null });
+    setV3ActionError("");
+    setV3ActionLoading(false);
+  };
+
+  const handleV3Collect = async (position) => {
+    if (!position) return;
+    if (!address) {
+      setV3ActionError("Connect your wallet to claim fees.");
+      return;
+    }
+    if (!hasV3Liquidity) {
+      setV3ActionError("V3 contracts not configured on this network.");
+      return;
+    }
+    setV3ActionLoading(true);
+    setV3ActionError("");
+    try {
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+      const manager = new Contract(
+        UNIV3_POSITION_MANAGER_ADDRESS,
+        UNIV3_POSITION_MANAGER_ABI,
+        signer
+      );
+      const params = {
+        tokenId: position.tokenId,
+        recipient: user,
+        amount0Max: MAX_UINT128,
+        amount1Max: MAX_UINT128,
+      };
+      const tx = await manager.collect(params);
+      const receipt = await tx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt?.hash,
+        message: "Fees claimed.",
+      });
+      setV3RefreshTick((t) => t + 1);
+      closeV3ActionModal();
+    } catch (err) {
+      const msg = friendlyActionError(err, "Claim fees");
+      setV3ActionError(msg);
+      setActionStatus({ variant: "error", message: msg });
+    } finally {
+      setV3ActionLoading(false);
+    }
+  };
+
+  const handleV3Increase = async () => {
+    const position = v3ActionModal.position;
+    if (!position) return;
+    if (!address) {
+      setV3ActionError("Connect your wallet to increase this position.");
+      return;
+    }
+    if (!hasV3Liquidity) {
+      setV3ActionError("V3 contracts not configured on this network.");
+      return;
+    }
+    const meta0 = findTokenMetaByAddress(position.token0);
+    const meta1 = findTokenMetaByAddress(position.token1);
+    const dec0 = meta0?.decimals ?? 18;
+    const dec1 = meta1?.decimals ?? 18;
+    const amount0Desired = safeParseUnits(v3ActionAmount0 || "0", dec0) || 0n;
+    const amount1Desired = safeParseUnits(v3ActionAmount1 || "0", dec1) || 0n;
+    if (amount0Desired <= 0n && amount1Desired <= 0n) {
+      setV3ActionError("Enter an amount for at least one token.");
+      return;
+    }
+    setV3ActionLoading(true);
+    setV3ActionError("");
+    try {
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+      const readProvider = getReadOnlyProvider(false, true) || provider;
+      const manager = new Contract(
+        UNIV3_POSITION_MANAGER_ADDRESS,
+        UNIV3_POSITION_MANAGER_ABI,
+        signer
+      );
+      if (amount0Desired > 0n) {
+        const tokenRead = new Contract(position.token0, ERC20_ABI, readProvider);
+        const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        if (allowance < amount0Desired) {
+          const token = new Contract(position.token0, ERC20_ABI, signer);
+          const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
+          await tx.wait();
+        }
+      }
+      if (amount1Desired > 0n) {
+        const tokenRead = new Contract(position.token1, ERC20_ABI, readProvider);
+        const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
+        if (allowance < amount1Desired) {
+          const token = new Contract(position.token1, ERC20_ABI, signer);
+          const tx = await token.approve(UNIV3_POSITION_MANAGER_ADDRESS, MAX_UINT256);
+          await tx.wait();
+        }
+      }
+      const params = {
+        tokenId: position.tokenId,
+        amount0Desired,
+        amount1Desired,
+        amount0Min: applySlippage(amount0Desired, slippageBps),
+        amount1Min: applySlippage(amount1Desired, slippageBps),
+        deadline: Math.floor(Date.now() / 1000) + 60 * 20,
+      };
+      const tx = await manager.increaseLiquidity(params);
+      const receipt = await tx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt?.hash,
+        message: "Position increased.",
+      });
+      setV3RefreshTick((t) => t + 1);
+      closeV3ActionModal();
+    } catch (err) {
+      const msg = friendlyActionError(err, "Increase liquidity");
+      setV3ActionError(msg);
+      setActionStatus({ variant: "error", message: msg });
+    } finally {
+      setV3ActionLoading(false);
+    }
+  };
+
+  const handleV3Remove = async () => {
+    const position = v3ActionModal.position;
+    if (!position) return;
+    if (!address) {
+      setV3ActionError("Connect your wallet to remove liquidity.");
+      return;
+    }
+    if (!hasV3Liquidity) {
+      setV3ActionError("V3 contracts not configured on this network.");
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, Number(v3RemovePct || 0)));
+    const pctBps = Math.round(pct * 100);
+    const liquidityToRemove = (position.liquidity * BigInt(pctBps)) / 10000n;
+    if (!liquidityToRemove || liquidityToRemove <= 0n) {
+      setV3ActionError("Select a valid percentage to remove.");
+      return;
+    }
+    setV3ActionLoading(true);
+    setV3ActionError("");
+    try {
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const user = await signer.getAddress();
+      const manager = new Contract(
+        UNIV3_POSITION_MANAGER_ADDRESS,
+        UNIV3_POSITION_MANAGER_ABI,
+        signer
+      );
+      const params = {
+        tokenId: position.tokenId,
+        liquidity: liquidityToRemove,
+        amount0Min: 0,
+        amount1Min: 0,
+        deadline: Math.floor(Date.now() / 1000) + 60 * 20,
+      };
+      const tx = await manager.decreaseLiquidity(params);
+      await tx.wait();
+      const collectParams = {
+        tokenId: position.tokenId,
+        recipient: user,
+        amount0Max: MAX_UINT128,
+        amount1Max: MAX_UINT128,
+      };
+      const collectTx = await manager.collect(collectParams);
+      const receipt = await collectTx.wait();
+      setActionStatus({
+        variant: "success",
+        hash: receipt?.hash,
+        message: "Liquidity removed and fees collected.",
+      });
+      setV3RefreshTick((t) => t + 1);
+      closeV3ActionModal();
+    } catch (err) {
+      const msg = friendlyActionError(err, "Remove liquidity");
+      setV3ActionError(msg);
+      setActionStatus({ variant: "error", message: msg });
+    } finally {
+      setV3ActionLoading(false);
     }
   };
 
@@ -5182,6 +5414,30 @@ export default function LiquiditySection({
                                   </div>
                                 </div>
 
+                                <div className="mt-3 flex flex-wrap items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => openV3ActionModal("increase", selectedPosition)}
+                                    className="px-3 py-1 rounded-full border border-slate-700 bg-slate-900/70 text-xs text-slate-200 hover:border-sky-500/60"
+                                  >
+                                    Increase
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => openV3ActionModal("remove", selectedPosition)}
+                                    className="px-3 py-1 rounded-full border border-slate-700 bg-slate-900/70 text-xs text-slate-200 hover:border-rose-500/60"
+                                  >
+                                    Remove
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleV3Collect(selectedPosition)}
+                                    className="px-3 py-1 rounded-full border border-slate-700 bg-slate-900/70 text-xs text-slate-200 hover:border-emerald-500/60"
+                                  >
+                                    Claim fees
+                                  </button>
+                                </div>
+
                                 <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
                                   <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
@@ -5929,6 +6185,28 @@ export default function LiquiditySection({
                               <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
                                 CL
                               </span>
+                              <div className="flex items-center gap-2 ml-1">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openV3ActionModal("increase", pos);
+                                  }}
+                                  className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-sky-500/60"
+                                >
+                                  Increase
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openV3ActionModal("remove", pos);
+                                  }}
+                                  className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-rose-500/60"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </div>
                           </div>
 
@@ -6291,6 +6569,167 @@ export default function LiquiditySection({
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {v3ActionModal.open && v3ActionModal.position && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={closeV3ActionModal}
+          />
+          <div className="relative w-full max-w-lg rounded-3xl border border-slate-800 bg-[#0a0f24] p-5 shadow-2xl">
+            {(() => {
+              const position = v3ActionModal.position;
+              const meta0 = findTokenMetaByAddress(position.token0);
+              const meta1 = findTokenMetaByAddress(position.token1);
+              return (
+                <>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                        {v3ActionModal.type === "increase" ? "Increase Position" : "Remove Liquidity"}
+                      </div>
+                      <div className="text-lg font-semibold text-slate-100">
+                        {position.token0Symbol} / {position.token1Symbol}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        Position #{position.tokenId} · Fee {formatFeeTier(position.fee)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={closeV3ActionModal}
+                      className="h-9 w-9 rounded-full border border-slate-700 text-slate-200 hover:border-slate-500"
+                      aria-label="Close"
+                    >
+                      X
+                    </button>
+                  </div>
+
+                  {v3ActionModal.type === "increase" ? (
+                    <div className="mt-4 space-y-3">
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>Deposit</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <input
+                            name="v3-increase-0"
+                            value={v3ActionAmount0}
+                            onChange={(e) => setV3ActionAmount0(e.target.value)}
+                            placeholder="0.0"
+                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                          />
+                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                            {meta0?.logo ? (
+                              <img
+                                src={meta0.logo}
+                                alt={`${position.token0Symbol} logo`}
+                                className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
+                              />
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                {(position.token0Symbol || "?").slice(0, 3)}
+                              </div>
+                            )}
+                            <span className="leading-none">{position.token0Symbol}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>Deposit</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <input
+                            name="v3-increase-1"
+                            value={v3ActionAmount1}
+                            onChange={(e) => setV3ActionAmount1(e.target.value)}
+                            placeholder="0.0"
+                            className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
+                          />
+                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                            {meta1?.logo ? (
+                              <img
+                                src={meta1.logo}
+                                alt={`${position.token1Symbol} logo`}
+                                className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
+                              />
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                {(position.token1Symbol || "?").slice(0, 3)}
+                              </div>
+                            )}
+                            <span className="leading-none">{position.token1Symbol}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-3">
+                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                        <div className="flex items-center justify-between text-[11px] text-slate-500">
+                          <span>Remove liquidity</span>
+                          <span>{v3RemovePct || 0}%</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={Number(v3RemovePct || 0)}
+                          onChange={(e) => setV3RemovePct(e.target.value)}
+                          className="mt-3 w-full accent-rose-400"
+                        />
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {[25, 50, 75, 100].map((pct) => (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => setV3RemovePct(String(pct))}
+                              className="px-3 py-1 rounded-full border border-slate-800 bg-slate-900/70 text-xs text-slate-200 hover:border-rose-500/60"
+                            >
+                              {pct}%
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {v3ActionError && (
+                    <div className="mt-4 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                      {v3ActionError}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex flex-col sm:flex-row gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleV3Collect(position)}
+                      disabled={v3ActionLoading}
+                      className="flex-1 rounded-xl border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm font-semibold text-slate-100 hover:border-emerald-500/60 disabled:opacity-60"
+                    >
+                      Claim fees
+                    </button>
+                    <button
+                      type="button"
+                      onClick={v3ActionModal.type === "increase" ? handleV3Increase : handleV3Remove}
+                      disabled={v3ActionLoading}
+                      className="flex-1 rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
+                    >
+                      {v3ActionLoading
+                        ? "Processing..."
+                        : v3ActionModal.type === "increase"
+                        ? "Increase"
+                        : "Remove"}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
