@@ -363,7 +363,7 @@ const buildRealtimeProof = (
 
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
-export default function SwapSection({ balances, address, chainId }) {
+export default function SwapSection({ balances, address, chainId, onBalancesRefresh }) {
   const normalizeChainHex = (value) => {
     if (value === null || value === undefined) return null;
     const str = String(value).trim();
@@ -373,6 +373,7 @@ export default function SwapSection({ balances, address, chainId }) {
     return str.toLowerCase();
   };
   const [localBalances, setLocalBalances] = useState({});
+  const [localBalancesTick, setLocalBalancesTick] = useState(0);
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
   const tokenRegistry = useMemo(() => {
     const out = { ...TOKENS };
@@ -435,7 +436,6 @@ export default function SwapSection({ balances, address, chainId }) {
   const [quoteError, setQuoteError] = useState("");
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [slippage, setSlippage] = useState("0.5");
-  const [slippageCap, setSlippageCap] = useState("3");
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
@@ -642,12 +642,22 @@ export default function SwapSection({ balances, address, chainId }) {
     return () => {
       cancelled = true;
     };
-  }, [address, tokenRegistry]);
+  }, [address, tokenRegistry, localBalancesTick]);
   useEffect(() => {
     if (!address) {
       setLocalBalances({});
     }
   }, [address]);
+  const refreshBalances = useCallback(async () => {
+    if (typeof onBalancesRefresh === "function") {
+      try {
+        await onBalancesRefresh(address, { silent: true });
+      } catch {
+        // ignore refresh errors
+      }
+    }
+    setLocalBalancesTick((t) => t + 1);
+  }, [onBalancesRefresh, address]);
   const effectiveBalances = useMemo(() => {
     const base = balances || {};
     const local = localBalances || {};
@@ -1763,12 +1773,7 @@ export default function SwapSection({ balances, address, chainId }) {
   const protectedSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
   const autoSlippagePct =
     executionMode === "turbo" ? turboAutoSlippagePct : protectedSlippagePct;
-  const slippageCapPct = (() => {
-    const val = Number(slippageCap);
-    if (Number.isNaN(val) || val <= 0) return 0.5;
-    return Math.min(5, val);
-  })();
-  const effectiveSlippagePct = Math.min(autoSlippagePct, slippageCapPct);
+  const effectiveSlippagePct = autoSlippagePct;
   const slippageBps = (() => {
     if (Number.isNaN(effectiveSlippagePct) || effectiveSlippagePct < 0) return 50;
     return Math.min(5000, Math.round(effectiveSlippagePct * 100));
@@ -2231,6 +2236,7 @@ export default function SwapSection({ balances, address, chainId }) {
           hash: receipt.hash,
           variant: "success",
         });
+        await refreshBalances();
         return;
       }
 
@@ -2369,6 +2375,7 @@ export default function SwapSection({ balances, address, chainId }) {
           hash: receipt.hash,
           variant: "success",
         });
+        await refreshBalances();
         return;
       }
 
@@ -2484,6 +2491,7 @@ export default function SwapSection({ balances, address, chainId }) {
           hash: receipt.hash,
           variant: "success",
         });
+        await refreshBalances();
         return;
       }
 
@@ -2618,6 +2626,7 @@ export default function SwapSection({ balances, address, chainId }) {
         hash: receipt.hash,
         variant: "success",
       });
+      await refreshBalances();
     } catch (e) {
       const txHash = extractTxHash(e) || pendingTxHashRef.current;
       if (txHash) {
@@ -2630,6 +2639,7 @@ export default function SwapSection({ balances, address, chainId }) {
             hash: txHash,
             message: "Swap confirmed. Check the explorer for details.",
           });
+          await refreshBalances();
           return;
         }
         if (normalized === 0) {
@@ -2698,7 +2708,7 @@ export default function SwapSection({ balances, address, chainId }) {
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
             <span className="font-medium text-slate-300">
-              Balance: {(balances[sellToken] || 0).toFixed(4)} {displaySellSymbol}
+              Balance: {(effectiveBalances[sellToken] || 0).toFixed(4)} {displaySellSymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -2815,7 +2825,7 @@ export default function SwapSection({ balances, address, chainId }) {
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Buy</span>
             <span className="font-medium text-slate-300">
-              Balance: {(balances[buyToken] || 0).toFixed(2)} {displayBuySymbol}
+              Balance: {(effectiveBalances[buyToken] || 0).toFixed(2)} {displayBuySymbol}
             </span>
           </div>
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
@@ -3492,7 +3502,7 @@ export default function SwapSection({ balances, address, chainId }) {
                       ) : (
                         <span className="text-[11px] text-slate-500">Native asset</span>
                       )}
-                      <div>{formatBalance(balances[t.symbol])}</div>
+                      <div>{formatBalance(effectiveBalances[t.symbol])}</div>
                     </div>
                   </button>
                 );

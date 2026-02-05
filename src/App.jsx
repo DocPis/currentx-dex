@@ -107,7 +107,12 @@ export default function App() {
 
       <main className="flex-1">
         {tab === "swap" && (
-          <SwapSection balances={balances} address={address} chainId={chainId} />
+          <SwapSection
+            balances={balances}
+            address={address}
+            chainId={chainId}
+            onBalancesRefresh={refresh}
+          />
         )}
         {tab === "liquidity" && (
           <LiquiditySection
@@ -115,6 +120,7 @@ export default function App() {
             chainId={chainId}
             balances={balances}
             showV3={true}
+            onBalancesRefresh={refresh}
           />
         )}
         {tab === "pools" && <PoolsSection />}

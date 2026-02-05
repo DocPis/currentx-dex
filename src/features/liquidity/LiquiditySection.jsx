@@ -765,6 +765,7 @@ export default function LiquiditySection({
   address,
   chainId,
   balances: balancesProp,
+  onBalancesRefresh,
   showV2 = true,
   showV3 = false,
 }) {
@@ -919,7 +920,7 @@ export default function LiquiditySection({
     [DEFAULT_SLIPPAGE]
   );
   const hasExternalBalances = Boolean(balancesProp);
-  const { balances: hookBalances, loading: hookBalancesLoading } = useBalances(
+  const { balances: hookBalances, loading: hookBalancesLoading, refresh: hookBalancesRefresh } = useBalances(
     address,
     chainId,
     tokenRegistry
@@ -932,6 +933,24 @@ export default function LiquiditySection({
     [balancesProp, hasExternalBalances, hookBalances]
   );
   const walletBalancesLoading = hasExternalBalances ? hookBalancesLoading : hookBalancesLoading;
+  const refreshBalances = useCallback(
+    async () => {
+      const tasks = [];
+      if (typeof onBalancesRefresh === "function") {
+        tasks.push(onBalancesRefresh(address, { silent: true }));
+      }
+      if (typeof hookBalancesRefresh === "function") {
+        tasks.push(hookBalancesRefresh(address, { silent: true }));
+      }
+      if (!tasks.length) return;
+      try {
+        await Promise.allSettled(tasks);
+      } catch {
+        // ignore refresh errors
+      }
+    },
+    [onBalancesRefresh, hookBalancesRefresh, address]
+  );
   const hasBothLiquidityViews = showV2 && showV3;
   const activeLiquidityView = hasBothLiquidityViews
     ? liquidityView
@@ -3439,6 +3458,7 @@ export default function LiquiditySection({
       setV3Amount0("");
       setV3Amount1("");
       setV3RefreshTick((t) => t + 1);
+      void refreshBalances();
     } catch (err) {
       setV3MintError(friendlyActionError(err, "Position deposit"));
       setActionStatus({
@@ -3503,6 +3523,7 @@ export default function LiquiditySection({
         message: "Fees claimed.",
       });
       setV3RefreshTick((t) => t + 1);
+      void refreshBalances();
       closeV3ActionModal();
     } catch (err) {
       const msg = friendlyActionError(err, "Claim fees");
@@ -3615,6 +3636,7 @@ export default function LiquiditySection({
         message: "Position increased.",
       });
       setV3RefreshTick((t) => t + 1);
+      void refreshBalances();
       closeV3ActionModal();
     } catch (err) {
       const msg = friendlyActionError(err, "Increase liquidity");
@@ -3677,6 +3699,7 @@ export default function LiquiditySection({
         message: "Liquidity removed and fees collected.",
       });
       setV3RefreshTick((t) => t + 1);
+      void refreshBalances();
       closeV3ActionModal();
     } catch (err) {
       const msg = friendlyActionError(err, "Remove liquidity");
@@ -4065,6 +4088,7 @@ export default function LiquiditySection({
       }
 
       setLpRefreshTick((t) => t + 1);
+      void refreshBalances();
     } catch (e) {
       const txHash = extractTxHash(e);
       if (txHash) {
@@ -4080,6 +4104,7 @@ export default function LiquiditySection({
             message: poolLabel ? `Deposited ${poolLabel}` : "Deposit confirmed",
           });
           setLpRefreshTick((t) => t + 1);
+          void refreshBalances();
           return;
         }
         if (normalized === 0) {
@@ -4236,6 +4261,7 @@ export default function LiquiditySection({
         message: `Withdrew ${getPoolLabel(selectedPool)}`,
       });
       setLpRefreshTick((t) => t + 1);
+      void refreshBalances();
     } catch (e) {
       const txHash = extractTxHash(e);
       if (txHash) {
@@ -4251,6 +4277,7 @@ export default function LiquiditySection({
             message: poolLabel ? `Withdrew ${poolLabel}` : "Withdraw confirmed",
           });
           setLpRefreshTick((t) => t + 1);
+          void refreshBalances();
           return;
         }
         if (normalized === 0) {
