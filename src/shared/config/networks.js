@@ -4,7 +4,7 @@
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const DEFAULT_MAINNET_SUBGRAPH_URL =
   env.VITE_UNIV2_SUBGRAPH ||
-  "https://gateway.thegraph.com/api/subgraphs/id/AokDW2tqCMiFvVqXUEfiwY94mNXoBQfsszwd5bnPiNcr";
+  "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv";
 const DEFAULT_MAINNET_SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 const DEFAULT_MAINNET_V3_SUBGRAPH_URL = env.VITE_UNIV3_SUBGRAPH || "";
 const DEFAULT_MAINNET_V3_SUBGRAPH_API_KEY = env.VITE_UNIV3_SUBGRAPH_API_KEY || "";
