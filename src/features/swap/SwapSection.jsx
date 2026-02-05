@@ -2989,18 +2989,51 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         {segment.hops.map((hop, hopIdx) => (
                           <div
                             key={`route-hop-${segIdx}-${hopIdx}`}
-                            className="flex items-center gap-2 text-xs text-slate-200"
+                            className="flex items-center gap-3 text-xs text-slate-200"
                           >
-                            <span className="px-2 py-1 rounded-md border border-slate-700 bg-slate-950/80">
-                              {hop.from?.symbol || "Token"}
-                            </span>
-                            <span className="text-slate-500">-&gt;</span>
-                            <span className="px-2 py-1 rounded-md border border-slate-700 bg-slate-950/80">
-                              {hop.to?.symbol || "Token"}
-                            </span>
-                            <span className="ml-auto text-[10px] text-slate-400">
-                              {hop.protocol === "V3" ? formatV3Fee(hop.fee) : "V2"}
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
+                                {hop.from?.meta?.logo ? (
+                                  <img
+                                    src={hop.from.meta.logo}
+                                    alt={`${hop.from?.symbol || "Token"} logo`}
+                                    className="h-full w-full object-contain"
+                                  />
+                                ) : (
+                                  <span className="text-[8px] font-semibold text-slate-300">
+                                    {(hop.from?.symbol || "TKN").slice(0, 2)}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] font-semibold text-slate-100">
+                                {hop.from?.symbol || "Token"}
+                              </span>
+                            </div>
+                            <div className="flex-1 flex items-center gap-2 min-w-[72px]">
+                              <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
+                              <span className="px-2 py-0.5 rounded-full border border-slate-700 bg-slate-950/80 text-[10px] text-slate-300 whitespace-nowrap">
+                                {hop.protocol === "V3" ? formatV3Fee(hop.fee) : "V2"}
+                              </span>
+                              <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] font-semibold text-slate-100">
+                                {hop.to?.symbol || "Token"}
+                              </span>
+                              <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
+                                {hop.to?.meta?.logo ? (
+                                  <img
+                                    src={hop.to.meta.logo}
+                                    alt={`${hop.to?.symbol || "Token"} logo`}
+                                    className="h-full w-full object-contain"
+                                  />
+                                ) : (
+                                  <span className="text-[8px] font-semibold text-slate-300">
+                                    {(hop.to?.symbol || "TKN").slice(0, 2)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
