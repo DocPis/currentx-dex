@@ -818,6 +818,7 @@ export default function LiquiditySection({
   const [v3RemovePct, setV3RemovePct] = useState("100");
   const [v3ActionLoading, setV3ActionLoading] = useState(false);
   const [v3ActionError, setV3ActionError] = useState("");
+  const [v3ActionLastEdited, setV3ActionLastEdited] = useState(null);
   const [selectedPositionId, setSelectedPositionId] = useState(null);
   const [liquidityView, setLiquidityView] = useState(() => {
     if (showV3 && !showV2) return "v3";
@@ -1054,6 +1055,95 @@ export default function LiquiditySection({
     };
   }, [v3ActionModal.position, v3PoolMetrics, findTokenMetaByAddress]);
 
+  const computeV3ActionFromAmount0 = useCallback(
+    (value) => {
+      if (!v3ActionRangeMath) return "";
+      const num = safeNumber(value);
+      if (!Number.isFinite(num) || num <= 0) return "";
+      const amount0Raw = safeParseUnits(value, v3ActionRangeMath.dec0);
+      if (!amount0Raw || amount0Raw <= 0n) return "";
+      const liquidity = getLiquidityForAmount0(
+        v3ActionRangeMath.sqrtCurrentX96,
+        v3ActionRangeMath.sqrtLowerX96,
+        v3ActionRangeMath.sqrtUpperX96,
+        amount0Raw
+      );
+      if (!liquidity || liquidity <= 0n) return "0";
+      const amounts = getAmountsForLiquidity(
+        v3ActionRangeMath.sqrtCurrentX96,
+        v3ActionRangeMath.sqrtLowerX96,
+        v3ActionRangeMath.sqrtUpperX96,
+        liquidity
+      );
+      const out1 = amounts?.amount1 ?? 0n;
+      return formatAmountFromRaw(out1, v3ActionRangeMath.dec1);
+    },
+    [v3ActionRangeMath]
+  );
+
+  const computeV3ActionFromAmount1 = useCallback(
+    (value) => {
+      if (!v3ActionRangeMath) return "";
+      const num = safeNumber(value);
+      if (!Number.isFinite(num) || num <= 0) return "";
+      const amount1Raw = safeParseUnits(value, v3ActionRangeMath.dec1);
+      if (!amount1Raw || amount1Raw <= 0n) return "";
+      const liquidity = getLiquidityForAmount1(
+        v3ActionRangeMath.sqrtCurrentX96,
+        v3ActionRangeMath.sqrtLowerX96,
+        v3ActionRangeMath.sqrtUpperX96,
+        amount1Raw
+      );
+      if (!liquidity || liquidity <= 0n) return "0";
+      const amounts = getAmountsForLiquidity(
+        v3ActionRangeMath.sqrtCurrentX96,
+        v3ActionRangeMath.sqrtLowerX96,
+        v3ActionRangeMath.sqrtUpperX96,
+        liquidity
+      );
+      const out0 = amounts?.amount0 ?? 0n;
+      return formatAmountFromRaw(out0, v3ActionRangeMath.dec0);
+    },
+    [v3ActionRangeMath]
+  );
+
+  useEffect(() => {
+    if (!v3ActionRangeMath || !v3ActionLastEdited) return;
+    if (v3ActionLastEdited === "token0") {
+      if (!v3ActionAmount0) {
+        if (v3ActionAmount1) setV3ActionAmount1("");
+        return;
+      }
+      const next = computeV3ActionFromAmount0(v3ActionAmount0);
+      if (next !== "" && next !== v3ActionAmount1) {
+        setV3ActionAmount1(next);
+      }
+      if (next === "" && v3ActionAmount1) {
+        setV3ActionAmount1("");
+      }
+    }
+    if (v3ActionLastEdited === "token1") {
+      if (!v3ActionAmount1) {
+        if (v3ActionAmount0) setV3ActionAmount0("");
+        return;
+      }
+      const next = computeV3ActionFromAmount1(v3ActionAmount1);
+      if (next !== "" && next !== v3ActionAmount0) {
+        setV3ActionAmount0(next);
+      }
+      if (next === "" && v3ActionAmount0) {
+        setV3ActionAmount0("");
+      }
+    }
+  }, [
+    v3ActionRangeMath,
+    v3ActionLastEdited,
+    v3ActionAmount0,
+    v3ActionAmount1,
+    computeV3ActionFromAmount0,
+    computeV3ActionFromAmount1,
+  ]);
+
   const v3PoolToken0Meta = useMemo(
     () => findTokenMetaByAddress(v3PoolInfo.token0),
     [findTokenMetaByAddress, v3PoolInfo.token0]
@@ -1116,7 +1206,9 @@ export default function LiquiditySection({
     v3RangeLowerNum < v3RangeUpperNum;
 
   const v3RangeMath = useMemo(() => {
-    if (!v3ReferencePrice) return null;
+    const hasPoolSqrt =
+      v3PoolInfo?.sqrtPriceX96 && v3PoolInfo.sqrtPriceX96 !== 0n;
+    if (!v3ReferencePrice && !hasPoolSqrt) return null;
     const dec0 = v3Token0Meta?.decimals ?? 18;
     const dec1 = v3Token1Meta?.decimals ?? 18;
     let sqrtLowerX96 = null;
@@ -1136,9 +1228,16 @@ export default function LiquiditySection({
     } else {
       return null;
     }
-    const currentScaled = safeParseUnits(formatAutoAmount(v3ReferencePrice), 18);
-    if (!sqrtLowerX96 || !sqrtUpperX96 || !currentScaled) return null;
-    const sqrtCurrentX96 = encodePriceSqrtFromPrice(currentScaled, dec0, dec1);
+    let sqrtCurrentX96 =
+      v3PoolInfo?.sqrtPriceX96 && v3PoolInfo.sqrtPriceX96 !== 0n
+        ? v3PoolInfo.sqrtPriceX96
+        : null;
+    if (!sqrtCurrentX96) {
+      const currentScaled = safeParseUnits(formatAutoAmount(v3ReferencePrice), 18);
+      if (!currentScaled) return null;
+      sqrtCurrentX96 = encodePriceSqrtFromPrice(currentScaled, dec0, dec1);
+    }
+    if (!sqrtLowerX96 || !sqrtUpperX96 || !sqrtCurrentX96) return null;
     if (!sqrtCurrentX96) return null;
     return {
       dec0,
@@ -1155,6 +1254,7 @@ export default function LiquiditySection({
     v3RangeUpper,
     v3Token0Meta,
     v3Token1Meta,
+    v3PoolInfo.sqrtPriceX96,
     v3PoolInfo.spacing,
     v3FeeTier,
   ]);
@@ -3216,6 +3316,7 @@ export default function LiquiditySection({
     setV3ActionAmount1("");
     setV3RemovePct("100");
     setV3ActionError("");
+    setV3ActionLastEdited(null);
   };
 
   const closeV3ActionModal = () => {
@@ -6669,31 +6770,10 @@ export default function LiquiditySection({
                               const next = e.target.value;
                               setV3ActionAmount0(next);
                               if (v3ActionError) setV3ActionError("");
-                              const num = safeNumber(next);
-                              if (!Number.isFinite(num) || num <= 0) return;
-                              if (v3ActionRangeMath) {
-                                const amount0Raw = safeParseUnits(next, v3ActionRangeMath.dec0);
-                                if (!amount0Raw || amount0Raw <= 0n) return;
-                                const liquidity = getLiquidityForAmount0(
-                                  v3ActionRangeMath.sqrtCurrentX96,
-                                  v3ActionRangeMath.sqrtLowerX96,
-                                  v3ActionRangeMath.sqrtUpperX96,
-                                  amount0Raw
-                                );
-                                if (!liquidity || liquidity <= 0n) {
-                                  setV3ActionAmount1("0");
-                                  return;
-                                }
-                                const amounts = getAmountsForLiquidity(
-                                  v3ActionRangeMath.sqrtCurrentX96,
-                                  v3ActionRangeMath.sqrtLowerX96,
-                                  v3ActionRangeMath.sqrtUpperX96,
-                                  liquidity
-                                );
-                                const out1 = amounts?.amount1 ?? 0n;
-                                setV3ActionAmount1(
-                                  formatAmountFromRaw(out1, v3ActionRangeMath.dec1)
-                                );
+                              setV3ActionLastEdited("token0");
+                              const computed = computeV3ActionFromAmount0(next);
+                              if (computed !== "" && computed !== v3ActionAmount1) {
+                                setV3ActionAmount1(computed);
                               }
                             }}
                             placeholder="0.0"
@@ -6728,31 +6808,10 @@ export default function LiquiditySection({
                               const next = e.target.value;
                               setV3ActionAmount1(next);
                               if (v3ActionError) setV3ActionError("");
-                              const num = safeNumber(next);
-                              if (!Number.isFinite(num) || num <= 0) return;
-                              if (v3ActionRangeMath) {
-                                const amount1Raw = safeParseUnits(next, v3ActionRangeMath.dec1);
-                                if (!amount1Raw || amount1Raw <= 0n) return;
-                                const liquidity = getLiquidityForAmount1(
-                                  v3ActionRangeMath.sqrtCurrentX96,
-                                  v3ActionRangeMath.sqrtLowerX96,
-                                  v3ActionRangeMath.sqrtUpperX96,
-                                  amount1Raw
-                                );
-                                if (!liquidity || liquidity <= 0n) {
-                                  setV3ActionAmount0("0");
-                                  return;
-                                }
-                                const amounts = getAmountsForLiquidity(
-                                  v3ActionRangeMath.sqrtCurrentX96,
-                                  v3ActionRangeMath.sqrtLowerX96,
-                                  v3ActionRangeMath.sqrtUpperX96,
-                                  liquidity
-                                );
-                                const out0 = amounts?.amount0 ?? 0n;
-                                setV3ActionAmount0(
-                                  formatAmountFromRaw(out0, v3ActionRangeMath.dec0)
-                                );
+                              setV3ActionLastEdited("token1");
+                              const computed = computeV3ActionFromAmount1(next);
+                              if (computed !== "" && computed !== v3ActionAmount0) {
+                                setV3ActionAmount0(computed);
                               }
                             }}
                             placeholder="0.0"
