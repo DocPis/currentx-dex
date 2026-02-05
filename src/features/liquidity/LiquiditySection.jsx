@@ -819,6 +819,8 @@ export default function LiquiditySection({
   const [v3ActionLoading, setV3ActionLoading] = useState(false);
   const [v3ActionError, setV3ActionError] = useState("");
   const [v3ActionLastEdited, setV3ActionLastEdited] = useState(null);
+  const [v3ActionUseEth0, setV3ActionUseEth0] = useState(false);
+  const [v3ActionUseEth1, setV3ActionUseEth1] = useState(false);
   const [selectedPositionId, setSelectedPositionId] = useState(null);
   const [liquidityView, setLiquidityView] = useState(() => {
     if (showV3 && !showV2) return "v3";
@@ -3391,6 +3393,8 @@ export default function LiquiditySection({
     setV3RemovePct("100");
     setV3ActionError("");
     setV3ActionLastEdited(null);
+    setV3ActionUseEth0(false);
+    setV3ActionUseEth1(false);
   };
 
   const closeV3ActionModal = () => {
@@ -3461,6 +3465,12 @@ export default function LiquiditySection({
     const dec1 = meta1?.decimals ?? 18;
     const amount0Desired = safeParseUnits(v3ActionAmount0 || "0", dec0) || 0n;
     const amount1Desired = safeParseUnits(v3ActionAmount1 || "0", dec1) || 0n;
+    const token0IsWeth = Boolean(WETH_ADDRESS) &&
+      position.token0?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+    const token1IsWeth = Boolean(WETH_ADDRESS) &&
+      position.token1?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+    const useEth0 = token0IsWeth && v3ActionUseEth0;
+    const useEth1 = token1IsWeth && v3ActionUseEth1;
     if (v3ActionRangeMath) {
       if (v3ActionRangeSide === "dual") {
         if (amount0Desired <= 0n || amount1Desired <= 0n) {
@@ -3494,7 +3504,7 @@ export default function LiquiditySection({
         UNIV3_POSITION_MANAGER_ABI,
         signer
       );
-      if (amount0Desired > 0n) {
+      if (amount0Desired > 0n && !useEth0) {
         const tokenRead = new Contract(position.token0, ERC20_ABI, readProvider);
         const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
         if (allowance < amount0Desired) {
@@ -3503,7 +3513,7 @@ export default function LiquiditySection({
           await tx.wait();
         }
       }
-      if (amount1Desired > 0n) {
+      if (amount1Desired > 0n && !useEth1) {
         const tokenRead = new Contract(position.token1, ERC20_ABI, readProvider);
         const allowance = await tokenRead.allowance(user, UNIV3_POSITION_MANAGER_ADDRESS);
         if (allowance < amount1Desired) {
@@ -3520,7 +3530,19 @@ export default function LiquiditySection({
         amount1Min: applySlippage(amount1Desired, slippageBps),
         deadline: Math.floor(Date.now() / 1000) + 60 * 20,
       };
-      const tx = await manager.increaseLiquidity(params);
+      const ethValue =
+        (useEth0 ? amount0Desired : 0n) + (useEth1 ? amount1Desired : 0n);
+      let tx;
+      if (ethValue > 0n) {
+        const iface = manager.interface;
+        const data = [
+          iface.encodeFunctionData("increaseLiquidity", [params]),
+          iface.encodeFunctionData("refundETH", []),
+        ];
+        tx = await manager.multicall(data, { value: ethValue });
+      } else {
+        tx = await manager.increaseLiquidity(params);
+      }
       const receipt = await tx.wait();
       setActionStatus({
         variant: "success",
@@ -6825,8 +6847,38 @@ export default function LiquiditySection({
               const position = v3ActionModal.position;
               const meta0 = findTokenMetaByAddress(position.token0);
               const meta1 = findTokenMetaByAddress(position.token1);
-              const balance0 = resolveWalletBalanceBySymbol(meta0?.symbol || position.token0Symbol);
-              const balance1 = resolveWalletBalanceBySymbol(meta1?.symbol || position.token1Symbol);
+              const token0IsWeth = Boolean(WETH_ADDRESS) &&
+                position.token0?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+              const token1IsWeth = Boolean(WETH_ADDRESS) &&
+                position.token1?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+              const useEth0 = token0IsWeth && v3ActionUseEth0;
+              const useEth1 = token1IsWeth && v3ActionUseEth1;
+              const displayMeta0 = useEth0
+                ? tokenRegistry.ETH
+                : token0IsWeth
+                ? meta0 || tokenRegistry.WETH
+                : meta0;
+              const displayMeta1 = useEth1
+                ? tokenRegistry.ETH
+                : token1IsWeth
+                ? meta1 || tokenRegistry.WETH
+                : meta1;
+              const displaySymbol0 = useEth0
+                ? "ETH"
+                : token0IsWeth
+                ? "WETH"
+                : (meta0?.symbol || position.token0Symbol);
+              const displaySymbol1 = useEth1
+                ? "ETH"
+                : token1IsWeth
+                ? "WETH"
+                : (meta1?.symbol || position.token1Symbol);
+              const balance0 = resolveWalletBalanceBySymbol(
+                useEth0 ? "ETH" : token0IsWeth ? "WETH" : (meta0?.symbol || position.token0Symbol)
+              );
+              const balance1 = resolveWalletBalanceBySymbol(
+                useEth1 ? "ETH" : token1IsWeth ? "WETH" : (meta1?.symbol || position.token1Symbol)
+              );
               const balance0Num = safeNumber(balance0);
               const balance1Num = safeNumber(balance1);
               const hasBalance0 = balance0Num !== null && balance0Num > 0;
@@ -6913,18 +6965,18 @@ export default function LiquiditySection({
                             className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
                           <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
-                            {meta0?.logo ? (
+                            {displayMeta0?.logo ? (
                               <img
-                                src={meta0.logo}
-                                alt={`${position.token0Symbol} logo`}
+                                src={displayMeta0.logo}
+                                alt={`${displaySymbol0} logo`}
                                 className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
                               />
                             ) : (
                               <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
-                                {(position.token0Symbol || "?").slice(0, 3)}
+                                {(displaySymbol0 || "?").slice(0, 3)}
                               </div>
                             )}
-                            <span className="leading-none">{position.token0Symbol}</span>
+                            <span className="leading-none">{displaySymbol0}</span>
                           </div>
                         </div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
@@ -6933,7 +6985,7 @@ export default function LiquiditySection({
                             {walletBalancesLoading
                               ? "Loading..."
                               : balance0Num !== null
-                              ? `${formatTokenBalance(balance0Num)} ${position.token0Symbol}`
+                              ? `${formatTokenBalance(balance0Num)} ${displaySymbol0}`
                               : "--"}
                           </span>
                           <div className="flex items-center gap-1">
@@ -6950,6 +7002,41 @@ export default function LiquiditySection({
                             ))}
                           </div>
                         </div>
+                        {token0IsWeth && (
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span>Pay with</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setV3ActionUseEth0(false)}
+                                disabled={!canUseSide0}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !canUseSide0
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : !useEth0
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                WETH
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setV3ActionUseEth0(true)}
+                                disabled={!canUseSide0}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !canUseSide0
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : useEth0
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                ETH
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
@@ -6975,18 +7062,18 @@ export default function LiquiditySection({
                             className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
                           <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
-                            {meta1?.logo ? (
+                            {displayMeta1?.logo ? (
                               <img
-                                src={meta1.logo}
-                                alt={`${position.token1Symbol} logo`}
+                                src={displayMeta1.logo}
+                                alt={`${displaySymbol1} logo`}
                                 className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
                               />
                             ) : (
                               <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
-                                {(position.token1Symbol || "?").slice(0, 3)}
+                                {(displaySymbol1 || "?").slice(0, 3)}
                               </div>
                             )}
-                            <span className="leading-none">{position.token1Symbol}</span>
+                            <span className="leading-none">{displaySymbol1}</span>
                           </div>
                         </div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
@@ -6995,7 +7082,7 @@ export default function LiquiditySection({
                             {walletBalancesLoading
                               ? "Loading..."
                               : balance1Num !== null
-                              ? `${formatTokenBalance(balance1Num)} ${position.token1Symbol}`
+                              ? `${formatTokenBalance(balance1Num)} ${displaySymbol1}`
                               : "--"}
                           </span>
                           <div className="flex items-center gap-1">
@@ -7012,6 +7099,41 @@ export default function LiquiditySection({
                             ))}
                           </div>
                         </div>
+                        {token1IsWeth && (
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span>Pay with</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setV3ActionUseEth1(false)}
+                                disabled={!canUseSide1}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !canUseSide1
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : !useEth1
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                WETH
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setV3ActionUseEth1(true)}
+                                disabled={!canUseSide1}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !canUseSide1
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : useEth1
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                ETH
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (
