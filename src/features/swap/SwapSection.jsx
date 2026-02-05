@@ -33,7 +33,7 @@ const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
 const MAX_UINT48 = (1n << 48n) - 1n;
-const APPROVAL_MODE_KEY = "cx_approval_mode";
+const APPROVAL_CACHE_KEY = "cx_approval_cache_v1";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
@@ -447,14 +447,6 @@ export default function SwapSection({ balances, address, chainId }) {
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
-  const [approvalMode, setApprovalMode] = useState(() => {
-    if (typeof window === "undefined") return "unlimited";
-    try {
-      return localStorage.getItem(APPROVAL_MODE_KEY) || "unlimited";
-    } catch {
-      return "unlimited";
-    }
-  }); // "exact" | "unlimited"
   const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
   const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
@@ -475,23 +467,52 @@ export default function SwapSection({ balances, address, chainId }) {
   const autoRefreshTimerRef = useRef(null);
   const approvalCacheRef = useRef(new Map());
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem(APPROVAL_MODE_KEY, approvalMode);
-    } catch {
-      // ignore storage errors
-    }
-  }, [approvalMode]);
-
-  useEffect(() => {
-    approvalCacheRef.current.clear();
-  }, [address]);
-
-  const approvalTarget = approvalTargets[0] || null;
-  const approveNeeded = approvalTargets.length > 0;
   const makeApprovalKey = (kind, token, spender) =>
     `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
+  const getApprovalStorageKey = (wallet) =>
+    `${APPROVAL_CACHE_KEY}:${(activeChainHex || "").toLowerCase()}:${(wallet || "").toLowerCase()}`;
+  const loadApprovalCache = useCallback(
+    (wallet) => {
+      if (typeof window === "undefined" || !wallet) return new Map();
+      try {
+        const raw = localStorage.getItem(getApprovalStorageKey(wallet));
+        if (!raw) return new Map();
+        const data = JSON.parse(raw);
+        const map = new Map();
+        Object.entries(data || {}).forEach(([key, entry]) => {
+          if (!entry) return;
+          map.set(key, {
+            amount: BigInt(entry.amount || "0"),
+            expiration: BigInt(entry.expiration || "0"),
+            at: entry.at || 0,
+          });
+        });
+        return map;
+      } catch {
+        return new Map();
+      }
+    },
+    [activeChainHex]
+  );
+  const persistApprovalCache = useCallback(
+    (wallet) => {
+      if (typeof window === "undefined" || !wallet) return;
+      try {
+        const obj = {};
+        approvalCacheRef.current.forEach((value, key) => {
+          obj[key] = {
+            amount: value?.amount?.toString?.() || "0",
+            expiration: value?.expiration?.toString?.() || "0",
+            at: value?.at || 0,
+          };
+        });
+        localStorage.setItem(getApprovalStorageKey(wallet), JSON.stringify(obj));
+      } catch {
+        // ignore storage errors
+      }
+    },
+    [activeChainHex]
+  );
   const getCachedApproval = (kind, token, spender) => {
     if (!token || !spender) return null;
     const entry = approvalCacheRef.current.get(
@@ -509,7 +530,27 @@ export default function SwapSection({ balances, address, chainId }) {
         at: Date.now(),
       }
     );
+    if (address) persistApprovalCache(address);
   };
+
+  useEffect(() => {
+    if (!address) {
+      approvalCacheRef.current.clear();
+      return;
+    }
+    approvalCacheRef.current = loadApprovalCache(address);
+  }, [address, loadApprovalCache]);
+
+  const approvalTargetsForSell = useMemo(
+    () => approvalTargets.filter((t) => t.symbol === sellToken),
+    [approvalTargets, sellToken]
+  );
+  const approvalTarget = approvalTargetsForSell[0] || null;
+  const approveNeeded = approvalTargetsForSell.length > 0;
+  const approvalSteps = approvalTargetsForSell.length;
+  const approvalButtonLabel = approvalSteps > 1
+    ? `Approve ${sellToken} (${approvalSteps} steps)`
+    : `Approve ${sellToken}`;
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -1560,14 +1601,8 @@ export default function SwapSection({ balances, address, chainId }) {
                 }
                 const readProvider = getReadOnlyProvider(false, true);
                 const token = new Contract(sellAddress, ERC20_ABI, readProvider);
-                const desiredErc20Allowance =
-                  approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
-                const desiredPermit2Allowance =
-                  approvalMode === "unlimited"
-                    ? MAX_UINT160
-                    : amountWei > MAX_UINT160
-                      ? MAX_UINT160
-                      : amountWei;
+                const desiredErc20Allowance = MAX_UINT256;
+                const desiredPermit2Allowance = MAX_UINT160;
                 const permit2Expiration = MAX_UINT48;
 
                 const targets = [];
@@ -1581,6 +1616,15 @@ export default function SwapSection({ balances, address, chainId }) {
                       symbol: sellToken,
                       address: sellAddress,
                       desiredAllowance: desiredErc20Allowance,
+                      spender,
+                      label,
+                      kind: "erc20",
+                    });
+                  } else {
+                    setCachedApproval({
+                      symbol: sellToken,
+                      address: sellAddress,
+                      desiredAllowance: allowance,
                       spender,
                       label,
                       kind: "erc20",
@@ -1618,6 +1662,16 @@ export default function SwapSection({ balances, address, chainId }) {
                       label,
                       kind: "permit2",
                       expiration: permit2Expiration,
+                    });
+                  } else {
+                    setCachedApproval({
+                      symbol: sellToken,
+                      address: sellAddress,
+                      desiredAllowance: allowance,
+                      spender,
+                      label,
+                      kind: "permit2",
+                      expiration,
                     });
                   }
                 };
@@ -1675,7 +1729,6 @@ export default function SwapSection({ balances, address, chainId }) {
     isSupported,
     hasV2Support,
     hasV3Support,
-    approvalMode,
     sellMeta?.address,
     sellMeta?.decimals,
     sellToken,
@@ -1748,8 +1801,8 @@ export default function SwapSection({ balances, address, chainId }) {
       ? "V2 + V3"
       : quoteMeta?.protocol || "V3";
   const hopCount = routeSegments.reduce((sum, seg) => sum + (seg.hops?.length || 0), 0);
-  const approvalSummary = approvalTargets.length
-    ? approvalTargets.map((t) => t.label || "Approval").join(" + ")
+  const approvalSummary = approvalTargetsForSell.length
+    ? approvalTargetsForSell.map((t) => t.label || "Approval").join(" + ")
     : "";
 
   useEffect(() => {
@@ -3092,42 +3145,17 @@ export default function SwapSection({ balances, address, chainId }) {
           <div className="flex flex-col gap-2 w-full sm:w-44">
             {sellToken !== "ETH" ? (
               <div className="rounded-2xl bg-gradient-to-br from-slate-800/80 via-slate-800/90 to-slate-900 border border-slate-700 px-3 py-3 text-[11px] text-slate-100 flex flex-col gap-2 shadow-[0_12px_30px_-18px_rgba(56,189,248,0.5)]">
-                <div className="flex items-center justify-between gap-3 flex-wrap">
-                  <div className="inline-flex items-center gap-2 text-slate-50 text-xs font-semibold">
-                    <span className="h-7 w-7 inline-flex items-center justify-center rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-100 text-[10px] shadow-[0_0_18px_rgba(56,189,248,0.35)]">
-                      ALW
-                    </span>
-                    Approval mode
-                  </div>
-                  <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-700 overflow-hidden shrink-0">
-                    {[
-                      { id: "unlimited", label: "Unlimited" },
-                      { id: "exact", label: "Exact" },
-                    ].map((opt) => (
-                      <button
-                        key={opt.id}
-                        type="button"
-                        onClick={() => setApprovalMode(opt.id)}
-                        className={`px-3 py-1.5 font-semibold transition ${
-                          approvalMode === opt.id
-                            ? "bg-sky-500/20 text-sky-100"
-                            : "text-slate-200 hover:text-sky-100"
-                        }`}
-                      >
-                        {opt.label}
-                      </button>
-                    ))}
-                  </div>
+                <div className="flex items-center gap-2 text-slate-50 text-xs font-semibold">
+                  <span className="h-7 w-7 inline-flex items-center justify-center rounded-xl bg-sky-500/20 border border-sky-500/30 text-sky-100 text-[10px] shadow-[0_0_18px_rgba(56,189,248,0.35)]">
+                    ALW
+                  </span>
+                  Approval
                 </div>
                 <div className="flex flex-col gap-1 text-slate-200">
-                  <span className="text-[11px] text-slate-100">
-                    {approvalMode === "unlimited"
-                      ? "One-time max approval. Faster, but higher risk if router is compromised."
-                      : "Approve only this swap amount (safer, may prompt more often)."}
-                  </span>
                   {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">
-                      Needs approval: {amountIn} {sellToken} to {approvalSummary || "router"}.
+                      Approval required for {sellToken}.
+                      {approvalSummary ? ` (${approvalSummary})` : ""}
                     </span>
                   ) : (
                     <span className="text-slate-400">
@@ -3146,9 +3174,7 @@ export default function SwapSection({ balances, address, chainId }) {
                 disabled={approveLoading || quoteLoading}
                 className="w-full py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm font-semibold text-white hover:border-sky-500/60 transition disabled:opacity-60"
               >
-                {approveLoading
-                  ? "Approving..."
-                  : `Approve ${approvalTarget?.symbol || sellToken}${approvalTarget?.label ? ` (${approvalTarget.label})` : ""}`}
+                {approveLoading ? "Approving..." : approvalButtonLabel}
               </button>
             ) : null}
             <button
