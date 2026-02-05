@@ -1856,6 +1856,96 @@ export default function SwapSection({ balances, address, chainId }) {
           return;
         }
       }
+      if (!isDirectEthWeth && routeProtocol === "V2") {
+        const readProvider = getReadOnlyProvider();
+        const candidateRoute = routePlan || (await buildV2Route({ amountWei }));
+        const path = candidateRoute?.path || [];
+        const freshOut = await getV2Quote(readProvider, amountWei, path);
+        const freshOutNum = Number(formatUnits(freshOut, decimalsOut));
+        const currentOutNum =
+          quoteOut !== null && Number.isFinite(Number(quoteOut))
+            ? Number(quoteOut)
+            : freshOutNum;
+        const deltaPct = currentOutNum
+          ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
+          : 0;
+        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        guardedRouteMeta = { ...candidateRoute, protocol: "V2", amountOut: freshOut };
+        guardedAmountOut = freshOut;
+        setQuoteVolatilityPct(deltaPct);
+
+        if (deltaPct > reQuoteThreshold) {
+          const refreshedRoute = guardedRouteMeta;
+          setQuoteOut(formatUnits(freshOut, decimalsOut));
+          setQuoteOutRaw(freshOut);
+          setQuoteRoute(refreshedRoute?.path || []);
+          setQuotePairs(refreshedRoute?.pairs || []);
+          setQuoteMeta(refreshedRoute);
+          setLastQuoteAt(Date.now());
+          setPriceImpact(null);
+          setQuoteVolatilityPct(deltaPct);
+          setSwapStatus({
+            message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
+            variant: "error",
+          });
+          setSwapLoading(false);
+          return;
+        }
+      }
+      if (!isDirectEthWeth && routeProtocol === "SPLIT") {
+        const readProvider = getReadOnlyProvider();
+        const legs = Array.isArray(routePlan?.routes) ? routePlan.routes : [];
+        const refreshedLegs = [];
+        let freshTotal = 0n;
+        for (const leg of legs) {
+          if (!leg) continue;
+          const legAmountIn = leg.amountIn ?? amountWei;
+          let legAmountOut = leg.amountOut;
+          if (leg.protocol === "V3") {
+            legAmountOut = await quoteV3Route(readProvider, legAmountIn, leg);
+          } else if (leg.protocol === "V2") {
+            legAmountOut = await getV2Quote(readProvider, legAmountIn, leg.path || []);
+          }
+          if (!legAmountOut) {
+            throw new Error("Unable to compute split output.");
+          }
+          freshTotal += legAmountOut;
+          refreshedLegs.push({ ...leg, amountIn: legAmountIn, amountOut: legAmountOut });
+        }
+        const freshOutNum = Number(formatUnits(freshTotal, decimalsOut));
+        const currentOutNum =
+          quoteOut !== null && Number.isFinite(Number(quoteOut))
+            ? Number(quoteOut)
+            : freshOutNum;
+        const deltaPct = currentOutNum
+          ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
+          : 0;
+        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        guardedRouteMeta = {
+          ...routePlan,
+          protocol: "SPLIT",
+          amountOut: freshTotal,
+          routes: refreshedLegs,
+        };
+        guardedAmountOut = freshTotal;
+        setQuoteVolatilityPct(deltaPct);
+
+        if (deltaPct > reQuoteThreshold) {
+          const refreshedRoute = guardedRouteMeta;
+          setQuoteOut(formatUnits(freshTotal, decimalsOut));
+          setQuoteOutRaw(freshTotal);
+          setQuoteMeta(refreshedRoute);
+          setLastQuoteAt(Date.now());
+          setPriceImpact(null);
+          setQuoteVolatilityPct(deltaPct);
+          setSwapStatus({
+            message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
+            variant: "error",
+          });
+          setSwapLoading(false);
+          return;
+        }
+      }
 
       triggerQuoteLock();
       pendingExecutionRef.current = null;
@@ -1931,7 +2021,8 @@ export default function SwapSection({ balances, address, chainId }) {
       }
 
       if (routeProtocol === "SPLIT") {
-        const legs = Array.isArray(routePlan?.routes) ? routePlan.routes : [];
+        const activeRoute = guardedRouteMeta || routePlan;
+        const legs = Array.isArray(activeRoute?.routes) ? activeRoute.routes : [];
         if (!legs.length) {
           throw new Error("Split route unavailable. Please re-quote.");
         }
@@ -2010,7 +2101,7 @@ export default function SwapSection({ balances, address, chainId }) {
           buyDecimals: decimalsOut,
           buySymbol: displayBuySymbol,
           minReceivedRaw: totalMinOut,
-          expectedRaw: quoteOutRaw,
+          expectedRaw: guardedAmountOut || quoteOutRaw,
           buyAddress: buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address,
           user,
           captureWithdrawal: buyToken === "ETH",
@@ -2018,7 +2109,7 @@ export default function SwapSection({ balances, address, chainId }) {
 
         const receipt = await tx.wait();
         pendingExecutionRef.current = {
-          expectedRaw: quoteOutRaw,
+          expectedRaw: guardedAmountOut || quoteOutRaw,
           minRaw: totalMinOut,
           priceImpactSnapshot: priceImpact,
           slippagePct: effectiveSlippagePct,
@@ -2068,13 +2159,13 @@ export default function SwapSection({ balances, address, chainId }) {
       }
 
       if (routeProtocol === "V2") {
-        const routeMeta = routePlan || {};
+        const routeMeta = guardedRouteMeta || routePlan || {};
         const path = routeMeta?.path || [];
         if (!Array.isArray(path) || path.length < 2) {
           throw new Error("Invalid V2 path.");
         }
         const readProvider = getReadOnlyProvider();
-        let amountOut = routeMeta.amountOut;
+        let amountOut = guardedAmountOut || routeMeta.amountOut;
         if (!amountOut) {
           amountOut = await getV2Quote(readProvider, amountWei, path);
         }
