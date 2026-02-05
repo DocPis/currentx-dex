@@ -833,6 +833,7 @@ export default function LiquiditySection({
   const [v3PositionMenuOpen, setV3PositionMenuOpen] = useState(false);
   const [v3PositionListMenuOpenId, setV3PositionListMenuOpenId] = useState(null);
   const [v3CopiedAddress, setV3CopiedAddress] = useState("");
+  const [v2PositionMenuOpenId, setV2PositionMenuOpenId] = useState(null);
   const [v3ActionModal, setV3ActionModal] = useState({
     open: false,
     type: null,
@@ -2346,6 +2347,17 @@ export default function LiquiditySection({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [v3PositionListMenuOpenId]);
+
+  useEffect(() => {
+    if (!v2PositionMenuOpenId) return undefined;
+    const handleClick = (event) => {
+      const target = event.target;
+      if (target?.closest?.(".v2-position-list-menu")) return;
+      setV2PositionMenuOpenId(null);
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [v2PositionMenuOpenId]);
 
   useEffect(() => {
     setV3PositionMenuOpen(false);
@@ -7289,6 +7301,32 @@ export default function LiquiditySection({
                         pos.lpShare !== null && pos.lpShare !== undefined
                           ? (pos.lpShare * 100).toFixed(2)
                           : null;
+                      const token0Address =
+                        pos.token0Address ||
+                        resolveTokenAddress(pos.token0Symbol, tokenRegistry);
+                      const token1Address =
+                        pos.token1Address ||
+                        resolveTokenAddress(pos.token1Symbol, tokenRegistry);
+                      const poolAddress = pos.pairAddress || pos.pairId || "";
+                      const v2MenuId = poolAddress || pos.id;
+                      const v2MenuOpen = v2PositionMenuOpenId === v2MenuId;
+                      const v2MenuItems = [
+                        {
+                          id: "token0",
+                          label: pos.token0Symbol,
+                          address: token0Address,
+                        },
+                        {
+                          id: "token1",
+                          label: pos.token1Symbol,
+                          address: token1Address,
+                        },
+                        {
+                          id: "pool",
+                          label: "Pool",
+                          address: poolAddress,
+                        },
+                      ];
                       return (
                         <div
                           key={`${pos.id}-lp`}
@@ -7321,13 +7359,141 @@ export default function LiquiditySection({
                                 ? `$${formatNumber(pos.positionUsd)}`
                                 : "--"}
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenPoolDepositFromRow(pos)}
-                              className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                            >
-                              Manage
-                            </button>
+                            <div className="flex items-center gap-2 justify-end">
+                              <div
+                                className="relative v2-position-list-menu"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setV2PositionMenuOpenId(v2MenuOpen ? null : v2MenuId)
+                                  }
+                                  className="h-8 px-2 rounded-full border border-slate-700 bg-slate-900/70 text-[10px] text-slate-200 hover:border-slate-500 inline-flex items-center gap-1"
+                                  aria-haspopup="menu"
+                                  aria-expanded={v2MenuOpen}
+                                >
+                                  Details
+                                  <svg
+                                    viewBox="0 0 20 20"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className={`h-3 w-3 text-slate-400 transition ${
+                                      v2MenuOpen ? "rotate-180" : ""
+                                    }`}
+                                  >
+                                    <path
+                                      d="M6 8l4 4 4-4"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+                                  </svg>
+                                </button>
+                                {v2MenuOpen && (
+                                  <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
+                                    {v2MenuItems.map((item) => {
+                                      const hasAddress = Boolean(item.address);
+                                      return (
+                                        <div
+                                          key={`${pos.id}-${item.id}`}
+                                          className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
+                                        >
+                                          <span className="font-semibold">{item.label}</span>
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => copyAddress(item.address)}
+                                              disabled={!hasAddress}
+                                              className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 disabled:opacity-40"
+                                              aria-label={`Copy ${item.label} address`}
+                                            >
+                                              {v3CopiedAddress === item.address ? (
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5 text-emerald-300 mx-auto"
+                                                >
+                                                  <path
+                                                    d="M5 11l3 3 7-7"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.6"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              ) : (
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5 mx-auto"
+                                                >
+                                                  <path
+                                                    d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.3"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                  <path
+                                                    d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.3"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              )}
+                                            </button>
+                                            {hasAddress ? (
+                                              <a
+                                                href={`${EXPLORER_BASE_URL}/address/${item.address}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 inline-flex items-center justify-center"
+                                                aria-label={`Open ${item.label} on explorer`}
+                                              >
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5"
+                                                >
+                                                  <path
+                                                    d="M5 13l9-9m0 0h-5m5 0v5"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.5"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              </a>
+                                            ) : (
+                                              <div className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-600 inline-flex items-center justify-center">
+                                                <span className="text-[10px]">--</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setV2PositionMenuOpenId(null);
+                                  handleOpenPoolDepositFromRow(pos);
+                                }}
+                                className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
+                              >
+                                Manage
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
