@@ -788,6 +788,8 @@ export default function LiquiditySection({
   const [v3FeeTier, setV3FeeTier] = useState(3000);
   const [v3Amount0, setV3Amount0] = useState("");
   const [v3Amount1, setV3Amount1] = useState("");
+  const [v3MintUseEth0, setV3MintUseEth0] = useState(false);
+  const [v3MintUseEth1, setV3MintUseEth1] = useState(false);
   const [v3RangeMode, setV3RangeMode] = useState("full");
   const [v3RangeLower, setV3RangeLower] = useState("");
   const [v3RangeUpper, setV3RangeUpper] = useState("");
@@ -808,6 +810,7 @@ export default function LiquiditySection({
   const [v3Positions, setV3Positions] = useState([]);
   const [v3PositionsLoading, setV3PositionsLoading] = useState(false);
   const [v3PositionsError, setV3PositionsError] = useState("");
+  const [v3ShowClosedPositions, setV3ShowClosedPositions] = useState(false);
   const [v3ActionModal, setV3ActionModal] = useState({
     open: false,
     type: null,
@@ -979,6 +982,12 @@ export default function LiquiditySection({
       if (next) setV3Token1(next);
     }
   }, [isV3View, v3Token0, v3Token1, v3TokenOptions]);
+  useEffect(() => {
+    if (v3Token0 !== "WETH") setV3MintUseEth0(false);
+  }, [v3Token0]);
+  useEffect(() => {
+    if (v3Token1 !== "WETH") setV3MintUseEth1(false);
+  }, [v3Token1]);
 
   useEffect(() => {
     if (!isV3View) return;
@@ -1052,6 +1061,42 @@ export default function LiquiditySection({
     },
     [walletBalances]
   );
+  const v3Token0IsWeth = Boolean(WETH_ADDRESS) &&
+    v3SelectedToken0Address?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+  const v3Token1IsWeth = Boolean(WETH_ADDRESS) &&
+    v3SelectedToken1Address?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
+  const v3MintUseEth0Effective =
+    v3Token0 === "ETH" || (v3Token0IsWeth && v3MintUseEth0);
+  const v3MintUseEth1Effective =
+    v3Token1 === "ETH" || (v3Token1IsWeth && v3MintUseEth1);
+  const v3MintDisplayMeta0 = v3MintUseEth0Effective
+    ? tokenRegistry.ETH
+    : v3Token0IsWeth
+    ? tokenRegistry.WETH
+    : v3Token0Meta;
+  const v3MintDisplayMeta1 = v3MintUseEth1Effective
+    ? tokenRegistry.ETH
+    : v3Token1IsWeth
+    ? tokenRegistry.WETH
+    : v3Token1Meta;
+  const v3MintDisplaySymbol0 = v3MintUseEth0Effective
+    ? "ETH"
+    : v3Token0IsWeth
+    ? "WETH"
+    : v3Token0;
+  const v3MintDisplaySymbol1 = v3MintUseEth1Effective
+    ? "ETH"
+    : v3Token1IsWeth
+    ? "WETH"
+    : v3Token1;
+  const v3MintBalance0 = resolveWalletBalanceBySymbol(
+    v3MintUseEth0Effective ? "ETH" : v3Token0IsWeth ? "WETH" : v3Token0
+  );
+  const v3MintBalance1 = resolveWalletBalanceBySymbol(
+    v3MintUseEth1Effective ? "ETH" : v3Token1IsWeth ? "WETH" : v3Token1
+  );
+  const v3MintBalance0Num = safeNumber(v3MintBalance0);
+  const v3MintBalance1Num = safeNumber(v3MintBalance1);
 
   const v3ActionRangeMath = useMemo(() => {
     const pos = v3ActionModal.position;
@@ -1302,6 +1347,8 @@ export default function LiquiditySection({
     if (v3RangeMath.sqrtCurrentX96 >= v3RangeMath.sqrtUpperX96) return "token1";
     return "dual";
   }, [v3RangeMath]);
+  const v3MintCanUseSide0 = v3RangeSide !== "token1";
+  const v3MintCanUseSide1 = v3RangeSide !== "token0";
 
   const applyV3RangePreset = useCallback(
     (pct) => {
@@ -1726,6 +1773,24 @@ export default function LiquiditySection({
       v3Positions.find((p) => String(p.tokenId) === String(selectedPositionId)) || null
     );
   }, [selectedPositionId, v3Positions]);
+  const closedPositionsCount = useMemo(
+    () => v3Positions.filter((p) => (p?.liquidity ?? 0n) <= 0n).length,
+    [v3Positions]
+  );
+  const visibleV3Positions = useMemo(() => {
+    if (v3ShowClosedPositions) return v3Positions;
+    return v3Positions.filter((p) => (p?.liquidity ?? 0n) > 0n);
+  }, [v3Positions, v3ShowClosedPositions]);
+
+  useEffect(() => {
+    if (v3ShowClosedPositions || !selectedPositionId) return;
+    const selected = v3Positions.find(
+      (p) => String(p.tokenId) === String(selectedPositionId)
+    );
+    if (selected && (selected?.liquidity ?? 0n) <= 0n) {
+      setSelectedPositionId(null);
+    }
+  }, [v3ShowClosedPositions, selectedPositionId, v3Positions]);
 
   useEffect(() => {
     setShowNftDebug(false);
@@ -3215,8 +3280,8 @@ export default function LiquiditySection({
       let token1Addr = addrB;
       let amount0Desired = amountA;
       let amount1Desired = amountB;
-      let token0IsEth = v3Token0 === "ETH";
-      let token1IsEth = v3Token1 === "ETH";
+      let token0IsEth = v3MintUseEth0Effective;
+      let token1IsEth = v3MintUseEth1Effective;
       const isReversed = addrA.toLowerCase() !== addrB.toLowerCase() &&
         addrA.toLowerCase() > addrB.toLowerCase();
 
@@ -6027,11 +6092,11 @@ export default function LiquiditySection({
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span>Deposit</span>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <input
-                          name="v3-deposit-0"
-                          value={v3Amount0}
-                          onChange={(e) => {
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <input
+                            name="v3-deposit-0"
+                            value={v3Amount0}
+                            onChange={(e) => {
                             const next = e.target.value;
                             setV3Amount0(next);
                             if (v3MintError) setV3MintError("");
@@ -6068,39 +6133,76 @@ export default function LiquiditySection({
                           placeholder="0.0"
                           disabled={v3RangeSide === "token1"}
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
-                        />
-                        <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
-                          {v3Token0Meta?.logo ? (
-                            <img
-                              src={v3Token0Meta.logo}
-                              alt={`${v3Token0} logo`}
-                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
-                            />
-                          ) : (
-                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
-                              {(v3Token0 || "?").slice(0, 3)}
-                            </div>
-                          )}
-                          <span className="leading-none">{v3Token0}</span>
+                          />
+                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                            {v3MintDisplayMeta0?.logo ? (
+                              <img
+                                src={v3MintDisplayMeta0.logo}
+                                alt={`${v3MintDisplaySymbol0} logo`}
+                                className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
+                              />
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                {(v3MintDisplaySymbol0 || "?").slice(0, 3)}
+                              </div>
+                            )}
+                            <span className="leading-none">{v3MintDisplaySymbol0}</span>
+                          </div>
                         </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Balance{" "}
+                          {walletBalancesLoading
+                            ? "Loading..."
+                            : v3MintBalance0Num !== null
+                            ? `${formatTokenBalance(v3MintBalance0Num)} ${v3MintDisplaySymbol0}`
+                            : "--"}
+                        </div>
+                        {v3Token0 === "WETH" && (
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span>Pay with</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setV3MintUseEth0(false)}
+                                disabled={!v3MintCanUseSide0}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !v3MintCanUseSide0
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : !v3MintUseEth0
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                WETH
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setV3MintUseEth0(true)}
+                                disabled={!v3MintCanUseSide0}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !v3MintCanUseSide0
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : v3MintUseEth0
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                ETH
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        Balance{" "}
-                        {walletBalancesLoading
-                          ? "Loading..."
-                          : `${formatTokenBalance(v3Token0Balance)} ${v3Token0}`}
-                      </div>
-                    </div>
 
                     <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
                       <div className="flex items-center justify-between text-[11px] text-slate-500">
                         <span>Deposit</span>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-3">
-                        <input
-                          name="v3-deposit-1"
-                          value={v3Amount1}
-                          onChange={(e) => {
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <input
+                            name="v3-deposit-1"
+                            value={v3Amount1}
+                            onChange={(e) => {
                             const next = e.target.value;
                             setV3Amount1(next);
                             if (v3MintError) setV3MintError("");
@@ -6137,29 +6239,66 @@ export default function LiquiditySection({
                           placeholder="0.0"
                           disabled={v3RangeSide === "token0"}
                           className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
-                        />
-                        <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
-                          {v3Token1Meta?.logo ? (
-                            <img
-                              src={v3Token1Meta.logo}
-                              alt={`${v3Token1} logo`}
-                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
-                            />
-                          ) : (
-                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
-                              {(v3Token1 || "?").slice(0, 3)}
-                            </div>
-                          )}
-                          <span className="leading-none">{v3Token1}</span>
+                          />
+                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                            {v3MintDisplayMeta1?.logo ? (
+                              <img
+                                src={v3MintDisplayMeta1.logo}
+                                alt={`${v3MintDisplaySymbol1} logo`}
+                                className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain block"
+                              />
+                            ) : (
+                              <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                {(v3MintDisplaySymbol1 || "?").slice(0, 3)}
+                              </div>
+                            )}
+                            <span className="leading-none">{v3MintDisplaySymbol1}</span>
+                          </div>
                         </div>
+                        <div className="mt-1 text-[11px] text-slate-500">
+                          Balance{" "}
+                          {walletBalancesLoading
+                            ? "Loading..."
+                            : v3MintBalance1Num !== null
+                            ? `${formatTokenBalance(v3MintBalance1Num)} ${v3MintDisplaySymbol1}`
+                            : "--"}
+                        </div>
+                        {v3Token1 === "WETH" && (
+                          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                            <span>Pay with</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setV3MintUseEth1(false)}
+                                disabled={!v3MintCanUseSide1}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !v3MintCanUseSide1
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : !v3MintUseEth1
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                WETH
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setV3MintUseEth1(true)}
+                                disabled={!v3MintCanUseSide1}
+                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                  !v3MintCanUseSide1
+                                    ? "border-slate-800 bg-slate-900/70 text-slate-500"
+                                    : v3MintUseEth1
+                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
+                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                }`}
+                              >
+                                ETH
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-500">
-                        Balance{" "}
-                        {walletBalancesLoading
-                          ? "Loading..."
-                          : `${formatTokenBalance(v3Token1Balance)} ${v3Token1}`}
-                      </div>
-                    </div>
                   </div>
 
                   <button
@@ -6297,22 +6436,36 @@ export default function LiquiditySection({
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                       Your Positions
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setV3RefreshTick((t) => t + 1)}
-                      className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
-                    >
-                      Refresh
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setV3ShowClosedPositions((prev) => !prev)}
+                        className={`px-2 py-1 rounded-full border text-xs transition ${
+                          v3ShowClosedPositions
+                            ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200"
+                            : "border-slate-700 text-slate-300 hover:border-slate-500"
+                        }`}
+                      >
+                        {v3ShowClosedPositions ? "Hide closed" : "Show closed"}
+                        {closedPositionsCount ? ` (${closedPositionsCount})` : ""}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setV3RefreshTick((t) => t + 1)}
+                        className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                      >
+                        Refresh
+                      </button>
+                    </div>
                   </div>
                   {v3PositionsLoading ? (
                     <div className="text-sm text-slate-400">Loading positions...</div>
                   ) : v3PositionsError ? (
                     <div className="text-sm text-amber-200">{v3PositionsError}</div>
-                  ) : v3Positions.length ? (
+                  ) : visibleV3Positions.length ? (
                     <div className="flex flex-col gap-3">
                       <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                      {v3Positions.map((pos) => {
+                      {visibleV3Positions.map((pos) => {
                       const key = `${pos.token0?.toLowerCase?.() || ""}-${pos.token1?.toLowerCase?.() || ""}-${pos.fee}`;
                       const metrics = v3PoolMetrics[key];
                       const meta0 = findTokenMetaByAddress(pos.token0);
@@ -6555,7 +6708,11 @@ export default function LiquiditySection({
                 </div>
                 ) : (
                   <div className="text-sm text-slate-400">
-                    No positions found.
+                    {v3ShowClosedPositions
+                      ? "No positions found."
+                      : closedPositionsCount
+                      ? "No open positions. Toggle \"Show closed\" to view closed positions."
+                      : "No positions found."}
                   </div>
                 )}
               </div>
