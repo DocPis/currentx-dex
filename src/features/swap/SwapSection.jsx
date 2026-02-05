@@ -19,6 +19,7 @@ import {
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
+  PERMIT2_ABI,
   UNIV2_FACTORY_ABI,
   WETH_ABI,
   UNIV3_FACTORY_ABI,
@@ -30,6 +31,9 @@ import { getRealtimeClient } from "../../shared/services/realtime";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA"];
 const MAX_UINT256 = (1n << 256n) - 1n;
+const MAX_UINT160 = (1n << 160n) - 1n;
+const MAX_UINT48 = (1n << 48n) - 1n;
+const APPROVAL_MODE_KEY = "cx_approval_mode";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
@@ -306,6 +310,9 @@ const friendlySwapError = (e) => {
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return "Swap simulation failed (no revert data). Try a smaller size, a different route, or a higher slippage.";
   }
+  if (lower.includes("permit2") && lower.includes("allowance")) {
+    return "Permit2 allowance missing or expired. Click Approve, then retry the swap.";
+  }
   if (lower.includes("transfer helper")) {
     return "Token transfer failed. Check allowance and balance, then retry.";
   }
@@ -440,8 +447,15 @@ export default function SwapSection({ balances, address, chainId }) {
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
-  const [approvalMode, setApprovalMode] = useState("exact"); // "exact" | "unlimited"
-  const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label }
+  const [approvalMode, setApprovalMode] = useState(() => {
+    if (typeof window === "undefined") return "unlimited";
+    try {
+      return localStorage.getItem(APPROVAL_MODE_KEY) || "unlimited";
+    } catch {
+      return "unlimited";
+    }
+  }); // "exact" | "unlimited"
+  const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
   const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
   const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
@@ -459,9 +473,43 @@ export default function SwapSection({ balances, address, chainId }) {
   const allowanceDebounceRef = useRef(null);
   const pendingTxHashRef = useRef(null);
   const autoRefreshTimerRef = useRef(null);
+  const approvalCacheRef = useRef(new Map());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      localStorage.setItem(APPROVAL_MODE_KEY, approvalMode);
+    } catch {
+      // ignore storage errors
+    }
+  }, [approvalMode]);
+
+  useEffect(() => {
+    approvalCacheRef.current.clear();
+  }, [address]);
 
   const approvalTarget = approvalTargets[0] || null;
   const approveNeeded = approvalTargets.length > 0;
+  const makeApprovalKey = (kind, token, spender) =>
+    `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
+  const getCachedApproval = (kind, token, spender) => {
+    if (!token || !spender) return null;
+    const entry = approvalCacheRef.current.get(
+      makeApprovalKey(kind, token, spender)
+    );
+    return entry || null;
+  };
+  const setCachedApproval = (target) => {
+    if (!target?.address || !target?.spender || !target?.kind) return;
+    approvalCacheRef.current.set(
+      makeApprovalKey(target.kind, target.address, target.spender),
+      {
+        amount: target.desiredAllowance ?? 0n,
+        expiration: target.expiration ?? MAX_UINT48,
+        at: Date.now(),
+      }
+    );
+  };
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -1504,24 +1552,72 @@ export default function SwapSection({ balances, address, chainId }) {
           if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
             allowanceDebounceRef.current = setTimeout(async () => {
               try {
-                const signerProvider = await getProvider();
-                const signer = await signerProvider.getSigner();
-                const user = await signer.getAddress();
-                const token = new Contract(sellAddress, ERC20_ABI, signer);
-                const desiredAllowance =
+                const user = address;
+                if (!user) {
+                  if (cancelled) return;
+                  setApprovalTargets([]);
+                  return;
+                }
+                const readProvider = getReadOnlyProvider(false, true);
+                const token = new Contract(sellAddress, ERC20_ABI, readProvider);
+                const desiredErc20Allowance =
                   approvalMode === "unlimited" ? MAX_UINT256 : amountWei;
+                const desiredPermit2Allowance =
+                  approvalMode === "unlimited"
+                    ? MAX_UINT160
+                    : amountWei > MAX_UINT160
+                      ? MAX_UINT160
+                      : amountWei;
+                const permit2Expiration = MAX_UINT48;
 
                 const targets = [];
-                const check = async (spender, label) => {
+                const checkErc20 = async (spender, label) => {
                   if (!spender) return;
+                  const cached = getCachedApproval("erc20", sellAddress, spender);
+                  if (cached && cached.amount >= amountWei) return;
                   const allowance = await token.allowance(user, spender);
                   if (allowance < amountWei) {
                     targets.push({
                       symbol: sellToken,
                       address: sellAddress,
-                      desiredAllowance,
+                      desiredAllowance: desiredErc20Allowance,
                       spender,
                       label,
+                      kind: "erc20",
+                    });
+                  }
+                };
+                const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, readProvider);
+                const checkPermit2 = async (spender, label) => {
+                  if (!spender) return;
+                  const cached = getCachedApproval("permit2", sellAddress, spender);
+                  if (cached) {
+                    const now = BigInt(Math.floor(Date.now() / 1000));
+                    const expired = !cached.expiration || cached.expiration < now;
+                    if (!expired && cached.amount >= amountWei) return;
+                  }
+                  const res = await permit2.allowance(user, sellAddress, spender);
+                  const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
+                  const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
+                  const allowance =
+                    typeof allowanceRaw === "bigint"
+                      ? allowanceRaw
+                      : BigInt(allowanceRaw || 0);
+                  const expiration =
+                    typeof expirationRaw === "bigint"
+                      ? expirationRaw
+                      : BigInt(expirationRaw || 0);
+                  const now = BigInt(Math.floor(Date.now() / 1000));
+                  const expired = !expiration || expiration < now;
+                  if (allowance < amountWei || expired) {
+                    targets.push({
+                      symbol: sellToken,
+                      address: sellAddress,
+                      desiredAllowance: desiredPermit2Allowance,
+                      spender,
+                      label,
+                      kind: "permit2",
+                      expiration: permit2Expiration,
                     });
                   }
                 };
@@ -1531,7 +1627,11 @@ export default function SwapSection({ balances, address, chainId }) {
                   selectedRoute.protocol === "V3" ||
                   selectedRoute.protocol === "SPLIT"
                 ) {
-                  await check(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+                  await checkErc20(PERMIT2_ADDRESS, "Token approval (Permit2)");
+                  await checkPermit2(
+                    UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+                    "Permit2 allowance (Universal Router)"
+                  );
                 }
 
                 if (cancelled) return;
@@ -1562,6 +1662,7 @@ export default function SwapSection({ balances, address, chainId }) {
       }
     };
   }, [
+    address,
     amountIn,
     buyMeta?.address,
     buyMeta?.decimals,
@@ -1681,7 +1782,9 @@ export default function SwapSection({ balances, address, chainId }) {
   }, []);
 
   const handleApprove = async () => {
-    if (!approvalTarget || approvalTarget.symbol !== sellToken) return;
+    if (!approvalTargets.length) return;
+    const pending = approvalTargets.filter((t) => t.symbol === sellToken);
+    if (!pending.length) return;
     if (!isChainMatch) {
       setSwapStatus({
         variant: "error",
@@ -1695,24 +1798,57 @@ export default function SwapSection({ balances, address, chainId }) {
       setSwapStatus(null);
       provider = await getProvider();
       const signer = await provider.getSigner();
-      const token = new Contract(approvalTarget.address, ERC20_ABI, signer);
-      const spender = approvalTarget.spender || PERMIT2_ADDRESS;
-      const tx = await token.approve(spender, approvalTarget.desiredAllowance);
-      await tx.wait();
-      setApprovalTargets((prev) => prev.slice(1));
+      const ordered = [...pending].sort((a, b) => {
+        const aScore = a.kind === "erc20" ? 0 : 1;
+        const bScore = b.kind === "erc20" ? 0 : 1;
+        return aScore - bScore;
+      });
+      for (let i = 0; i < ordered.length; i += 1) {
+        const target = ordered[i];
+        const stepLabel =
+          ordered.length > 1 ? ` (${i + 1}/${ordered.length})` : "";
+        setSwapStatus({
+          variant: "pending",
+          message: `Approving ${target.label || target.symbol}${stepLabel}...`,
+        });
+        let tx;
+        if (target.kind === "permit2") {
+          const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
+          const spender = target.spender || UNIV3_UNIVERSAL_ROUTER_ADDRESS;
+          const expiration =
+            typeof target.expiration === "bigint" ? target.expiration : MAX_UINT48;
+          tx = await permit2.approve(
+            target.address,
+            spender,
+            target.desiredAllowance,
+            expiration
+          );
+        } else {
+          const token = new Contract(target.address, ERC20_ABI, signer);
+          const spender = target.spender || PERMIT2_ADDRESS;
+          tx = await token.approve(spender, target.desiredAllowance);
+        }
+        const receipt = await tx.wait();
+        if (receipt?.status === 0 || receipt?.status === 0n) {
+          throw new Error("Approval failed");
+        }
+        setCachedApproval(target);
+      }
+      setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
       setSwapStatus({
         variant: "success",
-        message: `Approval updated for ${approvalTarget.symbol}.`,
+        message: `Approval updated for ${sellToken}.`,
       });
+      setLiveRouteTick((t) => t + 1);
     } catch (e) {
       const txHash = extractTxHash(e);
       if (txHash) {
         const receipt = await tryFetchReceipt(txHash, provider);
         const status = receipt?.status;
         const normalized = typeof status === "bigint" ? Number(status) : status;
-        const symbol = approvalTarget?.symbol || "token";
+        const symbol = approvalTarget?.symbol || sellToken || "token";
         if (normalized === 1) {
-          setApprovalTargets((prev) => prev.slice(1));
+          setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
           setSwapStatus({
             variant: "success",
             hash: txHash,
@@ -1804,7 +1940,7 @@ export default function SwapSection({ balances, address, chainId }) {
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const checkAllowance = async (spender, label) => {
+        const checkErc20Allowance = async (spender, label) => {
           const allowance = await token.allowance(user, spender);
           if (allowance < amountWei) {
             throw new Error(
@@ -1812,8 +1948,33 @@ export default function SwapSection({ balances, address, chainId }) {
             );
           }
         };
+        const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
+        const checkPermit2Allowance = async (spender, label) => {
+          const res = await permit2.allowance(user, sellAddress, spender);
+          const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
+          const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
+          const allowance =
+            typeof allowanceRaw === "bigint"
+              ? allowanceRaw
+              : BigInt(allowanceRaw || 0);
+          const expiration =
+            typeof expirationRaw === "bigint"
+              ? expirationRaw
+              : BigInt(expirationRaw || 0);
+          const now = BigInt(Math.floor(Date.now() / 1000));
+          const expired = !expiration || expiration < now;
+          if (allowance < amountWei || expired) {
+            throw new Error(
+              `Approval required for ${sellToken}. Please approve ${label} before swapping.`
+            );
+          }
+        };
         if (routeProtocol === "V2" || routeProtocol === "V3" || routeProtocol === "SPLIT") {
-          await checkAllowance(PERMIT2_ADDRESS, "Permit2 (Universal Router)");
+          await checkErc20Allowance(PERMIT2_ADDRESS, "Token approval (Permit2)");
+          await checkPermit2Allowance(
+            UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+            "Permit2 allowance (Universal Router)"
+          );
         }
       }
 
