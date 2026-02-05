@@ -677,6 +677,29 @@ export async function fetchProtocolHistoryV3(days = 7) {
           ) {
             date
             volumeUSD
+            tvlUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.tvlUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        cumulativeVolumeUsd: null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
             totalVolumeUSD
             totalValueLockedUSD
           }
