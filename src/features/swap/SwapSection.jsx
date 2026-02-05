@@ -2878,46 +2878,38 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         </div>
 
         <div className="mb-3 rounded-2xl bg-slate-900/70 border border-slate-800 p-4 shadow-[0_14px_40px_-24px_rgba(56,189,248,0.6)]">
-          <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-slate-100">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-sm font-semibold">Route (CurrentX API)</span>
+              <span className="text-sm font-semibold">Route</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-900/40 border border-emerald-600/40 text-[11px] text-emerald-100"
-                title="Route updates in real-time to keep best execution."
-              >
-                <span className="font-semibold">LiveRoute</span>
-                <span aria-hidden>✅</span>
-              </div>
-              <div
-                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-[11px] ${
-                  executionMode === "turbo"
-                    ? "bg-sky-900/40 border-sky-600/50 text-sky-100"
-                    : "bg-amber-900/30 border-amber-600/50 text-amber-100"
-                }`}
-                title={
-                  executionMode === "turbo"
-                    ? "Turbo: auto-slippage + auto re-quote on fast moves."
-                    : "Protected: tighter limits and conservative routing."
-                }
-              >
-                <span className="font-semibold">
-                  {executionMode === "turbo" ? "Turbo" : "Protected"}
+            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                {routeProtocolLabel}
+              </span>
+              {routeModeLabel && (
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                  {routeModeLabel}
                 </span>
-              </div>
+              )}
+              {hopCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                  {hopCount} hop{hopCount > 1 ? "s" : ""}
+                </span>
+              )}
+              <span
+                className={`px-2 py-0.5 rounded-full border ${
+                  executionMode === "turbo"
+                    ? "border-sky-500/50 bg-sky-500/10 text-sky-100"
+                    : "border-amber-500/50 bg-amber-500/10 text-amber-100"
+                }`}
+              >
+                {executionMode === "turbo" ? "Turbo" : "Protected"}
+              </span>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-2">
-            <span>Routing:</span>
-            <span className="inline-flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-1 text-slate-100">
-              Auto (lowest slippage)
-              <span className="text-[10px] text-slate-400">CurrentX API</span>
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200 mb-2">
-            <span className="text-slate-400">Path:</span>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
             {activeRouteLabels.map((label, idx) => (
               <React.Fragment key={`${label}-${idx}`}>
                 <span className="px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-50">
@@ -2929,101 +2921,23 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               </React.Fragment>
             ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mb-3">
-            <span>Protocol:</span>
-            <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-              {routeProtocolLabel}
-            </span>
-            {routeModeLabel && (
-              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                {routeModeLabel}
-              </span>
-            )}
-            {hopCount > 0 && (
-              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                {hopCount} hop{hopCount > 1 ? "s" : ""}
-              </span>
-            )}
-          </div>
-          {routeSegments.length ? (
-            <div className="space-y-3 text-[12px] text-slate-200 mb-3">
-              {routeSegments.map((segment, segIdx) => (
-                <div key={`segment-${segIdx}`} className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                    <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                      {segment.protocol}
-                    </span>
-                    {segment.sharePct !== null && segment.sharePct !== undefined && segment.sharePct !== 100 ? (
-                      <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                        {segment.sharePct.toFixed(2)}%
-                      </span>
-                    ) : null}
-                    {segment.kind ? (
-                      <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
-                        {segment.kind === "hop"
-                          ? "2-hop"
-                          : segment.kind === "direct"
-                            ? "Direct"
-                            : segment.kind}
-                      </span>
-                    ) : null}
-                  </div>
-                  {segment.hops.map((hop, idx) => (
-                    <div
-                      key={`hop-${segIdx}-${idx}`}
-                      className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-900/60 border border-slate-800 px-3 py-2"
-                    >
-                      <div className="inline-flex items-center gap-2">
-                        <TokenLogo
-                          token={hop.from.meta}
-                          fallbackSymbol={hop.from.symbol}
-                          imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                          placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
-                        />
-                        <span className="font-semibold">{hop.from.symbol}</span>
-                      </div>
-                      <span className="text-slate-500">-&gt;</span>
-                      <div className="inline-flex items-center gap-2">
-                        <TokenLogo
-                          token={hop.to.meta}
-                          fallbackSymbol={hop.to.symbol}
-                          imgClassName="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                          placeholderClassName="h-5 w-5 rounded-full bg-slate-800 border border-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
-                        />
-                        <span className="font-semibold">{hop.to.symbol}</span>
-                      </div>
-                      <span className="px-2 py-0.5 rounded-full bg-slate-800/80 border border-slate-700 text-[10px] text-slate-200">
-                        {hop.protocol}
-                        {hop.fee !== null && hop.fee !== undefined
-                          ? ` ${formatV3Fee(hop.fee)}`
-                          : ""}
-                      </span>
-                      {hop.pool ? (
-                        <span className="text-[10px] text-slate-500">
-                          pool {shortenAddress(hop.pool)}
-                        </span>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-[11px] text-slate-500 mb-3">
-              Route details will appear once a live quote is available.
-            </div>
-          )}
+
           {quoteMeta?.protocol === "SPLIT" ? (
-            <div className="text-[11px] text-amber-200 mb-2">
-              Split routing executes both routes inside the Universal Router (single transaction).
+            <div className="mt-2 text-[11px] text-amber-200">
+              Split routing (single transaction).
             </div>
           ) : null}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
+
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[12px] text-slate-100">
             <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Expected output</span>
+              <span className="text-slate-500 text-[11px]">Expected</span>
               <span className="font-semibold">
                 {quoteOut !== null ? `${Number(quoteOut).toFixed(5)} ${displayBuySymbol}` : "--"}
               </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">Min received</span>
+              <span className="font-semibold">{minReceivedDisplay}</span>
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Price impact</span>
@@ -3031,35 +2945,25 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
               </span>
             </div>
-          <div className="flex flex-col gap-1">
-            <span className="text-slate-500 text-[11px]">Min received (slippage)</span>
-            <span className="font-semibold">{minReceivedDisplay}</span>
-            <span className="text-[11px] text-slate-400">
-              Effective slippage:{" "}
+          </div>
+
+          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+            <span className="inline-flex items-center gap-2 text-emerald-100">
               <span
-                className={
-                  effectiveSlippagePct > slippageCapPct * 0.95
-                    ? "text-amber-200"
-                    : "text-emerald-200"
-                }
-              >
+                className={`h-2 w-2 rounded-full ${
+                  quoteLoading ? "bg-amber-400 animate-pulse" : "bg-emerald-400 animate-ping"
+                }`}
+              />
+              {quoteLoading ? "Updating..." : `Updated ${quoteAgeLabel}`}
+            </span>
+            <span>
+              Slippage{" "}
+              <span className="text-emerald-200">
                 {Number(effectiveSlippagePct || 0).toFixed(2)}%
-              </span>{" "}
-              (cap {slippageCapPct.toFixed(2)}%)
+              </span>
             </span>
           </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Updated</span>
-              <span className="inline-flex items-center gap-2 text-emerald-100">
-                <span
-                  className={`h-2 w-2 rounded-full ${
-                    quoteLoading ? "bg-amber-400 animate-pulse" : "bg-emerald-400 animate-ping"
-                  }`}
-                />
-                {quoteLoading ? "Updating..." : quoteAgeLabel}
-              </span>
-            </div>
-          </div>
+
           {isQuoteLocked ? (
             <div className="mt-2 text-[11px] text-amber-200 inline-flex items-center gap-2">
               <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
@@ -3076,7 +2980,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         <div className="flex flex-col sm:flex-row gap-3 mt-2">
           <div className="flex-1 rounded-2xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-300">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-slate-400">Base slippage (%)</span>
+              <span className="text-slate-400">Slippage (%)</span>
               <div className="flex items-center gap-2">
                 {[0.1, 0.5, 1].map((p) => (
                   <button
@@ -3100,56 +3004,18 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 />
               </div>
             </div>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-slate-400">Cap slippage (%)</span>
-              <div className="flex items-center gap-2">
-                {[1, 3, 5].map((p) => (
-                  <button
-                    key={`cap-${p}`}
-                    type="button"
-                    onClick={() => setSlippageCap(String(p))}
-                    className={`px-2 py-1 rounded-lg text-[11px] border ${
-                      Number(slippageCap) === p
-                        ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-100"
-                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
-                    }`}
-                  >
-                    {p}%
-                  </button>
-                ))}
-                <input
-                  name="swap-slippage-cap"
-                  value={slippageCap}
-                  onChange={(e) => setSlippageCap(e.target.value)}
-                  className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
-                />
-              </div>
-            </div>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="text-slate-500">Effettiva (auto & cap)</span>
+              <span className="text-slate-500">Effective</span>
               <span className="text-slate-100">
                 {Number(effectiveSlippagePct || 0).toFixed(2)}%{" "}
                 {executionMode === "turbo" ? "auto" : "protected"}
               </span>
             </div>
-            <div className="flex items-center justify-between text-[11px]">
+            <div className="flex items-center justify-between text-[11px] mt-1">
               <span className="text-slate-500">Min received</span>
-              <span className="text-slate-100">
-                {minReceivedDisplay}
-              </span>
+              <span className="text-slate-100">{minReceivedDisplay}</span>
             </div>
-            <div className="flex items-center justify-between text-[11px] mt-1">
-              <span className="text-slate-500">Price impact</span>
-              <span className="text-slate-100">
-                {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
-              </span>
-            </div>
-            <div className="flex items-center justify-between text-[11px] mt-1">
-              <span className="text-slate-500">Route volatility</span>
-              <span className="text-slate-100">
-                {quoteVolatilityPct ? `${quoteVolatilityPct.toFixed(2)}%` : "Calm"}
-              </span>
-            </div>
+          </div>
           </div>
 
           <div className="flex flex-col gap-2 w-full sm:w-44">
