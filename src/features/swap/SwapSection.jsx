@@ -2952,17 +2952,65 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
-            {activeRouteLabels.map((label, idx) => (
-              <React.Fragment key={`${label}-${idx}`}>
-                <span className="px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-50">
-                  {label}
-                </span>
-                {idx < activeRouteLabels.length - 1 && (
-                  <span className="text-slate-500">-&gt;</span>
-                )}
-              </React.Fragment>
-            ))}
+          <div className="mt-2 relative group">
+            <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
+              {activeRouteLabels.map((label, idx) => (
+                <React.Fragment key={`${label}-${idx}`}>
+                  <span className="px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-50">
+                    {label}
+                  </span>
+                  {idx < activeRouteLabels.length - 1 && (
+                    <span className="text-slate-500">-&gt;</span>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+            <div
+              className="absolute left-0 top-full mt-2 w-full max-w-[420px] rounded-2xl border border-slate-800 bg-slate-950/95 p-3 shadow-2xl shadow-black/50 opacity-0 translate-y-1 pointer-events-none transition duration-200 group-hover:opacity-100 group-hover:translate-y-0 z-20"
+              role="tooltip"
+            >
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                Full route
+              </div>
+              {routeSegments.length ? (
+                <div className="mt-2 space-y-2">
+                  {routeSegments.map((segment, segIdx) => (
+                    <div
+                      key={`route-seg-${segIdx}`}
+                      className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between text-[10px] text-slate-400">
+                        <span>{segment.protocol}</span>
+                        {quoteMeta?.protocol === "SPLIT" && (
+                          <span>{Math.round(segment.sharePct || 0)}%</span>
+                        )}
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {segment.hops.map((hop, hopIdx) => (
+                          <div
+                            key={`route-hop-${segIdx}-${hopIdx}`}
+                            className="flex items-center gap-2 text-xs text-slate-200"
+                          >
+                            <span className="px-2 py-1 rounded-md border border-slate-700 bg-slate-950/80">
+                              {hop.from?.symbol || "Token"}
+                            </span>
+                            <span className="text-slate-500">-&gt;</span>
+                            <span className="px-2 py-1 rounded-md border border-slate-700 bg-slate-950/80">
+                              {hop.to?.symbol || "Token"}
+                            </span>
+                            <span className="ml-auto text-[10px] text-slate-400">
+                              {hop.protocol === "V3" ? formatV3Fee(hop.fee) : "V2"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="mt-2 text-xs text-slate-500">No route data.</div>
+              )}
+            </div>
           </div>
 
           {quoteMeta?.protocol === "SPLIT" ? (
