@@ -1463,23 +1463,45 @@ export default function LiquiditySection({
         );
         const positions = await Promise.all(ids.map((id) => manager.positions(id)));
         const feesById = new Map();
-        await runWithConcurrency(ids, 4, async (id) => {
+        const collectParamsFor = (id) => ({
+          tokenId: id,
+          recipient: address,
+          amount0Max: MAX_UINT128,
+          amount1Max: MAX_UINT128,
+        });
+        const tryCollectStatic = async (mgr, id) => {
           try {
-            const params = {
-              tokenId: id,
-              recipient: address,
-              amount0Max: MAX_UINT128,
-              amount1Max: MAX_UINT128,
-            };
-            const res = await manager.collect.staticCall(params, { from: address });
+            const params = collectParamsFor(id);
+            const res = await mgr.collect.staticCall(params, { from: address });
             const amount0 = res?.amount0 ?? res?.[0] ?? 0n;
             const amount1 = res?.amount1 ?? res?.[1] ?? 0n;
-            feesById.set(id?.toString?.() || String(id), {
-              tokensOwed0: amount0,
-              tokensOwed1: amount1,
-            });
+            return { amount0, amount1 };
           } catch {
-            // fallback to stored tokensOwed if callStatic fails
+            return null;
+          }
+        };
+        let primaryManager = manager;
+        try {
+          const walletProvider = await getProvider();
+          const signer = await walletProvider.getSigner();
+          primaryManager = new Contract(
+            UNIV3_POSITION_MANAGER_ADDRESS,
+            UNIV3_POSITION_MANAGER_ABI,
+            signer
+          );
+        } catch {
+          // fallback to read-only manager
+        }
+        await runWithConcurrency(ids, 4, async (id) => {
+          let collected = await tryCollectStatic(primaryManager, id);
+          if (!collected && primaryManager !== manager) {
+            collected = await tryCollectStatic(manager, id);
+          }
+          if (collected) {
+            feesById.set(id?.toString?.() || String(id), {
+              tokensOwed0: collected.amount0,
+              tokensOwed1: collected.amount1,
+            });
           }
         });
         if (cancelled) return;
