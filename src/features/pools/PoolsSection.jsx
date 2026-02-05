@@ -80,7 +80,7 @@ const poolMatchesSearch = (pool, term) => {
   return hay.includes(term);
 };
 
-export default function PoolsSection() {
+export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
   const [v2Pools, setV2Pools] = useState([]);
   const [v3Pools, setV3Pools] = useState([]);
@@ -291,6 +291,20 @@ export default function PoolsSection() {
     }
   };
 
+  const handlePoolSelect = (pool) => {
+    if (typeof onSelectPool !== "function") return;
+    if (!pool) return;
+    onSelectPool({
+      type: pool.type,
+      token0Symbol: pool.token0Symbol,
+      token1Symbol: pool.token1Symbol,
+      feeTier: pool.feeTier ?? null,
+      id: pool.id ?? null,
+      token0Id: pool.token0Id ?? null,
+      token1Id: pool.token1Id ?? null,
+    });
+  };
+
   const sortIndicator = (key) =>
     sortKey === key ? (sortDir === "desc" ? "↓" : "↑") : "";
 
@@ -462,9 +476,12 @@ export default function PoolsSection() {
               const meta0 = resolveTokenMeta(pool.token0Id, pool.token0Symbol);
               const meta1 = resolveTokenMeta(pool.token1Id, pool.token1Symbol);
               return (
-                <div
+                <button
                   key={`${pool.type}-${pool.id}`}
-                  className="w-full rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3"
+                  type="button"
+                  onClick={() => handlePoolSelect(pool)}
+                  className="w-full text-left rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3 hover:border-sky-500/40 hover:bg-slate-900/60 transition"
+                  aria-label={`Open ${pool.token0Symbol || "Token0"} / ${pool.token1Symbol || "Token1"} pool`}
                 >
                   <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
                     <div className="md:col-span-4 flex items-center gap-3">
@@ -515,7 +532,7 @@ export default function PoolsSection() {
                       {pool.apr !== null ? `${pool.apr.toFixed(2)}%` : "--"}
                     </div>
                   </div>
-                </div>
+                </button>
               );
             })
           ) : (

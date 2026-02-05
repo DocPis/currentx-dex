@@ -16,6 +16,7 @@ export default function App() {
   const [tab, setTab] = useState("dashboard");
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
+  const [poolSelection, setPoolSelection] = useState(null);
   const { address, chainId, connect, disconnect } = useWallet();
   const { balances, refresh } = useBalances(address, chainId);
   useEffect(() => {
@@ -47,6 +48,11 @@ export default function App() {
           : e?.message || "Failed to connect wallet";
       setConnectError(msg);
     }
+  };
+
+  const handlePoolSelect = (pool) => {
+    setPoolSelection(pool || null);
+    setTab("liquidity");
   };
 
   return (
@@ -120,10 +126,11 @@ export default function App() {
             chainId={chainId}
             balances={balances}
             showV3={true}
+            poolSelection={poolSelection}
             onBalancesRefresh={refresh}
           />
         )}
-        {tab === "pools" && <PoolsSection />}
+        {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
         {tab === "dashboard" && <Dashboard />}
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />

@@ -766,6 +766,7 @@ export default function LiquiditySection({
   chainId,
   balances: balancesProp,
   onBalancesRefresh,
+  poolSelection,
   showV2 = true,
   showV3 = false,
 }) {
@@ -872,6 +873,8 @@ export default function LiquiditySection({
   const [v2LpLoading, setV2LpLoading] = useState(false);
   const [v2LpError, setV2LpError] = useState("");
   const toastTimerRef = useRef(null);
+  const lastPoolSelectionRef = useRef(null);
+  const suppressSelectionResetRef = useRef(false);
   const nftMetaRef = useRef({});
   const v3Token0DropdownRef = useRef(null);
   const v3Token1DropdownRef = useRef(null);
@@ -2673,6 +2676,10 @@ export default function LiquiditySection({
   const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
 
   useEffect(() => {
+    if (suppressSelectionResetRef.current) {
+      suppressSelectionResetRef.current = false;
+      return;
+    }
     setSelectionDepositPoolId(null);
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
@@ -3728,6 +3735,7 @@ export default function LiquiditySection({
 
   const handleOpenPoolDepositFromRow = (pool) => {
     if (!pool) return;
+    suppressSelectionResetRef.current = true;
     setTokenSelection({
       baseSymbol: pool.token0Symbol,
       pairSymbol: pool.token1Symbol,
@@ -3738,6 +3746,91 @@ export default function LiquiditySection({
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
   };
+
+  useEffect(() => {
+    if (!poolSelection) return;
+    const raw0 =
+      poolSelection.token0Symbol ||
+      poolSelection.baseSymbol ||
+      poolSelection.token0;
+    const raw1 =
+      poolSelection.token1Symbol ||
+      poolSelection.pairSymbol ||
+      poolSelection.token1;
+    if (!raw0 || !raw1) return;
+    const resolveSymbol = (symbol) => {
+      const trimmed = String(symbol || "").trim();
+      if (!trimmed) return "";
+      if (tokenRegistry[trimmed]) return trimmed;
+      const found = Object.keys(tokenRegistry).find(
+        (key) => key.toLowerCase() === trimmed.toLowerCase()
+      );
+      return found || trimmed;
+    };
+    const token0Symbol = resolveSymbol(raw0);
+    const token1Symbol = resolveSymbol(raw1);
+    if (!token0Symbol || !token1Symbol) return;
+    const feeTierNum = Number(poolSelection.feeTier);
+    const hasFeeTier = Number.isFinite(feeTierNum) && feeTierNum > 0;
+    const typeRaw = String(poolSelection.type || "").toUpperCase();
+    const preferV3 = typeRaw === "CL" || typeRaw === "V3" || (!typeRaw && hasFeeTier);
+    const preferV2 = typeRaw === "V2" || (!typeRaw && !hasFeeTier);
+    const selectionKey = [
+      typeRaw || (preferV3 ? "CL" : "V2"),
+      token0Symbol,
+      token1Symbol,
+      hasFeeTier ? feeTierNum : "",
+    ].join(":");
+    if (lastPoolSelectionRef.current === selectionKey) return;
+
+    let targetView = null;
+    if (preferV3 && showV3) targetView = "v3";
+    else if (preferV2 && showV2) targetView = "v2";
+    else if (showV3) targetView = "v3";
+    else if (showV2) targetView = "v2";
+
+    if (targetView === "v3") {
+      setLiquidityView("v3");
+      setV3Token0(token0Symbol);
+      setV3Token1(token1Symbol);
+      if (hasFeeTier) setV3FeeTier(feeTierNum);
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById("v3-add-liquidity");
+        if (target) target.scrollIntoView({ behavior: "smooth" });
+      });
+      lastPoolSelectionRef.current = selectionKey;
+      return;
+    }
+
+    if (targetView === "v2") {
+      setLiquidityView("v2");
+      suppressSelectionResetRef.current = true;
+      setTokenSelection({
+        baseSymbol: token0Symbol,
+        pairSymbol: token1Symbol,
+      });
+      setPairSelectorOpen(false);
+      const lower0 = token0Symbol.toLowerCase();
+      const lower1 = token1Symbol.toLowerCase();
+      const matched = allPools.find((p) => {
+        const symA = (p.token0Symbol || "").toLowerCase();
+        const symB = (p.token1Symbol || "").toLowerCase();
+        return (
+          (symA === lower0 && symB === lower1) ||
+          (symA === lower1 && symB === lower0)
+        );
+      });
+      const fallbackId = `custom-${token0Symbol}-${token1Symbol}`;
+      const poolId = matched?.id || fallbackId;
+      setSelectedPoolId(poolId);
+      setSelectionDepositPoolId(poolId);
+      window.requestAnimationFrame(() => {
+        const target = document.getElementById("token-selection-deposit");
+        if (target) target.scrollIntoView({ behavior: "smooth" });
+      });
+      lastPoolSelectionRef.current = selectionKey;
+    }
+  }, [poolSelection, tokenRegistry, allPools, showV2, showV3]);
 
   const handleAddCustomToken = async (e) => {
     if (e?.preventDefault) e.preventDefault();
@@ -4834,7 +4927,10 @@ export default function LiquiditySection({
             </div>
           )}
           {isV3View && (
-            <div className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40">
+            <div
+              id="v3-add-liquidity"
+              className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40"
+            >
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
               <div>
                 <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
