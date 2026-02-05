@@ -6139,12 +6139,38 @@ export default function LiquiditySection({
                             return (
                               <>
                                 <div className="flex flex-wrap items-start justify-between gap-3">
-                                  <div>
+                                  <div className="min-w-0">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                                       Position
                                     </div>
-                                    <div className="mt-1 text-lg font-semibold text-slate-100">
-                                      {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
+                                    <div className="mt-1 flex items-center gap-2">
+                                      <div className="flex -space-x-2">
+                                        {meta0?.logo ? (
+                                          <img
+                                            src={meta0.logo}
+                                            alt={`${selectedPosition.token0Symbol} logo`}
+                                            className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                          />
+                                        ) : (
+                                          <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
+                                            {(selectedPosition.token0Symbol || "?").slice(0, 3)}
+                                          </div>
+                                        )}
+                                        {meta1?.logo ? (
+                                          <img
+                                            src={meta1.logo}
+                                            alt={`${selectedPosition.token1Symbol} logo`}
+                                            className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                          />
+                                        ) : (
+                                          <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 text-[10px] font-semibold text-slate-200 flex items-center justify-center">
+                                            {(selectedPosition.token1Symbol || "?").slice(0, 3)}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="text-lg font-semibold text-slate-100 truncate">
+                                        {selectedPosition.token0Symbol} / {selectedPosition.token1Symbol}
+                                      </div>
                                     </div>
                                     <div className="text-[11px] text-slate-500">
                                       Position #{selectedPosition.tokenId} · Fee {formatFeeTier(selectedPosition.fee)}
