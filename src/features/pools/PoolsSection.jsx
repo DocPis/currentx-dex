@@ -17,15 +17,35 @@ const SORT_KEYS = {
   APR: "apr",
 };
 
+const trimTrailingZeros = (value) => {
+  if (typeof value !== "string" || !value.includes(".")) return value;
+  return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
+};
+
 const formatNumber = (num) => {
   if (num === null || num === undefined) return "--";
   if (!Number.isFinite(num)) return "--";
   const abs = Math.abs(num);
-  if (abs >= 1e12) return `${(num / 1e12).toFixed(2)}T`;
-  if (abs >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${(num / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${(num / 1e3).toFixed(2)}K`;
-  return num.toFixed(2);
+  const units = [
+    { value: 1e21, suffix: "Sx" },
+    { value: 1e18, suffix: "Qi" },
+    { value: 1e15, suffix: "Q" },
+    { value: 1e12, suffix: "T" },
+    { value: 1e9, suffix: "B" },
+    { value: 1e6, suffix: "M" },
+    { value: 1e3, suffix: "K" },
+  ];
+  for (const unit of units) {
+    if (abs >= unit.value) {
+      const scaled = num / unit.value;
+      const decimals = scaled >= 100 ? 2 : scaled >= 10 ? 3 : 4;
+      return `${trimTrailingZeros(scaled.toFixed(decimals))}${unit.suffix}`;
+    }
+  }
+  if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
+  if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
+  if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
+  return num.toExponential(2);
 };
 
 const formatUsd = (num) =>
