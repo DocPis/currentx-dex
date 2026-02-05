@@ -7170,6 +7170,125 @@ export default function LiquiditySection({
                                   Position #{pos.tokenId}
                                 </div>
                               </div>
+                              <div
+                                className="relative v3-position-list-menu"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setV3PositionListMenuOpenId(
+                                      listMenuOpen ? null : pos.tokenId
+                                    )
+                                  }
+                                  className="h-7 w-7 rounded-full border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-slate-500 inline-flex items-center justify-center"
+                                  aria-haspopup="menu"
+                                  aria-expanded={listMenuOpen}
+                                  aria-label="Open position details"
+                                >
+                                  <svg
+                                    viewBox="0 0 20 20"
+                                    fill="none"
+                                    xmlns="http://www.w3.org/2000/svg"
+                                    className="h-3.5 w-3.5 text-slate-300"
+                                  >
+                                    <circle cx="4" cy="10" r="1.5" fill="currentColor" />
+                                    <circle cx="10" cy="10" r="1.5" fill="currentColor" />
+                                    <circle cx="16" cy="10" r="1.5" fill="currentColor" />
+                                  </svg>
+                                </button>
+                                {listMenuOpen && (
+                                  <div className="absolute left-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
+                                    {listMenuItems.map((item) => {
+                                      const hasAddress = Boolean(item.address);
+                                      return (
+                                        <div
+                                          key={`${pos.tokenId}-${item.id}`}
+                                          className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
+                                        >
+                                          <span className="font-semibold">{item.label}</span>
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => copyAddress(item.address)}
+                                              disabled={!hasAddress}
+                                              className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 disabled:opacity-40"
+                                              aria-label={`Copy ${item.label} address`}
+                                            >
+                                              {v3CopiedAddress === item.address ? (
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5 text-emerald-300 mx-auto"
+                                                >
+                                                  <path
+                                                    d="M5 11l3 3 7-7"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.6"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              ) : (
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5 mx-auto"
+                                                >
+                                                  <path
+                                                    d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.3"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                  <path
+                                                    d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.3"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              )}
+                                            </button>
+                                            {hasAddress ? (
+                                              <a
+                                                href={`${EXPLORER_BASE_URL}/address/${item.address}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 inline-flex items-center justify-center"
+                                                aria-label={`Open ${item.label} on explorer`}
+                                              >
+                                                <svg
+                                                  viewBox="0 0 20 20"
+                                                  fill="none"
+                                                  xmlns="http://www.w3.org/2000/svg"
+                                                  className="h-3.5 w-3.5"
+                                                >
+                                                  <path
+                                                    d="M5 13l9-9m0 0h-5m5 0v5"
+                                                    stroke="currentColor"
+                                                    strokeWidth="1.5"
+                                                    strokeLinecap="round"
+                                                    strokeLinejoin="round"
+                                                  />
+                                                </svg>
+                                              </a>
+                                            ) : (
+                                              <div className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-600 inline-flex items-center justify-center">
+                                                <span className="text-[10px]">--</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700 bg-slate-900/70 text-slate-200">
@@ -7210,125 +7329,6 @@ export default function LiquiditySection({
                                 >
                                   Remove
                                 </button>
-                                <div
-                                  className="relative v3-position-list-menu"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setV3PositionListMenuOpenId(
-                                        listMenuOpen ? null : pos.tokenId
-                                      )
-                                    }
-                                    className="h-7 w-7 rounded-full border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-slate-500 inline-flex items-center justify-center"
-                                    aria-haspopup="menu"
-                                    aria-expanded={listMenuOpen}
-                                    aria-label="Open position details"
-                                  >
-                                    <svg
-                                      viewBox="0 0 20 20"
-                                      fill="none"
-                                      xmlns="http://www.w3.org/2000/svg"
-                                      className="h-3.5 w-3.5 text-slate-300"
-                                    >
-                                      <circle cx="4" cy="10" r="1.5" fill="currentColor" />
-                                      <circle cx="10" cy="10" r="1.5" fill="currentColor" />
-                                      <circle cx="16" cy="10" r="1.5" fill="currentColor" />
-                                    </svg>
-                                  </button>
-                                  {listMenuOpen && (
-                                    <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
-                                      {listMenuItems.map((item) => {
-                                        const hasAddress = Boolean(item.address);
-                                        return (
-                                          <div
-                                            key={`${pos.tokenId}-${item.id}`}
-                                            className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
-                                          >
-                                            <span className="font-semibold">{item.label}</span>
-                                            <div className="flex items-center gap-2">
-                                              <button
-                                                type="button"
-                                                onClick={() => copyAddress(item.address)}
-                                                disabled={!hasAddress}
-                                                className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 disabled:opacity-40"
-                                                aria-label={`Copy ${item.label} address`}
-                                              >
-                                                {v3CopiedAddress === item.address ? (
-                                                  <svg
-                                                    viewBox="0 0 20 20"
-                                                    fill="none"
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                    className="h-3.5 w-3.5 text-emerald-300 mx-auto"
-                                                  >
-                                                    <path
-                                                      d="M5 11l3 3 7-7"
-                                                      stroke="currentColor"
-                                                      strokeWidth="1.6"
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                    />
-                                                  </svg>
-                                                ) : (
-                                                  <svg
-                                                    viewBox="0 0 20 20"
-                                                    fill="none"
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                    className="h-3.5 w-3.5 mx-auto"
-                                                  >
-                                                    <path
-                                                      d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
-                                                      stroke="currentColor"
-                                                      strokeWidth="1.3"
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                    />
-                                                    <path
-                                                      d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
-                                                      stroke="currentColor"
-                                                      strokeWidth="1.3"
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                    />
-                                                  </svg>
-                                                )}
-                                              </button>
-                                              {hasAddress ? (
-                                                <a
-                                                  href={`${EXPLORER_BASE_URL}/address/${item.address}`}
-                                                  target="_blank"
-                                                  rel="noreferrer"
-                                                  className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 inline-flex items-center justify-center"
-                                                  aria-label={`Open ${item.label} on explorer`}
-                                                >
-                                                  <svg
-                                                    viewBox="0 0 20 20"
-                                                    fill="none"
-                                                    xmlns="http://www.w3.org/2000/svg"
-                                                    className="h-3.5 w-3.5"
-                                                  >
-                                                    <path
-                                                      d="M5 13l9-9m0 0h-5m5 0v5"
-                                                      stroke="currentColor"
-                                                      strokeWidth="1.5"
-                                                      strokeLinecap="round"
-                                                      strokeLinejoin="round"
-                                                    />
-                                                  </svg>
-                                                </a>
-                                              ) : (
-                                                <div className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-600 inline-flex items-center justify-center">
-                                                  <span className="text-[10px]">--</span>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
                               </div>
                             </div>
                           </div>
