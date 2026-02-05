@@ -1029,6 +1029,27 @@ export default function LiquiditySection({
     },
     [tokenRegistry]
   );
+  const resolveWalletBalanceBySymbol = useCallback(
+    (symbol) => {
+      if (!symbol || !walletBalances) return null;
+      const keys = Object.keys(walletBalances);
+      if (!keys.length) return null;
+      const normalized = String(symbol).trim();
+      if (!normalized) return null;
+      const candidates = [normalized];
+      const upper = normalized.toUpperCase();
+      if (upper !== normalized) candidates.push(upper);
+      if (upper === "ETH") candidates.push("WETH");
+      if (upper === "WETH") candidates.push("ETH");
+      for (const candidate of candidates) {
+        const lower = candidate.toLowerCase();
+        const match = keys.find((k) => k.toLowerCase() === lower);
+        if (match !== undefined) return walletBalances[match];
+      }
+      return null;
+    },
+    [walletBalances]
+  );
 
   const v3ActionRangeMath = useMemo(() => {
     const pos = v3ActionModal.position;
@@ -6732,6 +6753,40 @@ export default function LiquiditySection({
               const position = v3ActionModal.position;
               const meta0 = findTokenMetaByAddress(position.token0);
               const meta1 = findTokenMetaByAddress(position.token1);
+              const balance0 = resolveWalletBalanceBySymbol(meta0?.symbol || position.token0Symbol);
+              const balance1 = resolveWalletBalanceBySymbol(meta1?.symbol || position.token1Symbol);
+              const balance0Num = safeNumber(balance0);
+              const balance1Num = safeNumber(balance1);
+              const hasBalance0 = balance0Num !== null && balance0Num > 0;
+              const hasBalance1 = balance1Num !== null && balance1Num > 0;
+              const quickButtons = [
+                { label: "25%", pct: 0.25 },
+                { label: "50%", pct: 0.5 },
+                { label: "Max", pct: 1 },
+              ];
+              const applyQuickFill = (side, pct) => {
+                if (walletBalancesLoading) return;
+                const balance = side === 0 ? balance0Num : balance1Num;
+                if (!Number.isFinite(balance) || balance <= 0) return;
+                const next = formatAutoAmount(balance * pct);
+                if (side === 0) {
+                  setV3ActionAmount0(next);
+                  if (v3ActionError) setV3ActionError("");
+                  setV3ActionLastEdited("token0");
+                  const computed = computeV3ActionFromAmount0(next);
+                  if (computed !== "" && computed !== v3ActionAmount1) {
+                    setV3ActionAmount1(computed);
+                  }
+                } else {
+                  setV3ActionAmount1(next);
+                  if (v3ActionError) setV3ActionError("");
+                  setV3ActionLastEdited("token1");
+                  const computed = computeV3ActionFromAmount1(next);
+                  if (computed !== "" && computed !== v3ActionAmount0) {
+                    setV3ActionAmount0(computed);
+                  }
+                }
+              };
               return (
                 <>
                   <div className="flex items-center justify-between gap-3">
@@ -6794,6 +6849,29 @@ export default function LiquiditySection({
                             <span className="leading-none">{position.token0Symbol}</span>
                           </div>
                         </div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <span>
+                            Balance{" "}
+                            {walletBalancesLoading
+                              ? "Loading..."
+                              : balance0Num !== null
+                              ? `${formatTokenBalance(balance0Num)} ${position.token0Symbol}`
+                              : "--"}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {quickButtons.map((btn) => (
+                              <button
+                                key={`increase-0-${btn.label}`}
+                                type="button"
+                                onClick={() => applyQuickFill(0, btn.pct)}
+                                disabled={walletBalancesLoading || !hasBalance0}
+                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                              >
+                                {btn.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
 
                       <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
@@ -6830,6 +6908,29 @@ export default function LiquiditySection({
                               </div>
                             )}
                             <span className="leading-none">{position.token1Symbol}</span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <span>
+                            Balance{" "}
+                            {walletBalancesLoading
+                              ? "Loading..."
+                              : balance1Num !== null
+                              ? `${formatTokenBalance(balance1Num)} ${position.token1Symbol}`
+                              : "--"}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {quickButtons.map((btn) => (
+                              <button
+                                key={`increase-1-${btn.label}`}
+                                type="button"
+                                onClick={() => applyQuickFill(1, btn.pct)}
+                                disabled={walletBalancesLoading || !hasBalance1}
+                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                              >
+                                {btn.label}
+                              </button>
+                            ))}
                           </div>
                         </div>
                       </div>
