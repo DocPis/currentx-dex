@@ -1005,10 +1005,26 @@ export default function LiquiditySection({
     }
   }, [isV3View, v3Token0, v3Token1, v3TokenOptions]);
   useEffect(() => {
-    if (v3Token0 !== "WETH") setV3MintUseEth0(false);
+    if (v3Token0 === "ETH") {
+      setV3MintUseEth0(true);
+      return;
+    }
+    if (v3Token0 === "WETH") {
+      setV3MintUseEth0(false);
+      return;
+    }
+    setV3MintUseEth0(false);
   }, [v3Token0]);
   useEffect(() => {
-    if (v3Token1 !== "WETH") setV3MintUseEth1(false);
+    if (v3Token1 === "ETH") {
+      setV3MintUseEth1(true);
+      return;
+    }
+    if (v3Token1 === "WETH") {
+      setV3MintUseEth1(false);
+      return;
+    }
+    setV3MintUseEth1(false);
   }, [v3Token1]);
 
   useEffect(() => {
@@ -1087,10 +1103,14 @@ export default function LiquiditySection({
     v3SelectedToken0Address?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
   const v3Token1IsWeth = Boolean(WETH_ADDRESS) &&
     v3SelectedToken1Address?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
-  const v3MintUseEth0Effective =
-    v3Token0 === "ETH" || (v3Token0IsWeth && v3MintUseEth0);
-  const v3MintUseEth1Effective =
-    v3Token1 === "ETH" || (v3Token1IsWeth && v3MintUseEth1);
+  const v3Token0SupportsEthToggle = v3Token0IsWeth;
+  const v3Token1SupportsEthToggle = v3Token1IsWeth;
+  const v3MintUseEth0Effective = v3Token0SupportsEthToggle
+    ? v3MintUseEth0
+    : v3Token0 === "ETH";
+  const v3MintUseEth1Effective = v3Token1SupportsEthToggle
+    ? v3MintUseEth1
+    : v3Token1 === "ETH";
   const v3MintDisplayMeta0 = v3MintUseEth0Effective
     ? tokenRegistry.ETH
     : v3Token0IsWeth
@@ -1371,6 +1391,8 @@ export default function LiquiditySection({
   }, [v3RangeMath]);
   const v3MintCanUseSide0 = v3RangeSide !== "token1";
   const v3MintCanUseSide1 = v3RangeSide !== "token0";
+  const v3MintDimToken0 = !v3MintCanUseSide0;
+  const v3MintDimToken1 = !v3MintCanUseSide1;
 
   const applyV3RangePreset = useCallback(
     (pct) => {
@@ -6280,7 +6302,7 @@ export default function LiquiditySection({
                             ? `${formatTokenBalance(v3MintBalance0Num)} ${v3MintDisplaySymbol0}`
                             : "--"}
                         </div>
-                        {v3Token0 === "WETH" && (
+                        {v3Token0SupportsEthToggle && (
                           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                             <span>Pay with</span>
                             <div className="flex items-center gap-1">
@@ -6386,7 +6408,7 @@ export default function LiquiditySection({
                             ? `${formatTokenBalance(v3MintBalance1Num)} ${v3MintDisplaySymbol1}`
                             : "--"}
                         </div>
-                        {v3Token1 === "WETH" && (
+                        {v3Token1SupportsEthToggle && (
                           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                             <span>Pay with</span>
                             <div className="flex items-center gap-1">
@@ -7222,7 +7244,11 @@ export default function LiquiditySection({
 
                   {v3ActionModal.type === "increase" ? (
                     <div className="mt-4 space-y-3">
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                      <div
+                        className={`rounded-2xl border border-slate-800 bg-slate-950/70 p-3 transition ${
+                          v3MintDimToken0 ? "opacity-50 grayscale" : ""
+                        }`}
+                      >
                         <div className="flex items-center justify-between text-[11px] text-slate-500">
                           <span>Deposit</span>
                         </div>
@@ -7319,7 +7345,11 @@ export default function LiquiditySection({
                         )}
                       </div>
 
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
+                    <div
+                      className={`rounded-2xl border border-slate-800 bg-slate-950/70 p-3 transition ${
+                        v3MintDimToken1 ? "opacity-50 grayscale" : ""
+                      }`}
+                    >
                         <div className="flex items-center justify-between text-[11px] text-slate-500">
                           <span>Deposit</span>
                         </div>

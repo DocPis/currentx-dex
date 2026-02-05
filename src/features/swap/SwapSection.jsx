@@ -3016,7 +3016,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               <span className="text-slate-100">{minReceivedDisplay}</span>
             </div>
           </div>
-          </div>
 
           <div className="flex flex-col gap-2 w-full sm:w-44">
             {sellToken !== "ETH" ? (
