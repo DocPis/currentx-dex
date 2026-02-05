@@ -1070,6 +1070,12 @@ export default function LiquiditySection({
     v3Token0 === "ETH" ? WETH_ADDRESS : v3Token0Meta?.address;
   const v3SelectedToken1Address =
     v3Token1 === "ETH" ? WETH_ADDRESS : v3Token1Meta?.address;
+  const v3Token0PriceUsd = v3SelectedToken0Address
+    ? tokenPrices[(v3SelectedToken0Address || "").toLowerCase()]
+    : null;
+  const v3Token1PriceUsd = v3SelectedToken1Address
+    ? tokenPrices[(v3SelectedToken1Address || "").toLowerCase()]
+    : null;
 
   const readDecimals = useCallback(
     async (provider, addr, meta) => {
@@ -1498,8 +1504,10 @@ export default function LiquiditySection({
     if (!amount0Num && !amount1Num) return null;
     const v0 = amount0Num || 0;
     const v1 = amount1Num || 0;
-    if (v3ReferencePrice && Number.isFinite(v3ReferencePrice) && v3ReferencePrice > 0) {
-      const value0 = v0 * v3ReferencePrice;
+
+    const refPrice = safeNumber(v3ReferencePrice);
+    if (refPrice && refPrice > 0) {
+      const value0 = v0 * refPrice;
       const total = value0 + v1;
       if (total > 0) {
         return {
@@ -1508,13 +1516,28 @@ export default function LiquiditySection({
         };
       }
     }
+
+    const price0 = safeNumber(v3Token0PriceUsd);
+    const price1 = safeNumber(v3Token1PriceUsd);
+    if (price0 && price1) {
+      const value0 = v0 * price0;
+      const value1 = v1 * price1;
+      const total = value0 + value1;
+      if (total > 0) {
+        return {
+          token0: value0 / total,
+          token1: value1 / total,
+        };
+      }
+    }
+
     const total = v0 + v1;
     if (total <= 0) return null;
     return {
       token0: v0 / total,
       token1: v1 / total,
     };
-  }, [v3Amount0, v3Amount1, v3ReferencePrice]);
+  }, [v3Amount0, v3Amount1, v3ReferencePrice, v3Token0PriceUsd, v3Token1PriceUsd]);
 
   const v3TotalDeposit = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
@@ -1522,11 +1545,17 @@ export default function LiquiditySection({
     if (!amount0Num && !amount1Num) return null;
     const v0 = amount0Num || 0;
     const v1 = amount1Num || 0;
-    if (v3ReferencePrice && Number.isFinite(v3ReferencePrice) && v3ReferencePrice > 0) {
-      return v0 * v3ReferencePrice + v1;
+    const refPrice = safeNumber(v3ReferencePrice);
+    if (refPrice && refPrice > 0) {
+      return { value: v0 * refPrice + v1, unit: v3Token1 };
     }
-    return v0 + v1;
-  }, [v3Amount0, v3Amount1, v3ReferencePrice]);
+    const price0 = safeNumber(v3Token0PriceUsd);
+    const price1 = safeNumber(v3Token1PriceUsd);
+    if (price0 && price1) {
+      return { value: v0 * price0 + v1 * price1, unit: "USD" };
+    }
+    return { value: v0 + v1, unit: v3Token1 };
+  }, [v3Amount0, v3Amount1, v3ReferencePrice, v3Token0PriceUsd, v3Token1PriceUsd, v3Token1]);
 
   const adjustV3RangeValue = useCallback(
     (side, direction) => {
@@ -6829,8 +6858,8 @@ export default function LiquiditySection({
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
                       <span>Total deposit</span>
                       <span className="text-sm font-semibold text-slate-100">
-                        {v3TotalDeposit !== null
-                          ? `${formatPrice(v3TotalDeposit)} ${v3Token1}`
+                        {v3TotalDeposit?.value !== null && v3TotalDeposit?.value !== undefined
+                          ? `${formatPrice(v3TotalDeposit.value)} ${v3TotalDeposit.unit || v3Token1}`
                           : "--"}
                       </span>
                     </div>
