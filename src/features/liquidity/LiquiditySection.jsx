@@ -1029,6 +1029,31 @@ export default function LiquiditySection({
     [tokenRegistry]
   );
 
+  const v3ActionRangeMath = useMemo(() => {
+    const pos = v3ActionModal.position;
+    if (!pos) return null;
+    const meta0 = findTokenMetaByAddress(pos.token0);
+    const meta1 = findTokenMetaByAddress(pos.token1);
+    const dec0 = meta0?.decimals ?? 18;
+    const dec1 = meta1?.decimals ?? 18;
+    const sqrtLowerX96 = tickToSqrtPriceX96(pos.tickLower);
+    const sqrtUpperX96 = tickToSqrtPriceX96(pos.tickUpper);
+    const key = `${pos.token0?.toLowerCase?.() || ""}-${pos.token1?.toLowerCase?.() || ""}-${pos.fee}`;
+    const metrics = v3PoolMetrics[key];
+    let sqrtCurrentX96 = metrics?.sqrtPriceX96 ?? null;
+    if (!sqrtCurrentX96 && metrics?.tick !== undefined && metrics?.tick !== null) {
+      sqrtCurrentX96 = tickToSqrtPriceX96(metrics.tick);
+    }
+    if (!sqrtCurrentX96 || !sqrtLowerX96 || !sqrtUpperX96) return null;
+    return {
+      dec0,
+      dec1,
+      sqrtLowerX96,
+      sqrtUpperX96,
+      sqrtCurrentX96,
+    };
+  }, [v3ActionModal.position, v3PoolMetrics, findTokenMetaByAddress]);
+
   const v3PoolToken0Meta = useMemo(
     () => findTokenMetaByAddress(v3PoolInfo.token0),
     [findTokenMetaByAddress, v3PoolInfo.token0]
@@ -6640,7 +6665,37 @@ export default function LiquiditySection({
                           <input
                             name="v3-increase-0"
                             value={v3ActionAmount0}
-                            onChange={(e) => setV3ActionAmount0(e.target.value)}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setV3ActionAmount0(next);
+                              if (v3ActionError) setV3ActionError("");
+                              const num = safeNumber(next);
+                              if (!Number.isFinite(num) || num <= 0) return;
+                              if (v3ActionRangeMath) {
+                                const amount0Raw = safeParseUnits(next, v3ActionRangeMath.dec0);
+                                if (!amount0Raw || amount0Raw <= 0n) return;
+                                const liquidity = getLiquidityForAmount0(
+                                  v3ActionRangeMath.sqrtCurrentX96,
+                                  v3ActionRangeMath.sqrtLowerX96,
+                                  v3ActionRangeMath.sqrtUpperX96,
+                                  amount0Raw
+                                );
+                                if (!liquidity || liquidity <= 0n) {
+                                  setV3ActionAmount1("0");
+                                  return;
+                                }
+                                const amounts = getAmountsForLiquidity(
+                                  v3ActionRangeMath.sqrtCurrentX96,
+                                  v3ActionRangeMath.sqrtLowerX96,
+                                  v3ActionRangeMath.sqrtUpperX96,
+                                  liquidity
+                                );
+                                const out1 = amounts?.amount1 ?? 0n;
+                                setV3ActionAmount1(
+                                  formatAmountFromRaw(out1, v3ActionRangeMath.dec1)
+                                );
+                              }
+                            }}
                             placeholder="0.0"
                             className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
                           />
@@ -6669,7 +6724,37 @@ export default function LiquiditySection({
                           <input
                             name="v3-increase-1"
                             value={v3ActionAmount1}
-                            onChange={(e) => setV3ActionAmount1(e.target.value)}
+                            onChange={(e) => {
+                              const next = e.target.value;
+                              setV3ActionAmount1(next);
+                              if (v3ActionError) setV3ActionError("");
+                              const num = safeNumber(next);
+                              if (!Number.isFinite(num) || num <= 0) return;
+                              if (v3ActionRangeMath) {
+                                const amount1Raw = safeParseUnits(next, v3ActionRangeMath.dec1);
+                                if (!amount1Raw || amount1Raw <= 0n) return;
+                                const liquidity = getLiquidityForAmount1(
+                                  v3ActionRangeMath.sqrtCurrentX96,
+                                  v3ActionRangeMath.sqrtLowerX96,
+                                  v3ActionRangeMath.sqrtUpperX96,
+                                  amount1Raw
+                                );
+                                if (!liquidity || liquidity <= 0n) {
+                                  setV3ActionAmount0("0");
+                                  return;
+                                }
+                                const amounts = getAmountsForLiquidity(
+                                  v3ActionRangeMath.sqrtCurrentX96,
+                                  v3ActionRangeMath.sqrtLowerX96,
+                                  v3ActionRangeMath.sqrtUpperX96,
+                                  liquidity
+                                );
+                                const out0 = amounts?.amount0 ?? 0n;
+                                setV3ActionAmount0(
+                                  formatAmountFromRaw(out0, v3ActionRangeMath.dec0)
+                                );
+                              }
+                            }}
                             placeholder="0.0"
                             className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600"
                           />
