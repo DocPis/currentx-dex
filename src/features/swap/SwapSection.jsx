@@ -819,6 +819,28 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     return `0x${hex}`;
   }, []);
 
+  const getRouteCandidates = useCallback(
+    (tokenA, tokenB) => {
+      const aLower = (tokenA || "").toLowerCase();
+      const bLower = (tokenB || "").toLowerCase();
+      const map = new Map();
+      Object.values(tokenRegistry || {}).forEach((meta) => {
+        const addr = meta?.address;
+        if (!addr) return;
+        const lower = addr.toLowerCase();
+        if (!lower || lower === ZERO_ADDRESS) return;
+        if (lower === aLower || lower === bLower) return;
+        if (!map.has(lower)) map.set(lower, addr);
+      });
+      const wethLower = (WETH_ADDRESS || "").toLowerCase();
+      if (wethLower && wethLower !== aLower && wethLower !== bLower && !map.has(wethLower)) {
+        map.set(wethLower, WETH_ADDRESS);
+      }
+      return Array.from(map.values());
+    },
+    [tokenRegistry]
+  );
+
   const listV3Pools = useCallback(async (factory, tokenA, tokenB) => {
     if (!factory || !tokenA || !tokenB) return [];
     const results = await Promise.all(
@@ -868,7 +890,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (!hasV3Support) {
         throw new Error("V3 router not configured for this network.");
       }
-      const { amountWei, mode } = opts;
+      const { amountWei } = opts;
       const provider = getReadOnlyProvider();
       const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
       const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
@@ -876,12 +898,21 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
       const directPools = await listV3Pools(factory, a, b);
-      const canHop = a !== WETH_ADDRESS && b !== WETH_ADDRESS;
-      const hopPoolsA = canHop ? await listV3Pools(factory, a, WETH_ADDRESS) : [];
-      const hopPoolsB = canHop ? await listV3Pools(factory, WETH_ADDRESS, b) : [];
       const hasDirect = directPools.length > 0;
-      const hasHop = hopPoolsA.length > 0 && hopPoolsB.length > 0;
-      const effectiveMode = mode || executionMode;
+      const candidateMids = getRouteCandidates(a, b);
+      const hopCandidates = candidateMids.length
+        ? await Promise.all(
+            candidateMids.map(async (mid) => {
+              const poolsA = await listV3Pools(factory, a, mid);
+              if (!poolsA.length) return null;
+              const poolsB = await listV3Pools(factory, mid, b);
+              if (!poolsB.length) return null;
+              return { mid, poolsA, poolsB };
+            })
+          )
+        : [];
+      const hopOptions = hopCandidates.filter(Boolean);
+      const hasHop = hopOptions.length > 0;
 
       if (!hasDirect && !hasHop) {
         throw new Error("No V3 pools found for this pair.");
@@ -895,27 +926,66 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           fees: [pool.fee],
         }));
 
-      const buildHopRoutes = () =>
-        hopPoolsA.flatMap((poolA) =>
-          hopPoolsB.map((poolB) => ({
-            kind: "hop",
-            path: [a, WETH_ADDRESS, b],
-            pools: [poolA.pool, poolB.pool],
-            fees: [poolA.fee, poolB.fee],
-          }))
-        );
-
-      const pickBest = async (routes) => {
+      const pickBestForAmount = async (routes, amountIn) => {
         if (!routes.length) return null;
-        if (!amountWei || amountWei <= 0n) return routes[0];
+        if (!amountIn || amountIn <= 0n) return routes[0];
         const results = await Promise.all(
           routes.map(async (route) => {
             try {
-              const amountOut = await quoteV3Route(provider, amountWei, route);
+              const amountOut = await quoteV3Route(provider, amountIn, route);
               return { ...route, amountOut };
             } catch {
               return null;
             }
+          })
+        );
+        const valid = results.filter(Boolean);
+        if (!valid.length) return null;
+        return valid.reduce((best, next) => {
+          if (!best) return next;
+          return next.amountOut > best.amountOut ? next : best;
+        }, null);
+      };
+
+      const pickBestHop = async () => {
+        if (!hopOptions.length) return null;
+        if (!amountWei || amountWei <= 0n) {
+          const first = hopOptions[0];
+          const poolA = first?.poolsA?.[0];
+          const poolB = first?.poolsB?.[0];
+          if (!poolA || !poolB) return null;
+          return {
+            kind: "hop",
+            path: [a, first.mid, b],
+            pools: [poolA.pool, poolB.pool],
+            fees: [poolA.fee, poolB.fee],
+          };
+        }
+        const results = await Promise.all(
+          hopOptions.map(async (candidate) => {
+            const routesA = candidate.poolsA.map((pool) => ({
+              kind: "direct",
+              path: [a, candidate.mid],
+              pools: [pool.pool],
+              fees: [pool.fee],
+            }));
+            const bestA = await pickBestForAmount(routesA, amountWei);
+            if (!bestA?.amountOut) return null;
+            const routesB = candidate.poolsB.map((pool) => ({
+              kind: "direct",
+              path: [candidate.mid, b],
+              pools: [pool.pool],
+              fees: [pool.fee],
+            }));
+            const bestB = await pickBestForAmount(routesB, bestA.amountOut);
+            if (!bestB?.amountOut) return null;
+            return {
+              kind: "hop",
+              path: [a, candidate.mid, b],
+              pools: [bestA.pools?.[0] || null, bestB.pools?.[0] || null],
+              fees: [bestA.fees?.[0], bestB.fees?.[0]],
+              amountOut: bestB.amountOut,
+            };
           })
         );
         const valid = results.filter(Boolean);
@@ -932,19 +1002,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return rest;
       };
 
-      if (effectiveMode === "protected") {
-        if (hasDirect) {
-          const bestDirect = await pickBest(buildDirectRoutes());
-          if (bestDirect) return stripAmountOut(bestDirect);
-        }
-        if (hasHop) {
-          const bestHop = await pickBest(buildHopRoutes());
-          if (bestHop) return stripAmountOut(bestHop);
-        }
-      }
-
-      const bestDirect = hasDirect ? await pickBest(buildDirectRoutes()) : null;
-      const bestHop = hasHop ? await pickBest(buildHopRoutes()) : null;
+      const bestDirect = hasDirect ? await pickBestForAmount(buildDirectRoutes(), amountWei) : null;
+      const bestHop = hasHop ? await pickBestHop() : null;
       if (bestDirect && bestHop) {
         return stripAmountOut(bestHop.amountOut > bestDirect.amountOut ? bestHop : bestDirect);
       }
@@ -955,7 +1014,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [
       buyMeta?.address,
       buyToken,
-      executionMode,
+      getRouteCandidates,
       hasV3Support,
       listV3Pools,
       quoteV3Route,
@@ -1002,19 +1061,27 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
       const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
       const hasDirect = directPair && directPair !== ZERO_ADDRESS;
-      const canHop = a !== WETH_ADDRESS && b !== WETH_ADDRESS;
-      let hopPairA = null;
-      let hopPairB = null;
-      let hasHop = false;
-      if (canHop) {
-        hopPairA = await factory.getPair(a, WETH_ADDRESS).catch(() => ZERO_ADDRESS);
-        hopPairB = await factory.getPair(WETH_ADDRESS, b).catch(() => ZERO_ADDRESS);
-        hasHop =
-          hopPairA &&
-          hopPairB &&
-          hopPairA !== ZERO_ADDRESS &&
-          hopPairB !== ZERO_ADDRESS;
-      }
+      const candidateMids = getRouteCandidates(a, b);
+      const hopPairs = candidateMids.length
+        ? await Promise.all(
+            candidateMids.map(async (mid) => {
+              const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
+              if (!pairA || pairA === ZERO_ADDRESS) return null;
+              const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
+              if (!pairB || pairB === ZERO_ADDRESS) return null;
+              return { mid, pairA, pairB };
+            })
+          )
+        : [];
+      const hopRoutes = hopPairs
+        .filter(Boolean)
+        .map((pair) => ({
+          protocol: "V2",
+          kind: "hop",
+          path: [a, pair.mid, b],
+          pairs: [pair.pairA, pair.pairB],
+        }));
+      const hasHop = hopRoutes.length > 0;
 
       if (!hasDirect && !hasHop) {
         throw new Error("No V2 pools found for this pair.");
@@ -1028,67 +1095,44 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             pairs: [directPair].filter(Boolean),
           }
         : null;
-      const hopRoute = hasHop
-        ? {
-            protocol: "V2",
-            kind: "hop",
-            path: [a, WETH_ADDRESS, b],
-            pairs: [hopPairA, hopPairB].filter(Boolean),
-          }
-        : null;
 
       if (!amountWei) {
-        return directRoute || hopRoute;
+        return directRoute || hopRoutes[0];
       }
 
-      let directQuote = null;
-      let hopQuote = null;
-      if (directRoute) {
-        directQuote = await quoteV2Route(provider, amountWei, directRoute).catch(
-          () => null
-        );
-      }
-      if (hopRoute) {
-        hopQuote = await quoteV2Route(provider, amountWei, hopRoute).catch(
-          () => null
-        );
-      }
-
-      if (directQuote && hopQuote) {
-        if (hopQuote.amountOut > directQuote.amountOut) {
-          return {
-            ...hopRoute,
-            amountOut: hopQuote.amountOut,
-            priceImpact: hopQuote.priceImpact,
-          };
-        }
-        return {
-          ...directRoute,
-          amountOut: directQuote.amountOut,
-          priceImpact: directQuote.priceImpact,
-        };
-      }
-
-      if (directQuote) {
-        return {
-          ...directRoute,
-          amountOut: directQuote.amountOut,
-          priceImpact: directQuote.priceImpact,
-        };
-      }
-      if (hopQuote) {
-        return {
-          ...hopRoute,
-          amountOut: hopQuote.amountOut,
-          priceImpact: hopQuote.priceImpact,
-        };
-      }
+      const candidateRoutes = [
+        ...(directRoute ? [directRoute] : []),
+        ...hopRoutes,
+      ];
+      const quoted = await Promise.all(
+        candidateRoutes.map(async (route) => {
+          try {
+            const quote = await quoteV2Route(provider, amountWei, route);
+            if (!quote?.amountOut) return null;
+            return {
+              ...route,
+              amountOut: quote.amountOut,
+              priceImpact: quote.priceImpact,
+              pairs: quote.pairs || route.pairs,
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+      const valid = quoted.filter(Boolean);
+      if (!valid.length) throw new Error("No V2 route available for this pair.");
+      return valid.reduce((best, next) => {
+        if (!best) return next;
+        return next.amountOut > best.amountOut ? next : best;
+      }, null);
 
       throw new Error("No V2 route available for this pair.");
     },
     [
       buyMeta?.address,
       buyToken,
+      getRouteCandidates,
       hasV2Support,
       quoteV2Route,
       sellMeta?.address,
