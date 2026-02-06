@@ -1,10 +1,9 @@
+@import "@avon_xyz/widget/styles.css";
 @import url("https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,600;1,600&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import "@avon_xyz/widget/styles.css";
 
 /* extra base styles */
 body {
