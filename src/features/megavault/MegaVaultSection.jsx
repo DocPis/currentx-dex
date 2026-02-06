@@ -1,28 +1,26 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import { MegaVaultPositionWidget } from "@avon_xyz/widget";
-import { useConnect } from "wagmi";
+import { useAccount, useReconnect } from "wagmi";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
-export default function MegaVaultSection() {
+export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
   const chainId = useMemo(() => {
     const hex = activeNetwork?.chainIdHex || "0x10e6";
     const parsed = Number.parseInt(hex, 16);
     return Number.isFinite(parsed) ? parsed : 4326;
   }, [activeNetwork]);
-  const { connectors, connectAsync, connect, isPending } = useConnect();
+  const { isConnected } = useAccount();
+  const { reconnect } = useReconnect();
 
-  const handleConnectWallet = async () => {
-    const injected = connectors.find((item) => item.id === "injected") || connectors[0];
-    if (!injected || isPending) return;
-    try {
-      if (connectAsync) {
-        await connectAsync({ connector: injected });
-      } else if (connect) {
-        connect({ connector: injected });
-      }
-    } catch {
-      // wallet modal handles errors
+  useEffect(() => {
+    if (!address || isConnected) return;
+    reconnect();
+  }, [address, isConnected, reconnect]);
+
+  const handleConnectWallet = () => {
+    if (typeof onConnectWallet === "function") {
+      onConnectWallet();
     }
   };
 

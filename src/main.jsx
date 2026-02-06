@@ -10,7 +10,6 @@ import App from "./App";
 import WhitelistPage from "./features/whitelist/WhitelistPage";
 import { getActiveNetworkConfig } from "./shared/config/networks";
 import "./index.css";
-import "@avon_xyz/widget/styles.css";
 
 // Only enable analytics in production to avoid dev warnings.
 if (import.meta.env.MODE === "production") {

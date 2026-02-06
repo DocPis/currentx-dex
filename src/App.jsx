@@ -1,5 +1,6 @@
 ﻿// src/App.jsx
 import React, { useEffect, useState } from "react";
+import { useDisconnect, useReconnect } from "wagmi";
 import Header from "./shared/ui/Header";
 import SwapSection from "./features/swap/SwapSection";
 import LiquiditySection from "./features/liquidity/LiquiditySection";
@@ -18,7 +19,9 @@ export default function App() {
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [poolSelection, setPoolSelection] = useState(null);
-  const { address, chainId, connect, disconnect } = useWallet();
+  const { address, chainId, connect, disconnect: walletDisconnect } = useWallet();
+  const { disconnect: wagmiDisconnect } = useDisconnect();
+  const { reconnect } = useReconnect();
   const { balances, refresh } = useBalances(address, chainId);
   useEffect(() => {
     if (!connectError) return undefined;
@@ -32,13 +35,15 @@ export default function App() {
   };
 
   const handleDisconnect = async () => {
-    disconnect();
+    wagmiDisconnect();
+    walletDisconnect();
     await refresh(null);
   };
 
   const handleWalletSelect = async (walletId) => {
     try {
       const connectedAddress = await connect(walletId);
+      reconnect();
       await refresh(connectedAddress);
       setShowWalletModal(false);
       setConnectError("");
@@ -137,7 +142,9 @@ export default function App() {
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />
         )}
-        {tab === "megavault" && <MegaVaultSection />}
+        {tab === "megavault" && (
+          <MegaVaultSection address={address} onConnectWallet={handleConnect} />
+        )}
       </main>
 
       <Footer />
