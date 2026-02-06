@@ -26,42 +26,43 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
 
   return (
     <section className="px-4 sm:px-6 py-6">
-      <div className="relative overflow-hidden rounded-3xl border border-slate-800/80 bg-[#050816] shadow-xl shadow-black/40">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.18),transparent_55%)]" />
-        <div className="absolute -right-20 -top-20 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl" />
-        <div className="absolute -left-24 bottom-0 h-72 w-72 rounded-full bg-emerald-500/10 blur-3xl" />
-        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,0.9fr),minmax(0,1.1fr)] p-6">
-          <div className="flex flex-col gap-4">
+      <div className="relative overflow-hidden rounded-3xl border border-slate-800/70 bg-[#070b1b] shadow-[0_40px_80px_-50px_rgba(56,189,248,0.45)]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.22),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(14,165,233,0.12),transparent_60%)]" />
+        <div className="absolute -right-24 -top-24 h-72 w-72 rounded-full bg-sky-500/15 blur-3xl" />
+        <div className="absolute -left-28 bottom-0 h-80 w-80 rounded-full bg-indigo-500/10 blur-3xl" />
+        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,0.92fr),minmax(0,1.08fr)] p-6">
+          <div className="flex flex-col gap-5">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border border-sky-500/40 bg-sky-500/10 text-sky-200">
+              <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-[0.3em] border border-sky-500/50 bg-sky-500/10 text-sky-200">
                 MegaVault
               </span>
-              <span className="px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/70 text-slate-300">
+              <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/80 text-slate-300">
                 {activeNetwork?.name || "MegaETH"}
               </span>
-              <span className="px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/70 text-slate-300">
+              <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/80 text-slate-300">
                 Chain {chainId}
               </span>
             </div>
 
             <div>
-              <div className="text-2xl font-semibold text-slate-100">
-                Avon MegaVault on CurrentX
+              <div className="text-3xl font-semibold text-slate-100">
+                Avon MegaVault
               </div>
-              <div className="mt-2 text-sm text-slate-400">
-                Deposit and withdraw from the Avon MegaVault without leaving your trading flow.
-                Keep your position visible while you manage liquidity across CurrentX.
+              <div className="mt-2 text-sm text-slate-400 leading-relaxed">
+                Deposit and withdraw without leaving CurrentX. Your vault position stays visible
+                while you keep trading, and the wallet connection stays unified with the rest of the app.
               </div>
             </div>
 
             <div className="grid gap-2">
               {[
-                "Single widget to manage deposits and withdrawals.",
-                "Live position view inside your CurrentX layout.",
+                "Single panel for deposits + withdrawals.",
+                "Live position view, aligned with CurrentX UI.",
                 "Wallet connect handled by your existing modal.",
               ].map((copy) => (
                 <div key={copy} className="flex items-center gap-2 text-sm text-slate-200">
-                  <span className="h-6 w-6 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 flex items-center justify-center text-xs">
+                  <span className="h-7 w-7 rounded-full border border-sky-500/40 bg-sky-500/10 text-sky-200 flex items-center justify-center text-xs shadow-inner shadow-black/40">
                     ✓
                   </span>
                   <span>{copy}</span>
@@ -69,7 +70,7 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               ))}
             </div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
               <div className="text-[11px] uppercase tracking-wide text-slate-500">
                 Status
               </div>
@@ -78,7 +79,7 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   Widget ready
                 </span>
-                <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-[11px] text-slate-300">
+                <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-3 py-1 text-[11px] text-slate-300">
                   Network: {activeNetwork?.label || "Mainnet"}
                 </span>
               </div>
@@ -88,41 +89,42 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-slate-800/80 bg-slate-900/60 p-4 shadow-[0_20px_50px_-30px_rgba(56,189,248,0.65)]">
+          <div className="rounded-3xl border border-slate-800/70 bg-[#0b1226]/80 p-4 shadow-[0_22px_60px_-35px_rgba(56,189,248,0.6)]">
             <MegaVaultPositionWidget
               chainId={chainId}
               appName="CurrentX"
               onConnectWallet={handleConnectWallet}
-              widgetBackground="#0d0d0d"
-              borderColor="#292929"
-              textPrimary="#ffffff"
-              textSecondary="#dedede"
-              accent="#dedede"
-              accentSecondary="#dedede"
-              tagBackground="#dedede"
-              tabActiveBackground="#ffffff"
-              tabActiveText="#000000"
-              tabInactiveBackground="#1a1a1a"
-              tabInactiveText="#ffffff"
-              tabListBackground="#1c1c1c"
-              inputCardBackground="#1a1a1a"
-              secondaryCardBackground="#1a1a1a"
-              secondaryCardHeading="#dedede"
-              secondaryCardSubheading="#dedede"
-              actionButtonBackground="#ffffff"
-              actionButtonText="#000000"
-              secondaryButtonBackground="#000000"
-              secondaryButtonText="#ffffff"
-              sliderTrackBackground="#4f4f4f"
-              sliderThumbBackground="#ffffff"
-              sliderTooltipBackground="#ffffff"
-              sliderTooltipText="#000000"
-              success="#2cc479"
-              error="#ff7676"
-              pending="#ffffff"
+              widgetBackground="#0b1226"
+              borderColor="#1c2a48"
+              textPrimary="#e8f1ff"
+              textSecondary="rgba(232, 241, 255, 0.72)"
+              accent="#38bdf8"
+              accentSecondary="#22d3ee"
+              tagBackground="rgba(56, 189, 248, 0.2)"
+              tabActiveBackground="#38bdf8"
+              tabActiveText="#04101f"
+              tabInactiveBackground="#0f1a34"
+              tabInactiveText="#b9c7e6"
+              tabListBackground="#0b152e"
+              inputCardBackground="#0f1b36"
+              secondaryCardBackground="#0f1b36"
+              secondaryCardHeading="#d2def5"
+              secondaryCardSubheading="#9fb1d8"
+              actionButtonBackground="#38bdf8"
+              actionButtonText="#04101f"
+              secondaryButtonBackground="rgba(15, 23, 42, 0.85)"
+              secondaryButtonText="#e8f1ff"
+              sliderTrackBackground="#152446"
+              sliderThumbBackground="#38bdf8"
+              sliderTooltipBackground="#38bdf8"
+              sliderTooltipText="#04101f"
+              success="#34d399"
+              error="#f87171"
+              pending="#fbbf24"
               primaryFontClass=""
               secondaryFontClass="font-supply-mono"
-              borderRadius="12px"
+              shadow="0 24px 60px rgba(3, 12, 30, 0.7)"
+              borderRadius="16px"
             />
           </div>
         </div>
