@@ -1,8 +1,22 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { MegaVaultPositionWidget } from "@avon_xyz/widget";
-import { useAccount, useConnect, useReconnect } from "wagmi";
+import { useAccount, useConnect, useReadContract, useReconnect } from "wagmi";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import megaLogo from "../../tokens/megaeth.png";
+
+const VAULT_ADDRESSES = {
+  4326: "0x2eA493384F42d7Ea78564F3EF4C86986eAB4a890",
+  6343: "0x73fE6BF890559A6667519eD960A399B975B34DB1"
+};
+const REFERRER_WHITELIST_ABI = [
+  {
+    type: "function",
+    name: "isWhitelistedReferrer",
+    inputs: [{ name: "referrer", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+    stateMutability: "view"
+  }
+];
 
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
@@ -13,10 +27,22 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
     const parsed = Number.parseInt(hex, 16);
     return Number.isFinite(parsed) ? parsed : 4326;
   }, [activeNetwork]);
+  const vaultAddress = VAULT_ADDRESSES[chainId];
+  const { data: isWhitelistedReferrer } = useReadContract({
+    address: vaultAddress,
+    abi: REFERRER_WHITELIST_ABI,
+    functionName: "isWhitelistedReferrer",
+    args: [FIXED_REFERRER],
+    chainId,
+    query: {
+      enabled: Boolean(vaultAddress)
+    }
+  });
   const safeReferrer = useMemo(() => {
     const trimmed = FIXED_REFERRER.trim();
-    return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed : ZERO_ADDRESS;
-  }, []);
+    if (!/^0x[a-fA-F0-9]{40}$/.test(trimmed)) return ZERO_ADDRESS;
+    return isWhitelistedReferrer ? trimmed : ZERO_ADDRESS;
+  }, [isWhitelistedReferrer]);
   const { isConnected } = useAccount();
   const { connectAsync, connectors } = useConnect();
   const { reconnect } = useReconnect();
