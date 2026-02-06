@@ -5,11 +5,17 @@ import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
+  const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
   const chainId = useMemo(() => {
     const hex = activeNetwork?.chainIdHex || "0x10e6";
     const parsed = Number.parseInt(hex, 16);
     return Number.isFinite(parsed) ? parsed : 4326;
   }, [activeNetwork]);
+  const safeReferrer = useMemo(() => {
+    if (typeof address !== "string") return ZERO_ADDRESS;
+    const trimmed = address.trim();
+    return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed : ZERO_ADDRESS;
+  }, [address]);
   const { isConnected } = useAccount();
   const { reconnect } = useReconnect();
 
@@ -104,6 +110,7 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
             <div className="w-full max-w-[460px] lg:min-w-[420px]">
               <MegaVaultPositionWidget
                 chainId={chainId}
+                referrerAddress={safeReferrer}
                 appName="CurrentX"
                 onConnectWallet={handleConnectWallet}
                 widgetBackground="#0d0d0d"
