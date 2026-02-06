@@ -52,6 +52,43 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               </div>
             </div>
 
+            <div className="grid gap-3">
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-3">
+                <div className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  Stablecoin Drain
+                </div>
+                <div className="mt-1 text-sm text-neutral-200">
+                  Legacy issuers capture treasury yield offchain. MegaETH keeps value onchain with
+                  USDm and USDmY.
+                </div>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-3">
+                <div className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  USDm + USDmY
+                </div>
+                <div className="mt-1 text-sm text-neutral-200">
+                  USDm is the native settlement dollar. Deposit into MegaVault to mint USDmY, a
+                  yield-bearing and composable asset.
+                </div>
+              </div>
+              <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-3">
+                <div className="text-[11px] uppercase tracking-wide text-neutral-500">
+                  Yield Model
+                </div>
+                <div className="mt-1 text-sm text-neutral-200">
+                  Yield comes from onchain activity: lending, liquidity, and credit markets.
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-neutral-300">
+                  <span className="px-2 py-1 rounded-full border border-neutral-700 bg-neutral-950/70">
+                    Phase 1: 100% to users + LPs
+                  </span>
+                  <span className="px-2 py-1 rounded-full border border-neutral-700 bg-neutral-950/70">
+                    Phase 2: fee up to 10%
+                  </span>
+                </div>
+              </div>
+            </div>
+
             <div className="flex flex-wrap items-center gap-2 text-xs text-neutral-300">
               <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200">
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
