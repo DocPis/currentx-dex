@@ -4318,10 +4318,10 @@ export default function LiquiditySection({
     const feeTierNum = Number(poolSelection.feeTier);
     const hasFeeTier = Number.isFinite(feeTierNum) && feeTierNum > 0;
     const typeRaw = String(poolSelection.type || "").toUpperCase();
-    const preferV3 = typeRaw === "CL" || typeRaw === "V3" || (!typeRaw && hasFeeTier);
+    const preferV3 = typeRaw === "V3" || (!typeRaw && hasFeeTier);
     const preferV2 = typeRaw === "V2" || (!typeRaw && !hasFeeTier);
     const selectionKey = [
-      typeRaw || (preferV3 ? "CL" : "V2"),
+      typeRaw || (preferV3 ? "V3" : "V2"),
       token0Symbol,
       token1Symbol,
       hasFeeTier ? feeTierNum : "",
@@ -4950,46 +4950,6 @@ export default function LiquiditySection({
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 pb-12 text-slate-100 mt-8">
-      {/* hero */}
-      <div className="mb-6">
-        <div className="rounded-3xl bg-gradient-to-br from-indigo-700 via-sky-600 to-cyan-400 border border-white/10 shadow-2xl shadow-indigo-900/40 p-6 relative overflow-hidden">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.12),transparent_35%),radial-gradient(circle_at_80%_10%,rgba(255,255,255,0.18),transparent_40%)]" />
-          <div className="relative h-full flex flex-col justify-between">
-            <div className="text-xs font-semibold tracking-[0.2em] text-white/80 mb-3">
-              CURRENTX LIQUIDITY
-            </div>
-            <div className="text-3xl font-bold leading-tight mb-2 drop-shadow">
-              Quickstart CRX/WETH
-            </div>
-            <p className="text-sm text-white/80 mb-4 max-w-sm">
-              Fast-track into the CRX/WETH (V2) pool with a single click so you can provide liquidity immediately.
-            </p>
-            <button
-              type="button"
-              disabled={!autopilotPool}
-              onClick={() => autopilotPool && handleOpenPoolDepositFromRow(autopilotPool)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/15 text-sm font-semibold text-white border border-white/30 w-fit shadow-lg shadow-black/30 disabled:opacity-60"
-            >
-              Start quick deposit
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4"
-              >
-                <path
-                  d="M5 12h14M13 6l6 6-6 6"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* dedicated token deposit flow */}
       {isV2View && tokenSelection ? (
         <div className="w-full flex justify-center px-4 sm:px-6 pb-10">

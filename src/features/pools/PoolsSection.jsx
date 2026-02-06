@@ -7,6 +7,7 @@ import {
   fetchV3PoolsDayData,
 } from "../../shared/config/subgraph";
 import { TOKENS } from "../../shared/config/tokens";
+import megaLogo from "../../tokens/megaeth.png";
 import { NETWORK_NAME } from "../../shared/config/web3";
 
 const PAGE_SIZE = 50;
@@ -117,7 +118,7 @@ export default function PoolsSection({ onSelectPool }) {
   const [v3Error, setV3Error] = useState("");
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
-  const [typeFilter, setTypeFilter] = useState("all"); // all | cl | v2
+  const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
 
   const loadV2 = async (append = false) => {
     if (v2Loading) return;
@@ -219,7 +220,7 @@ export default function PoolsSection({ onSelectPool }) {
           : null;
       list.push({
         ...pool,
-        type: "CL",
+        type: "V3",
         feeLabel: formatFeePercent(pool.feeTier, "0.30%"),
         liquidityUsd,
         volume24hUsd,
@@ -276,7 +277,7 @@ export default function PoolsSection({ onSelectPool }) {
 
   const filteredByType = useMemo(() => {
     if (typeFilter === "all") return filteredPools;
-    const target = typeFilter === "cl" ? "CL" : "V2";
+    const target = typeFilter === "v3" ? "V3" : "V2";
     return filteredPools.filter((pool) => pool.type === target);
   }, [filteredPools, typeFilter]);
 
@@ -338,12 +339,10 @@ export default function PoolsSection({ onSelectPool }) {
               Track all pools across V2 and V3 with live liquidity and fee stats.
             </p>
             <div className="flex items-center justify-center gap-2 flex-wrap">
-              <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
+              <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200 inline-flex items-center">
                 Live data
               </span>
-              <span className="text-xs px-2 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300">
-                {NETWORK_NAME}
-              </span>
+              <img src={megaLogo} alt="MegaETH" className="h-7 w-7 rounded-full" />
             </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
@@ -409,7 +408,7 @@ export default function PoolsSection({ onSelectPool }) {
           <div className="flex items-center gap-2">
             {[
               { id: "all", label: "All" },
-              { id: "cl", label: "V3" },
+              { id: "v3", label: "V3" },
               { id: "v2", label: "V2" },
             ].map((item) => (
               <button
@@ -534,8 +533,7 @@ export default function PoolsSection({ onSelectPool }) {
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-2">
                             <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              {pool.type === "CL" ? "V3" : pool.type}{" "}
-                              {pool.feeLabel ? pool.feeLabel : ""}
+                              {pool.type} {pool.feeLabel ? pool.feeLabel : ""}
                             </span>
                           </div>
                         </div>

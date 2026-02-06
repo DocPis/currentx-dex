@@ -1503,7 +1503,7 @@ export async function fetchV3PoolsPage({ limit = 50, skip = 0 } = {}) {
         tvlUsd: toNumberSafe(pool?.totalValueLockedUSD),
         volumeUsd: toNumberSafe(pool?.volumeUSD),
         feeTier: pool?.feeTier,
-        type: "CL",
+        type: "V3",
       }));
     } catch (err) {
       const message = err?.message || "";
