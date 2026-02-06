@@ -87,42 +87,44 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
             </div>
           </div>
 
-          <div className="rounded-3xl border border-neutral-800 bg-[#0f0f0f] p-4 shadow-[0_30px_70px_-45px_rgba(0,0,0,0.85)]">
-            <MegaVaultPositionWidget
-              chainId={chainId}
-              appName="CurrentX"
-              onConnectWallet={handleConnectWallet}
-              widgetBackground="#0d0d0d"
-              borderColor="#292929"
-              textPrimary="#ffffff"
-              textSecondary="#dedede"
-              accent="#dedede"
-              accentSecondary="#dedede"
-              tagBackground="#dedede"
-              tabActiveBackground="#ffffff"
-              tabActiveText="#000000"
-              tabInactiveBackground="#1a1a1a"
-              tabInactiveText="#ffffff"
-              tabListBackground="#1c1c1c"
-              inputCardBackground="#1a1a1a"
-              secondaryCardBackground="#1a1a1a"
-              secondaryCardHeading="#dedede"
-              secondaryCardSubheading="#dedede"
-              actionButtonBackground="#ffffff"
-              actionButtonText="#000000"
-              secondaryButtonBackground="#000000"
-              secondaryButtonText="#ffffff"
-              sliderTrackBackground="#4f4f4f"
-              sliderThumbBackground="#ffffff"
-              sliderTooltipBackground="#ffffff"
-              sliderTooltipText="#000000"
-              success="#51c288"
-              error="#bd2828"
-              pending="#ffffff"
-              primaryFontClass=""
-              secondaryFontClass="font-supply-mono"
-              borderRadius="12px"
-            />
+          <div className="flex justify-center lg:justify-end">
+            <div className="w-full max-w-[460px] lg:min-w-[420px]">
+              <MegaVaultPositionWidget
+                chainId={chainId}
+                appName="CurrentX"
+                onConnectWallet={handleConnectWallet}
+                widgetBackground="#0d0d0d"
+                borderColor="#292929"
+                textPrimary="#ffffff"
+                textSecondary="#dedede"
+                accent="#dedede"
+                accentSecondary="#dedede"
+                tagBackground="#dedede"
+                tabActiveBackground="#ffffff"
+                tabActiveText="#000000"
+                tabInactiveBackground="#1a1a1a"
+                tabInactiveText="#ffffff"
+                tabListBackground="#1c1c1c"
+                inputCardBackground="#1a1a1a"
+                secondaryCardBackground="#1a1a1a"
+                secondaryCardHeading="#dedede"
+                secondaryCardSubheading="#dedede"
+                actionButtonBackground="#ffffff"
+                actionButtonText="#000000"
+                secondaryButtonBackground="#000000"
+                secondaryButtonText="#ffffff"
+                sliderTrackBackground="#4f4f4f"
+                sliderThumbBackground="#ffffff"
+                sliderTooltipBackground="#ffffff"
+                sliderTooltipText="#000000"
+                success="#51c288"
+                error="#bd2828"
+                pending="#ffffff"
+                primaryFontClass=""
+                secondaryFontClass="font-supply-mono"
+                borderRadius="12px"
+              />
+            </div>
           </div>
         </div>
       </div>
