@@ -1871,8 +1871,27 @@ export default function LiquiditySection({
     return buildSeriesChart(merged);
   }, [v3PoolSeries, v3PoolIsReversed, v3CurrentPrice]);
 
+  const v3PriceSeriesFallback = useMemo(() => {
+    if (v3PoolSeries.length) return [];
+    if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return [];
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    return Array.from({ length: 6 }, (_, idx) => ({
+      date: now - (5 - idx) * 7 * day,
+      value: v3ReferencePrice,
+    }));
+  }, [v3PoolSeries.length, v3ReferencePrice]);
+
+  const v3PriceChartDisplay = useMemo(() => {
+    if (v3PriceChart) return v3PriceChart;
+    if (v3PriceSeriesFallback.length) {
+      return buildSeriesChart(v3PriceSeriesFallback);
+    }
+    return null;
+  }, [v3PriceChart, v3PriceSeriesFallback]);
+
   const v3PriceAxisTicks = useMemo(() => {
-    const series = v3PoolSeries;
+    const series = v3PoolSeries.length ? v3PoolSeries : v3PriceSeriesFallback;
     if (!series.length) return [];
     const steps = [0, 0.33, 0.66, 1];
     return steps
@@ -6437,22 +6456,29 @@ export default function LiquiditySection({
                                 }
                               }}
                             >
-                              {v3PriceChart ? (
+                              <div
+                                className="absolute left-0 right-10 rounded-md border border-fuchsia-300/40 bg-[linear-gradient(180deg,rgba(147,51,98,0.65)_0%,rgba(67,24,47,0.9)_100%)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+                                style={{
+                                  top: `${100 - v3Chart.rangeEnd}%`,
+                                  height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                                }}
+                              />
+                              {v3PriceChartDisplay ? (
                                 <svg
                                   viewBox="0 0 100 100"
-                                  className="absolute inset-0 h-full w-full pointer-events-none"
+                                  className="absolute inset-0 h-full w-full pointer-events-none z-20"
                                   preserveAspectRatio="none"
                                 >
                                   <path
-                                    d={v3PriceChart.line}
+                                    d={v3PriceChartDisplay.line}
                                     fill="none"
-                                    stroke="rgba(226,232,240,0.6)"
+                                    stroke="rgba(226,232,240,0.65)"
                                     strokeWidth="0.8"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                   />
                                   {(() => {
-                                    const points = v3PriceChart.points || [];
+                                    const points = v3PriceChartDisplay.points || [];
                                     if (!points.length) return null;
                                     const start = Math.max(0, points.length - 8);
                                     const segment = points.slice(start);
@@ -6492,16 +6518,9 @@ export default function LiquiditySection({
                                   })()}
                                 </svg>
                               ) : null}
-                              <div
-                                className="absolute left-0 right-10 rounded-md border border-fuchsia-300/40 bg-[linear-gradient(180deg,rgba(147,51,98,0.65)_0%,rgba(67,24,47,0.9)_100%)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                                style={{
-                                  top: `${100 - v3Chart.rangeEnd}%`,
-                                  height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
-                                }}
-                              />
                               <div className="absolute right-2 top-2 bottom-2 w-2.5 rounded-full bg-slate-800/80" />
                               <div
-                                className="absolute right-2 w-2.5 rounded-full bg-fuchsia-500/80"
+                                className="absolute right-2 w-2.5 rounded-full bg-fuchsia-500/80 z-30"
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -6509,7 +6528,7 @@ export default function LiquiditySection({
                               />
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute right-7 w-5 rounded-sm bg-fuchsia-500/70 shadow-[0_0_12px_rgba(236,72,153,0.5)]"
+                                  className="absolute right-7 w-5 rounded-sm bg-fuchsia-500/70 shadow-[0_0_12px_rgba(236,72,153,0.5)] z-30"
                                   style={{
                                     top: `${100 - v3Chart.currentPct}%`,
                                     transform: "translateY(-50%)",
@@ -6519,17 +6538,17 @@ export default function LiquiditySection({
                               )}
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute left-0 right-10 h-px border-t border-dashed border-slate-200/40 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                  className="absolute left-0 right-10 h-px border-t border-dashed border-slate-200/40 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-30"
                                   style={{ top: `${100 - v3Chart.currentPct}%` }}
                                 />
                               )}
 
                               <div
-                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               />
                               <div
-                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               />
 
@@ -6540,7 +6559,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("lower");
                                 }}
-                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
@@ -6552,7 +6571,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("upper");
                                 }}
-                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
