@@ -1426,6 +1426,116 @@ export default function LiquiditySection({
   const v3MintCanUseSide1 = v3RangeSide !== "token0";
   const v3MintDimToken0 = !v3MintCanUseSide0;
   const v3MintDimToken1 = !v3MintCanUseSide1;
+  const v3MintHasBalance0 = v3MintBalance0Num !== null && v3MintBalance0Num > 0;
+  const v3MintHasBalance1 = v3MintBalance1Num !== null && v3MintBalance1Num > 0;
+
+  const v3MintQuickButtons = useMemo(
+    () => [
+      { label: "25%", pct: 0.25 },
+      { label: "50%", pct: 0.5 },
+      { label: "Max", pct: 1 },
+    ],
+    []
+  );
+
+  const applyV3MintAmount0 = useCallback(
+    (next) => {
+      setV3Amount0(next);
+      if (v3MintError) setV3MintError("");
+      if (actionStatus) setActionStatus(null);
+      const num = safeNumber(next);
+      if (!Number.isFinite(num) || num <= 0) return;
+      if (v3RangeMath) {
+        const amount0Raw = safeParseUnits(next, v3RangeMath.dec0);
+        if (!amount0Raw || amount0Raw <= 0n) return;
+        const liquidity = getLiquidityForAmount0(
+          v3RangeMath.sqrtCurrentX96,
+          v3RangeMath.sqrtLowerX96,
+          v3RangeMath.sqrtUpperX96,
+          amount0Raw
+        );
+        if (!liquidity || liquidity <= 0n) {
+          setV3Amount1("0");
+          return;
+        }
+        const amounts = getAmountsForLiquidity(
+          v3RangeMath.sqrtCurrentX96,
+          v3RangeMath.sqrtLowerX96,
+          v3RangeMath.sqrtUpperX96,
+          liquidity
+        );
+        const out1 = amounts?.amount1 ?? 0n;
+        setV3Amount1(formatAmountFromRaw(out1, v3RangeMath.dec1));
+        return;
+      }
+      if (!v3ReferencePrice) return;
+      const computed = num * v3ReferencePrice;
+      setV3Amount1(formatAutoAmount(computed));
+    },
+    [actionStatus, v3MintError, v3RangeMath, v3ReferencePrice]
+  );
+
+  const applyV3MintAmount1 = useCallback(
+    (next) => {
+      setV3Amount1(next);
+      if (v3MintError) setV3MintError("");
+      if (actionStatus) setActionStatus(null);
+      const num = safeNumber(next);
+      if (!Number.isFinite(num) || num <= 0) return;
+      if (v3RangeMath) {
+        const amount1Raw = safeParseUnits(next, v3RangeMath.dec1);
+        if (!amount1Raw || amount1Raw <= 0n) return;
+        const liquidity = getLiquidityForAmount1(
+          v3RangeMath.sqrtCurrentX96,
+          v3RangeMath.sqrtLowerX96,
+          v3RangeMath.sqrtUpperX96,
+          amount1Raw
+        );
+        if (!liquidity || liquidity <= 0n) {
+          setV3Amount0("0");
+          return;
+        }
+        const amounts = getAmountsForLiquidity(
+          v3RangeMath.sqrtCurrentX96,
+          v3RangeMath.sqrtLowerX96,
+          v3RangeMath.sqrtUpperX96,
+          liquidity
+        );
+        const out0 = amounts?.amount0 ?? 0n;
+        setV3Amount0(formatAmountFromRaw(out0, v3RangeMath.dec0));
+        return;
+      }
+      if (!v3ReferencePrice) return;
+      const computed = num / v3ReferencePrice;
+      setV3Amount0(formatAutoAmount(computed));
+    },
+    [actionStatus, v3MintError, v3RangeMath, v3ReferencePrice]
+  );
+
+  const applyV3MintQuickFill = useCallback(
+    (side, pct) => {
+      if (walletBalancesLoading) return;
+      if (side === 0 && !v3MintCanUseSide0) return;
+      if (side === 1 && !v3MintCanUseSide1) return;
+      const balance = side === 0 ? v3MintBalance0Num : v3MintBalance1Num;
+      if (!Number.isFinite(balance) || balance <= 0) return;
+      const next = formatAutoAmount(balance * pct);
+      if (side === 0) {
+        applyV3MintAmount0(next);
+      } else {
+        applyV3MintAmount1(next);
+      }
+    },
+    [
+      applyV3MintAmount0,
+      applyV3MintAmount1,
+      v3MintBalance0Num,
+      v3MintBalance1Num,
+      v3MintCanUseSide0,
+      v3MintCanUseSide1,
+      walletBalancesLoading,
+    ]
+  );
 
   const applyV3RangePreset = useCallback(
     (pct) => {
@@ -6808,38 +6918,7 @@ export default function LiquiditySection({
                             name="v3-deposit-0"
                             value={v3Amount0}
                             onChange={(e) => {
-                            const next = e.target.value;
-                            setV3Amount0(next);
-                            if (v3MintError) setV3MintError("");
-                            if (actionStatus) setActionStatus(null);
-                            const num = safeNumber(next);
-                            if (!Number.isFinite(num) || num <= 0) return;
-                            if (v3RangeMath) {
-                              const amount0Raw = safeParseUnits(next, v3RangeMath.dec0);
-                              if (!amount0Raw || amount0Raw <= 0n) return;
-                              const liquidity = getLiquidityForAmount0(
-                                v3RangeMath.sqrtCurrentX96,
-                                v3RangeMath.sqrtLowerX96,
-                                v3RangeMath.sqrtUpperX96,
-                                amount0Raw
-                              );
-                              if (!liquidity || liquidity <= 0n) {
-                                setV3Amount1("0");
-                                return;
-                              }
-                              const amounts = getAmountsForLiquidity(
-                                v3RangeMath.sqrtCurrentX96,
-                                v3RangeMath.sqrtLowerX96,
-                                v3RangeMath.sqrtUpperX96,
-                                liquidity
-                              );
-                              const out1 = amounts?.amount1 ?? 0n;
-                              setV3Amount1(formatAmountFromRaw(out1, v3RangeMath.dec1));
-                              return;
-                            }
-                            if (!v3ReferencePrice) return;
-                            const computed = num * v3ReferencePrice;
-                            setV3Amount1(formatAutoAmount(computed));
+                            applyV3MintAmount0(e.target.value);
                           }}
                           placeholder="0.0"
                           disabled={v3RangeSide === "token1"}
@@ -6860,13 +6939,30 @@ export default function LiquiditySection({
                             <span className="leading-none">{v3MintDisplaySymbol0}</span>
                           </div>
                         </div>
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          Balance{" "}
-                          {walletBalancesLoading
-                            ? "Loading..."
-                            : v3MintBalance0Num !== null
-                            ? `${formatTokenBalance(v3MintBalance0Num)} ${v3MintDisplaySymbol0}`
-                            : "--"}
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <span>
+                            Balance{" "}
+                            {walletBalancesLoading
+                              ? "Loading..."
+                              : v3MintBalance0Num !== null
+                              ? `${formatTokenBalance(v3MintBalance0Num)} ${v3MintDisplaySymbol0}`
+                              : "--"}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {v3MintQuickButtons.map((btn) => (
+                              <button
+                                key={`mint-0-${btn.label}`}
+                                type="button"
+                                onClick={() => applyV3MintQuickFill(0, btn.pct)}
+                                disabled={
+                                  walletBalancesLoading || !v3MintHasBalance0 || !v3MintCanUseSide0
+                                }
+                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                              >
+                                {btn.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                         {v3Token0SupportsEthToggle && (
                           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
@@ -6914,38 +7010,7 @@ export default function LiquiditySection({
                             name="v3-deposit-1"
                             value={v3Amount1}
                             onChange={(e) => {
-                            const next = e.target.value;
-                            setV3Amount1(next);
-                            if (v3MintError) setV3MintError("");
-                            if (actionStatus) setActionStatus(null);
-                            const num = safeNumber(next);
-                            if (!Number.isFinite(num) || num <= 0) return;
-                            if (v3RangeMath) {
-                              const amount1Raw = safeParseUnits(next, v3RangeMath.dec1);
-                              if (!amount1Raw || amount1Raw <= 0n) return;
-                              const liquidity = getLiquidityForAmount1(
-                                v3RangeMath.sqrtCurrentX96,
-                                v3RangeMath.sqrtLowerX96,
-                                v3RangeMath.sqrtUpperX96,
-                                amount1Raw
-                              );
-                              if (!liquidity || liquidity <= 0n) {
-                                setV3Amount0("0");
-                                return;
-                              }
-                              const amounts = getAmountsForLiquidity(
-                                v3RangeMath.sqrtCurrentX96,
-                                v3RangeMath.sqrtLowerX96,
-                                v3RangeMath.sqrtUpperX96,
-                                liquidity
-                              );
-                              const out0 = amounts?.amount0 ?? 0n;
-                              setV3Amount0(formatAmountFromRaw(out0, v3RangeMath.dec0));
-                              return;
-                            }
-                            if (!v3ReferencePrice) return;
-                            const computed = num / v3ReferencePrice;
-                            setV3Amount0(formatAutoAmount(computed));
+                            applyV3MintAmount1(e.target.value);
                           }}
                           placeholder="0.0"
                           disabled={v3RangeSide === "token0"}
@@ -6966,13 +7031,30 @@ export default function LiquiditySection({
                             <span className="leading-none">{v3MintDisplaySymbol1}</span>
                           </div>
                         </div>
-                        <div className="mt-1 text-[11px] text-slate-500">
-                          Balance{" "}
-                          {walletBalancesLoading
-                            ? "Loading..."
-                            : v3MintBalance1Num !== null
-                            ? `${formatTokenBalance(v3MintBalance1Num)} ${v3MintDisplaySymbol1}`
-                            : "--"}
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                          <span>
+                            Balance{" "}
+                            {walletBalancesLoading
+                              ? "Loading..."
+                              : v3MintBalance1Num !== null
+                              ? `${formatTokenBalance(v3MintBalance1Num)} ${v3MintDisplaySymbol1}`
+                              : "--"}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {v3MintQuickButtons.map((btn) => (
+                              <button
+                                key={`mint-1-${btn.label}`}
+                                type="button"
+                                onClick={() => applyV3MintQuickFill(1, btn.pct)}
+                                disabled={
+                                  walletBalancesLoading || !v3MintHasBalance1 || !v3MintCanUseSide1
+                                }
+                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                              >
+                                {btn.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
                         {v3Token1SupportsEthToggle && (
                           <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
