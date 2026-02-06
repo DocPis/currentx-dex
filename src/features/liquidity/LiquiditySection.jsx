@@ -1872,7 +1872,7 @@ export default function LiquiditySection({
   }, [v3PoolSeries, v3PoolIsReversed, v3CurrentPrice]);
 
   const v3PriceSeriesFallback = useMemo(() => {
-    if (v3PoolSeries.length) return [];
+    if (v3PriceChart) return [];
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return [];
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
@@ -1880,7 +1880,7 @@ export default function LiquiditySection({
       date: now - (5 - idx) * 7 * day,
       value: v3ReferencePrice,
     }));
-  }, [v3PoolSeries.length, v3ReferencePrice]);
+  }, [v3PriceChart, v3ReferencePrice]);
 
   const v3PriceChartDisplay = useMemo(() => {
     if (v3PriceChart) return v3PriceChart;
@@ -1891,7 +1891,7 @@ export default function LiquiditySection({
   }, [v3PriceChart, v3PriceSeriesFallback]);
 
   const v3PriceAxisTicks = useMemo(() => {
-    const series = v3PoolSeries.length ? v3PoolSeries : v3PriceSeriesFallback;
+    const series = v3PriceSeriesFallback.length ? v3PriceSeriesFallback : v3PoolSeries;
     if (!series.length) return [];
     const steps = [0, 0.33, 0.66, 1];
     return steps
@@ -6579,9 +6579,9 @@ export default function LiquiditySection({
 
                               {/* Prices moved to the card below */}
                             </div>
-                            <div className="absolute left-5 right-10 bottom-6 h-px bg-slate-700/60" />
+                            <div className="absolute left-5 right-10 bottom-7 h-px bg-slate-700/70 z-30" />
                             {v3PriceAxisTicks.length ? (
-                              <div className="absolute left-5 right-10 bottom-2 text-[11px] text-slate-400 pointer-events-none">
+                              <div className="absolute left-5 right-10 bottom-2 text-[11px] text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
                                 {v3PriceAxisTicks.map((tick) => (
                                   <span
                                     key={`${tick.label}-${tick.pct}`}
