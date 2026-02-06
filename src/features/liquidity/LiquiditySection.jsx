@@ -1457,6 +1457,17 @@ export default function LiquiditySection({
       Boolean(v3PoolInfo.address) &&
       !v3PoolInitialized
   );
+  const v3DerivedPrice = useMemo(() => {
+    const raw0 = safeNumber(v3Token0PriceUsd);
+    const raw1 = safeNumber(v3Token1PriceUsd);
+    const symbol0 = v3Token0Meta?.symbol || v3Token0;
+    const symbol1 = v3Token1Meta?.symbol || v3Token1;
+    const price0 = raw0 !== null && raw0 > 0 ? raw0 : isStableSymbol(symbol0) ? 1 : null;
+    const price1 = raw1 !== null && raw1 > 0 ? raw1 : isStableSymbol(symbol1) ? 1 : null;
+    if (price0 === null || price1 === null) return null;
+    const derived = price0 / price1;
+    return Number.isFinite(derived) && derived > 0 ? derived : null;
+  }, [v3Token0PriceUsd, v3Token1PriceUsd, v3Token0Meta, v3Token1Meta, v3Token0, v3Token1]);
   const v3ReferencePrice = useMemo(() => {
     if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
       return v3CurrentPrice;
@@ -1480,17 +1491,6 @@ export default function LiquiditySection({
     const usd = v3ReferencePrice * token1Usd;
     return Number.isFinite(usd) ? usd : null;
   }, [v3ReferencePrice, v3Token1PriceUsd, v3Token1Meta, v3Token1]);
-  const v3DerivedPrice = useMemo(() => {
-    const raw0 = safeNumber(v3Token0PriceUsd);
-    const raw1 = safeNumber(v3Token1PriceUsd);
-    const symbol0 = v3Token0Meta?.symbol || v3Token0;
-    const symbol1 = v3Token1Meta?.symbol || v3Token1;
-    const price0 = raw0 !== null && raw0 > 0 ? raw0 : isStableSymbol(symbol0) ? 1 : null;
-    const price1 = raw1 !== null && raw1 > 0 ? raw1 : isStableSymbol(symbol1) ? 1 : null;
-    if (price0 === null || price1 === null) return null;
-    const derived = price0 / price1;
-    return Number.isFinite(derived) && derived > 0 ? derived : null;
-  }, [v3Token0PriceUsd, v3Token1PriceUsd, v3Token0Meta, v3Token1Meta, v3Token0, v3Token1]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
   const v3HasCustomRange =
