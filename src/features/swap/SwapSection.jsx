@@ -5,6 +5,7 @@ import {
   TOKENS,
   getProvider,
   WETH_ADDRESS,
+  UNIV2_ROUTER_ADDRESS,
   UNIV2_FACTORY_ADDRESS,
   UNIV3_FACTORY_ADDRESS,
   UNIV3_QUOTER_V2_ADDRESS,
@@ -21,6 +22,7 @@ import {
   ERC20_ABI,
   PERMIT2_ABI,
   UNIV2_FACTORY_ABI,
+  UNIV2_ROUTER_ABI,
   WETH_ABI,
   UNIV3_FACTORY_ABI,
   UNIV3_QUOTER_V2_ABI,
@@ -452,6 +454,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("CRX");
   const [amountIn, setAmountIn] = useState("");
+  const [amountOutInput, setAmountOutInput] = useState("");
+  const [swapInputMode, setSwapInputMode] = useState("in"); // "in" | "out"
   const [quoteOut, setQuoteOut] = useState(null);
   const [quoteOutRaw, setQuoteOutRaw] = useState(null);
   const [priceImpact, setPriceImpact] = useState(null);
@@ -692,12 +696,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     const decimals = Math.min(6, tokenRegistry[sellKey]?.decimals ?? 6);
     if (!bal) {
       setAmountIn("");
+      setSwapInputMode("in");
       setQuoteError("");
       setSwapStatus(null);
       return;
     }
     const val = (bal * pct).toFixed(decimals);
     setAmountIn(val);
+    setSwapInputMode("in");
     setQuoteError("");
     setSwapStatus(null);
   };
@@ -886,6 +892,92 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [encodeV3Path]
   );
 
+  const quoteV3RouteExactOut = useCallback(
+    async (provider, amountOutWei, routeMeta) => {
+      if (!provider || !routeMeta) throw new Error("Missing V3 route.");
+      const quoter = new Contract(
+        UNIV3_QUOTER_V2_ADDRESS,
+        UNIV3_QUOTER_V2_ABI,
+        provider
+      );
+      if (routeMeta.kind === "direct") {
+        const params = {
+          tokenIn: routeMeta.path[0],
+          tokenOut: routeMeta.path[1],
+          amount: amountOutWei,
+          fee: routeMeta.fees[0],
+          sqrtPriceLimitX96: 0,
+        };
+        const res = await quoter.quoteExactOutputSingle.staticCall(params);
+        return res?.[0] ?? res?.amountIn;
+      }
+      const reversedPath = encodeV3Path(
+        [...routeMeta.path].reverse(),
+        [...routeMeta.fees].reverse()
+      );
+      const res = await quoter.quoteExactOutput.staticCall(reversedPath, amountOutWei);
+      return res?.[0] ?? res?.amountIn;
+    },
+    [encodeV3Path]
+  );
+
+  const buildV3RouteCandidates = useCallback(
+    async () => {
+      if (!hasV3Support) {
+        throw new Error("V3 router not configured for this network.");
+      }
+      const provider = getReadOnlyProvider();
+      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+      const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+      const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+      if (!a || !b) throw new Error("Select tokens with valid addresses.");
+
+      const directPools = await listV3Pools(factory, a, b);
+      const directRoutes = directPools.map((pool) => ({
+        kind: "direct",
+        path: [a, b],
+        pools: [pool.pool],
+        fees: [pool.fee],
+      }));
+
+      const candidateMids = getRouteCandidates(a, b);
+      const hopCandidates = candidateMids.length
+        ? await Promise.all(
+            candidateMids.map(async (mid) => {
+              const poolsA = await listV3Pools(factory, a, mid);
+              if (!poolsA.length) return null;
+              const poolsB = await listV3Pools(factory, mid, b);
+              if (!poolsB.length) return null;
+              return { mid, poolsA, poolsB };
+            })
+          )
+        : [];
+      const hopRoutes = hopCandidates
+        .filter(Boolean)
+        .flatMap((candidate) =>
+          candidate.poolsA.flatMap((poolA) =>
+            candidate.poolsB.map((poolB) => ({
+              kind: "hop",
+              path: [a, candidate.mid, b],
+              pools: [poolA.pool, poolB.pool],
+              fees: [poolA.fee, poolB.fee],
+            }))
+          )
+        );
+
+      return { directRoutes, hopRoutes };
+    },
+    [
+      buyMeta?.address,
+      buyToken,
+      getRouteCandidates,
+      hasV3Support,
+      listV3Pools,
+      sellMeta?.address,
+      sellToken,
+    ]
+  );
+
   const buildV3Route = useCallback(
     async (opts = {}) => {
       if (!hasV3Support) {
@@ -1048,6 +1140,81 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     },
     []
   );
+
+  const quoteV2RouteExactOut = useCallback(
+    async (provider, amountOutWei, routeMeta) => {
+      if (!provider || !routeMeta?.path) throw new Error("Missing V2 route.");
+      const router = new Contract(
+        UNIV2_ROUTER_ADDRESS,
+        UNIV2_ROUTER_ABI,
+        provider
+      );
+      const res = await router.getAmountsIn(amountOutWei, routeMeta.path);
+      const amounts = res?.amounts || res || [];
+      const amountIn = amounts?.[0];
+      if (!amountIn) throw new Error("No V2 exact output quote.");
+      return {
+        amountIn,
+        pairs: routeMeta.pairs || [],
+      };
+    },
+    []
+  );
+
+  const buildV2RouteCandidates = useCallback(
+    async () => {
+      if (!hasV2Support) {
+        throw new Error("V2 support not configured for this network.");
+      }
+      const provider = getReadOnlyProvider();
+      const factory = new Contract(UNIV2_FACTORY_ADDRESS, UNIV2_FACTORY_ABI, provider);
+      const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+      const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
+      if (!a || !b) throw new Error("Select tokens with valid addresses.");
+
+      const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
+      const hasDirect = directPair && directPair !== ZERO_ADDRESS;
+      const directRoute = hasDirect
+        ? {
+            protocol: "V2",
+            kind: "direct",
+            path: [a, b],
+            pairs: [directPair].filter(Boolean),
+          }
+        : null;
+
+      const candidateMids = getRouteCandidates(a, b);
+      const hopPairs = candidateMids.length
+        ? await Promise.all(
+            candidateMids.map(async (mid) => {
+              const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
+              if (!pairA || pairA === ZERO_ADDRESS) return null;
+              const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
+              if (!pairB || pairB === ZERO_ADDRESS) return null;
+              return { mid, pairA, pairB };
+            })
+          )
+        : [];
+      const hopRoutes = hopPairs
+        .filter(Boolean)
+        .map((pair) => ({
+          protocol: "V2",
+          kind: "hop",
+          path: [a, pair.mid, b],
+          pairs: [pair.pairA, pair.pairB],
+        }));
+
+      return { directRoute, hopRoutes };
+    },
+    [
+      buyMeta?.address,
+      buyToken,
+      getRouteCandidates,
+      hasV2Support,
+      sellMeta?.address,
+      sellToken,
+    ]
+  );
   const buildV2Route = useCallback(
     async (opts = {}) => {
       if (!hasV2Support) {
@@ -1146,6 +1313,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const isSupported =
     Boolean(sellMeta?.address || sellToken === "ETH") &&
     Boolean(buyMeta?.address || buyToken === "ETH");
+  const isExactOut = swapInputMode === "out";
+  const activeInputAmount = isExactOut ? amountOutInput : amountIn;
 
   const handleSelectToken = (symbol) => {
     if (!symbol) return;
@@ -1337,7 +1506,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     }
     const start = () => {
       if (autoRefreshTimerRef.current) return;
-      if (!amountIn || Number.isNaN(Number(amountIn)) || !isSupported) return;
+      if (!activeInputAmount || Number.isNaN(Number(activeInputAmount)) || !isSupported) {
+        return;
+      }
       autoRefreshTimerRef.current = setInterval(() => {
         setLiveRouteTick((t) => t + 1);
       }, 3000);
@@ -1364,7 +1535,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("focus", handleVisibility);
     };
-  }, [amountIn, isSupported]);
+  }, [activeInputAmount, isSupported]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1395,7 +1566,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return;
       }
       setQuoteError("");
-      if (!amountIn || Number.isNaN(Number(amountIn))) {
+      if (!activeInputAmount || Number.isNaN(Number(activeInputAmount))) {
         resetQuoteState();
         return;
       }
@@ -1426,8 +1597,16 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       }
 
       if (isDirectEthWeth) {
-        const directWei = parseUnits(amountIn, sellMeta?.decimals ?? 18);
-        setQuoteOut(amountIn);
+        const sellDecimals = sellMeta?.decimals ?? 18;
+        const buyDecimals = buyMeta?.decimals ?? 18;
+        const directAmount = isExactOut ? amountOutInput : amountIn;
+        const directWei = parseUnits(directAmount, isExactOut ? buyDecimals : sellDecimals);
+        const formattedIn = trimTrailingZeros(formatUnits(directWei, sellDecimals));
+        const formattedOut = trimTrailingZeros(formatUnits(directWei, buyDecimals));
+        if (isExactOut) {
+          setAmountIn(formattedIn);
+        }
+        setQuoteOut(isExactOut ? formattedOut : formattedOut);
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
         // Direct wrap/unwrap never needs approvals; reset any previous state.
@@ -1458,39 +1637,122 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           }
           const sellDecimals = requireDecimals(sellToken, sellMeta);
           const buyDecimals = requireDecimals(buyToken, buyMeta);
-          const amountWei = parseUnits(amountIn, sellDecimals);
+          const amountWei = isExactOut ? null : parseUnits(amountIn, sellDecimals);
+          const desiredOutWei = isExactOut
+            ? parseUnits(amountOutInput || "0", buyDecimals)
+            : null;
 
           let v3Route = null;
           let v2Route = null;
-          if (hasV3Support && routePreference !== "v2") {
-            try {
-              const route = await buildV3Route({ amountWei, mode: executionMode });
-              const amountOut = await quoteV3Route(provider, amountWei, route);
-              v3Route = { ...route, protocol: "V3", amountOut };
-            } catch {
-              v3Route = null;
-            }
-          }
-          if (hasV2Support && routePreference !== "v3") {
-            try {
-              const route = await buildV2Route({ amountWei });
-              if (route && route.amountOut !== undefined && route.amountOut !== null) {
-                v2Route = route;
-              } else if (route) {
-                const v2Quote = await quoteV2Route(provider, amountWei, route);
-                v2Route = {
-                  ...route,
-                  amountOut: v2Quote.amountOut,
-                  priceImpact: v2Quote.priceImpact,
-                  pairs: v2Quote.pairs || route.pairs,
-                };
-              }
-            } catch {
-              v2Route = null;
-            }
-          }
+          let splitRoute = null;
 
-          if (cancelled) return;
+          if (isExactOut) {
+            if (!desiredOutWei || desiredOutWei <= 0n) {
+              setQuoteError("Enter an amount to fetch a quote.");
+              return;
+            }
+            if (hasV3Support && routePreference !== "v2") {
+              try {
+                const { directRoutes, hopRoutes } = await buildV3RouteCandidates();
+                const candidates = [...directRoutes, ...hopRoutes];
+                const quoted = await Promise.all(
+                  candidates.map(async (route) => {
+                    try {
+                      const amountIn = await quoteV3RouteExactOut(
+                        provider,
+                        desiredOutWei,
+                        route
+                      );
+                      return {
+                        ...route,
+                        protocol: "V3",
+                        amountIn,
+                        amountOut: desiredOutWei,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  })
+                );
+                const valid = quoted.filter(Boolean);
+                if (valid.length) {
+                  v3Route = valid.reduce((best, next) => {
+                    if (!best) return next;
+                    return next.amountIn < best.amountIn ? next : best;
+                  }, null);
+                }
+              } catch {
+                v3Route = null;
+              }
+            }
+            if (hasV2Support && routePreference !== "v3") {
+              try {
+                const { directRoute, hopRoutes } = await buildV2RouteCandidates();
+                const candidates = [
+                  ...(directRoute ? [directRoute] : []),
+                  ...hopRoutes,
+                ];
+                const quoted = await Promise.all(
+                  candidates.map(async (route) => {
+                    try {
+                      const v2Quote = await quoteV2RouteExactOut(
+                        provider,
+                        desiredOutWei,
+                        route
+                      );
+                      return {
+                        ...route,
+                        amountIn: v2Quote.amountIn,
+                        amountOut: desiredOutWei,
+                        pairs: v2Quote.pairs || route.pairs,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  })
+                );
+                const valid = quoted.filter(Boolean);
+                if (valid.length) {
+                  v2Route = valid.reduce((best, next) => {
+                    if (!best) return next;
+                    return next.amountIn < best.amountIn ? next : best;
+                  }, null);
+                }
+              } catch {
+                v2Route = null;
+              }
+            }
+          } else {
+            if (hasV3Support && routePreference !== "v2") {
+              try {
+                const route = await buildV3Route({ amountWei, mode: executionMode });
+                const amountOut = await quoteV3Route(provider, amountWei, route);
+                v3Route = { ...route, protocol: "V3", amountOut };
+              } catch {
+                v3Route = null;
+              }
+            }
+            if (hasV2Support && routePreference !== "v3") {
+              try {
+                const route = await buildV2Route({ amountWei });
+                if (route && route.amountOut !== undefined && route.amountOut !== null) {
+                  v2Route = route;
+                } else if (route) {
+                  const v2Quote = await quoteV2Route(provider, amountWei, route);
+                  v2Route = {
+                    ...route,
+                    amountOut: v2Quote.amountOut,
+                    priceImpact: v2Quote.priceImpact,
+                    pairs: v2Quote.pairs || route.pairs,
+                  };
+                }
+              } catch {
+                v2Route = null;
+              }
+            }
+
+            if (cancelled) return;
+          }
 
           const estimateRouteSlippage = async (route) => {
             try {
@@ -1549,8 +1811,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             }
           };
 
-          let splitRoute = null;
-          if ((routePreference === "split" || routePreference === "smart") && v2Route && v3Route) {
+          if (
+            !isExactOut &&
+            (routePreference === "split" || routePreference === "smart") &&
+            v2Route &&
+            v3Route
+          ) {
             try {
               const half = amountWei / 2n;
               const rest = amountWei - half;
@@ -1604,11 +1870,17 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 if (!best) return next;
                 if (next.estimatedSlippage < best.estimatedSlippage) return next;
                 if (next.estimatedSlippage > best.estimatedSlippage) return best;
+                if (isExactOut) {
+                  return next.amountIn < best.amountIn ? next : best;
+                }
                 return next.amountOut > best.amountOut ? next : best;
               }, null);
             }
             return filtered.reduce((best, next) => {
               if (!best) return next;
+              if (isExactOut) {
+                return next.amountIn < best.amountIn ? next : best;
+              }
               return next.amountOut > best.amountOut ? next : best;
             }, null);
           };
@@ -1627,7 +1899,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           if (!selectedRoute) {
             const msg =
               routePreference === "split"
-                ? "Split route unavailable for this pair."
+                ? isExactOut
+                  ? "Split routing is unavailable for exact output."
+                  : "Split route unavailable for this pair."
                 : routePreference === "v2"
                   ? "No V2 route available for this pair."
                   : routePreference === "v3"
@@ -1643,11 +1917,19 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             return;
           }
 
-          const formatted = formatUnits(amountOut, buyDecimals);
-          setQuoteOut(formatted);
+          const formattedOut = trimTrailingZeros(formatUnits(amountOut, buyDecimals));
+          setQuoteOut(formattedOut);
           setQuoteOutRaw(amountOut);
           setQuoteMeta(selectedRoute);
           setQuoteRoute(selectedRoute.path || [sellToken, buyToken]);
+          if (isExactOut && selectedRoute.amountIn) {
+            const formattedIn = trimTrailingZeros(
+              formatUnits(selectedRoute.amountIn, sellDecimals)
+            );
+            if (formattedIn && formattedIn !== amountIn) {
+              setAmountIn(formattedIn);
+            }
+          }
 
           const v2Pairs =
             selectedRoute.protocol === "V2"
@@ -1664,7 +1946,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           lastQuoteOutRef.current = amountOut;
           if (prevRaw) {
             const prevNum = Number(formatUnits(prevRaw, buyMeta?.decimals ?? 18));
-            const currNum = Number(formatted);
+            const currNum = Number(formattedOut);
             if (prevNum > 0 && Number.isFinite(prevNum) && Number.isFinite(currNum)) {
               const deltaPct = Math.abs((currNum - prevNum) / prevNum) * 100;
               setQuoteVolatilityPct(deltaPct);
@@ -1680,12 +1962,19 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             selectedRoute.priceImpact ??
             null;
           setPriceImpact(routeImpact);
+          const resolvedAmountInWei = isExactOut
+            ? selectedRoute.amountIn
+            : amountWei;
 
           if (allowanceDebounceRef.current) {
             clearTimeout(allowanceDebounceRef.current);
             allowanceDebounceRef.current = null;
           }
           if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
+            if (!resolvedAmountInWei || resolvedAmountInWei <= 0n) {
+              if (!cancelled) setApprovalTargets([]);
+              return;
+            }
             allowanceDebounceRef.current = setTimeout(async () => {
               try {
                 const user = address;
@@ -1704,9 +1993,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 const checkErc20 = async (spender, label) => {
                   if (!spender) return;
                   const cached = getCachedApproval("erc20", sellAddress, spender);
-                  if (cached && cached.amount >= amountWei) return;
+                  if (cached && cached.amount >= resolvedAmountInWei) return;
                   const allowance = await token.allowance(user, spender);
-                  if (allowance < amountWei) {
+                  if (allowance < resolvedAmountInWei) {
                     targets.push({
                       symbol: sellToken,
                       address: sellAddress,
@@ -1733,7 +2022,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   if (cached) {
                     const now = BigInt(Math.floor(Date.now() / 1000));
                     const expired = !cached.expiration || cached.expiration < now;
-                    if (!expired && cached.amount >= amountWei) return;
+                    if (!expired && cached.amount >= resolvedAmountInWei) return;
                   }
                   const res = await permit2.allowance(user, sellAddress, spender);
                   const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
@@ -1748,7 +2037,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                       : BigInt(expirationRaw || 0);
                   const now = BigInt(Math.floor(Date.now() / 1000));
                   const expired = !expiration || expiration < now;
-                  if (allowance < amountWei || expired) {
+                  if (allowance < resolvedAmountInWei || expired) {
                     targets.push({
                       symbol: sellToken,
                       address: sellAddress,
@@ -1812,21 +2101,28 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     };
   }, [
     address,
-    amountIn,
+    activeInputAmount,
+    amountOutInput,
     buyMeta?.address,
     buyMeta?.decimals,
     buyToken,
     buildV2Route,
+    buildV2RouteCandidates,
     buildV3Route,
+    buildV3RouteCandidates,
     quoteV2Route,
+    quoteV2RouteExactOut,
     quoteV3Route,
+    quoteV3RouteExactOut,
     isDirectEthWeth,
+    isExactOut,
     isSupported,
     hasV2Support,
     hasV3Support,
     sellMeta?.address,
     sellMeta?.decimals,
     sellToken,
+    swapInputMode,
     liveRouteTick,
     quoteLockedUntil,
     routePreference,
@@ -1881,7 +2177,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const quoteSourceLabel = (() => {
     if (quoteLoading) return "Loading quote...";
     if (quoteError) return quoteError;
-    if (!amountIn) return "Enter an amount to fetch a quote";
+    if (!activeInputAmount) {
+      return isExactOut
+        ? "Enter a target output to fetch a quote"
+        : "Enter an amount to fetch a quote";
+    }
     if (isDirectEthWeth) return "Direct wrap/unwrap (no fee)";
     if (quoteMeta?.protocol === "V2") return "Live quote via CurrentX API (V2)";
     if (quoteMeta?.protocol === "SPLIT") return "Smart split via CurrentX API (V2 + V3)";
@@ -2842,6 +3142,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               value={amountIn}
               onChange={(e) => {
                 setAmountIn(e.target.value);
+                if (swapInputMode !== "in") {
+                  setSwapInputMode("in");
+                }
                 if (quoteError) setQuoteError("");
                 if (swapStatus) setSwapStatus(null);
               }}
@@ -2955,9 +3258,28 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               </svg>
             </button>
             <div className="flex-1 text-right w-full">
-              <div className="text-2xl sm:text-3xl font-semibold text-slate-50">
-                {quoteOut !== null ? formatCompactNumber(quoteOut) : "0.00"}
-              </div>
+              <input
+                name="swap-amount-out"
+                value={isExactOut ? amountOutInput : quoteOut || ""}
+                onChange={(e) => {
+                  setAmountOutInput(e.target.value);
+                  if (swapInputMode !== "out") {
+                    setSwapInputMode("out");
+                  }
+                  if (quoteError) setQuoteError("");
+                  if (swapStatus) setSwapStatus(null);
+                }}
+                onFocus={() => {
+                  if (!isExactOut) {
+                    setSwapInputMode("out");
+                    if (!amountOutInput && quoteOut) {
+                      setAmountOutInput(quoteOut);
+                    }
+                  }
+                }}
+                placeholder="0.00"
+                className="w-full text-right bg-transparent text-2xl sm:text-3xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
+              />
               <div className="text-[11px] text-slate-500">
                 {quoteSourceLabel}
               </div>
