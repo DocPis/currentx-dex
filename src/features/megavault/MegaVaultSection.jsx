@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { MegaVaultPositionWidget } from "@avon_xyz/widget";
-import { useAccount, useReconnect } from "wagmi";
+import { useAccount, useConnect, useReconnect } from "wagmi";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function MegaVaultSection({ address, onConnectWallet }) {
@@ -17,12 +17,24 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
     return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed : ZERO_ADDRESS;
   }, [address]);
   const { isConnected } = useAccount();
+  const { connectAsync, connectors } = useConnect();
   const { reconnect } = useReconnect();
+  const wagmiConnectAttempted = useRef(false);
 
   useEffect(() => {
     if (!address || isConnected) return;
     reconnect();
   }, [address, isConnected, reconnect]);
+  useEffect(() => {
+    if (!address || isConnected || wagmiConnectAttempted.current) return;
+    const connector =
+      connectors.find((item) => item?.type === "injected") || connectors[0];
+    if (!connector) return;
+    wagmiConnectAttempted.current = true;
+    connectAsync({ connector }).catch(() => {
+      wagmiConnectAttempted.current = false;
+    });
+  }, [address, isConnected, connectors, connectAsync]);
 
   const handleConnectWallet = () => {
     if (typeof onConnectWallet === "function") {
