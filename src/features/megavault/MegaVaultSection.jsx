@@ -7,16 +7,16 @@ import megaLogo from "../../tokens/megaeth.png";
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+  const FIXED_REFERRER = "0x522Fd15322252984011D8E59fDB3b2fB8F586127";
   const chainId = useMemo(() => {
     const hex = activeNetwork?.chainIdHex || "0x10e6";
     const parsed = Number.parseInt(hex, 16);
     return Number.isFinite(parsed) ? parsed : 4326;
   }, [activeNetwork]);
   const safeReferrer = useMemo(() => {
-    if (typeof address !== "string") return ZERO_ADDRESS;
-    const trimmed = address.trim();
+    const trimmed = FIXED_REFERRER.trim();
     return /^0x[a-fA-F0-9]{40}$/.test(trimmed) ? trimmed : ZERO_ADDRESS;
-  }, [address]);
+  }, []);
   const { isConnected } = useAccount();
   const { connectAsync, connectors } = useConnect();
   const { reconnect } = useReconnect();
