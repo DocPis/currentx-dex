@@ -90,6 +90,23 @@ const isLiquidityTokenBlocked = (token) => {
   return Boolean(addr && LIQUIDITY_BLOCKED_ADDRESSES.has(addr));
 };
 
+const STABLE_SYMBOLS = new Set([
+  "USDM",
+  "USDT0",
+  "CUSD",
+  "USDC",
+  "USDT",
+  "DAI",
+  "USDE",
+  "SUSDE",
+  "STCUSD",
+]);
+
+const isStableSymbol = (symbol) => {
+  const normalized = (symbol || "").toString().toUpperCase();
+  return Boolean(normalized && STABLE_SYMBOLS.has(normalized));
+};
+
 const filterLiquidityRegistry = (registry = {}) => {
   const out = {};
   Object.entries(registry).forEach(([sym, meta]) => {
@@ -1437,6 +1454,7 @@ export default function LiquiditySection({
       v3SelectedToken0Address &&
       v3SelectedToken1Address &&
       v3SelectedToken0Address.toLowerCase() !== v3SelectedToken1Address.toLowerCase() &&
+      Boolean(v3PoolInfo.address) &&
       !v3PoolInitialized
   );
   const v3ReferencePrice = useMemo(() => {
@@ -1446,15 +1464,33 @@ export default function LiquiditySection({
     if (v3PoolNeedsInit && v3HasStartPrice) {
       return v3StartPriceNum;
     }
+    if (v3DerivedPrice && Number.isFinite(v3DerivedPrice) && v3DerivedPrice > 0) {
+      return v3DerivedPrice;
+    }
     return null;
-  }, [v3CurrentPrice, v3PoolNeedsInit, v3HasStartPrice, v3StartPriceNum]);
-  const v3CurrentPriceUsd = useMemo(() => {
-    if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice) || v3CurrentPrice <= 0) return null;
-    const ref = v3Token1PriceUsd;
-    if (ref === null || ref === undefined || !Number.isFinite(ref) || ref <= 0) return null;
-    const usd = v3CurrentPrice * Number(ref);
+  }, [v3CurrentPrice, v3PoolNeedsInit, v3HasStartPrice, v3StartPriceNum, v3DerivedPrice]);
+  const v3ReferencePriceUsd = useMemo(() => {
+    if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice) || v3ReferencePrice <= 0) {
+      return null;
+    }
+    const raw = safeNumber(v3Token1PriceUsd);
+    const symbol1 = v3Token1Meta?.symbol || v3Token1;
+    const token1Usd = raw !== null && raw > 0 ? raw : isStableSymbol(symbol1) ? 1 : null;
+    if (token1Usd === null) return null;
+    const usd = v3ReferencePrice * token1Usd;
     return Number.isFinite(usd) ? usd : null;
-  }, [v3CurrentPrice, v3Token1PriceUsd]);
+  }, [v3ReferencePrice, v3Token1PriceUsd, v3Token1Meta, v3Token1]);
+  const v3DerivedPrice = useMemo(() => {
+    const raw0 = safeNumber(v3Token0PriceUsd);
+    const raw1 = safeNumber(v3Token1PriceUsd);
+    const symbol0 = v3Token0Meta?.symbol || v3Token0;
+    const symbol1 = v3Token1Meta?.symbol || v3Token1;
+    const price0 = raw0 !== null && raw0 > 0 ? raw0 : isStableSymbol(symbol0) ? 1 : null;
+    const price1 = raw1 !== null && raw1 > 0 ? raw1 : isStableSymbol(symbol1) ? 1 : null;
+    if (price0 === null || price1 === null) return null;
+    const derived = price0 / price1;
+    return Number.isFinite(derived) && derived > 0 ? derived : null;
+  }, [v3Token0PriceUsd, v3Token1PriceUsd, v3Token0Meta, v3Token1Meta, v3Token0, v3Token1]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
   const v3HasCustomRange =
@@ -1466,8 +1502,8 @@ export default function LiquiditySection({
     v3RangeLowerNum < v3RangeUpperNum;
   const v3PriceStatus = useMemo(() => {
     if (v3PoolLoading) return "Loading...";
-    if (v3CurrentPrice) {
-      return `${formatPrice(v3CurrentPrice)} ${v3Token1}/${v3Token0}`;
+    if (v3ReferencePrice) {
+      return `${formatPrice(v3ReferencePrice)} ${v3Token1}/${v3Token0}`;
     }
     if (v3PoolNeedsInit) {
       if (v3HasStartPrice) {
@@ -1478,7 +1514,7 @@ export default function LiquiditySection({
     return v3PoolError || "Pool not deployed";
   }, [
     v3PoolLoading,
-    v3CurrentPrice,
+    v3ReferencePrice,
     v3Token1,
     v3Token0,
     v3PoolNeedsInit,
@@ -6304,9 +6340,9 @@ export default function LiquiditySection({
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100">
                         <span className="truncate">{v3PriceStatus}</span>
-                        {v3CurrentPriceUsd !== null && (
+                        {v3ReferencePriceUsd !== null && (
                           <span className="text-sm text-slate-400">
-                            ({formatUsdPrice(v3CurrentPriceUsd)})
+                            ({formatUsdPrice(v3ReferencePriceUsd)})
                           </span>
                         )}
                       </div>
