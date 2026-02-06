@@ -78,7 +78,8 @@ const formatCompactNumber = (value) => {
   if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
   if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
   if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
-  return num.toExponential(2);
+  if (abs >= 0.00000001) return trimTrailingZeros(num.toFixed(8));
+  return "<0.00000001";
 };
 const formatBalance = (v) => {
   const n = Number(v || 0);

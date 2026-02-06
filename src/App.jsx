@@ -6,6 +6,7 @@ import LiquiditySection from "./features/liquidity/LiquiditySection";
 import Dashboard from "./features/dashboard/Dashboard";
 import Farms from "./features/farms/Farms";
 import PoolsSection from "./features/pools/PoolsSection";
+import MegaVaultSection from "./features/megavault/MegaVaultSection";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
@@ -95,6 +96,7 @@ export default function App() {
             { id: "liquidity", label: "Liquidity" },
             { id: "pools", label: "Pools" },
             { id: "farms", label: "Farms" },
+            { id: "megavault", label: "MegaVault" },
           ].map((item) => (
             <button
               key={item.id}
@@ -135,6 +137,7 @@ export default function App() {
         {tab === "farms" && (
           <Farms address={address} onConnect={handleConnect} />
         )}
+        {tab === "megavault" && <MegaVaultSection />}
       </main>
 
       <Footer />
