@@ -162,7 +162,9 @@ const formatPrice = (value) => {
   if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
   if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
   if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
-  return num.toExponential(2);
+  if (abs === 0) return "0";
+  const tiny = trimTrailingZeros(num.toFixed(10));
+  return tiny === "0" ? "<0.00000001" : tiny;
 };
 
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
@@ -310,7 +312,7 @@ const formatAmount = (value, decimals = 18) => {
     const num = Number(formatUnits(value || 0n, decimals));
     if (!Number.isFinite(num) || num <= 0) return "0";
     if (num >= 1) return num.toLocaleString("en-US", { maximumFractionDigits: 4 });
-    return num.toPrecision(4);
+    return formatAutoAmount(num);
   } catch {
     return "0";
   }
@@ -6940,52 +6942,67 @@ export default function LiquiditySection({
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                                       Liquidity
                                     </div>
-                                    <div className="mt-2 text-2xl font-semibold text-slate-100">
+                                    <div
+                                      className="mt-2 text-3xl font-semibold text-slate-100 truncate"
+                                      title={liquidityUsd !== null ? formatUsdValue(liquidityUsd) : "--"}
+                                    >
                                       {liquidityUsd !== null ? formatUsdValue(liquidityUsd) : "--"}
                                     </div>
-                                    <div className="mt-3 space-y-2 text-sm text-slate-200">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                          {meta0?.logo ? (
-                                            <img
-                                              src={meta0.logo}
-                                              alt={`${selectedPosition.token0Symbol} logo`}
-                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                            />
-                                          ) : (
-                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
-                                              {(selectedPosition.token0Symbol || "?").slice(0, 2)}
-                                            </div>
-                                          )}
-                                          <span>{selectedPosition.token0Symbol}</span>
-                                        </div>
-                                        <div className="text-right">
-                                          <div className="font-semibold">{amount0Display}</div>
-                                          <div className="text-[11px] text-slate-500">
-                                            {share0 !== null ? `${share0}%` : "--"}
+                                      <div className="mt-3 space-y-2 text-sm text-slate-200">
+                                        <div className="flex items-start justify-between gap-1.5">
+                                          <div className="flex items-center gap-2 min-w-0">
+                                            {meta0?.logo ? (
+                                              <img
+                                                src={meta0.logo}
+                                                alt={`${selectedPosition.token0Symbol} logo`}
+                                                className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                              />
+                                            ) : (
+                                              <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                                {(selectedPosition.token0Symbol || "?").slice(0, 2)}
+                                              </div>
+                                            )}
                                           </div>
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                          {meta1?.logo ? (
-                                            <img
-                                              src={meta1.logo}
-                                              alt={`${selectedPosition.token1Symbol} logo`}
-                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                            />
-                                          ) : (
-                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
-                                              {(selectedPosition.token1Symbol || "?").slice(0, 2)}
+                                          <div className="text-right min-w-0 max-w-[65%] flex flex-col items-end">
+                                            <div className="flex items-baseline justify-end gap-1 w-full">
+                                              <div
+                                                className="text-base sm:text-lg font-semibold text-slate-100 truncate max-w-[70%]"
+                                                title={amount0Display}
+                                              >
+                                                {amount0Display}
+                                              </div>
+                                              <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                                                {share0 !== null ? `${share0}%` : "--"}
+                                              </div>
                                             </div>
-                                          )}
-                                          <span>{selectedPosition.token1Symbol}</span>
                                         </div>
-                                        <div className="text-right">
-                                          <div className="font-semibold">{amount1Display}</div>
-                                          <div className="text-[11px] text-slate-500">
-                                            {share1 !== null ? `${share1}%` : "--"}
+                                        </div>
+                                        <div className="flex items-start justify-between gap-1.5">
+                                          <div className="flex items-center gap-2 min-w-0">
+                                            {meta1?.logo ? (
+                                              <img
+                                                src={meta1.logo}
+                                                alt={`${selectedPosition.token1Symbol} logo`}
+                                                className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                              />
+                                            ) : (
+                                              <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
+                                                {(selectedPosition.token1Symbol || "?").slice(0, 2)}
+                                              </div>
+                                            )}
                                           </div>
+                                          <div className="text-right min-w-0 max-w-[65%] flex flex-col items-end">
+                                            <div className="flex items-baseline justify-end gap-1 w-full">
+                                              <div
+                                                className="text-base sm:text-lg font-semibold text-slate-100 truncate max-w-[70%]"
+                                                title={amount1Display}
+                                              >
+                                                {amount1Display}
+                                              </div>
+                                              <div className="text-[11px] text-slate-500 whitespace-nowrap">
+                                                {share1 !== null ? `${share1}%` : "--"}
+                                              </div>
+                                            </div>
                                         </div>
                                       </div>
                                     </div>
@@ -6995,43 +7012,54 @@ export default function LiquiditySection({
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                                       Unclaimed fees
                                     </div>
-                                    <div className="mt-2 text-2xl font-semibold text-slate-100">
+                                    <div
+                                      className="mt-2 text-3xl font-semibold text-slate-100 truncate"
+                                      title={feesUsd !== null ? formatUsdValue(feesUsd) : "--"}
+                                    >
                                       {feesUsd !== null ? formatUsdValue(feesUsd) : "--"}
                                     </div>
                                     <div className="mt-3 space-y-2 text-sm text-slate-200">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
+                                      <div className="flex items-center justify-between gap-1.5">
+                                        <div className="flex items-center gap-2 min-w-0">
                                           {meta0?.logo ? (
                                             <img
                                               src={meta0.logo}
                                               alt={`${selectedPosition.token0Symbol} logo`}
-                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                              className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
                                             />
                                           ) : (
-                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                            <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
                                               {(selectedPosition.token0Symbol || "?").slice(0, 2)}
                                             </div>
                                           )}
-                                          <span>{selectedPosition.token0Symbol}</span>
                                         </div>
-                                        <div className="font-semibold">{fees0Display}</div>
+                                        <div
+                                          className="text-base sm:text-lg font-semibold text-slate-100 truncate min-w-0 max-w-[65%] text-right"
+                                          title={fees0Display}
+                                        >
+                                          {fees0Display}
+                                        </div>
                                       </div>
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
+                                      <div className="flex items-center justify-between gap-1.5">
+                                        <div className="flex items-center gap-2 min-w-0">
                                           {meta1?.logo ? (
                                             <img
                                               src={meta1.logo}
                                               alt={`${selectedPosition.token1Symbol} logo`}
-                                              className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                              className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 object-contain"
                                             />
                                           ) : (
-                                            <div className="h-5 w-5 rounded-full border border-slate-800 bg-slate-900 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                                            <div className="h-6 w-6 rounded-full border border-slate-800 bg-slate-900 text-[9px] font-semibold text-slate-200 flex items-center justify-center">
                                               {(selectedPosition.token1Symbol || "?").slice(0, 2)}
                                             </div>
                                           )}
-                                          <span>{selectedPosition.token1Symbol}</span>
                                         </div>
-                                        <div className="font-semibold">{fees1Display}</div>
+                                        <div
+                                          className="text-base sm:text-lg font-semibold text-slate-100 truncate min-w-0 max-w-[65%] text-right"
+                                          title={fees1Display}
+                                        >
+                                          {fees1Display}
+                                        </div>
                                       </div>
                                     </div>
                                   </div>
@@ -7897,7 +7925,7 @@ export default function LiquiditySection({
                                 </span>
                               )}
                               <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
-                                CL
+                                V3
                               </span>
                               <div className="flex items-center gap-2 ml-1">
                                 <button
@@ -7972,7 +8000,10 @@ export default function LiquiditySection({
                                 <span>Current price</span>
                                 <span>{metrics ? "Live" : "Latest"}</span>
                               </div>
-                              <div className="mt-2 text-2xl font-semibold text-slate-100">
+                              <div
+                                className="mt-2 text-2xl font-semibold text-slate-100 truncate"
+                                title={Number.isFinite(currentPrice) ? formatPrice(currentPrice) : "--"}
+                              >
                                 {Number.isFinite(currentPrice) ? formatPrice(currentPrice) : "--"}
                               </div>
                               <div className="text-[11px] text-slate-500">
@@ -7983,7 +8014,10 @@ export default function LiquiditySection({
                                   <div className="text-[10px] text-slate-500">
                                     Fees {pos.token0Symbol}
                                   </div>
-                                  <div className="text-sm font-semibold text-slate-100">
+                                  <div
+                                    className="text-sm font-semibold text-slate-100 truncate"
+                                    title={`${formatAmount(pos.tokensOwed0, dec0)} ${pos.token0Symbol}`}
+                                  >
                                     {formatAmount(pos.tokensOwed0, dec0)} {pos.token0Symbol}
                                   </div>
                                 </div>
@@ -7991,7 +8025,10 @@ export default function LiquiditySection({
                                   <div className="text-[10px] text-slate-500">
                                     Fees {pos.token1Symbol}
                                   </div>
-                                  <div className="text-sm font-semibold text-slate-100">
+                                  <div
+                                    className="text-sm font-semibold text-slate-100 truncate"
+                                    title={`${formatAmount(pos.tokensOwed1, dec1)} ${pos.token1Symbol}`}
+                                  >
                                     {formatAmount(pos.tokensOwed1, dec1)} {pos.token1Symbol}
                                   </div>
                                 </div>

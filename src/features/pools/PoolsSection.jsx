@@ -45,7 +45,8 @@ const formatNumber = (num) => {
   if (abs >= 1) return trimTrailingZeros(num.toFixed(4));
   if (abs >= 0.01) return trimTrailingZeros(num.toFixed(6));
   if (abs >= 0.0001) return trimTrailingZeros(num.toFixed(8));
-  return num.toExponential(2);
+  if (abs === 0) return "0";
+  return "<0.0001";
 };
 
 const formatUsd = (num) =>
@@ -152,7 +153,7 @@ export default function PoolsSection({ onSelectPool }) {
       setV3Skip(offset + data.length);
       setV3HasMore(data.length === PAGE_SIZE);
     } catch (err) {
-      setV3Error(err?.message || "Failed to load CL pools");
+      setV3Error(err?.message || "Failed to load V3 pools");
     } finally {
       setV3Loading(false);
     }
@@ -334,7 +335,7 @@ export default function PoolsSection({ onSelectPool }) {
         <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
           <div className="flex flex-col items-center gap-3 max-w-3xl">
             <p className="text-base sm:text-lg text-slate-200">
-              Track all pools across V2 and CL with live liquidity and fee stats.
+              Track all pools across V2 and V3 with live liquidity and fee stats.
             </p>
             <div className="flex items-center justify-center gap-2 flex-wrap">
               <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200">
@@ -378,7 +379,7 @@ export default function PoolsSection({ onSelectPool }) {
         <div>
           <h2 className="text-2xl font-semibold text-white">Pools</h2>
           <div className="text-sm text-slate-400">
-            All available pools across Concentrated Liquidity (CL) and V2.
+            All available pools across V3 and V2.
           </div>
         </div>
         <div className="flex items-center gap-3 w-full lg:w-auto">
@@ -408,7 +409,7 @@ export default function PoolsSection({ onSelectPool }) {
           <div className="flex items-center gap-2">
             {[
               { id: "all", label: "All" },
-              { id: "cl", label: "CL" },
+              { id: "cl", label: "V3" },
               { id: "v2", label: "V2" },
             ].map((item) => (
               <button
@@ -533,7 +534,8 @@ export default function PoolsSection({ onSelectPool }) {
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center gap-2">
                             <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              {pool.type} {pool.feeLabel ? pool.feeLabel : ""}
+                              {pool.type === "CL" ? "V3" : pool.type}{" "}
+                              {pool.feeLabel ? pool.feeLabel : ""}
                             </span>
                           </div>
                         </div>
@@ -570,7 +572,7 @@ export default function PoolsSection({ onSelectPool }) {
               disabled={v3Loading}
               className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
             >
-              {v3Loading ? "Loading..." : "Load more CL pools"}
+              {v3Loading ? "Loading..." : "Load more V3 pools"}
             </button>
           )}
           {v2HasMore && (

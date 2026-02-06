@@ -509,6 +509,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const pendingTxHashRef = useRef(null);
   const autoRefreshTimerRef = useRef(null);
   const approvalCacheRef = useRef(new Map());
+  const lastQuoteSourceRef = useRef("Live quote via CurrentX API...");
 
   const makeApprovalKey = (kind, token, spender) =>
     `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
@@ -2196,7 +2197,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     if (quoteMeta?.protocol === "V2") return "Live quote via CurrentX API (V2)";
     if (quoteMeta?.protocol === "SPLIT") return "Smart split via CurrentX API (V2 + V3)";
     if (quoteMeta?.protocol === "V3") return "Live quote via CurrentX API (V3)";
-    return "Fetching best route via CurrentX API...";
+    return lastQuoteSourceRef.current || "Live quote via CurrentX API...";
   })();
   const routeProtocolLabel = isDirectEthWeth
     ? "Wrap/Unwrap"
@@ -2207,6 +2208,24 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const approvalSummary = approvalTargetsForSell.length
     ? approvalTargetsForSell.map((t) => t.label || "Approval").join(" + ")
     : "";
+
+  useEffect(() => {
+    if (isDirectEthWeth) {
+      lastQuoteSourceRef.current = "Direct wrap/unwrap (no fee)";
+      return;
+    }
+    if (quoteMeta?.protocol === "V2") {
+      lastQuoteSourceRef.current = "Live quote via CurrentX API (V2)";
+      return;
+    }
+    if (quoteMeta?.protocol === "SPLIT") {
+      lastQuoteSourceRef.current = "Smart split via CurrentX API (V2 + V3)";
+      return;
+    }
+    if (quoteMeta?.protocol === "V3") {
+      lastQuoteSourceRef.current = "Live quote via CurrentX API (V3)";
+    }
+  }, [quoteMeta?.protocol, isDirectEthWeth]);
 
   useEffect(() => {
     if (!swapStatus) return undefined;
