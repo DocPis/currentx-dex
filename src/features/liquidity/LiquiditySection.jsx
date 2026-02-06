@@ -33,7 +33,12 @@ import {
   UNIV3_POOL_ABI,
   UNIV3_POSITION_MANAGER_ABI,
 } from "../../shared/config/abis";
-import { fetchV2PairData, fetchTokenPrices } from "../../shared/config/subgraph";
+import {
+  fetchV2PairData,
+  fetchTokenPrices,
+  fetchV3PoolHistory,
+  fetchV3PoolSnapshot,
+} from "../../shared/config/subgraph";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import { useBalances } from "../../shared/hooks/useBalances";
@@ -64,6 +69,7 @@ const IPFS_GATEWAYS = [
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TICK_BASE = 1.0001;
 const CHART_PADDING = 0.12;
+const V3_TVL_HISTORY_DAYS = 14;
 
 const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
 const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
@@ -118,6 +124,12 @@ const formatTokenBalance = (v) => {
 };
 
 const safeNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const toOptionalNumber = (value) => {
+  if (value === null || value === undefined) return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
@@ -491,6 +503,68 @@ const formatUsdValue = (v) => {
   return `$${num.toFixed(6)}`;
 };
 
+const buildSeriesChart = (series, padRatio = 0.1) => {
+  const cleaned = (series || []).filter(
+    (row) =>
+      Number.isFinite(row?.date) &&
+      row.date > 0 &&
+      Number.isFinite(row?.value)
+  );
+  if (!cleaned.length) return null;
+
+  let pointsSeries = cleaned;
+  if (pointsSeries.length === 1) {
+    pointsSeries = [
+      pointsSeries[0],
+      { ...pointsSeries[0], date: pointsSeries[0].date + 60 * 60 * 1000 },
+    ];
+  }
+
+  const values = pointsSeries.map((row) => row.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || Math.max(1, Math.abs(max));
+  const pad = span * padRatio;
+  const minY = min - pad;
+  const maxY = max + pad;
+  const points = pointsSeries.map((row, idx) => {
+    const x =
+      pointsSeries.length === 1 ? 0 : (idx / (pointsSeries.length - 1)) * 100;
+    const y = 100 - ((row.value - minY) / (maxY - minY)) * 100;
+    return { ...row, x, y };
+  });
+  const line = points
+    .map((point, idx) => `${idx === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+  const area = `${line} L 100 100 L 0 100 Z`;
+  const latest = pointsSeries[pointsSeries.length - 1]?.value ?? null;
+  const prev = pointsSeries.length > 1 ? pointsSeries[pointsSeries.length - 2]?.value : null;
+  const changePct =
+    prev !== null && Number.isFinite(prev) && prev > 0 && latest !== null
+      ? ((latest - prev) / prev) * 100
+      : null;
+  return {
+    points,
+    line,
+    area,
+    latest,
+    changePct,
+  };
+};
+
+const mergeSeriesSnapshot = (series, snapshot) => {
+  if (snapshot === null || snapshot === undefined) return series;
+  const now = Date.now();
+  if (!series.length) return [{ date: now, value: snapshot }];
+  const last = series[series.length - 1];
+  if (now >= last.date) {
+    return [...series.slice(0, -1), { ...last, date: now, value: snapshot }];
+  }
+  const merged = [...series, { date: now, value: snapshot }];
+  merged.sort((a, b) => a.date - b.date);
+  return merged;
+};
+
 const formatAutoAmount = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "";
@@ -824,6 +898,11 @@ export default function LiquiditySection({
   const [v3PoolLoading, setV3PoolLoading] = useState(false);
   const [v3PoolError, setV3PoolError] = useState("");
   const [v3PoolMetrics, setV3PoolMetrics] = useState({});
+  const [v3PoolTvlHistory, setV3PoolTvlHistory] = useState([]);
+  const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
+  const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
+  const [v3PoolTvlError, setV3PoolTvlError] = useState("");
+  const [v3TvlRefreshTick, setV3TvlRefreshTick] = useState(0);
   const [v3MintError, setV3MintError] = useState("");
   const [v3MintLoading, setV3MintLoading] = useState(false);
   const [v3Positions, setV3Positions] = useState([]);
@@ -1610,6 +1689,142 @@ export default function LiquiditySection({
     };
   }, [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
 
+  const v3PoolSeries = useMemo(() => {
+    const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
+    return history
+      .map((row) => ({
+        date: Number(row?.date || 0),
+        tvlUsd: toOptionalNumber(row?.tvlUsd),
+        volumeUsd: toOptionalNumber(row?.volumeUsd),
+        feesUsd: toOptionalNumber(row?.feesUsd),
+        token0Price: toOptionalNumber(row?.token0Price),
+        token1Price: toOptionalNumber(row?.token1Price),
+      }))
+      .filter((row) => Number.isFinite(row.date) && row.date > 0)
+      .sort((a, b) => a.date - b.date);
+  }, [v3PoolTvlHistory]);
+
+  const v3TvlChart = useMemo(() => {
+    const base = v3PoolSeries
+      .map((row) => ({ date: row.date, value: row.tvlUsd }))
+      .filter((row) => Number.isFinite(row.value));
+    const snapshot = safeNumber(v3PoolTvlSnapshot);
+    const merged = snapshot !== null ? mergeSeriesSnapshot(base, snapshot) : base;
+    return buildSeriesChart(merged);
+  }, [v3PoolSeries, v3PoolTvlSnapshot]);
+
+  const v3VolumeChart = useMemo(() => {
+    const base = v3PoolSeries
+      .map((row) => ({ date: row.date, value: row.volumeUsd }))
+      .filter((row) => Number.isFinite(row.value));
+    return buildSeriesChart(base);
+  }, [v3PoolSeries]);
+
+  const v3FeesChart = useMemo(() => {
+    const feeRate = Number(v3FeeTier) / 1_000_000;
+    const base = v3PoolSeries
+      .map((row) => {
+        const fees =
+          row.feesUsd !== null && row.feesUsd !== undefined
+            ? row.feesUsd
+            : row.volumeUsd !== null && Number.isFinite(row.volumeUsd) && feeRate
+            ? row.volumeUsd * feeRate
+            : null;
+        return { date: row.date, value: fees };
+      })
+      .filter((row) => Number.isFinite(row.value));
+    return buildSeriesChart(base);
+  }, [v3PoolSeries, v3FeeTier]);
+
+  const v3PriceChart = useMemo(() => {
+    const base = v3PoolSeries
+      .map((row) => {
+        let price = v3PoolIsReversed ? row.token1Price : row.token0Price;
+        if (!Number.isFinite(price) || price <= 0) {
+          const alt = v3PoolIsReversed ? row.token0Price : row.token1Price;
+          if (Number.isFinite(alt) && alt > 0) {
+            price = 1 / alt;
+          }
+        }
+        return { date: row.date, value: price };
+      })
+      .filter((row) => Number.isFinite(row.value) && row.value > 0);
+    const snapshot = safeNumber(v3CurrentPrice);
+    const merged =
+      snapshot !== null && snapshot > 0 ? mergeSeriesSnapshot(base, snapshot) : base;
+    return buildSeriesChart(merged);
+  }, [v3PoolSeries, v3PoolIsReversed, v3CurrentPrice]);
+
+  const showV3PriceRangeChart = v3ChartMode === "price-range";
+  const showV3TvlChart = v3ChartMode === "tvl";
+  const showV3PriceChart = v3ChartMode === "price";
+  const showV3VolumeChart = v3ChartMode === "volume";
+  const showV3FeesChart = v3ChartMode === "fees";
+  const showV3MetricChart =
+    showV3TvlChart || showV3PriceChart || showV3VolumeChart || showV3FeesChart;
+
+  const v3MetricChart = showV3TvlChart
+    ? v3TvlChart
+    : showV3PriceChart
+    ? v3PriceChart
+    : showV3VolumeChart
+    ? v3VolumeChart
+    : showV3FeesChart
+    ? v3FeesChart
+    : null;
+  const v3MetricLabel = showV3TvlChart
+    ? "TVL"
+    : showV3PriceChart
+    ? "Price"
+    : showV3VolumeChart
+    ? "Volume"
+    : showV3FeesChart
+    ? "Fees"
+    : "";
+  const v3MetricHasValue =
+    v3MetricChart?.latest !== null && v3MetricChart?.latest !== undefined;
+  const v3MetricValue = showV3PriceChart
+    ? v3MetricHasValue
+      ? formatPrice(v3MetricChart.latest)
+      : "--"
+    : v3MetricHasValue
+    ? formatNumber(v3MetricChart.latest)
+    : "--";
+  const v3MetricSubLabel = showV3PriceChart ? `${v3Token1} per ${v3Token0}` : "";
+  const v3MetricChange = v3MetricChart?.changePct ?? null;
+  const v3MetricPalette = useMemo(() => {
+    if (showV3PriceChart) {
+      return {
+        stroke: "#fbbf24",
+        glow: "#f59e0b",
+        from: "rgba(251,191,36,0.35)",
+        to: "rgba(251,191,36,0.05)",
+      };
+    }
+    if (showV3VolumeChart) {
+      return {
+        stroke: "#a855f7",
+        glow: "#9333ea",
+        from: "rgba(168,85,247,0.35)",
+        to: "rgba(168,85,247,0.05)",
+      };
+    }
+    if (showV3FeesChart) {
+      return {
+        stroke: "#34d399",
+        glow: "#10b981",
+        from: "rgba(52,211,153,0.35)",
+        to: "rgba(52,211,153,0.05)",
+      };
+    }
+    return {
+      stroke: "#38bdf8",
+      glow: "#0ea5e9",
+      from: "rgba(56,189,248,0.35)",
+      to: "rgba(14,165,233,0.05)",
+    };
+  }, [showV3FeesChart, showV3PriceChart, showV3VolumeChart]);
+
   const v3DepositRatio = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
     const amount1Num = safeNumber(v3Amount1);
@@ -2198,6 +2413,56 @@ export default function LiquiditySection({
     v3SelectedToken1Address,
     v3FeeTier,
   ]);
+
+  useEffect(() => {
+    if (!isV3View || !v3PoolInfo.address) return undefined;
+    const id = setInterval(() => {
+      setV3TvlRefreshTick((t) => t + 1);
+    }, 25000);
+    return () => clearInterval(id);
+  }, [isV3View, v3PoolInfo.address]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadV3PoolTvl = async () => {
+      if (!isV3View || !hasV3Liquidity || !v3PoolInfo.address) {
+        if (!cancelled) {
+          setV3PoolTvlHistory([]);
+          setV3PoolTvlSnapshot(null);
+          setV3PoolTvlError("");
+          setV3PoolTvlLoading(false);
+        }
+        return;
+      }
+      setV3PoolTvlLoading(true);
+      setV3PoolTvlError("");
+      try {
+        const [history, snapshot] = await Promise.all([
+          fetchV3PoolHistory(v3PoolInfo.address, V3_TVL_HISTORY_DAYS),
+          fetchV3PoolSnapshot(v3PoolInfo.address),
+        ]);
+        if (cancelled) return;
+        setV3PoolTvlHistory(Array.isArray(history) ? history : []);
+        const nextSnapshot =
+          snapshot && Number.isFinite(Number(snapshot.tvlUsd))
+            ? Number(snapshot.tvlUsd)
+            : null;
+        setV3PoolTvlSnapshot(nextSnapshot);
+      } catch (err) {
+        if (!cancelled) {
+          setV3PoolTvlHistory([]);
+          setV3PoolTvlSnapshot(null);
+          setV3PoolTvlError(err?.message || "Failed to load TVL data.");
+        }
+      } finally {
+        if (!cancelled) setV3PoolTvlLoading(false);
+      }
+    };
+    loadV3PoolTvl();
+    return () => {
+      cancelled = true;
+    };
+  }, [isV3View, hasV3Liquidity, v3PoolInfo.address, v3TvlRefreshTick, v3RefreshTick]);
 
   useEffect(() => {
     let cancelled = false;
@@ -5932,115 +6197,200 @@ export default function LiquiditySection({
                   </div>
 
                   <div className="relative">
-                    <div className="relative h-60 rounded-3xl border border-slate-800 bg-[#0f0707] overflow-hidden">
-                      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(248,113,113,0.24),transparent_48%),radial-gradient(circle_at_80%_0%,rgba(251,113,133,0.18),transparent_40%)]" />
-                      <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(92,12,12,0.92)_0px,rgba(92,12,12,0.92)_40px,rgba(255,114,114,0.35)_40px,rgba(255,114,114,0.35)_42px)] opacity-85" />
-                      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
-                      {v3Chart ? (
-                        <div
-                          ref={v3RangeTrackRef}
-                          className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
-                          onClick={(event) => {
-                            if (!v3Chart) return;
-                            const rect = event.currentTarget.getBoundingClientRect();
-                            const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
-                            if (!Number.isFinite(pct)) return;
-                            const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
-                            if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
-                            const distLower = Math.abs(pct - v3Chart.rangeStart);
-                            const distUpper = Math.abs(pct - v3Chart.rangeEnd);
-                            setV3RangeMode("custom");
-                            if (distLower <= distUpper) {
-                              const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : nextPrice;
-                              setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
-                            } else {
-                              const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : nextPrice;
-                              setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
-                            }
-                          }}
-                        >
-                          {v3ChartMode !== "price-range" && (
-                            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[#0f0707]/80 text-xs text-rose-100/80 pointer-events-none">
-                              {v3ChartMode.replace("-", " ").toUpperCase()} view coming soon
+                    <div
+                      className={`relative h-60 rounded-3xl border border-slate-800 overflow-hidden ${
+                        showV3MetricChart ? "bg-[#050b16]" : "bg-[#0f0707]"
+                      }`}
+                    >
+                      {showV3PriceRangeChart ? (
+                        <>
+                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(248,113,113,0.24),transparent_48%),radial-gradient(circle_at_80%_0%,rgba(251,113,133,0.18),transparent_40%)]" />
+                          <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(92,12,12,0.92)_0px,rgba(92,12,12,0.92)_40px,rgba(255,114,114,0.35)_40px,rgba(255,114,114,0.35)_42px)] opacity-85" />
+                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
+                        </>
+                      ) : showV3MetricChart ? (
+                        <>
+                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.25),transparent_55%),radial-gradient(circle_at_80%_0%,rgba(16,185,129,0.18),transparent_50%)]" />
+                          <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(15,23,42,0.9)_0px,rgba(15,23,42,0.9)_40px,rgba(56,189,248,0.12)_40px,rgba(56,189,248,0.12)_42px)] opacity-70" />
+                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
+                        </>
+                      ) : (
+                        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/70 to-black/60" />
+                      )}
+
+                      {showV3PriceRangeChart ? (
+                        v3Chart ? (
+                          <div
+                            ref={v3RangeTrackRef}
+                            className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
+                            onClick={(event) => {
+                              if (!v3Chart) return;
+                              const rect = event.currentTarget.getBoundingClientRect();
+                              const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
+                              if (!Number.isFinite(pct)) return;
+                              const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
+                              if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
+                              const distLower = Math.abs(pct - v3Chart.rangeStart);
+                              const distUpper = Math.abs(pct - v3Chart.rangeEnd);
+                              setV3RangeMode("custom");
+                              if (distLower <= distUpper) {
+                                const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : nextPrice;
+                                setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
+                              } else {
+                                const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : nextPrice;
+                                setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
+                              }
+                            }}
+                          >
+                            <div className="absolute left-0 right-0 bottom-4 h-[2px] bg-slate-500/60" />
+                            <div
+                              className="absolute bottom-4 h-28 rounded-md border border-rose-400/60 bg-[linear-gradient(180deg,rgba(255,98,98,0.28)_0%,rgba(120,12,12,0.65)_100%)] transition-[left,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{
+                                left: `${v3Chart.rangeStart}%`,
+                                width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                              }}
+                            />
+                            {v3Chart.currentPct !== null && (
+                              <div
+                                className="absolute top-0 bottom-6 w-px border-l border-dashed border-rose-100/60 shadow-[0_0_10px_rgba(248,113,113,0.35)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ left: `${v3Chart.currentPct}%` }}
+                              />
+                            )}
+
+                            <div
+                              className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeStart}%` }}
+                            />
+                            <div
+                              className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeEnd}%` }}
+                            />
+
+                            <div
+                              className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeStart}%` }}
+                            >
+                              {v3RangeMode === "full"
+                                ? "MIN"
+                                : v3LowerPct !== null
+                                ? `${v3LowerPct >= 0 ? "+" : ""}${v3LowerPct.toFixed(2)}%`
+                                : "--"}
+                            </div>
+                            <div
+                              className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeEnd}%` }}
+                            >
+                              {v3RangeMode === "full"
+                                ? "MAX"
+                                : v3UpperPct !== null
+                                ? `${v3UpperPct >= 0 ? "+" : ""}${v3UpperPct.toFixed(2)}%`
+                                : "--"}
+                            </div>
+
+                            <button
+                              type="button"
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                setV3DraggingHandle("lower");
+                              }}
+                              className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeStart}%` }}
+                            >
+                              <span className="absolute inset-2 rounded-full border border-rose-100/60" />
+                              <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
+                            </button>
+                            <button
+                              type="button"
+                              onPointerDown={(event) => {
+                                event.stopPropagation();
+                                event.preventDefault();
+                                setV3DraggingHandle("upper");
+                              }}
+                              className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                              style={{ left: `${v3Chart.rangeEnd}%` }}
+                            >
+                              <span className="absolute inset-2 rounded-full border border-rose-100/60" />
+                              <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
+                            </button>
+
+                            {/* Prices moved to the card below */}
+                          </div>
+                        ) : (
+                          <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
+                            No price data yet
+                          </div>
+                        )
+                      ) : showV3MetricChart ? (
+                        <div className="absolute inset-5">
+                          {v3MetricChart ? (
+                            <>
+                              <svg
+                                viewBox="0 0 100 100"
+                                className="h-full w-full"
+                                preserveAspectRatio="none"
+                              >
+                                <defs>
+                                  <linearGradient id="v3-metric-area" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor={v3MetricPalette.from} />
+                                    <stop offset="100%" stopColor={v3MetricPalette.to} />
+                                  </linearGradient>
+                                </defs>
+                                <path d={v3MetricChart.area} fill="url(#v3-metric-area)" />
+                                <path
+                                  d={v3MetricChart.line}
+                                  fill="none"
+                                  stroke={v3MetricPalette.stroke}
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                {v3MetricChart.points?.length ? (
+                                  <circle
+                                    cx={v3MetricChart.points[v3MetricChart.points.length - 1].x}
+                                    cy={v3MetricChart.points[v3MetricChart.points.length - 1].y}
+                                    r="2.2"
+                                    fill={v3MetricPalette.stroke}
+                                    stroke={v3MetricPalette.glow}
+                                    strokeWidth="1.2"
+                                  />
+                                ) : null}
+                              </svg>
+                              <div className="absolute left-0 top-0">
+                                <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                                  {v3MetricLabel}
+                                </div>
+                                <div className="text-sm font-semibold text-slate-100">
+                                  {v3MetricValue}
+                                </div>
+                                {v3MetricSubLabel ? (
+                                  <div className="text-[10px] text-slate-500">
+                                    {v3MetricSubLabel}
+                                  </div>
+                                ) : null}
+                              </div>
+                              {v3MetricChange !== null && (
+                                <div
+                                  className={`absolute right-0 top-0 text-[10px] font-semibold ${
+                                    v3MetricChange >= 0 ? "text-emerald-300" : "text-rose-300"
+                                  }`}
+                                >
+                                  {v3MetricChange >= 0 ? "+" : ""}
+                                  {v3MetricChange.toFixed(2)}%
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                              {v3PoolTvlLoading
+                                ? `Loading ${v3MetricLabel || "data"}...`
+                                : v3PoolTvlError || `No ${v3MetricLabel || "data"} yet`}
                             </div>
                           )}
-                          <div className="absolute left-0 right-0 bottom-4 h-[2px] bg-slate-500/60" />
-                          <div
-                            className="absolute bottom-4 h-28 rounded-md border border-rose-400/60 bg-[linear-gradient(180deg,rgba(255,98,98,0.28)_0%,rgba(120,12,12,0.65)_100%)] transition-[left,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{
-                              left: `${v3Chart.rangeStart}%`,
-                              width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
-                            }}
-                          />
-                          {v3Chart.currentPct !== null && (
-                            <div
-                              className="absolute top-0 bottom-6 w-px border-l border-dashed border-rose-100/60 shadow-[0_0_10px_rgba(248,113,113,0.35)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.currentPct}%` }}
-                            />
-                          )}
-
-                          <div
-                            className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeStart}%` }}
-                          />
-                          <div
-                            className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeEnd}%` }}
-                          />
-
-                          <div
-                            className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeStart}%` }}
-                          >
-                            {v3RangeMode === "full"
-                              ? "MIN"
-                              : v3LowerPct !== null
-                              ? `${v3LowerPct >= 0 ? "+" : ""}${v3LowerPct.toFixed(2)}%`
-                              : "--"}
-                          </div>
-                          <div
-                            className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeEnd}%` }}
-                          >
-                            {v3RangeMode === "full"
-                              ? "MAX"
-                              : v3UpperPct !== null
-                              ? `${v3UpperPct >= 0 ? "+" : ""}${v3UpperPct.toFixed(2)}%`
-                              : "--"}
-                          </div>
-
-                          <button
-                            type="button"
-                            onPointerDown={(event) => {
-                              event.stopPropagation();
-                              event.preventDefault();
-                              setV3DraggingHandle("lower");
-                            }}
-                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeStart}%` }}
-                          >
-                            <span className="absolute inset-2 rounded-full border border-rose-100/60" />
-                            <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
-                          </button>
-                          <button
-                            type="button"
-                            onPointerDown={(event) => {
-                              event.stopPropagation();
-                              event.preventDefault();
-                              setV3DraggingHandle("upper");
-                            }}
-                            className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                            style={{ left: `${v3Chart.rangeEnd}%` }}
-                          >
-                            <span className="absolute inset-2 rounded-full border border-rose-100/60" />
-                            <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
-                          </button>
-
-                          {/* Prices moved to the card below */}
                         </div>
                       ) : (
-                        <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
-                          No price data yet
+                        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-slate-950/70 text-xs text-slate-300">
+                          {v3ChartMode.replace("-", " ").toUpperCase()} view coming soon
                         </div>
                       )}
                     </div>
@@ -7211,8 +7561,22 @@ export default function LiquiditySection({
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
                           TVL
                         </div>
-                        <div className="text-lg font-semibold text-slate-100">--</div>
-                        <div className="text-[11px] text-emerald-400">--</div>
+                        <div className="text-lg font-semibold text-slate-100">
+                          {v3TvlChart?.latest !== null ? formatNumber(v3TvlChart.latest) : "--"}
+                        </div>
+                        <div
+                          className={`text-[11px] ${
+                            v3TvlChart?.changePct !== null
+                              ? v3TvlChart.changePct >= 0
+                                ? "text-emerald-400"
+                                : "text-rose-400"
+                              : "text-slate-500"
+                          }`}
+                        >
+                          {v3TvlChart?.changePct !== null
+                            ? `${v3TvlChart.changePct >= 0 ? "+" : ""}${v3TvlChart.changePct.toFixed(2)}%`
+                            : "--"}
+                        </div>
                       </div>
                     </div>
                   </div>

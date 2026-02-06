@@ -1657,6 +1657,168 @@ export async function fetchV3PoolsDayData(ids = []) {
   return out;
 }
 
+// Fetch recent pool day data for a V3 pool (sorted desc by date)
+export async function fetchV3PoolHistory(poolId, days = 14) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+  const id = (poolId || "").toLowerCase();
+  if (!id) return [];
+  const count = Math.max(1, Math.min(Number(days) || 14, 1000));
+
+  const candidates = ["pool", "poolAddress"];
+  const variants = [
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+      token0Price
+      token1Price
+    `,
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      token0Price
+      token1Price
+    `,
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+    `,
+  ];
+
+  for (const variant of variants) {
+    for (const field of candidates) {
+      const query = `
+        query V3PoolHistory {
+          poolDayDatas(
+            first: ${count}
+            orderBy: date
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            ${variant}
+          }
+        }
+      `;
+
+      try {
+        const res = await postSubgraphV3(query);
+        const rows = res?.poolDayDatas || [];
+        const mapped = rows.map((row) => {
+          const tvl =
+            row.tvlUSD !== undefined && row.tvlUSD !== null
+              ? row.tvlUSD
+              : row.totalValueLockedUSD;
+          return {
+            date: Number(row.date || 0) * 1000,
+            tvlUsd: toNumberSafe(tvl),
+            volumeUsd: toNumberSafe(row.volumeUSD),
+            feesUsd: row.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
+            token0Price:
+              row.token0Price !== undefined ? toNumberSafe(row.token0Price) : null,
+            token1Price:
+              row.token1Price !== undefined ? toNumberSafe(row.token1Price) : null,
+          };
+        });
+        return mapped
+          .filter((row) => Number.isFinite(row.date) && row.date > 0)
+          .sort((a, b) => a.date - b.date);
+      } catch (err) {
+        const message = err?.message || "";
+        if (isSchemaFieldMissing(message)) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  return [];
+}
+
+// Fetch latest pool-level TVL snapshot for a V3 pool
+export async function fetchV3PoolSnapshot(poolId) {
+  if (SUBGRAPH_V3_MISSING_KEY) return null;
+  const id = (poolId || "").toLowerCase();
+  if (!id) return null;
+
+  const candidates = [
+    {
+      field: "pools",
+      query: `
+        query V3PoolSnapshot {
+          pools(where: { id: "${id}" }) {
+            id
+            totalValueLockedUSD
+            volumeUSD
+          }
+        }
+      `,
+      map: (row) => ({
+        tvlUsd: toNumberSafe(row?.totalValueLockedUSD),
+        volumeUsd: toNumberSafe(row?.volumeUSD),
+      }),
+    },
+    {
+      field: "pools",
+      query: `
+        query V3PoolSnapshot {
+          pools(where: { id: "${id}" }) {
+            id
+            tvlUSD
+            volumeUSD
+          }
+        }
+      `,
+      map: (row) => ({
+        tvlUsd: toNumberSafe(row?.tvlUSD),
+        volumeUsd: toNumberSafe(row?.volumeUSD),
+      }),
+    },
+    {
+      field: "pool",
+      query: `
+        query V3PoolSnapshot {
+          pool(id: "${id}") {
+            id
+            totalValueLockedUSD
+            volumeUSD
+          }
+        }
+      `,
+      map: (row) => ({
+        tvlUsd: toNumberSafe(row?.totalValueLockedUSD),
+        volumeUsd: toNumberSafe(row?.volumeUSD),
+      }),
+      single: true,
+    },
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      const res = await postSubgraphV3(candidate.query);
+      const row = candidate.single ? res?.[candidate.field] : res?.[candidate.field]?.[0];
+      if (!row) {
+        continue;
+      }
+      return candidate.map(row);
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return null;
+}
+
 // Fetch recent pair day data for a token pair (sorted desc by date)
 export async function fetchPairHistory(tokenA, tokenB, days = 7) {
   const tokenALower = tokenA.toLowerCase();

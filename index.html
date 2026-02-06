@@ -22,6 +22,13 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      const isDevHost =
+        location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      window.process = window.process || {
+        env: { NODE_ENV: isDevHost ? "development" : "production" },
+      };
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
