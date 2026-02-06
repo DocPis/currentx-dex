@@ -505,6 +505,18 @@ const formatUsdValue = (v) => {
   return `$${num.toFixed(6)}`;
 };
 
+const formatShortDate = (value) => {
+  try {
+    const date = new Date(value);
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "2-digit",
+    });
+  } catch {
+    return "--";
+  }
+};
+
 const buildSeriesChart = (series, padRatio = 0.1) => {
   const cleaned = (series || []).filter(
     (row) =>
@@ -970,6 +982,8 @@ export default function LiquiditySection({
   const [v3RangeInitialized, setV3RangeInitialized] = useState(false);
   const [v3ChartMode, setV3ChartMode] = useState("price-range");
   const [v3ChartMenuOpen, setV3ChartMenuOpen] = useState(false);
+  const [v3RangeTimeframe, setV3RangeTimeframe] = useState("1M");
+  const [v3StrategyId, setV3StrategyId] = useState("");
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
@@ -1434,6 +1448,13 @@ export default function LiquiditySection({
     }
     return null;
   }, [v3CurrentPrice, v3PoolNeedsInit, v3HasStartPrice, v3StartPriceNum]);
+  const v3CurrentPriceUsd = useMemo(() => {
+    if (!v3CurrentPrice || !Number.isFinite(v3CurrentPrice) || v3CurrentPrice <= 0) return null;
+    const ref = v3Token1PriceUsd;
+    if (ref === null || ref === undefined || !Number.isFinite(ref) || ref <= 0) return null;
+    const usd = v3CurrentPrice * Number(ref);
+    return Number.isFinite(usd) ? usd : null;
+  }, [v3CurrentPrice, v3Token1PriceUsd]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
   const v3HasCustomRange =
@@ -1443,6 +1464,28 @@ export default function LiquiditySection({
     v3RangeLowerNum > 0 &&
     v3RangeUpperNum > 0 &&
     v3RangeLowerNum < v3RangeUpperNum;
+  const v3PriceStatus = useMemo(() => {
+    if (v3PoolLoading) return "Loading...";
+    if (v3CurrentPrice) {
+      return `${formatPrice(v3CurrentPrice)} ${v3Token1}/${v3Token0}`;
+    }
+    if (v3PoolNeedsInit) {
+      if (v3HasStartPrice) {
+        return `${formatPrice(v3StartPriceNum)} ${v3Token1}/${v3Token0}`;
+      }
+      return v3PoolError || "Pool not initialized. Set a starting price.";
+    }
+    return v3PoolError || "Pool not deployed";
+  }, [
+    v3PoolLoading,
+    v3CurrentPrice,
+    v3Token1,
+    v3Token0,
+    v3PoolNeedsInit,
+    v3HasStartPrice,
+    v3StartPriceNum,
+    v3PoolError,
+  ]);
 
   const v3RangeMath = useMemo(() => {
     const hasPoolSqrt =
@@ -1630,6 +1673,43 @@ export default function LiquiditySection({
     },
     [v3ReferencePrice]
   );
+  const applyV3RangeAsymmetric = useCallback(
+    (lowerPct, upperPct) => {
+      if (!v3ReferencePrice) return;
+      const lower = v3ReferencePrice * (1 + lowerPct);
+      const upper = v3ReferencePrice * (1 + upperPct);
+      if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower <= 0 || upper <= 0) {
+        return;
+      }
+      const sortedLower = Math.min(lower, upper);
+      const sortedUpper = Math.max(lower, upper);
+      setV3RangeMode("custom");
+      setV3RangeLower(sortedLower.toFixed(6));
+      setV3RangeUpper(sortedUpper.toFixed(6));
+      setV3RangeInitialized(true);
+    },
+    [v3ReferencePrice]
+  );
+  const applyV3RangeTickPreset = useCallback(
+    (tickCount) => {
+      if (!v3ReferencePrice) return;
+      const dec0 = v3Token0Meta?.decimals ?? 18;
+      const dec1 = v3Token1Meta?.decimals ?? 18;
+      const spacing = getTickSpacingFromFee(v3FeeTier) || 1;
+      const currentTick = priceToTick(v3ReferencePrice, dec0, dec1);
+      if (!Number.isFinite(currentTick)) return;
+      const lowerTick = Math.floor((currentTick - tickCount * spacing) / spacing) * spacing;
+      const upperTick = Math.ceil((currentTick + tickCount * spacing) / spacing) * spacing;
+      const lower = tickToPrice(lowerTick, dec0, dec1);
+      const upper = tickToPrice(upperTick, dec0, dec1);
+      if (!Number.isFinite(lower) || !Number.isFinite(upper)) return;
+      setV3RangeMode("custom");
+      setV3RangeLower(lower.toFixed(6));
+      setV3RangeUpper(upper.toFixed(6));
+      setV3RangeInitialized(true);
+    },
+    [v3ReferencePrice, v3Token0Meta, v3Token1Meta, v3FeeTier]
+  );
   useEffect(() => {
     if (v3RangeSide === "token0") {
       if (v3Amount1 && v3Amount1 !== "0") setV3Amount1("0");
@@ -1690,6 +1770,40 @@ export default function LiquiditySection({
       rangeEnd,
     };
   }, [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
+
+  const v3RangeStrategies = useMemo(
+    () => [
+      {
+        id: "stable",
+        title: "Stable",
+        range: "± 3 ticks",
+        description: "Good for stablecoins or low volatility pairs.",
+        apply: () => applyV3RangeTickPreset(3),
+      },
+      {
+        id: "wide",
+        title: "Wide",
+        range: "-50% → +100%",
+        description: "Good for volatile pairs.",
+        apply: () => applyV3RangeAsymmetric(-0.5, 1),
+      },
+      {
+        id: "lower",
+        title: "One-sided lower",
+        range: "-50%",
+        description: "Supply liquidity if price goes down.",
+        apply: () => applyV3RangeAsymmetric(-0.5, 0),
+      },
+      {
+        id: "upper",
+        title: "One-sided upper",
+        range: "+100%",
+        description: "Supply liquidity if price goes up.",
+        apply: () => applyV3RangeAsymmetric(0, 1),
+      },
+    ],
+    [applyV3RangeTickPreset, applyV3RangeAsymmetric]
+  );
 
   const v3PoolSeries = useMemo(() => {
     const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
@@ -1756,6 +1870,23 @@ export default function LiquiditySection({
       snapshot !== null && snapshot > 0 ? mergeSeriesSnapshot(base, snapshot) : base;
     return buildSeriesChart(merged);
   }, [v3PoolSeries, v3PoolIsReversed, v3CurrentPrice]);
+
+  const v3PriceAxisTicks = useMemo(() => {
+    const series = v3PoolSeries;
+    if (!series.length) return [];
+    const steps = [0, 0.33, 0.66, 1];
+    return steps
+      .map((ratio) => {
+        const idx = Math.min(series.length - 1, Math.max(0, Math.round((series.length - 1) * ratio)));
+        const item = series[idx];
+        if (!item || !Number.isFinite(item.date)) return null;
+        return {
+          label: formatShortDate(item.date),
+          pct: ratio * 100,
+        };
+      })
+      .filter(Boolean);
+  }, [v3PoolSeries]);
 
   const showV3PriceRangeChart = v3ChartMode === "price-range";
   const showV3TvlChart = v3ChartMode === "tvl";
@@ -1896,11 +2027,13 @@ export default function LiquiditySection({
         const next = Math.max(0, lower + direction * step);
         const safeNext = upper ? Math.min(next, upper * 0.999) : next;
         setV3RangeMode("custom");
+        setV3StrategyId("custom");
         setV3RangeLower(safeNext.toFixed(6));
       } else {
         const next = upper + direction * step;
         const safeNext = lower ? Math.max(next, lower * 1.001) : next;
         setV3RangeMode("custom");
+        setV3StrategyId("custom");
         setV3RangeUpper(safeNext.toFixed(6));
       }
     },
@@ -2659,7 +2792,8 @@ export default function LiquiditySection({
   useEffect(() => {
     if (!v3DraggingHandle) return undefined;
     const prevCursor = document.body.style.cursor;
-    document.body.style.cursor = "ew-resize";
+    const useVerticalDrag = v3ChartMode === "price-range";
+    document.body.style.cursor = useVerticalDrag ? "ns-resize" : "ew-resize";
     v3DragCurrentRef.current = {
       ...v3DragCurrentRef.current,
       [v3DraggingHandle]:
@@ -2695,7 +2829,11 @@ export default function LiquiditySection({
     const handleMove = (event) => {
       if (!v3RangeTrackRef.current || !v3Chart) return;
       const rect = v3RangeTrackRef.current.getBoundingClientRect();
-      const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
+      const pct = clampPercent(
+        useVerticalDrag
+          ? ((rect.bottom - event.clientY) / rect.height) * 100
+          : ((event.clientX - rect.left) / rect.width) * 100
+      );
       if (!Number.isFinite(pct)) return;
       const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
       if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
@@ -2730,7 +2868,7 @@ export default function LiquiditySection({
       }
       v3DragTargetRef.current = null;
     };
-  }, [v3DraggingHandle, v3Chart, v3RangeLowerNum, v3RangeUpperNum]);
+  }, [v3DraggingHandle, v3Chart, v3RangeLowerNum, v3RangeUpperNum, v3ChartMode]);
 
   useEffect(() => {
     if (!v3PositionMenuOpen) return undefined;
@@ -5990,9 +6128,9 @@ export default function LiquiditySection({
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs text-slate-400">Range</span>
-                    <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs text-slate-400">Set price range</span>
+                    <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/70 p-1">
                       <button
                         type="button"
                         onClick={() => {
@@ -6000,42 +6138,37 @@ export default function LiquiditySection({
                           setV3RangeLower("");
                           setV3RangeUpper("");
                           setV3RangeInitialized(true);
+                          setV3StrategyId("full");
                         }}
-                        className={`px-3 py-1.5 rounded-full text-xs border ${
+                        className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                           v3RangeMode === "full"
-                            ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
-                            : "border-slate-800 bg-slate-900 text-slate-300"
+                            ? "bg-slate-200 text-slate-900 shadow"
+                            : "text-slate-300 hover:text-slate-100"
                         }`}
                       >
                         Full range
                       </button>
                       <button
                         type="button"
-                        disabled={!v3ReferencePrice}
-                        onClick={() => applyV3RangePreset(0.1)}
-                        className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
-                      >
-                        +/-10%
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!v3ReferencePrice}
-                        onClick={() => applyV3RangePreset(0.25)}
-                        className="px-3 py-1.5 rounded-full text-xs border border-slate-800 bg-slate-900 text-slate-300 disabled:opacity-50"
-                      >
-                        +/-25%
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setV3RangeMode("custom")}
-                        className={`px-3 py-1.5 rounded-full text-xs border ${
+                        onClick={() => {
+                          setV3RangeMode("custom");
+                          if (!v3HasCustomRange && v3ReferencePrice) {
+                            applyV3RangePreset(0.1);
+                          }
+                        }}
+                        className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
                           v3RangeMode === "custom"
-                            ? "border-sky-400/40 bg-sky-500/10 text-sky-100"
-                            : "border-slate-800 bg-slate-900 text-slate-300"
+                            ? "bg-slate-200 text-slate-900 shadow"
+                            : "text-slate-300 hover:text-slate-100"
                         }`}
                       >
-                        Custom
+                        Custom range
                       </button>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {v3RangeMode === "custom"
+                        ? "Custom range allows you to concentrate your liquidity within specific price bounds, enhancing fee earnings but requiring active management."
+                        : "Full range spreads liquidity across all prices for a hands-off position with lower capital efficiency."}
                     </div>
                   </div>
                 </div>
@@ -6077,6 +6210,7 @@ export default function LiquiditySection({
                         value={v3RangeLower}
                         onChange={(e) => {
                           setV3RangeMode("custom");
+                          setV3StrategyId("custom");
                           setV3RangeLower(e.target.value);
                         }}
                         disabled={v3RangeMode === "full"}
@@ -6114,6 +6248,7 @@ export default function LiquiditySection({
                         value={v3RangeUpper}
                         onChange={(e) => {
                           setV3RangeMode("custom");
+                          setV3StrategyId("custom");
                           setV3RangeUpper(e.target.value);
                         }}
                         disabled={v3RangeMode === "full"}
@@ -6143,32 +6278,121 @@ export default function LiquiditySection({
                 </div>
 
                 <div className="rounded-3xl border border-slate-800 bg-slate-950/60 px-5 pt-5 pb-6 mb-6">
-                  <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 gap-2 mb-3">
-                    <span>
-                      {v3PoolLoading
-                        ? "Loading..."
-                        : v3CurrentPrice
-                        ? `Current price: ${formatPrice(v3CurrentPrice)} ${v3Token1} per ${v3Token0}`
-                        : v3PoolNeedsInit
-                        ? v3HasStartPrice
-                          ? `Starting price: ${formatPrice(v3StartPriceNum)} ${v3Token1} per ${v3Token0}`
-                          : v3PoolError || "Pool not initialized. Set a starting price."
-                        : v3PoolError || "Pool not deployed"}
-                    </span>
-                    <span>Fee tier {formatFeeTier(v3FeeTier)}</span>
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                    <div className="min-w-0">
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                        Current price
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100">
+                        <span className="truncate">{v3PriceStatus}</span>
+                        {v3CurrentPriceUsd !== null && (
+                          <span className="text-sm text-slate-400">
+                            ({formatUsdPrice(v3CurrentPriceUsd)})
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {v3PoolLoading
+                          ? "Fetching live pool data"
+                          : `Fee tier ${formatFeeTier(v3FeeTier)}`}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 rounded-full border border-slate-800 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-100">
+                        {v3Token1Meta?.logo ? (
+                          <img
+                            src={v3Token1Meta.logo}
+                            alt={`${v3Token1} logo`}
+                            className="h-4 w-4 rounded-full bg-slate-800 object-contain"
+                          />
+                        ) : (
+                          <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                            {(v3Token1 || "?").slice(0, 2)}
+                          </div>
+                        )}
+                        <span>{v3Token1}</span>
+                        <span className="mx-1 h-3 w-px bg-slate-700/80" />
+                        {v3Token0Meta?.logo ? (
+                          <img
+                            src={v3Token0Meta.logo}
+                            alt={`${v3Token0} logo`}
+                            className="h-4 w-4 rounded-full bg-slate-800 object-contain"
+                          />
+                        ) : (
+                          <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                            {(v3Token0 || "?").slice(0, 2)}
+                          </div>
+                        )}
+                        <span>{v3Token0}</span>
+                      </div>
+                      <div className="relative" ref={v3ChartMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setV3ChartMenuOpen((v) => !v)}
+                          className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-200 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+                        >
+                          {v3ChartMode.replace("-", " ")}
+                          <svg
+                            viewBox="0 0 20 20"
+                            fill="none"
+                            xmlns="http://www.w3.org/2000/svg"
+                            className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
+                          >
+                            <path
+                              d="M6 8l4 4 4-4"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
+                          </svg>
+                        </button>
+                        <div
+                          className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
+                            v3ChartMenuOpen
+                              ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
+                              : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
+                          }`}
+                        >
+                          {[
+                            { id: "price-range", label: "Price range" },
+                            { id: "tvl", label: "TVL" },
+                            { id: "price", label: "Price" },
+                            { id: "volume", label: "Volume" },
+                            { id: "fees", label: "Fees" },
+                          ].map((opt) => (
+                            <button
+                              key={opt.id}
+                              type="button"
+                              onClick={() => {
+                                setV3ChartMode(opt.id);
+                                setV3ChartMenuOpen(false);
+                              }}
+                              className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
+                                v3ChartMode === opt.id
+                                  ? "bg-sky-500/20 text-sky-100"
+                                  : "hover:bg-slate-800/70"
+                              }`}
+                            >
+                              {opt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="relative">
                     <div
-                      className={`relative h-60 rounded-3xl border border-slate-800 overflow-hidden ${
+                      className={`relative h-64 rounded-3xl border border-slate-800 overflow-hidden ${
                         showV3MetricChart ? "bg-[#050b16]" : "bg-[#0f0707]"
                       }`}
                     >
                       {showV3PriceRangeChart ? (
                         <>
-                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_10%,rgba(248,113,113,0.24),transparent_48%),radial-gradient(circle_at_80%_0%,rgba(251,113,133,0.18),transparent_40%)]" />
-                          <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(92,12,12,0.92)_0px,rgba(92,12,12,0.92)_40px,rgba(255,114,114,0.35)_40px,rgba(255,114,114,0.35)_42px)] opacity-85" />
-                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
+                          <div className="absolute inset-0 bg-[#1b1b1b]" />
+                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_45%)]" />
+                          <div className="absolute inset-0 bg-[linear-gradient(transparent_0,transparent_28px,rgba(255,255,255,0.05)_28px,rgba(255,255,255,0.05)_29px),linear-gradient(90deg,rgba(255,255,255,0.04)_0,rgba(255,255,255,0.04)_1px,transparent_1px,transparent_48px)] opacity-70" />
                         </>
                       ) : showV3MetricChart ? (
                         <>
@@ -6182,102 +6406,175 @@ export default function LiquiditySection({
 
                       {showV3PriceRangeChart ? (
                         v3Chart ? (
-                          <div
-                            ref={v3RangeTrackRef}
-                            className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
-                            onClick={(event) => {
-                              if (!v3Chart) return;
-                              const rect = event.currentTarget.getBoundingClientRect();
-                              const pct = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
-                              if (!Number.isFinite(pct)) return;
-                              const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
-                              if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
-                              const distLower = Math.abs(pct - v3Chart.rangeStart);
-                              const distUpper = Math.abs(pct - v3Chart.rangeEnd);
-                              setV3RangeMode("custom");
-                              if (distLower <= distUpper) {
-                                const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : nextPrice;
-                                setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
-                              } else {
-                                const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : nextPrice;
-                                setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
-                              }
-                            }}
-                          >
-                            <div className="absolute left-0 right-0 bottom-4 h-[2px] bg-slate-500/60" />
+                          <>
                             <div
-                              className="absolute bottom-4 h-28 rounded-md border border-rose-400/60 bg-[linear-gradient(180deg,rgba(255,98,98,0.28)_0%,rgba(120,12,12,0.65)_100%)] transition-[left,width] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{
-                                left: `${v3Chart.rangeStart}%`,
-                                width: `${Math.max(2, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                              ref={v3RangeTrackRef}
+                              className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
+                              onClick={(event) => {
+                                if (!v3Chart) return;
+                                const rect = event.currentTarget.getBoundingClientRect();
+                                const pct = clampPercent(
+                                  ((rect.bottom - event.clientY) / rect.height) * 100
+                                );
+                                if (!Number.isFinite(pct)) return;
+                                const nextPrice =
+                                  v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
+                                if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
+                                const distLower = Math.abs(pct - v3Chart.rangeStart);
+                                const distUpper = Math.abs(pct - v3Chart.rangeEnd);
+                                setV3RangeMode("custom");
+                                setV3StrategyId("custom");
+                                if (distLower <= distUpper) {
+                                  const maxAllowed = v3RangeUpperNum
+                                    ? v3RangeUpperNum * 0.999
+                                    : nextPrice;
+                                  setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
+                                } else {
+                                  const minAllowed = v3RangeLowerNum
+                                    ? v3RangeLowerNum * 1.001
+                                    : nextPrice;
+                                  setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
+                                }
                               }}
-                            />
-                            {v3Chart.currentPct !== null && (
+                            >
+                              {v3PriceChart ? (
+                                <svg
+                                  viewBox="0 0 100 100"
+                                  className="absolute inset-0 h-full w-full pointer-events-none"
+                                  preserveAspectRatio="none"
+                                >
+                                  <path
+                                    d={v3PriceChart.line}
+                                    fill="none"
+                                    stroke="rgba(226,232,240,0.6)"
+                                    strokeWidth="0.8"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+                                  {(() => {
+                                    const points = v3PriceChart.points || [];
+                                    if (!points.length) return null;
+                                    const start = Math.max(0, points.length - 8);
+                                    const segment = points.slice(start);
+                                    const highlight =
+                                      segment.length >= 2
+                                        ? segment
+                                            .map((point, idx) =>
+                                              `${idx === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`
+                                            )
+                                            .join(" ")
+                                        : null;
+                                    const last = points[points.length - 1];
+                                    return (
+                                      <>
+                                        {highlight ? (
+                                          <path
+                                            d={highlight}
+                                            fill="none"
+                                            stroke="#f472d0"
+                                            strokeWidth="1.8"
+                                            strokeLinecap="round"
+                                            strokeLinejoin="round"
+                                          />
+                                        ) : null}
+                                        {last ? (
+                                          <circle
+                                            cx={last.x}
+                                            cy={last.y}
+                                            r="2.4"
+                                            fill="#f472d0"
+                                            stroke="#fbcfe8"
+                                            strokeWidth="0.9"
+                                          />
+                                        ) : null}
+                                      </>
+                                    );
+                                  })()}
+                                </svg>
+                              ) : null}
                               <div
-                                className="absolute top-0 bottom-6 w-px border-l border-dashed border-rose-100/60 shadow-[0_0_10px_rgba(248,113,113,0.35)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                                style={{ left: `${v3Chart.currentPct}%` }}
+                                className="absolute left-0 right-10 rounded-md border border-fuchsia-300/40 bg-[linear-gradient(180deg,rgba(147,51,98,0.65)_0%,rgba(67,24,47,0.9)_100%)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{
+                                  top: `${100 - v3Chart.rangeEnd}%`,
+                                  height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                                }}
                               />
-                            )}
+                              <div className="absolute right-2 top-2 bottom-2 w-2.5 rounded-full bg-slate-800/80" />
+                              <div
+                                className="absolute right-2 w-2.5 rounded-full bg-fuchsia-500/80"
+                                style={{
+                                  top: `${100 - v3Chart.rangeEnd}%`,
+                                  height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                                }}
+                              />
+                              {v3Chart.currentPct !== null && (
+                                <div
+                                  className="absolute right-7 w-5 rounded-sm bg-fuchsia-500/70 shadow-[0_0_12px_rgba(236,72,153,0.5)]"
+                                  style={{
+                                    top: `${100 - v3Chart.currentPct}%`,
+                                    transform: "translateY(-50%)",
+                                    height: "18px",
+                                  }}
+                                />
+                              )}
+                              {v3Chart.currentPct !== null && (
+                                <div
+                                  className="absolute left-0 right-10 h-px border-t border-dashed border-slate-200/40 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                  style={{ top: `${100 - v3Chart.currentPct}%` }}
+                                />
+                              )}
 
-                            <div
-                              className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeStart}%` }}
-                            />
-                            <div
-                              className="absolute top-0 bottom-6 w-[2px] bg-rose-100/80 shadow-[0_0_10px_rgba(248,113,113,0.45)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeEnd}%` }}
-                            />
+                              <div
+                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ top: `${100 - v3Chart.rangeEnd}%` }}
+                              />
+                              <div
+                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ top: `${100 - v3Chart.rangeStart}%` }}
+                              />
 
-                            <div
-                              className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeStart}%` }}
-                            >
-                              {v3RangeMode === "full"
-                                ? "MIN"
-                                : v3LowerPct !== null
-                                ? `${v3LowerPct >= 0 ? "+" : ""}${v3LowerPct.toFixed(2)}%`
-                                : "--"}
+                              <button
+                                type="button"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  event.preventDefault();
+                                  setV3DraggingHandle("lower");
+                                }}
+                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ top: `${100 - v3Chart.rangeStart}%` }}
+                              >
+                                <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
+                              </button>
+                              <button
+                                type="button"
+                                onPointerDown={(event) => {
+                                  event.stopPropagation();
+                                  event.preventDefault();
+                                  setV3DraggingHandle("upper");
+                                }}
+                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+                                style={{ top: `${100 - v3Chart.rangeEnd}%` }}
+                              >
+                                <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
+                              </button>
+
+                              {/* Prices moved to the card below */}
                             </div>
-                            <div
-                              className="absolute -top-3 translate-x-[-50%] rounded-full bg-[#0f0b0b]/90 border border-rose-500/30 px-2.5 py-1 text-[11px] text-rose-100/90 shadow-[0_6px_18px_rgba(0,0,0,0.5)] transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeEnd}%` }}
-                            >
-                              {v3RangeMode === "full"
-                                ? "MAX"
-                                : v3UpperPct !== null
-                                ? `${v3UpperPct >= 0 ? "+" : ""}${v3UpperPct.toFixed(2)}%`
-                                : "--"}
-                            </div>
-
-                            <button
-                              type="button"
-                              onPointerDown={(event) => {
-                                event.stopPropagation();
-                                event.preventDefault();
-                                setV3DraggingHandle("lower");
-                              }}
-                              className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeStart}%` }}
-                            >
-                              <span className="absolute inset-2 rounded-full border border-rose-100/60" />
-                              <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
-                            </button>
-                            <button
-                              type="button"
-                              onPointerDown={(event) => {
-                                event.stopPropagation();
-                                event.preventDefault();
-                                setV3DraggingHandle("upper");
-                              }}
-                              className="absolute bottom-1 h-8 w-8 -translate-x-1/2 rounded-full border-2 border-rose-100/80 bg-[#111010] shadow-[0_0_24px_rgba(248,113,113,0.55)] touch-none cursor-ew-resize transition-[left] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
-                              style={{ left: `${v3Chart.rangeEnd}%` }}
-                            >
-                              <span className="absolute inset-2 rounded-full border border-rose-100/60" />
-                              <span className="absolute left-1/2 top-1/2 h-3.5 w-0.5 -translate-x-1/2 -translate-y-1/2 bg-rose-100/80" />
-                            </button>
-
-                            {/* Prices moved to the card below */}
-                          </div>
+                            <div className="absolute left-5 right-10 bottom-6 h-px bg-slate-700/60" />
+                            {v3PriceAxisTicks.length ? (
+                              <div className="absolute left-5 right-10 bottom-2 text-[11px] text-slate-400 pointer-events-none">
+                                {v3PriceAxisTicks.map((tick) => (
+                                  <span
+                                    key={`${tick.label}-${tick.pct}`}
+                                    className="absolute -translate-x-1/2"
+                                    style={{ left: `${tick.pct}%` }}
+                                  >
+                                    {tick.label}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </>
                         ) : (
                           <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
                             No price data yet
@@ -6356,62 +6653,105 @@ export default function LiquiditySection({
                         </div>
                       )}
                     </div>
-                    <div className="mt-4 flex justify-end" ref={v3ChartMenuRef}>
-                      <div className="relative">
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {["1D", "1W", "1M", "1Y", "All"].map((label) => (
+                          <button
+                            key={label}
+                            type="button"
+                            onClick={() => setV3RangeTimeframe(label)}
+                            className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${
+                              v3RangeTimeframe === label
+                                ? "border-sky-400/70 bg-sky-500/15 text-sky-100"
+                                : "border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-600"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setV3ChartMenuOpen((v) => !v)}
-                          className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-[#120909]/80 px-3 py-1.5 text-[11px] uppercase tracking-[0.12em] text-rose-100/80 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          aria-label="Zoom in"
                         >
-                          {v3ChartMode.replace("-", " ")}
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
-                          >
-                            <path
-                              d="M6 8l4 4 4-4"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
+                          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
+                            <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+                            <path d="M16 16l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            <path d="M11 8v6M8 11h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                           </svg>
                         </button>
-                        <div
-                          className={`absolute top-full right-0 mt-1 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-[#140b0b] p-1 text-[9px] text-rose-100/80 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
-                            v3ChartMenuOpen
-                              ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
-                              : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
-                          }`}
+                        <button
+                          type="button"
+                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          aria-label="Crosshair"
                         >
-                          {[
-                            { id: "price-range", label: "Price range" },
-                            { id: "tvl", label: "TVL" },
-                            { id: "price", label: "Price" },
-                            { id: "volume", label: "Volume" },
-                            { id: "fees", label: "Fees" },
-                          ].map((opt) => (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() => {
-                                setV3ChartMode(opt.id);
-                                setV3ChartMenuOpen(false);
-                              }}
-                              className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
-                                v3ChartMode === opt.id
-                                  ? "bg-rose-500/15 text-rose-100"
-                                  : "hover:bg-rose-500/10"
-                              }`}
-                            >
-                              {opt.label}
-                            </button>
-                          ))}
-                        </div>
+                          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
+                            <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.5" />
+                            <path d="M12 5v4M12 15v4M5 12h4M15 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          </svg>
+                        </button>
+                        <button
+                          type="button"
+                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          aria-label="Zoom out"
+                        >
+                          <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
+                            <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="1.5" />
+                            <path d="M16 16l4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            <path d="M8 11h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                          </svg>
+                        </button>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3RangeMode("full");
+                          setV3RangeLower("");
+                          setV3RangeUpper("");
+                          setV3RangeInitialized(true);
+                          setV3StrategyId("full");
+                        }}
+                        className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold text-slate-200 hover:border-slate-500"
+                      >
+                        Reset
+                      </button>
                     </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-5 py-4 mb-5">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                    Price strategies
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                    {v3RangeStrategies.map((strategy) => {
+                      const isActive = v3StrategyId === strategy.id;
+                      return (
+                        <button
+                          key={strategy.id}
+                          type="button"
+                          disabled={!v3ReferencePrice}
+                          onClick={() => {
+                            if (!v3ReferencePrice) return;
+                            strategy.apply();
+                            setV3StrategyId(strategy.id);
+                          }}
+                          className={`rounded-2xl border px-4 py-3 text-left transition ${
+                            isActive
+                              ? "border-sky-400/60 bg-sky-500/10 text-sky-100"
+                              : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-600"
+                          } disabled:opacity-50`}
+                        >
+                          <div className="text-sm font-semibold">{strategy.title}</div>
+                          <div className="mt-1 text-xs text-slate-300">{strategy.range}</div>
+                          <div className="mt-2 text-[11px] text-slate-500">
+                            {strategy.description}
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
