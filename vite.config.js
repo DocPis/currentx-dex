@@ -55,4 +55,7 @@ export default defineConfig({
   build: {
     chunkSizeWarningLimit: 1024, // raise limit to 1 MB to avoid noisy warnings
   },
+  optimizeDeps: {
+    exclude: ['@avon_xyz/widget'],
+  },
 })
