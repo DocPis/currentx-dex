@@ -90,6 +90,24 @@ const formatBalance = (v) => {
 };
 const displaySymbol = (token, fallback) =>
   (token && (token.displaySymbol || token.symbol)) || fallback;
+const routeSymbol = (token, fallback) => {
+  const sym = token?.symbol;
+  if (typeof sym === "string" && sym.trim() && !sym.includes(" ")) return sym;
+  const display = token?.displaySymbol;
+  if (typeof display === "string" && display.trim() && !display.includes(" ")) return display;
+  return fallback;
+};
+const amountTextClass = (value, baseClass = "text-2xl sm:text-3xl") => {
+  const raw = String(value || "");
+  if (!raw) return baseClass;
+  const len = raw.replace(/[^0-9.]/g, "").length;
+  if (len <= 12) return baseClass;
+  if (len <= 16) return "text-xl sm:text-2xl tracking-tight";
+  if (len <= 20) return "text-lg sm:text-xl tracking-tight";
+  if (len <= 24) return "text-base sm:text-lg tracking-tight";
+  if (len <= 30) return "text-sm sm:text-base tracking-tight";
+  return "text-xs sm:text-sm tracking-tight";
+};
 const TokenLogo = ({
   token,
   fallbackSymbol,
@@ -475,7 +493,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [swapPulse, setSwapPulse] = useState(false);
   const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
-  const [executionMode, setExecutionMode] = useState("turbo"); // "turbo" | "protected"
   const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
@@ -1381,7 +1398,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           : null;
       const label =
         typeof addrOrSymbol === "string" && addrOrSymbol.startsWith("0x")
-          ? displaySymbol(metaByAddr, "Token")
+          ? routeSymbol(metaByAddr, "Token")
           : addrOrSymbol;
       return label || "Token";
     });
@@ -1394,11 +1411,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const meta = Object.values(tokenRegistry).find(
           (t) => t.address && t.address.toLowerCase() === lower
         );
-        const symbol = displaySymbol(meta, meta?.symbol || shortenAddress(value));
+        const symbol = routeSymbol(meta, shortenAddress(value));
         return { symbol, meta };
       }
       const meta = tokenRegistry[value] || null;
-      return { symbol: displaySymbol(meta, value), meta };
+      return { symbol: routeSymbol(meta, value), meta };
     },
     [tokenRegistry]
   );
@@ -1725,7 +1742,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           } else {
             if (hasV3Support && routePreference !== "v2") {
               try {
-                const route = await buildV3Route({ amountWei, mode: executionMode });
+                const route = await buildV3Route({ amountWei });
                 const amountOut = await quoteV3Route(provider, amountWei, route);
                 v3Route = { ...route, protocol: "V3", amountOut };
               } catch {
@@ -2147,14 +2164,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const safeVolatility = Number.isFinite(quoteVolatilityPct)
     ? Math.max(quoteVolatilityPct, 0)
     : 0;
-  const turboAutoSlippagePct = Math.min(
-    5,
-    Math.max(baseSlippagePct, safePriceImpact * 0.6 + safeVolatility * 0.45 + 0.35)
-  );
-  const protectedSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
-  const autoSlippagePct =
-    executionMode === "turbo" ? turboAutoSlippagePct : protectedSlippagePct;
+  const autoSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
   const effectiveSlippagePct = autoSlippagePct;
+  const reQuoteThresholdPct = 0.9;
   const slippageBps = (() => {
     if (Number.isNaN(effectiveSlippagePct) || effectiveSlippagePct < 0) return 50;
     return Math.min(5000, Math.round(effectiveSlippagePct * 100));
@@ -2169,13 +2181,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         displayBuySymbol
       )
     : "--";
-  const activeRouteLabels =
-    displayRoute && displayRoute.length
-      ? displayRoute
-      : [displaySellSymbol, displayBuySymbol];
+  const activeRouteTokens = (
+    displayRoute && displayRoute.length ? displayRoute : [displaySellSymbol, displayBuySymbol]
+  ).map((label) => resolveRouteToken(label));
   const isQuoteLocked = quoteLockedUntil && quoteLockedUntil > Date.now();
   const quoteSourceLabel = (() => {
-    if (quoteLoading) return "Loading quote...";
     if (quoteError) return quoteError;
     if (!activeInputAmount) {
       return isExactOut
@@ -2430,7 +2440,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (!isDirectEthWeth && routeProtocol === "V3") {
         const readProvider = getReadOnlyProvider();
         const candidateRoute =
-          routePlan || (await buildV3Route({ amountWei, mode: executionMode }));
+          routePlan || (await buildV3Route({ amountWei }));
         const freshOut = await quoteV3Route(readProvider, amountWei, candidateRoute);
         const freshOutNum = Number(formatUnits(freshOut, decimalsOut));
         const currentOutNum =
@@ -2440,7 +2450,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const deltaPct = currentOutNum
           ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
           : 0;
-        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        const reQuoteThreshold = reQuoteThresholdPct;
         guardedRouteMeta = candidateRoute;
         guardedAmountOut = freshOut;
         setQuoteVolatilityPct(deltaPct);
@@ -2476,7 +2486,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const deltaPct = currentOutNum
           ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
           : 0;
-        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        const reQuoteThreshold = reQuoteThresholdPct;
         guardedRouteMeta = { ...candidateRoute, protocol: "V2", amountOut: freshOut };
         guardedAmountOut = freshOut;
         setQuoteVolatilityPct(deltaPct);
@@ -2527,7 +2537,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const deltaPct = currentOutNum
           ? Math.abs((freshOutNum - currentOutNum) / currentOutNum) * 100
           : 0;
-        const reQuoteThreshold = executionMode === "turbo" ? 1.5 : 0.9;
+        const reQuoteThreshold = reQuoteThresholdPct;
         guardedRouteMeta = {
           ...routePlan,
           protocol: "SPLIT",
@@ -3063,35 +3073,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   return (
     <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
       <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-4 sm:p-6 shadow-xl">
-        <div className="mb-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <span className="text-sm font-semibold text-slate-100">Execution mode</span>
-            <div className="inline-flex rounded-xl bg-slate-900/70 border border-slate-800 overflow-hidden">
-              {[
-                { id: "turbo", label: "Turbo" },
-                { id: "protected", label: "Protected" },
-              ].map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setExecutionMode(opt.id)}
-                  className={`px-3 py-1.5 text-sm font-semibold transition ${
-                    executionMode === opt.id
-                      ? "bg-sky-500/20 text-sky-100 border border-sky-500/40"
-                      : "text-slate-200 hover:text-sky-100"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="text-[11px] text-slate-400">
-            {executionMode === "turbo"
-              ? "Turbo: quote live, auto-slippage, auto re-quote on fast moves."
-              : "Protected: tighter limits and conservative routing (direct/WETH fallback)."}
-          </div>
-        </div>
         <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
           <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
             <span>Sell</span>
@@ -3149,7 +3130,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 if (swapStatus) setSwapStatus(null);
               }}
               placeholder="0.00"
-              className="flex-1 text-right bg-transparent text-2xl font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full"
+              className={`flex-1 text-right bg-transparent font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full ${amountTextClass(amountIn, "text-2xl")}`}
             />
           </div>
           <div className="flex justify-end gap-2 mt-3 text-[11px] sm:text-xs">
@@ -3278,7 +3259,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   }
                 }}
                 placeholder="0.00"
-                className="w-full text-right bg-transparent text-2xl sm:text-3xl font-semibold text-slate-50 outline-none placeholder:text-slate-700"
+                className={`w-full text-right bg-transparent font-semibold text-slate-50 outline-none placeholder:text-slate-700 ${amountTextClass(
+                  isExactOut ? amountOutInput : quoteOut,
+                  "text-2xl sm:text-3xl"
+                )}`}
               />
               <div className="text-[11px] text-slate-500">
                 {quoteSourceLabel}
@@ -3307,26 +3291,22 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   {hopCount} hop{hopCount > 1 ? "s" : ""}
                 </span>
               )}
-              <span
-                className={`px-2 py-0.5 rounded-full border ${
-                  executionMode === "turbo"
-                    ? "border-sky-500/50 bg-sky-500/10 text-sky-100"
-                    : "border-amber-500/50 bg-amber-500/10 text-amber-100"
-                }`}
-              >
-                {executionMode === "turbo" ? "Turbo" : "Protected"}
-              </span>
             </div>
           </div>
 
           <div className="mt-2 relative group">
             <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
-              {activeRouteLabels.map((label, idx) => (
-                <React.Fragment key={`${label}-${idx}`}>
-                  <span className="px-2 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-slate-50">
-                    {label}
+              {activeRouteTokens.map((token, idx) => (
+                <React.Fragment key={`${token.symbol || "token"}-${idx}`}>
+                  <span title={token.symbol} aria-label={token.symbol}>
+                    <TokenLogo
+                      token={token.meta}
+                      fallbackSymbol={token.symbol}
+                      imgClassName="h-6 w-6 rounded-full object-contain"
+                      placeholderClassName="h-6 w-6 rounded-full bg-slate-700 text-[9px] font-semibold flex items-center justify-center text-white"
+                    />
                   </span>
-                  {idx < activeRouteLabels.length - 1 && (
+                  {idx < activeRouteTokens.length - 1 && (
                     <span className="text-slate-500">-&gt;</span>
                   )}
                 </React.Fragment>
@@ -3498,8 +3478,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             <div className="flex items-center justify-between text-[11px]">
               <span className="text-slate-500">Effective</span>
               <span className="text-slate-100">
-                {Number(effectiveSlippagePct || 0).toFixed(2)}%{" "}
-                {executionMode === "turbo" ? "auto" : "protected"}
+                {Number(effectiveSlippagePct || 0).toFixed(2)}%
               </span>
             </div>
             <div className="flex items-center justify-between text-[11px] mt-1">
@@ -3631,16 +3610,24 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           {executionProof.route?.length ? (
             <div className="mt-4 flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
               <span className="text-slate-500">Route</span>
-              {executionProof.route.map((label, idx) => (
-                <React.Fragment key={`${label}-${idx}-proof`}>
-                  <span className="px-2 py-1 rounded-lg bg-slate-900/70 border border-slate-700 text-slate-50">
-                    {label}
-                  </span>
-                  {idx < executionProof.route.length - 1 && (
-                    <span className="text-slate-500">→</span>
-                  )}
-                </React.Fragment>
-              ))}
+                            {executionProof.route.map((label, idx) => {
+                const token = resolveRouteToken(label);
+                return (
+                  <React.Fragment key={`${label}-${idx}-proof`}>
+                    <span title={token.symbol} aria-label={token.symbol}>
+                      <TokenLogo
+                        token={token.meta}
+                        fallbackSymbol={token.symbol}
+                        imgClassName="h-5 w-5 rounded-full object-contain"
+                        placeholderClassName="h-5 w-5 rounded-full bg-slate-700 text-[8px] font-semibold flex items-center justify-center text-white"
+                      />
+                    </span>
+                    {idx < executionProof.route.length - 1 && (
+                      <span className="text-slate-500">→</span>
+                    )}
+                  </React.Fragment>
+                );
+              })}
               {executionProof.route.length === 2 &&
                 executionProof.route.includes("ETH") &&
                 executionProof.route.includes("WETH") ? (
@@ -3995,3 +3982,4 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     </div>
   );
 }
+

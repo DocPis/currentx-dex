@@ -9,3 +9,8 @@ body {
   @apply bg-slate-950 text-slate-50;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+/* Avon widget: hide the inner dot inside the slider thumb */
+#shadcn-slider span[class*="avon-size-[10px]"][class*="avon-bg-white"][class*="avon-absolute"] {
+  display: none;
+}

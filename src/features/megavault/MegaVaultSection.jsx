@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { MegaVaultPositionWidget } from "@avon_xyz/widget";
 import { useAccount, useConnect, useReconnect } from "wagmi";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
+import megaLogo from "../../tokens/megaeth.png";
 
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
@@ -53,11 +54,8 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-[0.3em] border border-sky-500/40 bg-sky-500/10 text-sky-100">
                 MegaVault
               </span>
-              <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/70 text-slate-300">
-                {activeNetwork?.name || "MegaETH"}
-              </span>
-              <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-wide border border-slate-700 bg-slate-900/70 text-slate-300">
-                Chain {chainId}
+              <span className="flex items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 p-0.5">
+                <img src={megaLogo} alt="MegaETH" className="h-[22px] w-[22px]" />
               </span>
             </div>
 

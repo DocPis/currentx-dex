@@ -2,6 +2,7 @@ import React from "react";
 import discordIcon from "../../assets/social/discord.png";
 import twitterIcon from "../../assets/social/x.png";
 import telegramIcon from "../../assets/social/telegram.png";
+import megaLogo from "../../tokens/megaeth.png";
 
 const FOOTER_LINKS = {
   docs: "https://docs.currentx.app/",
@@ -39,7 +40,12 @@ export default function Footer() {
     <footer className="mt-10 border-t border-slate-800 bg-[#050915]">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
-          <span className="text-slate-300">Built on MegaETH</span>
+          <span className="inline-flex items-center gap-1 text-slate-300">
+            Built on
+            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 p-0.5">
+              <img src={megaLogo} alt="MegaETH" className="h-full w-full" />
+            </span>
+          </span>
           <span className="text-slate-700">|</span>
           <LinkItem href={FOOTER_LINKS.docs}>Docs</LinkItem>
         </div>
