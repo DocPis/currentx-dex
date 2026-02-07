@@ -3931,6 +3931,7 @@ export default function LiquiditySection({
 
 
   const selectedPool = useMemo(() => {
+    if (!allPools.length) return null;
     const found = allPools.find((p) => p.id === selectedPoolId);
     return found || allPools[0];
   }, [allPools, selectedPoolId]);
@@ -5075,13 +5076,19 @@ export default function LiquiditySection({
 
   const handleOpenPoolDepositFromRow = (pool) => {
     if (!pool) return;
+    const poolId =
+      pool.id ||
+      (pool.token0Symbol && pool.token1Symbol
+        ? `${String(pool.token0Symbol).toLowerCase()}-${String(pool.token1Symbol).toLowerCase()}`
+        : null);
+    if (!poolId) return;
     suppressSelectionResetRef.current = true;
     setTokenSelection({
       baseSymbol: pool.token0Symbol,
       pairSymbol: pool.token1Symbol,
     });
-    setSelectedPoolId(pool.id);
-    setSelectionDepositPoolId(pool.id);
+    setSelectedPoolId(poolId);
+    setSelectionDepositPoolId(poolId);
     setPairSelectorOpen(false);
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
@@ -5260,6 +5267,10 @@ export default function LiquiditySection({
       setTokenBalanceLoading(true);
       setTokenBalanceError("");
       setTokenBalances(null);
+      if (!selectedPool) {
+        setTokenBalanceLoading(false);
+        return;
+      }
       if (!poolSupportsActions) {
         setTokenBalanceLoading(false);
         return;
