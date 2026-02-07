@@ -1264,6 +1264,12 @@ export default function LiquiditySection({
   const v3DragRafRef = useRef(null);
   const v3DragTargetRef = useRef(null);
   const v3DragCurrentRef = useRef({ lower: null, upper: null });
+  const v3DragValueRef = useRef({ lower: "", upper: "" });
+  const v3DragTimeRef = useRef(null);
+  const v3DragDirtyRef = useRef(false);
+  const v3RangeLowerRef = useRef(null);
+  const v3RangeUpperRef = useRef(null);
+  const v3ChartRef = useRef(null);
   const v3ChartMenuRef = useRef(null);
   const v3HoverIndexRef = useRef({ source: null, idx: null });
   const v3AddMenuRef = useRef(null);
@@ -1844,6 +1850,10 @@ export default function LiquiditySection({
   }, [v3PriceCacheKey, v3ReferencePrice]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
+  useEffect(() => {
+    v3RangeLowerRef.current = v3RangeLowerNum;
+    v3RangeUpperRef.current = v3RangeUpperNum;
+  }, [v3RangeLowerNum, v3RangeUpperNum]);
   const v3HasCustomRange =
     v3RangeMode === "custom" &&
     v3RangeLowerNum !== null &&
@@ -2219,6 +2229,9 @@ export default function LiquiditySection({
     v3RangeTimeframe,
     v3ChartMode,
   ]);
+  useEffect(() => {
+    v3ChartRef.current = v3Chart;
+  }, [v3Chart]);
 
   const v3RangeStrategies = useMemo(
     () => [
@@ -2608,6 +2621,10 @@ export default function LiquiditySection({
   const renderV3HoverOverlay = useCallback(
     (source) => {
       if (!v3ChartHover || v3ChartHover.source !== source) return null;
+      const isTodayLabel =
+        Number.isFinite(v3ChartHover.date) &&
+        formatShortDate(v3ChartHover.date) === formatShortDate(Date.now());
+      const hidePriceDetails = Boolean(v3ChartHover.isPrice && isTodayLabel);
       const align =
         v3ChartHover.x <= 6 ? "left" : v3ChartHover.x >= 94 ? "right" : "center";
       const translate =
@@ -2635,13 +2652,17 @@ export default function LiquiditySection({
             className={`absolute ${translate} rounded-lg border border-slate-700/80 bg-slate-950/95 px-2 py-1 text-[10px] text-slate-200 shadow-xl`}
             style={{ left: `${v3ChartHover.x}%`, top: `${tooltipTop}%` }}
           >
-            <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">
-              {v3ChartHover.label}
-            </div>
-            <div className="text-sm font-semibold text-slate-100">
-              {v3HoverValueLabel}
-            </div>
-            {v3ChartHover.subLabel ? (
+            {hidePriceDetails ? null : (
+              <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">
+                {v3ChartHover.label}
+              </div>
+            )}
+            {hidePriceDetails ? null : (
+              <div className="text-sm font-semibold text-slate-100">
+                {v3HoverValueLabel}
+              </div>
+            )}
+            {!hidePriceDetails && v3ChartHover.subLabel ? (
               <div className="text-[10px] text-slate-500">{v3ChartHover.subLabel}</div>
             ) : null}
             {v3HoverDateLabel ? (
@@ -2774,6 +2795,16 @@ export default function LiquiditySection({
     const idx = Math.round((pctX / 100) * (chart.points.length - 1));
     const point = chart.points[Math.min(chart.points.length - 1, Math.max(0, idx))];
     if (!point || !Number.isFinite(point.value)) return;
+    if (options?.isPrice) {
+      const isTodayLabel =
+        Number.isFinite(point.date) &&
+        formatShortDate(point.date) === formatShortDate(Date.now());
+      if (isTodayLabel) {
+        v3HoverIndexRef.current = { source: null, idx: null };
+        setV3ChartHover(null);
+        return;
+      }
+    }
     const prev = v3HoverIndexRef.current || {};
     if (prev.source === options.source && prev.idx === idx) return;
     v3HoverIndexRef.current = { source: options.source, idx };
@@ -2833,6 +2864,14 @@ export default function LiquiditySection({
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
+  const v3RangeTransition =
+    v3DraggingHandle
+      ? "transition-none"
+      : "transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]";
+  const v3RangeLineTransition =
+    v3DraggingHandle
+      ? "transition-none"
+      : "transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]";
   const v3PoolBalance0 = v3PoolIsReversed ? v3PoolBalances.token1 : v3PoolBalances.token0;
   const v3PoolBalance1 = v3PoolIsReversed ? v3PoolBalances.token0 : v3PoolBalances.token1;
   const v3PoolBalance0Num = safeNumber(v3PoolBalance0);
@@ -3787,40 +3826,71 @@ export default function LiquiditySection({
     const prevCursor = document.body.style.cursor;
     const useVerticalDrag = v3ChartMode === "price-range";
     document.body.style.cursor = useVerticalDrag ? "ns-resize" : "ew-resize";
+    v3DragTimeRef.current = null;
+    v3DragDirtyRef.current = false;
+    const getRangeValue = (key) =>
+      key === "lower" ? v3RangeLowerRef.current : v3RangeUpperRef.current;
+    const formatDragValue = (value) =>
+      Number.isFinite(value) ? value.toFixed(6) : "";
     v3DragCurrentRef.current = {
       ...v3DragCurrentRef.current,
-      [v3DraggingHandle]:
-        v3DraggingHandle === "lower" ? v3RangeLowerNum : v3RangeUpperNum,
+      [v3DraggingHandle]: getRangeValue(v3DraggingHandle),
     };
-    const smoothStep = (current, target) => current + (target - current) * 0.35;
-    const flushDrag = () => {
+    v3DragValueRef.current = {
+      lower: formatDragValue(v3RangeLowerRef.current),
+      upper: formatDragValue(v3RangeUpperRef.current),
+    };
+    const smoothStep = (current, target, dt, immediate) => {
+      if (immediate) return target;
+      const tau = 0.06;
+      const alpha = 1 - Math.exp(-dt / tau);
+      return current + (target - current) * alpha;
+    };
+    const flushDrag = (timestamp) => {
       const target = v3DragTargetRef.current;
       if (!Number.isFinite(target) || target <= 0) {
         v3DragRafRef.current = null;
+        v3DragTimeRef.current = null;
         return;
       }
       const key = v3DraggingHandle;
       const current =
         v3DragCurrentRef.current[key] ??
-        (key === "lower" ? v3RangeLowerNum : v3RangeUpperNum) ??
+        getRangeValue(key) ??
         target;
-      const next = smoothStep(current, target);
+      const isFirstFrame = v3DragTimeRef.current === null;
+      const lastTs = isFirstFrame ? timestamp : v3DragTimeRef.current;
+      const dt = Math.min(0.05, Math.max(0.001, (timestamp - lastTs) / 1000));
+      v3DragTimeRef.current = timestamp;
+      const immediate = v3DragDirtyRef.current || isFirstFrame;
+      v3DragDirtyRef.current = false;
+      const next = smoothStep(current, target, dt, immediate);
       v3DragCurrentRef.current[key] = next;
       setV3RangeMode("custom");
       if (key === "lower") {
-        setV3RangeLower(next.toFixed(6));
+        const nextValue = formatDragValue(next);
+        if (v3DragValueRef.current.lower !== nextValue) {
+          v3DragValueRef.current.lower = nextValue;
+          setV3RangeLower(nextValue);
+        }
       } else {
-        setV3RangeUpper(next.toFixed(6));
+        const nextValue = formatDragValue(next);
+        if (v3DragValueRef.current.upper !== nextValue) {
+          v3DragValueRef.current.upper = nextValue;
+          setV3RangeUpper(nextValue);
+        }
       }
       if (Math.abs(target - next) < Math.max(1e-6, Math.abs(target) * 0.00001)) {
         v3DragTargetRef.current = null;
         v3DragRafRef.current = null;
+        v3DragTimeRef.current = null;
         return;
       }
       v3DragRafRef.current = window.requestAnimationFrame(flushDrag);
     };
     const handleMove = (event) => {
-      if (!v3RangeTrackRef.current || !v3Chart) return;
+      const chart = v3ChartRef.current;
+      if (!v3RangeTrackRef.current || !chart) return;
       const rect = v3RangeTrackRef.current.getBoundingClientRect();
       const pct = clampPercent(
         useVerticalDrag
@@ -3828,17 +3898,22 @@ export default function LiquiditySection({
           : ((event.clientX - rect.left) / rect.width) * 100
       );
       if (!Number.isFinite(pct)) return;
-      const nextPrice = v3Chart.min + ((v3Chart.max - v3Chart.min) * pct) / 100;
+      const nextPrice = chart.min + ((chart.max - chart.min) * pct) / 100;
       if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
       let bounded = nextPrice;
       if (v3DraggingHandle === "lower") {
-        const maxAllowed = v3RangeUpperNum ? v3RangeUpperNum * 0.999 : bounded;
+        const maxAllowed = v3RangeUpperRef.current
+          ? v3RangeUpperRef.current * 0.999
+          : bounded;
         bounded = Math.min(bounded, maxAllowed);
       } else {
-        const minAllowed = v3RangeLowerNum ? v3RangeLowerNum * 1.001 : bounded;
+        const minAllowed = v3RangeLowerRef.current
+          ? v3RangeLowerRef.current * 1.001
+          : bounded;
         bounded = Math.max(bounded, minAllowed);
       }
       v3DragTargetRef.current = bounded;
+      v3DragDirtyRef.current = true;
       if (!v3DragRafRef.current) {
         v3DragRafRef.current = window.requestAnimationFrame(flushDrag);
       }
@@ -3860,8 +3935,10 @@ export default function LiquiditySection({
         v3DragRafRef.current = null;
       }
       v3DragTargetRef.current = null;
+      v3DragTimeRef.current = null;
+      v3DragDirtyRef.current = false;
     };
-  }, [v3DraggingHandle, v3Chart, v3RangeLowerNum, v3RangeUpperNum, v3ChartMode]);
+  }, [v3DraggingHandle, v3ChartMode]);
 
   useEffect(() => {
     if (!v3PositionMenuOpen) return undefined;
@@ -7501,7 +7578,7 @@ export default function LiquiditySection({
                               }}
                             >
                               <div
-                                className="absolute left-0 right-5 rounded-md border border-sky-200/30 bg-[linear-gradient(180deg,rgba(14,165,233,0.35)_0%,rgba(30,64,175,0.65)_100%)] shadow-[0_0_24px_rgba(56,189,248,0.22)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+                                className={`absolute left-0 right-5 rounded-md border border-sky-200/30 bg-[linear-gradient(180deg,rgba(14,165,233,0.35)_0%,rgba(30,64,175,0.65)_100%)] shadow-[0_0_24px_rgba(56,189,248,0.22)] ${v3RangeTransition} z-10`}
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -7582,17 +7659,17 @@ export default function LiquiditySection({
                               )}
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute left-0 right-5 h-px border-t border-dotted border-slate-200/50 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-30"
+                                  className={`absolute left-0 right-5 h-px border-t border-dotted border-slate-200/50 ${v3RangeLineTransition} z-30`}
                                   style={{ top: `${100 - v3Chart.currentPct}%` }}
                                 />
                               )}
 
                               <div
-                                className="absolute left-0 right-5 h-px bg-sky-200/70 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className={`absolute left-0 right-5 h-px bg-sky-200/70 ${v3RangeLineTransition} z-20`}
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               />
                               <div
-                                className="absolute left-0 right-5 h-px bg-sky-200/70 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className={`absolute left-0 right-5 h-px bg-sky-200/70 ${v3RangeLineTransition} z-20`}
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               />
 
@@ -7603,7 +7680,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("lower");
                                 }}
-                                className="absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className={`absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize ${v3RangeLineTransition} z-40`}
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />
@@ -7615,7 +7692,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("upper");
                                 }}
-                                className="absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className={`absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize ${v3RangeLineTransition} z-40`}
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />

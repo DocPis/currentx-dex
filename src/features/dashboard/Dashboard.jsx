@@ -454,17 +454,27 @@ export default function Dashboard() {
     return todayPoint ? [...volumeSeries, todayPoint] : volumeSeries;
   }, [volumeSeries, todayVolume, latestVolumeDate]);
 
-  const calcChange = (series) => {
+  const calcChange = (series, options = {}) => {
     if (!series?.length || series.length < 2) return null;
-    const first = series[0]?.value ?? 0;
-    const last = series[series.length - 1]?.value ?? 0;
+    let startIdx = 0;
+    if (options.preferNonZeroStart) {
+      const idx = series.findIndex((point) => {
+        const value = Number(point?.value ?? 0);
+        return Number.isFinite(value) && value > 0;
+      });
+      if (idx >= 0 && idx < series.length - 1) {
+        startIdx = idx;
+      }
+    }
+    const first = Number(series[startIdx]?.value ?? 0);
+    const last = Number(series[series.length - 1]?.value ?? 0);
     const diff = last - first;
     const pct = first ? (diff / first) * 100 : null;
     return { diff, pct };
   };
 
   const tvlChange = calcChange(tvlSeriesWithToday);
-  const volumeChange = calcChange(volumeSeriesWithToday);
+  const volumeChange = calcChange(volumeSeriesWithToday, { preferNonZeroStart: true });
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
