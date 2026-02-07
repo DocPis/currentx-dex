@@ -1119,6 +1119,110 @@ export async function fetchTokenPrices(addresses = []) {
 
 // Fetch top pairs by all-time volume (falling back gracefully if unavailable)
 export async function fetchTopPairsBreakdown(limit = 4) {
+  const fetchTopPairsDay = async (finalLimit) => {
+    try {
+      const latestRes = await postSubgraph(`
+        query LatestPairDay {
+          pairDayDatas(first: 1, orderBy: date, orderDirection: desc) {
+            date
+          }
+        }
+      `);
+      const latestDay = Number(latestRes?.pairDayDatas?.[0]?.date || 0);
+      if (!Number.isFinite(latestDay) || latestDay <= 0) return [];
+
+      const variants = [
+        `
+          query TopPairsDay($limit: Int!, $day: Int!) {
+            pairDayDatas(
+              first: $limit
+              orderBy: dailyVolumeUSD
+              orderDirection: desc
+              where: { date: $day }
+            ) {
+              date
+              dailyVolumeUSD
+              reserveUSD
+              pair {
+                id
+                token0 { symbol }
+                token1 { symbol }
+              }
+            }
+          }
+        `,
+        `
+          query TopPairsDay($limit: Int!, $day: Int!) {
+            pairDayDatas(
+              first: $limit
+              orderBy: volumeUSD
+              orderDirection: desc
+              where: { date: $day }
+            ) {
+              date
+              volumeUSD
+              reserveUSD
+              pair {
+                id
+                token0 { symbol }
+                token1 { symbol }
+              }
+            }
+          }
+        `,
+      ];
+
+      for (const query of variants) {
+        try {
+          const res = await postSubgraph(query, { limit: finalLimit, day: latestDay });
+          const rows = res?.pairDayDatas || [];
+          if (!rows.length) continue;
+          const mapped = rows.map((row, idx) => {
+            const pair = row?.pair || {};
+            const t0 = pair?.token0?.symbol || "Token0";
+            const t1 = pair?.token1?.symbol || "Token1";
+            const label = `${t0}-${t1}`;
+            const volumeUsd = Number(row?.dailyVolumeUSD ?? row?.volumeUSD ?? 0);
+            const tvlUsd = Number(row?.reserveUSD ?? 0);
+            return {
+              id: (pair?.id || `${label}-${idx}`).toLowerCase(),
+              label,
+              volumeUsd,
+              tvlUsd,
+            };
+          });
+
+          const filtered = mapped.filter((p) => p.volumeUsd > 0 || p.tvlUsd > 0);
+          if (!filtered.length) return [];
+          const volumeSumTop = filtered.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
+          const tvlSumTop = filtered.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
+          const useTvl = volumeSumTop === 0;
+          const baseTotal = useTvl ? tvlSumTop : volumeSumTop;
+          return filtered.map((p, idx) => {
+            const baseValue = useTvl ? p.tvlUsd : p.volumeUsd;
+            const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
+            return {
+              ...p,
+              share,
+              rank: idx + 1,
+            };
+          });
+        } catch (err) {
+          const message = err?.message || "";
+          if (isSchemaFieldMissing(message)) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) return [];
+      throw err;
+    }
+    return [];
+  };
+
   const safeQuery = async (query, field, variables = {}) => {
     try {
       const res = await postSubgraph(query, variables);
@@ -1134,6 +1238,9 @@ export async function fetchTopPairsBreakdown(limit = 4) {
   };
 
   const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+
+  const dayTop = await fetchTopPairsDay(finalLimit);
+  if (dayTop.length) return dayTop;
 
   const [topPairsRes, factoryRes] = await Promise.all([
     safeQuery(
@@ -1235,6 +1342,102 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
   if (SUBGRAPH_V3_MISSING_KEY) return [];
 
   const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+  const fetchTopPoolsDay = async () => {
+    try {
+      const latestRes = await postSubgraphV3(`
+        query LatestPoolDay {
+          poolDayDatas(first: 1, orderBy: date, orderDirection: desc) {
+            date
+          }
+        }
+      `);
+      const latestDay = Number(latestRes?.poolDayDatas?.[0]?.date || 0);
+      if (!Number.isFinite(latestDay) || latestDay <= 0) return [];
+
+      const variants = [
+        `
+          query TopPoolsDay($limit: Int!, $day: Int!) {
+            poolDayDatas(
+              first: $limit
+              orderBy: volumeUSD
+              orderDirection: desc
+              where: { date: $day }
+            ) {
+              date
+              volumeUSD
+              tvlUSD
+              totalValueLockedUSD
+              pool {
+                id
+                feeTier
+                token0 { symbol }
+                token1 { symbol }
+              }
+            }
+          }
+        `,
+        `
+          query TopPoolsDay($limit: Int!, $day: Int!) {
+            poolDayDatas(
+              first: $limit
+              orderBy: volumeUSD
+              orderDirection: desc
+              where: { date: $day }
+            ) {
+              date
+              volumeUSD
+              pool {
+                id
+                feeTier
+                token0 { symbol }
+                token1 { symbol }
+              }
+            }
+          }
+        `,
+      ];
+
+      for (const query of variants) {
+        try {
+          const res = await postSubgraphV3(query, { limit: finalLimit, day: latestDay });
+          const rows = res?.poolDayDatas || [];
+          if (!rows.length) continue;
+          return rows.map((row, idx) => {
+            const pool = row?.pool || {};
+            const t0 = pool?.token0?.symbol || "Token0";
+            const t1 = pool?.token1?.symbol || "Token1";
+            const feeLabel = formatFeeTierLabel(pool?.feeTier);
+            const label = feeLabel ? `${t0}-${t1} (${feeLabel})` : `${t0}-${t1}`;
+            const tvl =
+              row?.tvlUSD !== undefined && row?.tvlUSD !== null
+                ? row?.tvlUSD
+                : row?.totalValueLockedUSD;
+            return {
+              id: (pool?.id || `${label}-${idx}`).toLowerCase(),
+              label,
+              volumeUsd: Number(row?.volumeUSD || 0),
+              tvlUsd: Number(tvl || 0),
+            };
+          });
+        } catch (err) {
+          const message = err?.message || "";
+          if (isSchemaFieldMissing(message)) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) return [];
+      throw err;
+    }
+    return [];
+  };
+
+  const dayTop = await fetchTopPoolsDay();
+  if (dayTop.length) return dayTop;
+
   const candidates = [
     {
       query: `
