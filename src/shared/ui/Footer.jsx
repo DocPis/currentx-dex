@@ -2,8 +2,12 @@ import React from "react";
 import discordIcon from "../../assets/social/discord.png";
 import twitterIcon from "../../assets/social/x.png";
 import telegramIcon from "../../assets/social/telegram.png";
+import geckoTerminalIcon from "../../assets/social/geckoterminal.svg";
 import megaLogo from "../../tokens/megaeth.png";
-import { GeckoTerminalAttributionLink } from "./GeckoTerminalAttribution";
+import {
+  GECKOTERMINAL_URL,
+  SHOW_GECKOTERMINAL_ATTRIBUTION,
+} from "./GeckoTerminalAttribution";
 
 const FOOTER_LINKS = {
   docs: "https://docs.currentx.app/",
@@ -40,7 +44,7 @@ const IconButton = ({ href, label, children }) => (
     href={href}
     target="_blank"
     rel="noreferrer"
-    className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all overflow-hidden"
+    className="group h-10 w-10 rounded-full border border-slate-800 bg-slate-900/60 flex items-center justify-center hover:border-sky-500/50 hover:bg-sky-500/5 transition-all overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/70 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
     aria-label={label}
     title={label}
   >
@@ -76,6 +80,16 @@ export default function Footer() {
                 style={{ transform: "scale(1.3)" }}
               />
             </IconButton>
+            {SHOW_GECKOTERMINAL_ATTRIBUTION && (
+              <IconButton href={GECKOTERMINAL_URL} label="GeckoTerminal">
+                <img
+                  src={geckoTerminalIcon}
+                  alt="GeckoTerminal"
+                  className="h-full w-full object-contain"
+                  style={{ transform: "scale(1.4)" }}
+                />
+              </IconButton>
+            )}
             <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
               <img
                 src={twitterIcon}
@@ -93,10 +107,11 @@ export default function Footer() {
               />
             </IconButton>
           </div>
-          <GeckoTerminalAttributionLink
-            text="Powered by GeckoTerminal"
-            className="text-center sm:text-right"
-          />
+          {SHOW_GECKOTERMINAL_ATTRIBUTION && (
+            <div className="text-[12px] text-slate-300/70 text-center sm:text-right">
+              Powered by GeckoTerminal
+            </div>
+          )}
         </div>
       </div>
     </footer>
