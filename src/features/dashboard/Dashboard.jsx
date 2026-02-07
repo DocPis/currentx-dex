@@ -1,6 +1,7 @@
 // src/features/dashboard/Dashboard.jsx
 import React, { useMemo, useRef, useState } from "react";
 import { useDashboardData } from "../../shared/hooks/useDashboardData";
+import { TOKENS } from "../../shared/config/tokens";
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
@@ -13,6 +14,40 @@ function formatNumber(num) {
   if (abs >= 1e3) return `${(num / 1e3).toFixed(2)}K`;
   return num.toFixed(2);
 }
+
+const formatFeePercent = (feeTier) => {
+  const num = Number(feeTier);
+  if (!Number.isFinite(num) || num <= 0) return "";
+  return `${(num / 10000).toFixed(2)}%`;
+};
+
+const buildTokenMaps = () => {
+  const byAddress = {};
+  const bySymbol = {};
+  Object.values(TOKENS).forEach((token) => {
+    if (!token) return;
+    if (token.address) {
+      byAddress[token.address.toLowerCase()] = token;
+    }
+    if (token.symbol) {
+      bySymbol[token.symbol] = token;
+    }
+  });
+  return { byAddress, bySymbol };
+};
+
+const TOKEN_MAPS = buildTokenMaps();
+
+const resolveTokenMeta = (tokenId, symbol) => {
+  if (tokenId) {
+    const match = TOKEN_MAPS.byAddress[tokenId.toLowerCase()];
+    if (match) return match;
+  }
+  if (symbol && TOKEN_MAPS.bySymbol[symbol]) {
+    return TOKEN_MAPS.bySymbol[symbol];
+  }
+  return null;
+};
 
 function StatCard({ label, value, prefix = "$" }) {
   return (
@@ -540,7 +575,7 @@ export default function Dashboard() {
       <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-lg font-semibold text-slate-50">Top pairs breakdown</div>
+            <div className="text-lg font-semibold text-slate-50">Top pools by TVL</div>
           </div>
           <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 uppercase tracking-wide">
             <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
@@ -564,12 +599,48 @@ export default function Dashboard() {
                 pair.share > 0
                   ? Math.min(100, Math.max(pair.share || 0, 6))
                   : 0;
+              const meta0 = resolveTokenMeta(pair.token0Id, pair.token0Symbol);
+              const meta1 = resolveTokenMeta(pair.token1Id, pair.token1Symbol);
+              const symbol0 =
+                meta0?.displaySymbol || meta0?.symbol || pair.token0Symbol || "Token0";
+              const symbol1 =
+                meta1?.displaySymbol || meta1?.symbol || pair.token1Symbol || "Token1";
+              const feeLabel =
+                pair.type === "V3" && pair.feeTier ? formatFeePercent(pair.feeTier) : "";
               return (
                 <div key={pair.id} className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-baseline gap-2">
-                      <div className="text-sm font-semibold text-white">
-                        {pair.label}
+                    <div className="flex items-center gap-2">
+                      <div className="flex -space-x-2">
+                        {[meta0, meta1].map((t, idx) => (
+                          <div
+                            key={idx}
+                            className="h-7 w-7 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[9px] font-semibold text-slate-200"
+                          >
+                            {t?.logo ? (
+                              <img
+                                src={t.logo}
+                                alt={`${t.symbol} logo`}
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <span>{(idx === 0 ? symbol0 : symbol1).slice(0, 3)}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="text-sm font-semibold text-white">
+                          {symbol0} / {symbol1}
+                        </div>
+                        {feeLabel ? (
+                          <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-[10px] text-slate-200">
+                            {feeLabel}
+                          </span>
+                        ) : null}
+                        <span className="text-[10px] uppercase tracking-wide text-slate-500">
+                          {pair.type || "Pool"}
+                        </span>
                       </div>
                     </div>
                     <div className="text-sm font-semibold text-sky-200">
@@ -578,7 +649,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400">
                     <span className="text-slate-200">
-                      ${formatNumber(pair.volumeUsd || 0)}
+                      TVL: ${formatNumber(pair.tvlUsd || 0)}
                     </span>
                   </div>
                   <div className="mt-1.5 h-3 w-full rounded-full bg-slate-800/80 overflow-hidden">
@@ -597,7 +668,7 @@ export default function Dashboard() {
             })
           ) : (
             <div className="py-4 text-center text-sm text-slate-500">
-              No pair data found in the subgraph for the latest day.
+              No pool TVL data found in the subgraph for the latest day.
             </div>
           )}
         </div>

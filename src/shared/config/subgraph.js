@@ -531,7 +531,8 @@ export async function fetchDashboardStatsV3() {
       return candidate.map(factory);
     } catch (err) {
       const message = err?.message || "";
-      if (isSchemaFieldMissing(message)) {
+      const orderByMissing = message.toLowerCase().includes("order");
+      if (isSchemaFieldMissing(message) || orderByMissing) {
         continue;
       }
       throw err;
@@ -1136,17 +1137,16 @@ export async function fetchTopPairsBreakdown(limit = 4) {
           query TopPairsDay($limit: Int!, $day: Int!) {
             pairDayDatas(
               first: $limit
-              orderBy: dailyVolumeUSD
+              orderBy: reserveUSD
               orderDirection: desc
               where: { date: $day }
             ) {
               date
-              dailyVolumeUSD
               reserveUSD
               pair {
                 id
-                token0 { symbol }
-                token1 { symbol }
+                token0 { id symbol }
+                token1 { id symbol }
               }
             }
           }
@@ -1160,12 +1160,11 @@ export async function fetchTopPairsBreakdown(limit = 4) {
               where: { date: $day }
             ) {
               date
-              volumeUSD
               reserveUSD
               pair {
                 id
-                token0 { symbol }
-                token1 { symbol }
+                token0 { id symbol }
+                token1 { id symbol }
               }
             }
           }
@@ -1182,25 +1181,24 @@ export async function fetchTopPairsBreakdown(limit = 4) {
             const t0 = pair?.token0?.symbol || "Token0";
             const t1 = pair?.token1?.symbol || "Token1";
             const label = `${t0}-${t1}`;
-            const volumeUsd = Number(row?.dailyVolumeUSD ?? row?.volumeUSD ?? 0);
             const tvlUsd = Number(row?.reserveUSD ?? 0);
             return {
               id: (pair?.id || `${label}-${idx}`).toLowerCase(),
               label,
-              volumeUsd,
               tvlUsd,
+              type: "V2",
+              token0Symbol: pair?.token0?.symbol || "",
+              token1Symbol: pair?.token1?.symbol || "",
+              token0Id: pair?.token0?.id || "",
+              token1Id: pair?.token1?.id || "",
             };
           });
 
-          const filtered = mapped.filter((p) => p.volumeUsd > 0 || p.tvlUsd > 0);
+          const filtered = mapped.filter((p) => p.tvlUsd > 0);
           if (!filtered.length) return [];
-          const volumeSumTop = filtered.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
           const tvlSumTop = filtered.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
-          const useTvl = volumeSumTop === 0;
-          const baseTotal = useTvl ? tvlSumTop : volumeSumTop;
           return filtered.map((p, idx) => {
-            const baseValue = useTvl ? p.tvlUsd : p.volumeUsd;
-            const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
+            const share = tvlSumTop ? (p.tvlUsd / tvlSumTop) * 100 : 0;
             return {
               ...p,
               share,
@@ -1209,7 +1207,8 @@ export async function fetchTopPairsBreakdown(limit = 4) {
           });
         } catch (err) {
           const message = err?.message || "";
-          if (isSchemaFieldMissing(message)) {
+          const orderByMissing = message.toLowerCase().includes("order");
+          if (isSchemaFieldMissing(message) || orderByMissing) {
             continue;
           }
           throw err;
@@ -1217,7 +1216,8 @@ export async function fetchTopPairsBreakdown(limit = 4) {
       }
     } catch (err) {
       const message = err?.message || "";
-      if (isSchemaFieldMissing(message)) return [];
+      const orderByMissing = message.toLowerCase().includes("order");
+      if (isSchemaFieldMissing(message) || orderByMissing) return [];
       throw err;
     }
     return [];
@@ -1242,37 +1242,52 @@ export async function fetchTopPairsBreakdown(limit = 4) {
   const dayTop = await fetchTopPairsDay(finalLimit);
   if (dayTop.length) return dayTop;
 
-  const [topPairsRes, factoryRes] = await Promise.all([
-    safeQuery(
-      `
-        query TopPairs($limit: Int!) {
-          pairs(
-            first: $limit
-            orderBy: volumeUSD
-            orderDirection: desc
-          ) {
-            id
-            volumeUSD
-            reserveUSD
-            token0 { symbol }
-            token1 { symbol }
-          }
+  const pairQueries = [
+    `
+      query TopPairs($limit: Int!) {
+        pairs(
+          first: $limit
+          orderBy: reserveUSD
+          orderDirection: desc
+        ) {
+          id
+          reserveUSD
+          token0 { id symbol }
+          token1 { id symbol }
         }
-      `,
-      "pairs",
-      { limit: finalLimit }
-    ),
-    safeQuery(
-      `
-        query FactoryVolume {
-          uniswapFactories(first: 1) {
-            totalVolumeUSD
-          }
+      }
+    `,
+    `
+      query TopPairs($limit: Int!) {
+        pairs(
+          first: $limit
+          orderBy: volumeUSD
+          orderDirection: desc
+        ) {
+          id
+          reserveUSD
+          token0 { id symbol }
+          token1 { id symbol }
         }
-      `,
-      "uniswapFactories"
-    ),
-  ]);
+      }
+    `,
+  ];
+
+  let topPairsRes = [];
+  for (const query of pairQueries) {
+    try {
+      const res = await postSubgraph(query, { limit: finalLimit });
+      topPairsRes = res?.pairs || [];
+      if (topPairsRes.length) break;
+    } catch (err) {
+      const message = err?.message || "";
+      const orderByMissing = message.toLowerCase().includes("order");
+      if (isSchemaFieldMissing(message) || orderByMissing) {
+        continue;
+      }
+      throw err;
+    }
+  }
 
   const pairIds = topPairsRes.map((p) => p?.id).filter(Boolean);
 
@@ -1299,29 +1314,26 @@ export async function fetchTopPairsBreakdown(limit = 4) {
     const t0 = meta?.token0?.symbol || "Token0";
     const t1 = meta?.token1?.symbol || "Token1";
     const label = meta ? `${t0}-${t1}` : (pairId ? `${pairId.slice(0, 6)}...${pairId.slice(-4)}` : "Pair");
-    const volumeUsd = Number(p?.volumeUSD || 0);
     const tvlUsd = Number(p?.reserveUSD || 0);
     return {
       id: pairId || `${label}-${idx}`,
       label,
-      volumeUsd,
       tvlUsd,
+      type: "V2",
+      token0Symbol: meta?.token0?.symbol || "",
+      token1Symbol: meta?.token1?.symbol || "",
+      token0Id: meta?.token0?.id || "",
+      token1Id: meta?.token1?.id || "",
     };
   });
 
-  const filtered = mapped.filter((p) => p.volumeUsd > 0 || p.tvlUsd > 0);
+  const filtered = mapped.filter((p) => p.tvlUsd > 0);
   if (!filtered.length) return [];
 
   const top = filtered.slice(0, finalLimit);
-  const factoryVolumeUsd = Number(factoryRes?.[0]?.totalVolumeUSD || 0);
-  const volumeSumTop = top.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
   const tvlSumTop = top.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
-  const baseTotal = factoryVolumeUsd || volumeSumTop || tvlSumTop;
-  const baseIsTvl = !factoryVolumeUsd && volumeSumTop === 0;
-
   return top.map((p, idx) => {
-    const baseValue = baseIsTvl ? p.tvlUsd : p.volumeUsd;
-    const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
+    const share = tvlSumTop ? (p.tvlUsd / tvlSumTop) * 100 : 0;
     return {
       ...p,
       share,
@@ -1359,19 +1371,18 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
           query TopPoolsDay($limit: Int!, $day: Int!) {
             poolDayDatas(
               first: $limit
-              orderBy: volumeUSD
+              orderBy: tvlUSD
               orderDirection: desc
               where: { date: $day }
             ) {
               date
-              volumeUSD
               tvlUSD
               totalValueLockedUSD
               pool {
                 id
                 feeTier
-                token0 { symbol }
-                token1 { symbol }
+                token0 { id symbol }
+                token1 { id symbol }
               }
             }
           }
@@ -1385,12 +1396,13 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
               where: { date: $day }
             ) {
               date
-              volumeUSD
+              tvlUSD
+              totalValueLockedUSD
               pool {
                 id
                 feeTier
-                token0 { symbol }
-                token1 { symbol }
+                token0 { id symbol }
+                token1 { id symbol }
               }
             }
           }
@@ -1402,7 +1414,7 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
           const res = await postSubgraphV3(query, { limit: finalLimit, day: latestDay });
           const rows = res?.poolDayDatas || [];
           if (!rows.length) continue;
-          return rows.map((row, idx) => {
+          const mapped = rows.map((row, idx) => {
             const pool = row?.pool || {};
             const t0 = pool?.token0?.symbol || "Token0";
             const t1 = pool?.token1?.symbol || "Token1";
@@ -1415,10 +1427,16 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
             return {
               id: (pool?.id || `${label}-${idx}`).toLowerCase(),
               label,
-              volumeUsd: Number(row?.volumeUSD || 0),
               tvlUsd: Number(tvl || 0),
+              type: "V3",
+              feeTier: pool?.feeTier,
+              token0Symbol: pool?.token0?.symbol || "",
+              token1Symbol: pool?.token1?.symbol || "",
+              token0Id: pool?.token0?.id || "",
+              token1Id: pool?.token1?.id || "",
             };
           });
+          return mapped.filter((p) => p.tvlUsd > 0);
         } catch (err) {
           const message = err?.message || "";
           if (isSchemaFieldMissing(message)) {
@@ -1444,15 +1462,14 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
         query TopPoolsV3($limit: Int!) {
           pools(
             first: $limit
-            orderBy: volumeUSD
+            orderBy: totalValueLockedUSD
             orderDirection: desc
           ) {
             id
-            volumeUSD
             totalValueLockedUSD
             feeTier
-            token0 { symbol }
-            token1 { symbol }
+            token0 { id symbol }
+            token1 { id symbol }
           }
         }
       `,
@@ -1464,8 +1481,13 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
         return {
           id: (pool?.id || `${label}-${idx}`).toLowerCase(),
           label,
-          volumeUsd: Number(pool?.volumeUSD || 0),
           tvlUsd: Number(pool?.totalValueLockedUSD || 0),
+          type: "V3",
+          feeTier: pool?.feeTier,
+          token0Symbol: pool?.token0?.symbol || "",
+          token1Symbol: pool?.token1?.symbol || "",
+          token0Id: pool?.token0?.id || "",
+          token1Id: pool?.token1?.id || "",
         };
       },
     },
@@ -1474,14 +1496,13 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
         query TopPoolsV3($limit: Int!) {
           pools(
             first: $limit
-            orderBy: volumeUSD
+            orderBy: totalValueLockedUSD
             orderDirection: desc
           ) {
             id
-            volumeUSD
             feeTier
-            token0 { symbol }
-            token1 { symbol }
+            token0 { id symbol }
+            token1 { id symbol }
           }
         }
       `,
@@ -1493,8 +1514,13 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
         return {
           id: (pool?.id || `${label}-${idx}`).toLowerCase(),
           label,
-          volumeUsd: Number(pool?.volumeUSD || 0),
           tvlUsd: 0,
+          type: "V3",
+          feeTier: pool?.feeTier,
+          token0Symbol: pool?.token0?.symbol || "",
+          token1Symbol: pool?.token1?.symbol || "",
+          token0Id: pool?.token0?.id || "",
+          token1Id: pool?.token1?.id || "",
         };
       },
     },
@@ -1508,7 +1534,8 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
       return pools.map(candidate.map);
     } catch (err) {
       const message = err?.message || "";
-      if (isSchemaFieldMissing(message)) {
+      const orderByMissing = message.toLowerCase().includes("order");
+      if (isSchemaFieldMissing(message) || orderByMissing) {
         continue;
       }
       throw err;
@@ -1526,32 +1553,24 @@ export async function fetchTopPairsBreakdownCombined(limit = 4) {
   ]);
 
   const combined = [...(v2Pairs || []), ...(v3Pools || [])].filter(
-    (p) => (p.volumeUsd || 0) > 0 || (p.tvlUsd || 0) > 0
+    (p) => (p.tvlUsd || 0) > 0
   );
 
   if (!combined.length) return [];
 
-  const volumeSum = combined.reduce((sum, p) => sum + (p.volumeUsd || 0), 0);
-  const tvlSum = combined.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
-  const useTvl = volumeSum === 0;
-  const baseTotal = useTvl ? tvlSum : volumeSum;
-
-  return combined
-    .sort((a, b) =>
-      useTvl
-        ? (b.tvlUsd || 0) - (a.tvlUsd || 0)
-        : (b.volumeUsd || 0) - (a.volumeUsd || 0)
-    )
-    .slice(0, finalLimit)
-    .map((p, idx) => {
-      const baseValue = useTvl ? p.tvlUsd : p.volumeUsd;
-      const share = baseTotal ? (baseValue / baseTotal) * 100 : 0;
-      return {
-        ...p,
-        share,
-        rank: idx + 1,
-      };
-    });
+  const sorted = combined
+    .slice()
+    .sort((a, b) => (b.tvlUsd || 0) - (a.tvlUsd || 0))
+    .slice(0, finalLimit);
+  const tvlSum = sorted.reduce((sum, p) => sum + (p.tvlUsd || 0), 0);
+  return sorted.map((p, idx) => {
+    const share = tvlSum ? (p.tvlUsd / tvlSum) * 100 : 0;
+    return {
+      ...p,
+      share,
+      rank: idx + 1,
+    };
+  });
 }
 
 const toNumberSafe = (value) => {
