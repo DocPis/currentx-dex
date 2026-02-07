@@ -43,7 +43,7 @@ import {
   fetchV3PoolSnapshot,
   fetchV3TokenPairHistory,
 } from "../../shared/config/subgraph";
-import { getRealtimeClient } from "../../shared/services/realtime";
+import { getRealtimeClient, TRANSFER_TOPIC } from "../../shared/services/realtime";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import { useBalances } from "../../shared/hooks/useBalances";
 import { multicall, hasMulticall } from "../../shared/services/multicall";
@@ -163,6 +163,12 @@ const formatTokenBalance = (v) => {
 const safeNumber = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+};
+
+const topicToAddress = (topic) => {
+  if (typeof topic !== "string") return "";
+  if (!topic.startsWith("0x") || topic.length < 66) return "";
+  return `0x${topic.slice(-40)}`.toLowerCase();
 };
 
 const toOptionalNumber = (value) => {
@@ -1143,6 +1149,11 @@ export default function LiquiditySection({
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
   const [v3PoolTvlError, setV3PoolTvlError] = useState("");
+  const [v3PoolBalances, setV3PoolBalances] = useState({
+    token0: null,
+    token1: null,
+  });
+  const [v3PoolBalanceTick, setV3PoolBalanceTick] = useState(0);
   const [v3TvlRefreshTick, setV3TvlRefreshTick] = useState(0);
   const [v3MintError, setV3MintError] = useState("");
   const [v3MintLoading, setV3MintLoading] = useState(false);
@@ -1193,6 +1204,7 @@ export default function LiquiditySection({
   const [lpRefreshTick, setLpRefreshTick] = useState(0);
   const [pairLiveTick, setPairLiveTick] = useState(0);
   const livePairThrottle = useRef(0);
+  const v3PoolLiveThrottle = useRef(0);
   const [tokenBalances, setTokenBalances] = useState(null);
   const [tokenBalanceError, setTokenBalanceError] = useState("");
   const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
@@ -2695,15 +2707,35 @@ export default function LiquiditySection({
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
-  const v3PoolBalance0 = null;
-  const v3PoolBalance1 = null;
+  const v3PoolBalance0 = v3PoolIsReversed ? v3PoolBalances.token1 : v3PoolBalances.token0;
+  const v3PoolBalance1 = v3PoolIsReversed ? v3PoolBalances.token0 : v3PoolBalances.token1;
   const v3PoolBalance0Num = safeNumber(v3PoolBalance0);
   const v3PoolBalance1Num = safeNumber(v3PoolBalance1);
+  const v3PoolBalance0Usd =
+    v3PoolBalance0Num !== null && v3Token0PriceUsd
+      ? v3PoolBalance0Num * v3Token0PriceUsd
+      : null;
+  const v3PoolBalance1Usd =
+    v3PoolBalance1Num !== null && v3Token1PriceUsd
+      ? v3PoolBalance1Num * v3Token1PriceUsd
+      : null;
+  const v3PoolBalanceRatioBase0 =
+    v3PoolBalance0Usd !== null && v3PoolBalance1Usd !== null
+      ? v3PoolBalance0Usd
+      : v3PoolBalance0Num;
+  const v3PoolBalanceRatioBase1 =
+    v3PoolBalance0Usd !== null && v3PoolBalance1Usd !== null
+      ? v3PoolBalance1Usd
+      : v3PoolBalance1Num;
   const v3PoolBalanceRatio0 =
-    v3PoolBalance0Num !== null &&
-    v3PoolBalance1Num !== null &&
-    v3PoolBalance0Num + v3PoolBalance1Num > 0
-      ? clampPercent((v3PoolBalance0Num / (v3PoolBalance0Num + v3PoolBalance1Num)) * 100)
+    v3PoolBalanceRatioBase0 !== null &&
+    v3PoolBalanceRatioBase1 !== null &&
+    v3PoolBalanceRatioBase0 + v3PoolBalanceRatioBase1 > 0
+      ? clampPercent(
+          (v3PoolBalanceRatioBase0 /
+            (v3PoolBalanceRatioBase0 + v3PoolBalanceRatioBase1)) *
+            100
+        )
       : 50;
   const v3PoolBalanceRatio1 = 100 - v3PoolBalanceRatio0;
   const v3LowerPct = useMemo(() => {
@@ -3337,6 +3369,106 @@ export default function LiquiditySection({
     v3TokenPriceKey,
     v3TvlRefreshTick,
     v3RefreshTick,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadV3PoolBalances = async () => {
+      if (!isV3View || !hasV3Liquidity || !v3PoolInfo.address) {
+        if (!cancelled) {
+          setV3PoolBalances({ token0: null, token1: null });
+        }
+        return;
+      }
+      if (!v3PoolInfo.token0 || !v3PoolInfo.token1) {
+        if (!cancelled) {
+          setV3PoolBalances({ token0: null, token1: null });
+        }
+        return;
+      }
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        if (!provider) throw new Error("Missing provider");
+        const iface = new Interface(ERC20_ABI);
+        const calls = [
+          {
+            target: v3PoolInfo.token0,
+            callData: iface.encodeFunctionData("balanceOf", [v3PoolInfo.address]),
+          },
+          {
+            target: v3PoolInfo.token1,
+            callData: iface.encodeFunctionData("balanceOf", [v3PoolInfo.address]),
+          },
+        ];
+
+        let results = [];
+        if (await hasMulticall(provider).catch(() => false)) {
+          results = await multicall(calls, provider);
+        } else {
+          results = await Promise.all(
+            calls.map(async (call) => {
+              try {
+                const erc = new Contract(call.target, ERC20_ABI, provider);
+                const bal = await erc.balanceOf(v3PoolInfo.address);
+                return {
+                  success: true,
+                  returnData: iface.encodeFunctionResult("balanceOf", [bal]),
+                };
+              } catch {
+                return { success: false, returnData: "0x" };
+              }
+            })
+          );
+        }
+
+        const [dec0, dec1] = await Promise.all([
+          readDecimals(provider, v3PoolInfo.token0, v3PoolToken0Meta),
+          readDecimals(provider, v3PoolInfo.token1, v3PoolToken1Meta),
+        ]);
+
+        let balance0 = null;
+        let balance1 = null;
+        if (results?.[0]?.success) {
+          try {
+            const raw = iface.decodeFunctionResult("balanceOf", results[0].returnData)[0];
+            balance0 = Number(formatUnits(raw, dec0));
+          } catch {
+            balance0 = null;
+          }
+        }
+        if (results?.[1]?.success) {
+          try {
+            const raw = iface.decodeFunctionResult("balanceOf", results[1].returnData)[0];
+            balance1 = Number(formatUnits(raw, dec1));
+          } catch {
+            balance1 = null;
+          }
+        }
+
+        if (!cancelled) {
+          setV3PoolBalances({ token0: balance0, token1: balance1 });
+        }
+      } catch {
+        if (!cancelled) {
+          setV3PoolBalances({ token0: null, token1: null });
+        }
+      }
+    };
+    loadV3PoolBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isV3View,
+    hasV3Liquidity,
+    v3PoolInfo.address,
+    v3PoolInfo.token0,
+    v3PoolInfo.token1,
+    v3PoolToken0Meta,
+    v3PoolToken1Meta,
+    readDecimals,
+    v3RefreshTick,
+    v3PoolBalanceTick,
   ]);
 
   useEffect(() => {
@@ -4074,6 +4206,51 @@ export default function LiquiditySection({
     const unsubscribe = client.addMiniBlockListener(handleMini);
     return unsubscribe;
   }, [pairIdOverride, pairInfo?.pairAddress, selectedPool?.pairAddress]);
+
+  // Listen for V3 pool logs to refresh balances instantly
+  useEffect(() => {
+    if (!isV3View || !v3PoolInfo.address) return undefined;
+    const target = v3PoolInfo.address.toLowerCase();
+    const token0Addr = (v3PoolInfo.token0 || "").toLowerCase();
+    const token1Addr = (v3PoolInfo.token1 || "").toLowerCase();
+    const client = getRealtimeClient();
+    const transferTopic = (TRANSFER_TOPIC || "").toLowerCase();
+
+    const handleMini = (mini) => {
+      const receipts = mini?.receipts;
+      if (!Array.isArray(receipts)) return;
+      for (let i = 0; i < receipts.length; i += 1) {
+        const logs = receipts[i]?.logs;
+        if (!Array.isArray(logs)) continue;
+        for (let j = 0; j < logs.length; j += 1) {
+          const log = logs[j];
+          const addr = (log?.address || "").toLowerCase();
+          let shouldRefresh = false;
+          if (addr === target) {
+            shouldRefresh = true;
+          } else if (addr && transferTopic && (addr === token0Addr || addr === token1Addr)) {
+            const topic0 = (log?.topics?.[0] || "").toLowerCase();
+            if (topic0 === transferTopic) {
+              const from = topicToAddress(log?.topics?.[1]);
+              const to = topicToAddress(log?.topics?.[2]);
+              if (from === target || to === target) {
+                shouldRefresh = true;
+              }
+            }
+          }
+          if (!shouldRefresh) continue;
+          const now = Date.now();
+          if (now - (v3PoolLiveThrottle.current || 0) < 500) return;
+          v3PoolLiveThrottle.current = now;
+          setV3PoolBalanceTick((t) => t + 1);
+          return;
+        }
+      }
+    };
+
+    const unsubscribe = client.addMiniBlockListener(handleMini);
+    return unsubscribe;
+  }, [isV3View, v3PoolInfo.address, v3PoolInfo.token0, v3PoolInfo.token1]);
   const pairBlockingError = Boolean(pairError && !pairMissing);
   const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
 
@@ -8664,8 +8841,8 @@ export default function LiquiditySection({
                       />
                     </div>
                     <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
-                      <span>{v3PoolBalance0Num !== null ? formatUsdPrice(v3PoolBalance0Num) : "--"}</span>
-                      <span>{v3PoolBalance1Num !== null ? formatUsdPrice(v3PoolBalance1Num) : "--"}</span>
+                      <span>{v3PoolBalance0Usd !== null ? formatUsdPrice(v3PoolBalance0Usd) : "--"}</span>
+                      <span>{v3PoolBalance1Usd !== null ? formatUsdPrice(v3PoolBalance1Usd) : "--"}</span>
                     </div>
                   </div>
 
