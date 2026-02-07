@@ -70,8 +70,8 @@ export default function Footer() {
           </LinkItem>
         </div>
 
-        <div className="flex flex-col items-center gap-2 sm:items-end">
-          <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col items-center gap-2 sm:w-auto sm:items-end">
+          <div className="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-end">
             <IconButton href={FOOTER_LINKS.discord} label="Discord">
               <img
                 src={discordIcon}
@@ -108,7 +108,7 @@ export default function Footer() {
             </IconButton>
           </div>
           {SHOW_GECKOTERMINAL_ATTRIBUTION && (
-            <div className="text-[12px] text-slate-300/70 text-center sm:text-right">
+            <div className="w-full text-[12px] text-slate-300/70 text-center sm:w-auto sm:text-right">
               Powered by GeckoTerminal
             </div>
           )}
