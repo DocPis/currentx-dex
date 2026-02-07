@@ -1,16 +1,9 @@
 // src/features/pools/PoolsSection.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  fetchV2PoolsPage,
-  fetchV3PoolsPage,
-  fetchV2PoolsDayData,
-  fetchV3PoolsDayData,
-} from "../../shared/config/subgraph";
+import React, { useMemo, useState } from "react";
 import { TOKENS } from "../../shared/config/tokens";
 import megaLogo from "../../tokens/megaeth.png";
-import { NETWORK_NAME } from "../../shared/config/web3";
+import { usePoolsData } from "../../shared/hooks/usePoolsData";
 
-const PAGE_SIZE = 50;
 const SORT_KEYS = {
   LIQUIDITY: "liquidity",
   VOLUME: "volume",
@@ -104,100 +97,28 @@ const poolMatchesSearch = (pool, term) => {
 
 export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [v2Pools, setV2Pools] = useState([]);
-  const [v3Pools, setV3Pools] = useState([]);
-  const [v2DayData, setV2DayData] = useState({});
-  const [v3DayData, setV3DayData] = useState({});
-  const [v2Skip, setV2Skip] = useState(0);
-  const [v3Skip, setV3Skip] = useState(0);
-  const [v2Loading, setV2Loading] = useState(false);
-  const [v3Loading, setV3Loading] = useState(false);
-  const [v2HasMore, setV2HasMore] = useState(true);
-  const [v3HasMore, setV3HasMore] = useState(true);
-  const [v2Error, setV2Error] = useState("");
-  const [v3Error, setV3Error] = useState("");
+  const {
+    v2Pools,
+    v3Pools,
+    v2DayData,
+    v3DayData,
+    v2Error,
+    v3Error,
+    v2IsLoading,
+    v3IsLoading,
+    v2IsFetchingNextPage,
+    v3IsFetchingNextPage,
+    v2HasNextPage,
+    v3HasNextPage,
+    fetchNextV2,
+    fetchNextV3,
+    refetchAll,
+  } = usePoolsData();
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
 
-  const loadV2 = async (append = false) => {
-    if (v2Loading) return;
-    setV2Loading(true);
-    setV2Error("");
-    const offset = append ? v2Skip : 0;
-    try {
-      const data = await fetchV2PoolsPage({
-        limit: PAGE_SIZE,
-        skip: offset,
-      });
-      setV2Pools((prev) => (append ? [...prev, ...data] : data));
-      setV2Skip(offset + data.length);
-      setV2HasMore(data.length === PAGE_SIZE);
-    } catch (err) {
-      setV2Error(err?.message || "Failed to load V2 pools");
-    } finally {
-      setV2Loading(false);
-    }
-  };
-
-  const loadV3 = async (append = false) => {
-    if (v3Loading) return;
-    setV3Loading(true);
-    setV3Error("");
-    const offset = append ? v3Skip : 0;
-    try {
-      const data = await fetchV3PoolsPage({
-        limit: PAGE_SIZE,
-        skip: offset,
-      });
-      setV3Pools((prev) => (append ? [...prev, ...data] : data));
-      setV3Skip(offset + data.length);
-      setV3HasMore(data.length === PAGE_SIZE);
-    } catch (err) {
-      setV3Error(err?.message || "Failed to load V3 pools");
-    } finally {
-      setV3Loading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadV3(false);
-    loadV2(false);
-  }, []);
-
   const searchLower = searchTerm.trim().toLowerCase();
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadDayData = async () => {
-      try {
-        const v2Ids = v2Pools.map((p) => p.id).filter(Boolean);
-        const v3Ids = v3Pools.map((p) => p.id).filter(Boolean);
-        const [v2Data, v3Data] = await Promise.all([
-          fetchV2PoolsDayData(v2Ids),
-          fetchV3PoolsDayData(v3Ids),
-        ]);
-        if (!cancelled) {
-          setV2DayData(v2Data || {});
-          setV3DayData(v3Data || {});
-        }
-      } catch {
-        if (!cancelled) {
-          setV2DayData({});
-          setV3DayData({});
-        }
-      }
-    };
-    if (v2Pools.length || v3Pools.length) {
-      loadDayData();
-    } else {
-      setV2DayData({});
-      setV3DayData({});
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [v2Pools, v3Pools]);
 
   const combinedPools = useMemo(() => {
     const list = [];
@@ -427,10 +348,7 @@ export default function PoolsSection({ onSelectPool }) {
           </div>
           <button
             type="button"
-            onClick={() => {
-              loadV3(false);
-              loadV2(false);
-            }}
+            onClick={() => refetchAll()}
             className="px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500"
           >
             Refresh
@@ -444,7 +362,7 @@ export default function PoolsSection({ onSelectPool }) {
             Pools ({sortedPools.length})
           </div>
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
-            {v2Error || v3Error ? "Partial data loaded" : "Live data"}
+          {v2Error || v3Error ? "Partial data loaded" : "Live data"}
           </div>
         </div>
 
@@ -482,12 +400,12 @@ export default function PoolsSection({ onSelectPool }) {
 
         {(v2Error || v3Error) && (
           <div className="px-5 py-3 text-xs text-amber-200">
-            {v2Error || v3Error}
+            {v2Error?.message || v3Error?.message || "Failed to load pools."}
           </div>
         )}
 
         <div className="px-3 sm:px-5 py-3 space-y-2">
-          {v2Loading && v3Loading && !sortedPools.length ? (
+          {(v2IsLoading || v3IsLoading) && !sortedPools.length ? (
             <div className="py-6 text-center text-sm text-slate-400">
               Loading pools...
             </div>
@@ -563,24 +481,24 @@ export default function PoolsSection({ onSelectPool }) {
         </div>
 
         <div className="px-5 pb-5 flex flex-col sm:flex-row gap-3">
-          {v3HasMore && (
+          {v3HasNextPage && (
             <button
               type="button"
-              onClick={() => loadV3(true)}
-              disabled={v3Loading}
+              onClick={() => fetchNextV3()}
+              disabled={v3IsFetchingNextPage}
               className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
             >
-              {v3Loading ? "Loading..." : "Load more V3 pools"}
+              {v3IsFetchingNextPage ? "Loading..." : "Load more V3 pools"}
             </button>
           )}
-          {v2HasMore && (
+          {v2HasNextPage && (
             <button
               type="button"
-              onClick={() => loadV2(true)}
-              disabled={v2Loading}
+              onClick={() => fetchNextV2()}
+              disabled={v2IsFetchingNextPage}
               className="w-full px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-60"
             >
-              {v2Loading ? "Loading..." : "Load more V2 pools"}
+              {v2IsFetchingNextPage ? "Loading..." : "Load more V2 pools"}
             </button>
           )}
         </div>

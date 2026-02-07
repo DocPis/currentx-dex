@@ -1,20 +1,6 @@
 // src/features/dashboard/Dashboard.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  fetchDashboardStatsCombined,
-  fetchProtocolHistoryCombined,
-  fetchTopPairsBreakdownCombined,
-} from "../../shared/config/subgraph";
-
-// Start the protocol TVL counter from "today" (UTC midnight) and keep counting forward.
-const TVL_START_DATE = (() => {
-  const now = new Date();
-  const start = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  );
-  start.setUTCDate(start.getUTCDate() - 1);
-  return start.getTime();
-})();
+import React, { useMemo, useRef, useState } from "react";
+import { useDashboardData } from "../../shared/hooks/useDashboardData";
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
@@ -352,60 +338,15 @@ function BarGlowChart({
 }
 
 export default function Dashboard() {
-  const [stats, setStats] = useState(null);
-  const [tvlHistory, setTvlHistory] = useState([]);
-  const [volumeHistory, setVolumeHistory] = useState([]);
-  const [topPairs, setTopPairs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let cancelled = false;
-    let loadingInFlight = false;
-
-    const load = async (isBackground = false) => {
-      if (loadingInFlight) return;
-      loadingInFlight = true;
-      try {
-        setError("");
-        if (!isBackground) setLoading(true);
-
-        const tvlDays = Math.min(
-          1000,
-          Math.max(30, Math.ceil((Date.now() - TVL_START_DATE) / 86400000) + 2)
-        );
-
-        const [s, tvlHist, volHist, pairs] = await Promise.all([
-          fetchDashboardStatsCombined(),
-          fetchProtocolHistoryCombined(tvlDays),
-          fetchProtocolHistoryCombined(7),
-          fetchTopPairsBreakdownCombined(4),
-        ]);
-
-        if (cancelled) return;
-        setStats(s);
-        setTvlHistory(tvlHist);
-        setVolumeHistory(volHist);
-        setTopPairs(pairs || []);
-      } catch (e) {
-        if (!cancelled) setError(e.message || "Failed to load dashboard");
-      } finally {
-        if (!cancelled && !isBackground) setLoading(false);
-        loadingInFlight = false;
-      }
-    };
-
-    load(false);
-    const interval = setInterval(() => load(true), 5 * 60 * 1000); // refresh every 5m
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
+  const { data, isLoading, error } = useDashboardData();
+  const stats = data.stats;
+  const tvlHistory = data.tvlHistory;
+  const volumeHistory = data.volumeHistory;
+  const topPairs = data.topPairs;
+  const tvlStartDate = data.tvlStartDate;
 
   const tvlSeries = useMemo(() => {
-    const filtered = tvlHistory.filter((d) => d.date >= TVL_START_DATE);
+    const filtered = tvlHistory.filter((d) => d.date >= tvlStartDate);
     return filtered
       .slice()
       .reverse()
@@ -495,11 +436,11 @@ export default function Dashboard() {
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
         </div>
-        {error && (
-          <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs">
-            {error}
-          </div>
-        )}
+            {error && (
+              <div className="px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs">
+                {error?.message || "Failed to load dashboard"}
+              </div>
+            )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
@@ -541,7 +482,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="h-56">
-            {loading ? (
+            {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
               </div>
@@ -581,7 +522,7 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="h-56">
-            {loading ? (
+            {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
               </div>
@@ -607,7 +548,7 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="space-y-4">
-          {loading ? (
+          {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="space-y-2">
                 <div className="flex items-center justify-between">
