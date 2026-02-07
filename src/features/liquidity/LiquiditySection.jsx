@@ -254,14 +254,14 @@ const fetchChainlinkEthUsdHistory = async ({
     if (poolToken0IsEthLike) {
       return {
         date: tsSec * 1000,
-        token0Price: price,
-        token1Price: 1 / price,
+        token0Price: 1 / price,
+        token1Price: price,
       };
     }
     return {
       date: tsSec * 1000,
-      token0Price: 1 / price,
-      token1Price: price,
+      token0Price: price,
+      token1Price: 1 / price,
     };
   };
 
@@ -1209,6 +1209,7 @@ export default function LiquiditySection({
   const [v3RangeInitialized, setV3RangeInitialized] = useState(false);
   const [v3ChartMode, setV3ChartMode] = useState("price-range");
   const [v3ChartMenuOpen, setV3ChartMenuOpen] = useState(false);
+  const [v3ChartHover, setV3ChartHover] = useState(null);
   const [v3RangeTimeframe, setV3RangeTimeframe] = useState("1M");
   const v3RangeDays = useMemo(() => getV3RangeDays(v3RangeTimeframe), [v3RangeTimeframe]);
   const [v3StrategyId, setV3StrategyId] = useState("");
@@ -1232,6 +1233,7 @@ export default function LiquiditySection({
   const v3DragTargetRef = useRef(null);
   const v3DragCurrentRef = useRef({ lower: null, upper: null });
   const v3ChartMenuRef = useRef(null);
+  const v3HoverIndexRef = useRef({ source: null, idx: null });
   const v3AddMenuRef = useRef(null);
   const slippageMenuRef = useRef(null);
   const tokenRegistry = useMemo(() => {
@@ -1700,9 +1702,9 @@ export default function LiquiditySection({
     const latest = history[history.length - 1];
     const token0Price = toOptionalNumber(latest?.token0Price);
     const token1Price = toOptionalNumber(latest?.token1Price);
-    let price = v3PoolIsReversed ? token1Price : token0Price;
+    let price = v3PoolIsReversed ? token0Price : token1Price;
     if (!Number.isFinite(price) || price <= 0) {
-      const alt = v3PoolIsReversed ? token0Price : token1Price;
+      const alt = v3PoolIsReversed ? token1Price : token0Price;
       if (Number.isFinite(alt) && alt > 0) {
         price = 1 / alt;
       }
@@ -2056,9 +2058,9 @@ export default function LiquiditySection({
       if (cutoff && date < cutoff) continue;
       const token0Price = toOptionalNumber(row?.token0Price);
       const token1Price = toOptionalNumber(row?.token1Price);
-      let price = v3PoolIsReversed ? token1Price : token0Price;
+      let price = v3PoolIsReversed ? token0Price : token1Price;
       if (!Number.isFinite(price) || price <= 0) {
-        const alt = v3PoolIsReversed ? token0Price : token1Price;
+        const alt = v3PoolIsReversed ? token1Price : token0Price;
         if (Number.isFinite(alt) && alt > 0) {
           price = 1 / alt;
         }
@@ -2214,9 +2216,9 @@ export default function LiquiditySection({
   const v3PriceChart = useMemo(() => {
     const base = v3PriceSeriesSource
       .map((row) => {
-        let price = v3PoolIsReversed ? row.token1Price : row.token0Price;
+        let price = v3PoolIsReversed ? row.token0Price : row.token1Price;
         if (!Number.isFinite(price) || price <= 0) {
-          const alt = v3PoolIsReversed ? row.token0Price : row.token1Price;
+          const alt = v3PoolIsReversed ? row.token1Price : row.token0Price;
           if (Number.isFinite(alt) && alt > 0) {
             price = 1 / alt;
           }
@@ -2380,6 +2382,71 @@ export default function LiquiditySection({
     };
   }, [showV3FeesChart, showV3PriceChart, showV3VolumeChart]);
 
+  useEffect(() => {
+    clearV3ChartHover();
+  }, [v3ChartMode, clearV3ChartHover]);
+
+  const v3HoverValueLabel = useMemo(() => {
+    if (!v3ChartHover || !Number.isFinite(v3ChartHover.value)) return "--";
+    return v3ChartHover.isPrice
+      ? formatPrice(v3ChartHover.value)
+      : formatNumber(v3ChartHover.value);
+  }, [v3ChartHover]);
+
+  const v3HoverDateLabel = useMemo(() => {
+    if (!v3ChartHover || !Number.isFinite(v3ChartHover.date)) return "";
+    return formatShortDate(v3ChartHover.date);
+  }, [v3ChartHover]);
+
+  const renderV3HoverOverlay = useCallback(
+    (source) => {
+      if (!v3ChartHover || v3ChartHover.source !== source) return null;
+      const align =
+        v3ChartHover.x <= 6 ? "left" : v3ChartHover.x >= 94 ? "right" : "center";
+      const translate =
+        align === "center"
+          ? "-translate-x-1/2"
+          : align === "right"
+          ? "-translate-x-full"
+          : "translate-x-0";
+      const tooltipTop = Math.min(92, Math.max(6, v3ChartHover.y - 12));
+      return (
+        <div className="absolute inset-0 pointer-events-none z-30">
+          <div
+            className="absolute top-0 bottom-0 w-px bg-white/25"
+            style={{ left: `${v3ChartHover.x}%` }}
+          />
+          <div
+            className="absolute h-2.5 w-2.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.6)]"
+            style={{
+              left: `${v3ChartHover.x}%`,
+              top: `${v3ChartHover.y}%`,
+              transform: "translate(-50%, -50%)",
+            }}
+          />
+          <div
+            className={`absolute ${translate} rounded-lg border border-slate-700/80 bg-slate-950/95 px-2 py-1 text-[10px] text-slate-200 shadow-xl`}
+            style={{ left: `${v3ChartHover.x}%`, top: `${tooltipTop}%` }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">
+              {v3ChartHover.label}
+            </div>
+            <div className="text-sm font-semibold text-slate-100">
+              {v3HoverValueLabel}
+            </div>
+            {v3ChartHover.subLabel ? (
+              <div className="text-[10px] text-slate-500">{v3ChartHover.subLabel}</div>
+            ) : null}
+            {v3HoverDateLabel ? (
+              <div className="text-[10px] text-slate-500">{v3HoverDateLabel}</div>
+            ) : null}
+          </div>
+        </div>
+      );
+    },
+    [v3ChartHover, v3HoverValueLabel, v3HoverDateLabel]
+  );
+
   const v3DepositRatio = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
     const amount1Num = safeNumber(v3Amount1);
@@ -2460,6 +2527,109 @@ export default function LiquiditySection({
       }
     },
     [v3ReferencePrice, v3RangeLowerNum, v3RangeUpperNum]
+  );
+
+  const zoomV3Range = useCallback(
+    (direction) => {
+      if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
+      const hasRange = v3HasCustomRange && v3RangeLowerNum && v3RangeUpperNum;
+      const center = hasRange
+        ? (v3RangeLowerNum + v3RangeUpperNum) / 2
+        : v3ReferencePrice;
+      const baseSpan = hasRange
+        ? Math.max((v3RangeUpperNum - v3RangeLowerNum) / 2, v3ReferencePrice * 0.0005)
+        : v3ReferencePrice * 0.05;
+      const factor = direction > 0 ? 0.8 : 1.25;
+      const span = Math.max(baseSpan * factor, v3ReferencePrice * 0.0005);
+      let lower = center - span;
+      let upper = center + span;
+      if (lower <= 0) lower = v3ReferencePrice * 0.0005;
+      if (upper <= lower) upper = lower * 1.01;
+      setV3RangeMode("custom");
+      setV3StrategyId("custom");
+      setV3RangeInitialized(true);
+      setV3RangeLower(lower.toFixed(6));
+      setV3RangeUpper(upper.toFixed(6));
+    },
+    [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]
+  );
+
+  const fitV3RangeView = useCallback(() => {
+    if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
+    const hasRange = v3HasCustomRange && v3RangeLowerNum && v3RangeUpperNum;
+    const span = hasRange
+      ? Math.max((v3RangeUpperNum - v3RangeLowerNum) / 2, v3ReferencePrice * 0.0005)
+      : v3ReferencePrice * 0.05;
+    let lower = v3ReferencePrice - span;
+    let upper = v3ReferencePrice + span;
+    if (lower <= 0) lower = v3ReferencePrice * 0.0005;
+    if (upper <= lower) upper = lower * 1.01;
+    setV3RangeMode("custom");
+    setV3StrategyId("custom");
+    setV3RangeInitialized(true);
+    setV3RangeLower(lower.toFixed(6));
+    setV3RangeUpper(upper.toFixed(6));
+  }, [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
+
+  const updateV3ChartHover = useCallback((event, chart, options) => {
+    if (!chart?.points?.length) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+    const pctX = clampPercent(((event.clientX - rect.left) / rect.width) * 100);
+    const idx = Math.round((pctX / 100) * (chart.points.length - 1));
+    const point = chart.points[Math.min(chart.points.length - 1, Math.max(0, idx))];
+    if (!point || !Number.isFinite(point.value)) return;
+    const prev = v3HoverIndexRef.current || {};
+    if (prev.source === options.source && prev.idx === idx) return;
+    v3HoverIndexRef.current = { source: options.source, idx };
+    setV3ChartHover({
+      source: options.source,
+      x: point.x,
+      y: point.y,
+      value: point.value,
+      date: point.date,
+      label: options.label,
+      subLabel: options.subLabel,
+      isPrice: options.isPrice,
+    });
+  }, [setV3ChartHover, v3HoverIndexRef]);
+
+  const clearV3ChartHover = useCallback(() => {
+    v3HoverIndexRef.current = { source: null, idx: null };
+    setV3ChartHover(null);
+  }, [setV3ChartHover, v3HoverIndexRef]);
+
+  const handleV3PriceRangeHover = useCallback(
+    (event) => {
+      if (!v3PriceRangeChartDisplay) return;
+      updateV3ChartHover(event, v3PriceRangeChartDisplay, {
+        source: "price-range",
+        label: "Price",
+        subLabel: `${v3Token1} per ${v3Token0}`,
+        isPrice: true,
+      });
+    },
+    [updateV3ChartHover, v3PriceRangeChartDisplay, v3Token0, v3Token1]
+  );
+
+  const handleV3MetricHover = useCallback(
+    (event) => {
+      if (!v3MetricChart) return;
+      updateV3ChartHover(event, v3MetricChart, {
+        source: "metric",
+        label: v3MetricLabel,
+        subLabel: showV3PriceChart ? `${v3Token1} per ${v3Token0}` : "",
+        isPrice: showV3PriceChart,
+      });
+    },
+    [
+      updateV3ChartHover,
+      v3MetricChart,
+      v3MetricLabel,
+      showV3PriceChart,
+      v3Token0,
+      v3Token1,
+    ]
   );
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
@@ -6839,7 +7009,7 @@ export default function LiquiditySection({
                           <span>{v3Token0}</span>
                         </div>
                       </div>
-                      <div className="relative" ref={v3ChartMenuRef}>
+                      <div className="relative z-40" ref={v3ChartMenuRef}>
                         <button
                           type="button"
                           onClick={() => setV3ChartMenuOpen((v) => !v)}
@@ -6862,7 +7032,7 @@ export default function LiquiditySection({
                           </svg>
                         </button>
                         <div
-                          className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
+                          className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right z-50 ${
                             v3ChartMenuOpen
                               ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
                               : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
@@ -6924,6 +7094,8 @@ export default function LiquiditySection({
                             <div
                               ref={v3RangeTrackRef}
                               className="absolute inset-5 overflow-visible cursor-pointer select-none touch-none"
+                              onMouseMove={handleV3PriceRangeHover}
+                              onMouseLeave={clearV3ChartHover}
                               onClick={(event) => {
                                 if (!v3Chart) return;
                                 const rect = event.currentTarget.getBoundingClientRect();
@@ -6958,6 +7130,7 @@ export default function LiquiditySection({
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
                                 }}
                               />
+                              {renderV3HoverOverlay("price-range")}
                               {v3PriceRangeChartDisplay ? (
                                 <svg
                                   viewBox="0 0 100 100"
@@ -7075,16 +7248,26 @@ export default function LiquiditySection({
                             </div>
                             <div className="absolute left-5 right-5 bottom-7 h-px bg-slate-700/70 z-30" />
                             {v3PriceAxisTicks.length ? (
-                              <div className="absolute left-5 right-5 bottom-2 text-[11px] text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
-                                {v3PriceAxisTicks.map((tick) => (
-                                  <span
-                                    key={`${tick.label}-${tick.pct}`}
-                                    className="absolute -translate-x-1/2"
-                                    style={{ left: `${tick.pct}%` }}
-                                  >
-                                    {tick.label}
-                                  </span>
-                                ))}
+                              <div className="absolute left-5 right-5 bottom-3 text-[11px] leading-none text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
+                                {v3PriceAxisTicks.map((tick) => {
+                                  const align =
+                                    tick.pct <= 3 ? "left" : tick.pct >= 97 ? "right" : "center";
+                                  const translate =
+                                    align === "center"
+                                      ? "-translate-x-1/2"
+                                      : align === "right"
+                                      ? "-translate-x-full"
+                                      : "translate-x-0";
+                                  return (
+                                    <span
+                                      key={`${tick.label}-${tick.pct}`}
+                                      className={`absolute ${translate} whitespace-nowrap`}
+                                      style={{ left: `${tick.pct}%` }}
+                                    >
+                                      {tick.label}
+                                    </span>
+                                  );
+                                })}
                               </div>
                             ) : null}
                           </>
@@ -7094,7 +7277,11 @@ export default function LiquiditySection({
                           </div>
                         )
                       ) : showV3MetricChart ? (
-                        <div className="absolute inset-5">
+                        <div
+                          className="absolute inset-5"
+                          onMouseMove={handleV3MetricHover}
+                          onMouseLeave={clearV3ChartHover}
+                        >
                           {v3MetricChart ? (
                             <>
                               <svg
@@ -7151,6 +7338,7 @@ export default function LiquiditySection({
                                   {v3MetricChange.toFixed(2)}%
                                 </div>
                               )}
+                              {renderV3HoverOverlay("metric")}
                             </>
                           ) : (
                             <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
@@ -7192,6 +7380,7 @@ export default function LiquiditySection({
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
+                          onClick={() => zoomV3Range(1)}
                           className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
                           aria-label="Zoom in"
                         >
@@ -7203,6 +7392,7 @@ export default function LiquiditySection({
                         </button>
                         <button
                           type="button"
+                          onClick={fitV3RangeView}
                           className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
                           aria-label="Fit view"
                         >
@@ -7218,6 +7408,7 @@ export default function LiquiditySection({
                         </button>
                         <button
                           type="button"
+                          onClick={() => zoomV3Range(-1)}
                           className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
                           aria-label="Zoom out"
                         >
