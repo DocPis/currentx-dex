@@ -2382,10 +2382,6 @@ export default function LiquiditySection({
     };
   }, [showV3FeesChart, showV3PriceChart, showV3VolumeChart]);
 
-  useEffect(() => {
-    clearV3ChartHover();
-  }, [v3ChartMode, clearV3ChartHover]);
-
   const v3HoverValueLabel = useMemo(() => {
     if (!v3ChartHover || !Number.isFinite(v3ChartHover.value)) return "--";
     return v3ChartHover.isPrice
@@ -2598,6 +2594,10 @@ export default function LiquiditySection({
     v3HoverIndexRef.current = { source: null, idx: null };
     setV3ChartHover(null);
   }, [setV3ChartHover, v3HoverIndexRef]);
+
+  useEffect(() => {
+    clearV3ChartHover();
+  }, [v3ChartMode, clearV3ChartHover]);
 
   const handleV3PriceRangeHover = useCallback(
     (event) => {
