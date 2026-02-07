@@ -1147,6 +1147,7 @@ export default function LiquiditySection({
   const [v3PoolTvlHistory, setV3PoolTvlHistory] = useState([]);
   const [v3TokenPriceHistory, setV3TokenPriceHistory] = useState([]);
   const [v3TokenPriceKey, setV3TokenPriceKey] = useState("");
+  const [v3CachedPrice, setV3CachedPrice] = useState(null);
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
   const [v3PoolTvlError, setV3PoolTvlError] = useState("");
@@ -1422,6 +1423,31 @@ export default function LiquiditySection({
     v3Token0 === "ETH" ? WETH_ADDRESS : v3Token0Meta?.address;
   const v3SelectedToken1Address =
     v3Token1 === "ETH" ? WETH_ADDRESS : v3Token1Meta?.address;
+  const v3PriceCacheKey = useMemo(() => {
+    if (!chainId || !v3SelectedToken0Address || !v3SelectedToken1Address) return "";
+    const key0 = v3SelectedToken0Address.toLowerCase();
+    const key1 = v3SelectedToken1Address.toLowerCase();
+    return `v3-price-${chainId}-${key0}-${key1}-${Number(v3FeeTier || 0)}`;
+  }, [chainId, v3SelectedToken0Address, v3SelectedToken1Address, v3FeeTier]);
+
+  useEffect(() => {
+    if (!isV3View || !v3PriceCacheKey) {
+      setV3CachedPrice(null);
+      return;
+    }
+    try {
+      const raw = localStorage.getItem(v3PriceCacheKey);
+      if (!raw) {
+        setV3CachedPrice(null);
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const price = Number(parsed?.price);
+      setV3CachedPrice(Number.isFinite(price) && price > 0 ? price : null);
+    } catch {
+      setV3CachedPrice(null);
+    }
+  }, [isV3View, v3PriceCacheKey]);
   const v3Token0PriceUsd = v3SelectedToken0Address
     ? tokenPrices[(v3SelectedToken0Address || "").toLowerCase()]
     : null;
@@ -1742,6 +1768,9 @@ export default function LiquiditySection({
     if (v3DerivedPrice && Number.isFinite(v3DerivedPrice) && v3DerivedPrice > 0) {
       return v3DerivedPrice;
     }
+    if (v3CachedPrice && Number.isFinite(v3CachedPrice) && v3CachedPrice > 0) {
+      return v3CachedPrice;
+    }
     return null;
   }, [
     v3CurrentPrice,
@@ -1750,6 +1779,7 @@ export default function LiquiditySection({
     v3StartPriceNum,
     v3SubgraphCurrentPrice,
     v3DerivedPrice,
+    v3CachedPrice,
   ]);
   const v3ReferencePriceUsd = useMemo(() => {
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice) || v3ReferencePrice <= 0) {
@@ -1762,6 +1792,18 @@ export default function LiquiditySection({
     const usd = v3ReferencePrice * token1Usd;
     return Number.isFinite(usd) ? usd : null;
   }, [v3ReferencePrice, v3Token1PriceUsd, v3Token1Meta, v3Token1]);
+
+  useEffect(() => {
+    if (!v3PriceCacheKey || !v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
+    try {
+      localStorage.setItem(
+        v3PriceCacheKey,
+        JSON.stringify({ price: v3ReferencePrice, ts: Date.now() })
+      );
+    } catch {
+      // ignore cache write errors
+    }
+  }, [v3PriceCacheKey, v3ReferencePrice]);
   const v3RangeLowerNum = safeNumber(v3RangeLower);
   const v3RangeUpperNum = safeNumber(v3RangeUpper);
   const v3HasCustomRange =
@@ -1983,8 +2025,12 @@ export default function LiquiditySection({
   const applyV3RangeAsymmetric = useCallback(
     (lowerPct, upperPct) => {
       if (!v3ReferencePrice) return;
-      const lower = v3ReferencePrice * (1 + lowerPct);
-      const upper = v3ReferencePrice * (1 + upperPct);
+      let lower = v3ReferencePrice * (1 + lowerPct);
+      let upper = v3ReferencePrice * (1 + upperPct);
+      if (upperPct === 0 && lowerPct < 0) {
+        const bump = Math.max(v3ReferencePrice * 0.000001, 1e-6);
+        upper += bump;
+      }
       if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower <= 0 || upper <= 0) {
         return;
       }
@@ -2030,8 +2076,9 @@ export default function LiquiditySection({
   useEffect(() => {
     if (!isV3View || v3RangeInitialized) return;
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
-    const lower = v3ReferencePrice * 0.95;
-    const upper = v3ReferencePrice * 1.05;
+    const span = v3ReferencePrice * 0.15;
+    const lower = v3ReferencePrice - span;
+    const upper = v3ReferencePrice + span;
     setV3RangeMode("custom");
     setV3RangeLower(lower.toFixed(6));
     setV3RangeUpper(upper.toFixed(6));
@@ -2096,6 +2143,12 @@ export default function LiquiditySection({
       max += pad;
     }
 
+    if (v3ChartMode === "price-range" && v3ReferencePrice) {
+      const span = Math.max(v3ReferencePrice - min, max - v3ReferencePrice);
+      min = v3ReferencePrice - span;
+      max = v3ReferencePrice + span;
+    }
+
     if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
       return null;
     }
@@ -2126,6 +2179,7 @@ export default function LiquiditySection({
     v3TokenPriceHistory,
     v3RangeDays,
     v3RangeTimeframe,
+    v3ChartMode,
   ]);
 
   const v3RangeStrategies = useMemo(
@@ -7428,7 +7482,7 @@ export default function LiquiditySection({
                                     d={v3PriceRangeChartDisplay.line}
                                     fill="none"
                                     stroke="rgba(226,232,240,0.65)"
-                                    strokeWidth="0.8"
+                                    strokeWidth="0.7"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                   />
@@ -7453,7 +7507,7 @@ export default function LiquiditySection({
                                             d={highlight}
                                             fill="none"
                                             stroke="#38bdf8"
-                                            strokeWidth="1.8"
+                                            strokeWidth="1.4"
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
                                           />
@@ -8893,7 +8947,11 @@ export default function LiquiditySection({
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
                           Net APR
                         </div>
-                        <div className="text-xl font-semibold text-emerald-400">0.00%</div>
+                        <div className="text-xl font-semibold text-emerald-400">
+                          {v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
+                            ? `${v3EstimatedApr.toFixed(2)}%`
+                            : "--"}
+                        </div>
                       </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
