@@ -2646,27 +2646,15 @@ export default function LiquiditySection({
 
   const zoomV3Range = useCallback(
     (direction) => {
-      if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
-      const hasRange = v3HasCustomRange && v3RangeLowerNum && v3RangeUpperNum;
-      const center = hasRange
-        ? (v3RangeLowerNum + v3RangeUpperNum) / 2
-        : v3ReferencePrice;
-      const baseSpan = hasRange
-        ? Math.max((v3RangeUpperNum - v3RangeLowerNum) / 2, v3ReferencePrice * 0.0005)
-        : v3ReferencePrice * 0.05;
-      const factor = direction > 0 ? 0.8 : 1.25;
-      const span = Math.max(baseSpan * factor, v3ReferencePrice * 0.0005);
-      let lower = center - span;
-      let upper = center + span;
-      if (lower <= 0) lower = v3ReferencePrice * 0.0005;
-      if (upper <= lower) upper = lower * 1.01;
-      setV3RangeMode("custom");
-      setV3StrategyId("custom");
-      setV3RangeInitialized(true);
-      setV3RangeLower(lower.toFixed(6));
-      setV3RangeUpper(upper.toFixed(6));
+      const order = ["1D", "1W", "1M", "1Y", "All"];
+      const idx = order.indexOf(v3RangeTimeframe);
+      if (idx === -1) return;
+      const nextIdx =
+        direction > 0 ? Math.max(0, idx - 1) : Math.min(order.length - 1, idx + 1);
+      if (nextIdx === idx) return;
+      setV3RangeTimeframe(order[nextIdx]);
     },
-    [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]
+    [v3RangeTimeframe]
   );
 
   const fitV3RangeView = useCallback(() => {
@@ -7423,7 +7411,7 @@ export default function LiquiditySection({
                               }}
                             >
                               <div
-                                className="absolute left-0 right-5 rounded-md border border-fuchsia-200/40 bg-[linear-gradient(180deg,rgba(187,61,139,0.6)_0%,rgba(92,24,70,0.92)_100%)] shadow-[0_0_24px_rgba(236,72,153,0.25)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+                                className="absolute left-0 right-5 rounded-md border border-sky-200/30 bg-[linear-gradient(180deg,rgba(14,165,233,0.35)_0%,rgba(30,64,175,0.65)_100%)] shadow-[0_0_24px_rgba(56,189,248,0.22)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -7464,7 +7452,7 @@ export default function LiquiditySection({
                                           <path
                                             d={highlight}
                                             fill="none"
-                                            stroke="#f472d0"
+                                            stroke="#38bdf8"
                                             strokeWidth="1.8"
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
@@ -7475,8 +7463,8 @@ export default function LiquiditySection({
                                             cx={last.x}
                                             cy={last.y}
                                             r="2.4"
-                                            fill="#f472d0"
-                                            stroke="#fbcfe8"
+                                            fill="#38bdf8"
+                                            stroke="#e0f2fe"
                                             strokeWidth="0.9"
                                           />
                                         ) : null}
@@ -7487,7 +7475,7 @@ export default function LiquiditySection({
                               ) : null}
                               <div className="absolute right-1 top-3 bottom-3 w-3 rounded-full bg-slate-800/80 shadow-inner" />
                               <div
-                                className="absolute right-1 w-3 rounded-full bg-[linear-gradient(180deg,#ff4fd8_0%,#d12aa8_60%,#8a146c_100%)] shadow-[0_0_18px_rgba(236,72,153,0.5)] z-30"
+                                className="absolute right-1 w-3 rounded-full bg-[linear-gradient(180deg,#38bdf8_0%,#0ea5e9_55%,#1d4ed8_100%)] shadow-[0_0_18px_rgba(56,189,248,0.45)] z-30"
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -7510,11 +7498,11 @@ export default function LiquiditySection({
                               )}
 
                               <div
-                                className="absolute left-0 right-5 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className="absolute left-0 right-5 h-px bg-sky-200/70 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               />
                               <div
-                                className="absolute left-0 right-5 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className="absolute left-0 right-5 h-px bg-sky-200/70 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               />
 
@@ -7525,10 +7513,10 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("lower");
                                 }}
-                                className="absolute right-1 h-6 w-6 -translate-y-1/2 rounded-full border-2 border-white bg-white shadow-[0_0_16px_rgba(236,72,153,0.55)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className="absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               >
-                                <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
+                                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />
                               </button>
                               <button
                                 type="button"
@@ -7537,10 +7525,10 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("upper");
                                 }}
-                                className="absolute right-1 h-6 w-6 -translate-y-1/2 rounded-full border-2 border-white bg-white shadow-[0_0_16px_rgba(236,72,153,0.55)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className="absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               >
-                                <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
+                                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />
                               </button>
 
                               {/* Prices moved to the card below */}
