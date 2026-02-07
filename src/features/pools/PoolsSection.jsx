@@ -69,6 +69,23 @@ const buildTokenMaps = () => {
 
 const TOKEN_MAPS = buildTokenMaps();
 
+const STABLE_SYMBOLS = new Set([
+  "USDM",
+  "USDT0",
+  "CUSD",
+  "USDC",
+  "USDT",
+  "DAI",
+  "USDE",
+  "SUSDE",
+  "STCUSD",
+]);
+
+const isStableSymbol = (symbol) => {
+  const normalized = (symbol || "").toString().toUpperCase();
+  return Boolean(normalized && STABLE_SYMBOLS.has(normalized));
+};
+
 const resolveTokenMeta = (tokenId, symbol) => {
   if (tokenId) {
     const match = TOKEN_MAPS.byAddress[tokenId.toLowerCase()];
@@ -151,10 +168,19 @@ export default function PoolsSection({ onSelectPool }) {
     });
     v2Pools.forEach((pool) => {
       const day = v2DayData[pool.id?.toLowerCase?.() || ""] || {};
-      const liquidityUsd =
+      let liquidityUsd =
         day.tvlUsd !== undefined && day.tvlUsd !== null
           ? day.tvlUsd
           : pool.tvlUsd ?? null;
+      if (!liquidityUsd || liquidityUsd <= 0) {
+        const stable0 = isStableSymbol(pool.token0Symbol);
+        const stable1 = isStableSymbol(pool.token1Symbol);
+        if (stable0 && Number.isFinite(pool.reserve0) && pool.reserve0 > 0) {
+          liquidityUsd = pool.reserve0 * 2;
+        } else if (stable1 && Number.isFinite(pool.reserve1) && pool.reserve1 > 0) {
+          liquidityUsd = pool.reserve1 * 2;
+        }
+      }
       const volume24hUsd =
         day.volumeUsd !== undefined && day.volumeUsd !== null
           ? day.volumeUsd

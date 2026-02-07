@@ -1372,6 +1372,8 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
         ) {
           id
           reserveUSD
+          reserve0
+          reserve1
           volumeUSD
           token0 { id symbol }
           token1 { id symbol }
@@ -1388,6 +1390,8 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
         ) {
           id
           reserveUSD
+          reserve0
+          reserve1
           volumeUSD
           token0 { id symbol }
           token1 { id symbol }
@@ -1401,6 +1405,8 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
           skip: $skip
         ) {
           id
+          reserve0
+          reserve1
           token0 { id symbol }
           token1 { id symbol }
         }
@@ -1419,6 +1425,8 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
         token0Id: pair?.token0?.id || "",
         token1Id: pair?.token1?.id || "",
         tvlUsd: toNumberSafe(pair?.reserveUSD),
+        reserve0: toNumberSafe(pair?.reserve0),
+        reserve1: toNumberSafe(pair?.reserve1),
         volumeUsd: toNumberSafe(pair?.volumeUSD),
         type: "V2",
       }));
