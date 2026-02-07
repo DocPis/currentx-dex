@@ -939,6 +939,16 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [encodeV3Path]
   );
 
+  const buildRouteKey = useCallback((route) => {
+    if (!route) return "";
+    const path = Array.isArray(route.path)
+      ? route.path.map((p) => (p || "").toLowerCase()).join("-")
+      : "";
+    const fees = Array.isArray(route.fees) ? route.fees.join("-") : "";
+    const protocol = route.protocol || (fees ? "V3" : "V2");
+    return `${protocol}:${path}:${fees}`;
+  }, []);
+
   const buildV3RouteCandidates = useCallback(
     async () => {
       if (!hasV3Support) {
@@ -1741,31 +1751,202 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               }
             }
           } else {
-            if (hasV3Support && routePreference !== "v2") {
-              try {
-                const route = await buildV3Route({ amountWei });
-                const amountOut = await quoteV3Route(provider, amountWei, route);
-                v3Route = { ...route, protocol: "V3", amountOut };
-              } catch {
-                v3Route = null;
+            const quoteRouteExactIn = async (route, amountIn) => {
+              if (!route || !amountIn || amountIn <= 0n) return null;
+              if (route.protocol === "V3") {
+                return quoteV3Route(provider, amountIn, route);
               }
-            }
-            if (hasV2Support && routePreference !== "v3") {
-              try {
-                const route = await buildV2Route({ amountWei });
-                if (route && route.amountOut !== undefined && route.amountOut !== null) {
-                  v2Route = route;
-                } else if (route) {
+              if (route.protocol === "V2") {
+                const v2Quote = await quoteV2Route(provider, amountIn, route);
+                return v2Quote?.amountOut ?? null;
+              }
+              return null;
+            };
+
+            const v3Candidates =
+              hasV3Support && routePreference !== "v2"
+                ? await buildV3RouteCandidates()
+                : { directRoutes: [], hopRoutes: [] };
+            const v2Candidates =
+              hasV2Support && routePreference !== "v3"
+                ? await buildV2RouteCandidates()
+                : { directRoute: null, hopRoutes: [] };
+
+            const v3Routes = [...v3Candidates.directRoutes, ...v3Candidates.hopRoutes].map(
+              (route) => ({ ...route, protocol: "V3" })
+            );
+            const v2Routes = [
+              ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
+              ...v2Candidates.hopRoutes,
+            ].map((route) => ({ ...route, protocol: "V2" }));
+
+            const quotedV3 = await Promise.all(
+              v3Routes.map(async (route) => {
+                try {
+                  const amountOut = await quoteV3Route(provider, amountWei, route);
+                  return { ...route, amountOut };
+                } catch {
+                  return null;
+                }
+              })
+            );
+            const quotedV2 = await Promise.all(
+              v2Routes.map(async (route) => {
+                try {
                   const v2Quote = await quoteV2Route(provider, amountWei, route);
-                  v2Route = {
+                  return {
                     ...route,
                     amountOut: v2Quote.amountOut,
                     priceImpact: v2Quote.priceImpact,
                     pairs: v2Quote.pairs || route.pairs,
                   };
+                } catch {
+                  return null;
+                }
+              })
+            );
+
+            const v3Valid = quotedV3.filter(Boolean);
+            const v2Valid = quotedV2.filter(Boolean);
+            if (v3Valid.length) {
+              v3Route = v3Valid.reduce((best, next) => {
+                if (!best) return next;
+                return next.amountOut > best.amountOut ? next : best;
+              }, null);
+            }
+            if (v2Valid.length) {
+              v2Route = v2Valid.reduce((best, next) => {
+                if (!best) return next;
+                return next.amountOut > best.amountOut ? next : best;
+              }, null);
+            }
+
+            const allQuoted = [...v3Valid, ...v2Valid].filter(
+              (route) => route?.amountOut && route.amountOut > 0n
+            );
+
+            if (
+              (routePreference === "split" || routePreference === "smart") &&
+              allQuoted.length > 1
+            ) {
+              try {
+                const maxCandidates = 6;
+                const ranked = allQuoted
+                  .slice()
+                  .sort((a, b) => Number(b.amountOut - a.amountOut))
+                  .slice(0, maxCandidates);
+                const pairSteps = [];
+                for (let pct = 5; pct <= 95; pct += 5) pairSteps.push(pct);
+                const tripleSteps = [];
+                for (let pct = 10; pct <= 90; pct += 10) tripleSteps.push(pct);
+                const tripleStepSet = new Set(tripleSteps);
+                const quoteCache = new Map();
+                const getCachedQuote = async (route, amountIn) => {
+                  const key = `${buildRouteKey(route)}:${amountIn.toString()}`;
+                  if (quoteCache.has(key)) return await quoteCache.get(key);
+                  const pending = quoteRouteExactIn(route, amountIn);
+                  quoteCache.set(key, pending);
+                  const out = await pending;
+                  quoteCache.set(key, out);
+                  return out;
+                };
+                let bestSplit = null;
+
+                for (let i = 0; i < ranked.length; i += 1) {
+                  for (let j = i + 1; j < ranked.length; j += 1) {
+                    const routeA = ranked[i];
+                    const routeB = ranked[j];
+                    for (const share of pairSteps) {
+                      const amountA = (amountWei * BigInt(share)) / 100n;
+                      const amountB = amountWei - amountA;
+                      if (amountA <= 0n || amountB <= 0n) continue;
+                      const [outA, outB] = await Promise.all([
+                        getCachedQuote(routeA, amountA),
+                        getCachedQuote(routeB, amountB),
+                      ]);
+                      if (!outA || !outB) continue;
+                      const total = outA + outB;
+                      if (!bestSplit || total > bestSplit.amountOut) {
+                        bestSplit = {
+                          protocol: "SPLIT",
+                          kind: "split",
+                          amountOut: total,
+                          routes: [
+                            {
+                              ...routeA,
+                              amountIn: amountA,
+                              amountOut: outA,
+                              sharePct: share,
+                            },
+                            {
+                              ...routeB,
+                              amountIn: amountB,
+                              amountOut: outB,
+                              sharePct: 100 - share,
+                            },
+                          ],
+                        };
+                      }
+                    }
+                  }
+                }
+
+                if (ranked.length >= 3 && tripleSteps.length) {
+                  const trio = ranked.slice(0, 3);
+                  for (let aIdx = 0; aIdx < tripleSteps.length; aIdx += 1) {
+                    const shareA = tripleSteps[aIdx];
+                    for (let bIdx = 0; bIdx < tripleSteps.length; bIdx += 1) {
+                      const shareB = tripleSteps[bIdx];
+                      const shareC = 100 - shareA - shareB;
+                      if (shareC <= 0 || shareC >= 100) continue;
+                      if (!tripleStepSet.has(shareC)) continue;
+                      const amountA = (amountWei * BigInt(shareA)) / 100n;
+                      const amountB = (amountWei * BigInt(shareB)) / 100n;
+                      const amountC = amountWei - amountA - amountB;
+                      if (amountA <= 0n || amountB <= 0n || amountC <= 0n) continue;
+                      const [outA, outB, outC] = await Promise.all([
+                        getCachedQuote(trio[0], amountA),
+                        getCachedQuote(trio[1], amountB),
+                        getCachedQuote(trio[2], amountC),
+                      ]);
+                      if (!outA || !outB || !outC) continue;
+                      const total = outA + outB + outC;
+                      if (!bestSplit || total > bestSplit.amountOut) {
+                        bestSplit = {
+                          protocol: "SPLIT",
+                          kind: "split",
+                          amountOut: total,
+                          routes: [
+                            {
+                              ...trio[0],
+                              amountIn: amountA,
+                              amountOut: outA,
+                              sharePct: shareA,
+                            },
+                            {
+                              ...trio[1],
+                              amountIn: amountB,
+                              amountOut: outB,
+                              sharePct: shareB,
+                            },
+                            {
+                              ...trio[2],
+                              amountIn: amountC,
+                              amountOut: outC,
+                              sharePct: shareC,
+                            },
+                          ],
+                        };
+                      }
+                    }
+                  }
+                }
+
+                if (bestSplit) {
+                  splitRoute = bestSplit;
                 }
               } catch {
-                v2Route = null;
+                splitRoute = null;
               }
             }
 
@@ -1833,7 +2014,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             !isExactOut &&
             (routePreference === "split" || routePreference === "smart") &&
             v2Route &&
-            v3Route
+            v3Route &&
+            !splitRoute
           ) {
             try {
               const half = amountWei / 2n;
