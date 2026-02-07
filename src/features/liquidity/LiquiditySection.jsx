@@ -40,6 +40,7 @@ import {
   fetchV2PairData,
   fetchTokenPrices,
   fetchV3PoolHistory,
+  fetchV3PoolHourStats,
   fetchV3PoolSnapshot,
   fetchV3TokenPairHistory,
 } from "../../shared/config/subgraph";
@@ -1149,6 +1150,7 @@ export default function LiquiditySection({
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
   const [v3PoolTvlError, setV3PoolTvlError] = useState("");
+  const [v3PoolHourStats, setV3PoolHourStats] = useState(null);
   const [v3PoolBalances, setV3PoolBalances] = useState({
     token0: null,
     token1: null,
@@ -2231,21 +2233,35 @@ export default function LiquiditySection({
   }, [v3PoolSeries]);
 
   const v3PoolDailyFeesUsd = useMemo(() => {
-    if (!v3LatestPoolRow) return null;
-    if (
-      v3LatestPoolRow.feesUsd !== null &&
-      v3LatestPoolRow.feesUsd !== undefined &&
-      Number.isFinite(v3LatestPoolRow.feesUsd)
-    ) {
-      return Number(v3LatestPoolRow.feesUsd);
-    }
-    const volume = v3LatestPoolRow.volumeUsd;
     const feeRate = Number(v3FeeTier) / 1_000_000;
-    if (volume !== null && volume !== undefined && Number.isFinite(volume) && feeRate) {
-      return volume * feeRate;
+    if (v3LatestPoolRow) {
+      if (
+        v3LatestPoolRow.feesUsd !== null &&
+        v3LatestPoolRow.feesUsd !== undefined &&
+        Number.isFinite(v3LatestPoolRow.feesUsd)
+      ) {
+        return Number(v3LatestPoolRow.feesUsd);
+      }
+      const volume = v3LatestPoolRow.volumeUsd;
+      if (volume !== null && volume !== undefined && Number.isFinite(volume) && feeRate) {
+        return volume * feeRate;
+      }
+    }
+    if (v3PoolHourStats) {
+      if (
+        v3PoolHourStats.feesUsd !== null &&
+        v3PoolHourStats.feesUsd !== undefined &&
+        Number.isFinite(v3PoolHourStats.feesUsd)
+      ) {
+        return Number(v3PoolHourStats.feesUsd);
+      }
+      const volume = v3PoolHourStats.volumeUsd;
+      if (volume !== null && volume !== undefined && Number.isFinite(volume) && feeRate) {
+        return volume * feeRate;
+      }
     }
     return null;
-  }, [v3LatestPoolRow, v3FeeTier]);
+  }, [v3LatestPoolRow, v3PoolHourStats, v3FeeTier]);
 
   const v3PoolLatestTvlUsd = useMemo(() => {
     if (v3LatestPoolRow?.tvlUsd !== null && v3LatestPoolRow?.tvlUsd !== undefined) {
@@ -2253,8 +2269,38 @@ export default function LiquiditySection({
       return Number.isFinite(tvl) ? tvl : null;
     }
     const snapshot = safeNumber(v3PoolTvlSnapshot);
-    return snapshot !== null ? snapshot : null;
-  }, [v3LatestPoolRow, v3PoolTvlSnapshot]);
+    if (snapshot !== null) return snapshot;
+    if (
+      v3PoolHourStats?.tvlUsd !== null &&
+      v3PoolHourStats?.tvlUsd !== undefined &&
+      Number.isFinite(v3PoolHourStats.tvlUsd) &&
+      v3PoolHourStats.tvlUsd > 0
+    ) {
+      return Number(v3PoolHourStats.tvlUsd);
+    }
+    const balance0 = v3PoolIsReversed ? v3PoolBalances.token1 : v3PoolBalances.token0;
+    const balance1 = v3PoolIsReversed ? v3PoolBalances.token0 : v3PoolBalances.token1;
+    const balance0Num = safeNumber(balance0);
+    const balance1Num = safeNumber(balance1);
+    const tvl0 =
+      balance0Num !== null && v3Token0PriceUsd
+        ? balance0Num * v3Token0PriceUsd
+        : null;
+    const tvl1 =
+      balance1Num !== null && v3Token1PriceUsd
+        ? balance1Num * v3Token1PriceUsd
+        : null;
+    if (tvl0 !== null && tvl1 !== null) return tvl0 + tvl1;
+    return null;
+  }, [
+    v3LatestPoolRow,
+    v3PoolTvlSnapshot,
+    v3PoolHourStats,
+    v3PoolBalances,
+    v3PoolIsReversed,
+    v3Token0PriceUsd,
+    v3Token1PriceUsd,
+  ]);
 
   const v3BaseApr = useMemo(() => {
     if (
@@ -3253,15 +3299,17 @@ export default function LiquiditySection({
           setV3PoolTvlLoading(false);
           setV3TokenPriceHistory([]);
           setV3TokenPriceKey("");
+          setV3PoolHourStats(null);
         }
         return;
       }
       setV3PoolTvlLoading(true);
       setV3PoolTvlError("");
       try {
-        const [history, snapshot] = await Promise.all([
+        const [history, snapshot, hourStats] = await Promise.all([
           fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays),
           fetchV3PoolSnapshot(v3PoolInfo.address),
+          fetchV3PoolHourStats(v3PoolInfo.address, 24).catch(() => null),
         ]);
         if (cancelled) return;
         const historyRows = Array.isArray(history) ? history : [];
@@ -3271,6 +3319,7 @@ export default function LiquiditySection({
             ? Number(snapshot.tvlUsd)
             : null;
         setV3PoolTvlSnapshot(nextSnapshot);
+        setV3PoolHourStats(hourStats || null);
 
         const stable0 = isStableSymbol(v3Token0Meta?.symbol || v3Token0);
         const stable1 = isStableSymbol(v3Token1Meta?.symbol || v3Token1);
@@ -3346,6 +3395,7 @@ export default function LiquiditySection({
           setV3PoolTvlError(err?.message || "Failed to load TVL data.");
           setV3TokenPriceHistory([]);
           setV3TokenPriceKey("");
+          setV3PoolHourStats(null);
         }
       } finally {
         if (!cancelled) setV3PoolTvlLoading(false);

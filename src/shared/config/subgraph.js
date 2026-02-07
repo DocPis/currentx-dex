@@ -2148,6 +2148,132 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
   return dayRows || [];
 }
 
+// Fetch recent pool hour data for a V3 pool and aggregate the last N hours.
+export async function fetchV3PoolHourStats(poolId, hours = 24) {
+  if (SUBGRAPH_V3_MISSING_KEY) return null;
+  const id = (poolId || "").toLowerCase();
+  if (!id) return null;
+  const count = Math.max(1, Math.min(Number(hours) || 24, 1000));
+
+  const candidates = ["pool", "poolAddress"];
+  const variants = [
+    { name: "periodStartUnix", dateGetter: (row) => Number(row.periodStartUnix || 0) * 1000 },
+    { name: "hourStartUnix", dateGetter: (row) => Number(row.hourStartUnix || 0) * 1000 },
+    { name: "date", dateGetter: (row) => Number(row.date || 0) * 1000 },
+  ];
+  const selectVariants = [
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+    `,
+    `
+      volumeUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+    `,
+  ];
+
+  for (const variant of variants) {
+    for (const field of candidates) {
+      for (const select of selectVariants) {
+        const query = `
+          query V3PoolHourStats {
+            poolHourDatas(
+              first: ${count}
+              orderBy: ${variant.name}
+              orderDirection: desc
+              where: { ${field}: "${id}" }
+            ) {
+              ${variant.name}
+              ${select}
+            }
+          }
+        `;
+        try {
+          const res = await postSubgraphV3(query);
+          const rows = res?.poolHourDatas || [];
+          if (!rows.length) continue;
+          const mapped = rows
+            .map((row) => {
+              const tvl =
+                row?.tvlUSD !== undefined && row?.tvlUSD !== null
+                  ? row.tvlUSD
+                  : row?.totalValueLockedUSD;
+              return {
+                date: variant.dateGetter(row),
+                volumeUsd: toNumberSafe(row?.volumeUSD),
+                tvlUsd: toNumberSafe(tvl),
+                feesUsd: row?.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
+              };
+            })
+            .filter((row) => Number.isFinite(row.date) && row.date > 0);
+          if (!mapped.length) continue;
+
+          const volumeUsd = mapped.reduce((sum, row) => sum + (row.volumeUsd || 0), 0);
+          const hasFees = mapped.some((row) => row.feesUsd !== null && row.feesUsd !== undefined);
+          const feesUsd = hasFees
+            ? mapped.reduce((sum, row) => sum + (row.feesUsd || 0), 0)
+            : null;
+          const latest = mapped.reduce(
+            (acc, row) => (row.date > acc.date ? row : acc),
+            mapped[0]
+          );
+          const tvlUsd =
+            latest && Number.isFinite(latest.tvlUsd) && latest.tvlUsd > 0
+              ? latest.tvlUsd
+              : null;
+
+          return {
+            volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
+            feesUsd,
+            tvlUsd,
+            hours: mapped.length,
+          };
+        } catch (err) {
+          const message = err?.message || "";
+          const orderByMissing =
+            message.includes("PoolHourData_orderBy") ||
+            message.includes("PoolHourData_orderBy!") ||
+            message.includes("is not a valid PoolHourData_orderBy");
+          if (isSchemaFieldMissing(message) || orderByMissing) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 export async function fetchV3TokenPairHistory(token0Id, token1Id, days = 14) {
   if (SUBGRAPH_V3_MISSING_KEY) return [];
   const id0 = (token0Id || "").toLowerCase();
