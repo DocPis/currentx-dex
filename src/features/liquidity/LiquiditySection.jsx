@@ -221,6 +221,12 @@ const isEthLikeAddress = (addr) =>
       addr.toLowerCase &&
       addr.toLowerCase() === WETH_ADDRESS.toLowerCase()
   );
+const sortAddressPair = (a, b) => {
+  const left = (a || "").toLowerCase();
+  const right = (b || "").toLowerCase();
+  if (!left || !right) return [a, b];
+  return left < right ? [a, b] : [b, a];
+};
 const getChainlinkProvider = () =>
   CHAINLINK_RPC_URL ? new JsonRpcProvider(CHAINLINK_RPC_URL) : getReadOnlyProvider(false, true);
 const CHAINLINK_BATCH_SIZE = 80;
@@ -1436,6 +1442,21 @@ export default function LiquiditySection({
     setV3PoolError("");
     setV3StartPrice("");
     setV3RangeInitialized(false);
+    setV3PoolInfo({
+      address: "",
+      token0: "",
+      token1: "",
+      tick: null,
+      sqrtPriceX96: null,
+      spacing: null,
+    });
+    setV3PoolTvlHistory([]);
+    setV3PoolTvlSnapshot(null);
+    setV3PoolTvlError("");
+    setV3PoolHourStats(null);
+    setV3TokenPriceHistory([]);
+    setV3TokenPriceKey("");
+    setV3PoolBalances({ token0: null, token1: null });
   }, [isV3View, v3Token0, v3Token1, v3FeeTier]);
 
   const v3Token0Meta = tokenRegistry[v3Token0];
@@ -2333,9 +2354,9 @@ export default function LiquiditySection({
   }, [v3PoolSeries, v3FeeTier]);
 
   const v3LatestPoolRow = useMemo(() => {
-    if (!v3PoolSeries.length) return null;
-    return v3PoolSeries[v3PoolSeries.length - 1];
-  }, [v3PoolSeries]);
+    if (!v3PoolSeriesRaw.length) return null;
+    return v3PoolSeriesRaw[v3PoolSeriesRaw.length - 1];
+  }, [v3PoolSeriesRaw]);
 
   const v3PoolDailyFeesUsd = useMemo(() => {
     const feeRate = Number(v3FeeTier) / 1_000_000;
@@ -2371,10 +2392,10 @@ export default function LiquiditySection({
   const v3PoolLatestTvlUsd = useMemo(() => {
     if (v3LatestPoolRow?.tvlUsd !== null && v3LatestPoolRow?.tvlUsd !== undefined) {
       const tvl = Number(v3LatestPoolRow.tvlUsd);
-      return Number.isFinite(tvl) ? tvl : null;
+      if (Number.isFinite(tvl) && tvl > 0) return tvl;
     }
     const snapshot = safeNumber(v3PoolTvlSnapshot);
-    if (snapshot !== null) return snapshot;
+    if (snapshot !== null && snapshot > 0) return snapshot;
     if (
       v3PoolHourStats?.tvlUsd !== null &&
       v3PoolHourStats?.tvlUsd !== undefined &&
@@ -2387,15 +2408,26 @@ export default function LiquiditySection({
     const balance1 = v3PoolIsReversed ? v3PoolBalances.token0 : v3PoolBalances.token1;
     const balance0Num = safeNumber(balance0);
     const balance1Num = safeNumber(balance1);
-    const tvl0 =
-      balance0Num !== null && v3Token0PriceUsd
-        ? balance0Num * v3Token0PriceUsd
-        : null;
-    const tvl1 =
-      balance1Num !== null && v3Token1PriceUsd
-        ? balance1Num * v3Token1PriceUsd
-        : null;
+    const symbol0 = v3Token0Meta?.symbol || v3Token0;
+    const symbol1 = v3Token1Meta?.symbol || v3Token1;
+    const price0 = safeNumber(v3Token0PriceUsd);
+    const price1 = safeNumber(v3Token1PriceUsd);
+    let usd0 =
+      price0 !== null && price0 > 0 ? price0 : isStableSymbol(symbol0) ? 1 : null;
+    let usd1 =
+      price1 !== null && price1 > 0 ? price1 : isStableSymbol(symbol1) ? 1 : null;
+    const refPrice = safeNumber(v3ReferencePrice);
+    if (usd0 === null && usd1 !== null && refPrice !== null && refPrice > 0) {
+      usd0 = usd1 * refPrice;
+    }
+    if (usd1 === null && usd0 !== null && refPrice !== null && refPrice > 0) {
+      usd1 = usd0 / refPrice;
+    }
+    const tvl0 = balance0Num !== null && usd0 !== null ? balance0Num * usd0 : null;
+    const tvl1 = balance1Num !== null && usd1 !== null ? balance1Num * usd1 : null;
     if (tvl0 !== null && tvl1 !== null) return tvl0 + tvl1;
+    if (tvl0 !== null) return tvl0;
+    if (tvl1 !== null) return tvl1;
     return null;
   }, [
     v3LatestPoolRow,
@@ -2405,6 +2437,11 @@ export default function LiquiditySection({
     v3PoolIsReversed,
     v3Token0PriceUsd,
     v3Token1PriceUsd,
+    v3Token0Meta,
+    v3Token1Meta,
+    v3Token0,
+    v3Token1,
+    v3ReferencePrice,
   ]);
 
   const v3BaseApr = useMemo(() => {
@@ -2864,6 +2901,10 @@ export default function LiquiditySection({
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
+  const v3HideChartControls = v3Token0Open || v3Token1Open;
+  const v3PoolDataLoading = Boolean(
+    isV3View && (v3PoolLoading || v3PoolTvlLoading)
+  );
   const v3RangeTransition =
     v3DraggingHandle
       ? "transition-none"
@@ -3298,6 +3339,12 @@ export default function LiquiditySection({
     };
   }, [selectedPositionId, hasV3Liquidity, nftMetaRefreshTick]);
 
+  const v3FeeTierLockedRef = useRef(false);
+
+  useEffect(() => {
+    v3FeeTierLockedRef.current = false;
+  }, [v3Token0, v3Token1]);
+
   useEffect(() => {
     let cancelled = false;
     const loadV3PoolInfo = async () => {
@@ -3316,17 +3363,31 @@ export default function LiquiditySection({
         return;
       }
       const [token0Addr, token1Addr, feeRaw] = v3PoolQueryKey.split("|");
+      const [sorted0, sorted1] = sortAddressPair(token0Addr, token1Addr);
       setV3PoolLoading(true);
       setV3PoolError("");
       try {
         const provider = getReadOnlyProvider(false, true);
         const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+        const fee = Number(feeRaw || 0);
         const poolAddr = await factory.getPool(
-          token0Addr,
-          token1Addr,
-          Number(feeRaw || 0)
+          sorted0,
+          sorted1,
+          fee
         );
         if (!poolAddr || poolAddr === ZERO_ADDRESS) {
+          if (!v3FeeTierLockedRef.current) {
+            const fallbackFees = V3_FEE_OPTIONS.map((opt) => opt.fee).filter(
+              (optFee) => optFee !== fee
+            );
+            for (const candidate of fallbackFees) {
+              const candidateAddr = await factory.getPool(sorted0, sorted1, candidate);
+              if (candidateAddr && candidateAddr !== ZERO_ADDRESS) {
+                if (!cancelled) setV3FeeTier(candidate);
+                return;
+              }
+            }
+          }
           if (!cancelled) {
             setV3PoolInfo({
               address: "",
@@ -3808,6 +3869,11 @@ export default function LiquiditySection({
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [v3ChartMenuOpen]);
+  useEffect(() => {
+    if (v3Token0Open || v3Token1Open) {
+      setV3ChartMenuOpen(false);
+    }
+  }, [v3Token0Open, v3Token1Open]);
 
   useEffect(() => {
     if (!slippageMenuOpen) return undefined;
@@ -7251,7 +7317,10 @@ export default function LiquiditySection({
                     <select
                       name="v3-fee-tier"
                       value={v3FeeTier}
-                      onChange={(e) => setV3FeeTier(Number(e.target.value))}
+                      onChange={(e) => {
+                        v3FeeTierLockedRef.current = true;
+                        setV3FeeTier(Number(e.target.value));
+                      }}
                       className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
                     >
                       {V3_FEE_OPTIONS.map((opt) => (
@@ -7432,11 +7501,11 @@ export default function LiquiditySection({
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center rounded-full border border-slate-700/60 bg-slate-900/80 p-1 text-[11px] text-slate-100 shadow-[0_8px_20px_rgba(0,0,0,0.45)]">
-                        <div className="flex items-center gap-1 rounded-full bg-slate-800/90 px-2 py-1 text-[11px] font-semibold text-slate-100">
-                          {v3Token1Meta?.logo ? (
-                            <img
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center rounded-full border border-slate-700/60 bg-slate-900/80 p-1 text-[11px] text-slate-100 shadow-[0_8px_20px_rgba(0,0,0,0.45)]">
+                          <div className="flex items-center gap-1 rounded-full bg-slate-800/90 px-2 py-1 text-[11px] font-semibold text-slate-100">
+                            {v3Token1Meta?.logo ? (
+                              <img
                               src={v3Token1Meta.logo}
                               alt={`${v3Token1} logo`}
                               className="h-4 w-4 rounded-full bg-slate-800 object-contain"
@@ -7463,60 +7532,62 @@ export default function LiquiditySection({
                           <span>{v3Token0}</span>
                         </div>
                       </div>
-                      <div className="relative z-40" ref={v3ChartMenuRef}>
-                        <button
-                          type="button"
-                          onClick={() => setV3ChartMenuOpen((v) => !v)}
-                          className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-200 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
-                        >
-                          {v3ChartMode.replace("-", " ")}
-                          <svg
-                            viewBox="0 0 20 20"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                            className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
+                      {!v3HideChartControls && (
+                        <div className="relative z-40" ref={v3ChartMenuRef}>
+                          <button
+                            type="button"
+                            onClick={() => setV3ChartMenuOpen((v) => !v)}
+                            className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-200 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
                           >
-                            <path
-                              d="M6 8l4 4 4-4"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </button>
-                        <div
-                          className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right z-50 ${
-                            v3ChartMenuOpen
-                              ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
-                              : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
-                          }`}
-                        >
-                          {[
-                            { id: "price-range", label: "Price range" },
-                            { id: "tvl", label: "TVL" },
-                            { id: "price", label: "Price" },
-                            { id: "volume", label: "Volume" },
-                            { id: "fees", label: "Fees" },
-                          ].map((opt) => (
-                            <button
-                              key={opt.id}
-                              type="button"
-                              onClick={() => {
-                                setV3ChartMode(opt.id);
-                                setV3ChartMenuOpen(false);
-                              }}
-                              className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
-                                v3ChartMode === opt.id
-                                  ? "bg-sky-500/20 text-sky-100"
-                                  : "hover:bg-slate-800/70"
-                              }`}
+                            {v3ChartMode.replace("-", " ")}
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className={`h-3.5 w-3.5 transition ${v3ChartMenuOpen ? "rotate-180" : ""}`}
                             >
-                              {opt.label}
-                            </button>
-                          ))}
+                              <path
+                                d="M6 8l4 4 4-4"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                          <div
+                            className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right z-50 ${
+                              v3ChartMenuOpen
+                                ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
+                                : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
+                            }`}
+                          >
+                            {[
+                              { id: "price-range", label: "Price range" },
+                              { id: "tvl", label: "TVL" },
+                              { id: "price", label: "Price" },
+                              { id: "volume", label: "Volume" },
+                              { id: "fees", label: "Fees" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.id}
+                                type="button"
+                                onClick={() => {
+                                  setV3ChartMode(opt.id);
+                                  setV3ChartMenuOpen(false);
+                                }}
+                                className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
+                                  v3ChartMode === opt.id
+                                    ? "bg-sky-500/20 text-sky-100"
+                                    : "hover:bg-slate-800/70"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
@@ -7891,8 +7962,14 @@ export default function LiquiditySection({
                 </div>
 
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-5 py-4 mb-5">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                    Price strategies
+                  <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-slate-500">
+                    <span>Price strategies</span>
+                    {v3PoolDataLoading ? (
+                      <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1 text-[10px] text-slate-300 normal-case">
+                        <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
+                        Loading pool data...
+                      </span>
+                    ) : null}
                   </div>
                   <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {v3RangeStrategies.map((strategy) => {
@@ -9057,7 +9134,9 @@ export default function LiquiditySection({
                           Net APR
                         </div>
                         <div className="text-xl font-semibold text-emerald-400">
-                          {v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
+                          {v3PoolDataLoading
+                            ? "Loading..."
+                            : v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
                             ? `${v3EstimatedApr.toFixed(2)}%`
                             : "--"}
                         </div>

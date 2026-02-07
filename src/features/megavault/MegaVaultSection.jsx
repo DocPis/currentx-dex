@@ -101,15 +101,7 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-              <span className="inline-flex items-center gap-2 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] text-emerald-200">
-                <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                Widget ready
-              </span>
-              <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-[11px] text-slate-300">
-                Network: {activeNetwork?.label || "Mainnet"}
-              </span>
-            </div>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300" />
           </div>
 
           <div className="flex justify-center lg:justify-end">

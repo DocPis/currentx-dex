@@ -3,6 +3,7 @@ import React, { useMemo, useState } from "react";
 import { TOKENS } from "../../shared/config/tokens";
 import megaLogo from "../../tokens/megaeth.png";
 import { usePoolsData } from "../../shared/hooks/usePoolsData";
+import { useDashboardData } from "../../shared/hooks/useDashboardData";
 
 const SORT_KEYS = {
   LIQUIDITY: "liquidity",
@@ -114,6 +115,13 @@ const poolMatchesSearch = (pool, term) => {
 
 export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
+  const { data: dashboardData } = useDashboardData();
+  const protocolStats = dashboardData?.stats || null;
+  const protocolHistory = dashboardData?.volumeHistory || [];
+  const protocolVolume24h =
+    protocolHistory?.[0]?.volumeUsd ?? protocolStats?.totalVolumeUsd ?? 0;
+  const protocolFees24h = protocolVolume24h ? protocolVolume24h * 0.003 : 0;
+  const protocolTvl = protocolStats?.totalLiquidityUsd ?? 0;
   const {
     v2Pools,
     v3Pools,
@@ -205,17 +213,7 @@ export default function PoolsSection({ onSelectPool }) {
     return list;
   }, [v2Pools, v3Pools, v2DayData, v3DayData]);
 
-  const totals = useMemo(() => {
-    return combinedPools.reduce(
-      (acc, pool) => {
-        acc.liquidity += Number(pool.liquidityUsd || 0);
-        acc.volume += Number(pool.volume24hUsd || 0);
-        acc.fees += Number(pool.fees24hUsd || 0);
-        return acc;
-      },
-      { liquidity: 0, volume: 0, fees: 0 }
-    );
-  }, [combinedPools]);
+  // totals are now sourced from dashboard protocol stats for consistency
 
   const filteredPools = useMemo(() => {
     if (!searchLower) return combinedPools;
@@ -295,18 +293,18 @@ export default function PoolsSection({ onSelectPool }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Volume 24h
+                Protocol volume 24h
               </div>
               <div className="text-xl font-semibold">
-                {formatUsd(totals.volume)}
+                {formatUsd(protocolVolume24h)}
               </div>
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Fees 24h
+                Protocol fees 24h
               </div>
               <div className="text-xl font-semibold">
-                {formatUsd(totals.fees)}
+                {formatUsd(protocolFees24h)}
               </div>
             </div>
             <div>
@@ -314,7 +312,7 @@ export default function PoolsSection({ onSelectPool }) {
                 TVL
               </div>
               <div className="text-xl font-semibold">
-                {formatUsd(totals.liquidity)}
+                {formatUsd(protocolTvl)}
               </div>
             </div>
           </div>
