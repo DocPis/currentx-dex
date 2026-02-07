@@ -2213,6 +2213,67 @@ export default function LiquiditySection({
     return buildSeriesChart(base);
   }, [v3PoolSeries, v3FeeTier]);
 
+  const v3LatestPoolRow = useMemo(() => {
+    if (!v3PoolSeries.length) return null;
+    return v3PoolSeries[v3PoolSeries.length - 1];
+  }, [v3PoolSeries]);
+
+  const v3PoolDailyFeesUsd = useMemo(() => {
+    if (!v3LatestPoolRow) return null;
+    if (
+      v3LatestPoolRow.feesUsd !== null &&
+      v3LatestPoolRow.feesUsd !== undefined &&
+      Number.isFinite(v3LatestPoolRow.feesUsd)
+    ) {
+      return Number(v3LatestPoolRow.feesUsd);
+    }
+    const volume = v3LatestPoolRow.volumeUsd;
+    const feeRate = Number(v3FeeTier) / 1_000_000;
+    if (volume !== null && volume !== undefined && Number.isFinite(volume) && feeRate) {
+      return volume * feeRate;
+    }
+    return null;
+  }, [v3LatestPoolRow, v3FeeTier]);
+
+  const v3PoolLatestTvlUsd = useMemo(() => {
+    if (v3LatestPoolRow?.tvlUsd !== null && v3LatestPoolRow?.tvlUsd !== undefined) {
+      const tvl = Number(v3LatestPoolRow.tvlUsd);
+      return Number.isFinite(tvl) ? tvl : null;
+    }
+    const snapshot = safeNumber(v3PoolTvlSnapshot);
+    return snapshot !== null ? snapshot : null;
+  }, [v3LatestPoolRow, v3PoolTvlSnapshot]);
+
+  const v3BaseApr = useMemo(() => {
+    if (
+      v3PoolDailyFeesUsd === null ||
+      v3PoolDailyFeesUsd === undefined ||
+      v3PoolLatestTvlUsd === null ||
+      v3PoolLatestTvlUsd === undefined ||
+      v3PoolLatestTvlUsd <= 0
+    ) {
+      return null;
+    }
+    return (v3PoolDailyFeesUsd * 365 * 100) / v3PoolLatestTvlUsd;
+  }, [v3PoolDailyFeesUsd, v3PoolLatestTvlUsd]);
+
+  const v3RangeBoost = useMemo(() => {
+    if (!v3HasCustomRange || !v3ReferencePrice) return 1;
+    const width = v3RangeUpperNum - v3RangeLowerNum;
+    if (!Number.isFinite(width) || width <= 0) return 1;
+    const relativeWidth = width / v3ReferencePrice;
+    if (!Number.isFinite(relativeWidth) || relativeWidth <= 0) return 1;
+    const rawBoost = 1 / relativeWidth;
+    return Math.min(25, Math.max(0.2, rawBoost));
+  }, [v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum, v3ReferencePrice]);
+
+  const v3EstimatedApr = useMemo(() => {
+    if (v3BaseApr === null || v3BaseApr === undefined) return null;
+    if (v3RangeSide !== "dual") return 0;
+    const boost = v3HasCustomRange ? v3RangeBoost : 1;
+    return v3BaseApr * boost;
+  }, [v3BaseApr, v3RangeSide, v3HasCustomRange, v3RangeBoost]);
+
   const v3PriceChart = useMemo(() => {
     const base = v3PriceSeriesSource
       .map((row) => {
@@ -7550,9 +7611,17 @@ export default function LiquiditySection({
                       <span className="text-[10px] text-slate-600">ⓘ</span>
                     </div>
                     <div className="mt-2 text-xl font-semibold text-slate-100">
-                      {formatFeeTier(v3FeeTier)}
+                      {v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
+                        ? `${v3EstimatedApr.toFixed(2)}%`
+                        : "--"}
                     </div>
-                    <div className="text-[11px] text-slate-500">Estimated</div>
+                    <div
+                      className={`text-[11px] ${
+                        v3RangeSide !== "dual" ? "text-rose-400" : "text-slate-500"
+                      }`}
+                    >
+                      {v3RangeSide !== "dual" ? "Out of range" : "Estimated"}
+                    </div>
                   </div>
                 </div>
 
