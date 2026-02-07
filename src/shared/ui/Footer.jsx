@@ -3,6 +3,7 @@ import discordIcon from "../../assets/social/discord.png";
 import twitterIcon from "../../assets/social/x.png";
 import telegramIcon from "../../assets/social/telegram.png";
 import megaLogo from "../../tokens/megaeth.png";
+import { GeckoTerminalAttributionLink } from "./GeckoTerminalAttribution";
 
 const FOOTER_LINKS = {
   docs: "https://docs.currentx.app/",
@@ -11,16 +12,28 @@ const FOOTER_LINKS = {
   telegram: "https://t.co/VLEkH8Z2fD",
 };
 
-const LinkItem = ({ href, children }) => (
+const LinkItem = ({ href, children, external = true }) => {
+  const handleClick = (event) => {
+    if (external || typeof window === "undefined") return;
+    event.preventDefault();
+    const target = href?.startsWith?.("/") ? href : `/${href || ""}`;
+    if (window.location.pathname === target) return;
+    window.history.pushState({}, "", target);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+  };
+
+  return (
   <a
     href={href}
-    target="_blank"
-    rel="noreferrer"
+    target={external ? "_blank" : undefined}
+    rel={external ? "noreferrer" : undefined}
+    onClick={handleClick}
     className="text-sm text-slate-300 hover:text-sky-300 transition-colors"
   >
     {children}
   </a>
-);
+  );
+};
 
 const IconButton = ({ href, label, children }) => (
   <a
@@ -48,33 +61,42 @@ export default function Footer() {
           </span>
           <span className="text-slate-700">|</span>
           <LinkItem href={FOOTER_LINKS.docs}>Docs</LinkItem>
+          <LinkItem href="/about" external={false}>
+            About
+          </LinkItem>
         </div>
 
-        <div className="flex items-center gap-2">
-          <IconButton href={FOOTER_LINKS.discord} label="Discord">
-            <img
-              src={discordIcon}
-              alt="Discord"
-              className="h-full w-full object-contain"
-              style={{ transform: "scale(1.3)" }}
-            />
-          </IconButton>
-          <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
-            <img
-              src={twitterIcon}
-              alt="Twitter / X"
-              className="h-full w-full object-contain"
-              style={{ transform: "scale(1.35)" }}
-            />
-          </IconButton>
-          <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
-            <img
-              src={telegramIcon}
-              alt="Telegram"
-              className="h-full w-full object-contain"
-              style={{ transform: "scale(1.7)" }}
-            />
-          </IconButton>
+        <div className="flex flex-col items-center gap-2 sm:items-end">
+          <div className="flex items-center gap-2">
+            <IconButton href={FOOTER_LINKS.discord} label="Discord">
+              <img
+                src={discordIcon}
+                alt="Discord"
+                className="h-full w-full object-contain"
+                style={{ transform: "scale(1.3)" }}
+              />
+            </IconButton>
+            <IconButton href={FOOTER_LINKS.twitter} label="Twitter / X">
+              <img
+                src={twitterIcon}
+                alt="Twitter / X"
+                className="h-full w-full object-contain"
+                style={{ transform: "scale(1.35)" }}
+              />
+            </IconButton>
+            <IconButton href={FOOTER_LINKS.telegram} label="Telegram">
+              <img
+                src={telegramIcon}
+                alt="Telegram"
+                className="h-full w-full object-contain"
+                style={{ transform: "scale(1.7)" }}
+              />
+            </IconButton>
+          </div>
+          <GeckoTerminalAttributionLink
+            text="Powered by GeckoTerminal"
+            className="text-center sm:text-right"
+          />
         </div>
       </div>
     </footer>
