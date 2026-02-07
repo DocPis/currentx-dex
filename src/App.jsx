@@ -8,7 +8,6 @@ import Dashboard from "./features/dashboard/Dashboard";
 import Farms from "./features/farms/Farms";
 import PoolsSection from "./features/pools/PoolsSection";
 import MegaVaultSection from "./features/megavault/MegaVaultSection";
-import About from "./features/about/About";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
@@ -22,7 +21,6 @@ const TAB_ROUTES = {
   pools: "/pools",
   farms: "/farms",
   megavault: "/megavault",
-  about: "/about",
 };
 
 const normalizePath = (path = "") => {
@@ -190,7 +188,6 @@ export default function App() {
         {tab === "megavault" && (
           <MegaVaultSection address={address} onConnectWallet={handleConnect} />
         )}
-        {tab === "about" && <About />}
       </main>
 
       <Footer />

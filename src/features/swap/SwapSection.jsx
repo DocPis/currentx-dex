@@ -32,6 +32,7 @@ import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA"];
+const MAX_ROUTE_CANDIDATES = 12;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
 const MAX_UINT48 = (1n << 48n) - 1n;
@@ -510,6 +511,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const autoRefreshTimerRef = useRef(null);
   const approvalCacheRef = useRef(new Map());
   const lastQuoteSourceRef = useRef("Live quote via CurrentX API...");
+  const quoteInFlightRef = useRef(false);
+  const lastQuoteKeyRef = useRef("");
+  const routeCandidateCacheRef = useRef(new Map());
 
   const makeApprovalKey = (kind, token, spender) =>
     `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
@@ -848,20 +852,38 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     (tokenA, tokenB) => {
       const aLower = (tokenA || "").toLowerCase();
       const bLower = (tokenB || "").toLowerCase();
-      const map = new Map();
+      const prioritized = new Map();
+      BASE_TOKEN_OPTIONS.forEach((symbol) => {
+        let addr = tokenRegistry?.[symbol]?.address;
+        if (symbol === "ETH") addr = WETH_ADDRESS;
+        if (!addr) return;
+        const lower = addr.toLowerCase();
+        if (!lower || lower === ZERO_ADDRESS) return;
+        if (lower === aLower || lower === bLower) return;
+        if (!prioritized.has(lower)) prioritized.set(lower, addr);
+      });
+      const fallback = new Map();
       Object.values(tokenRegistry || {}).forEach((meta) => {
         const addr = meta?.address;
         if (!addr) return;
         const lower = addr.toLowerCase();
         if (!lower || lower === ZERO_ADDRESS) return;
         if (lower === aLower || lower === bLower) return;
-        if (!map.has(lower)) map.set(lower, addr);
+        if (prioritized.has(lower) || fallback.has(lower)) return;
+        fallback.set(lower, addr);
       });
       const wethLower = (WETH_ADDRESS || "").toLowerCase();
-      if (wethLower && wethLower !== aLower && wethLower !== bLower && !map.has(wethLower)) {
-        map.set(wethLower, WETH_ADDRESS);
+      if (
+        wethLower &&
+        wethLower !== aLower &&
+        wethLower !== bLower &&
+        !prioritized.has(wethLower) &&
+        !fallback.has(wethLower)
+      ) {
+        prioritized.set(wethLower, WETH_ADDRESS);
       }
-      return Array.from(map.values());
+      const merged = [...prioritized.values(), ...fallback.values()];
+      return merged.slice(0, MAX_ROUTE_CANDIDATES);
     },
     [tokenRegistry]
   );
@@ -959,41 +981,59 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
       const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
+      const cacheKey = `v3:${a.toLowerCase()}:${b.toLowerCase()}`;
+      const cached = routeCandidateCacheRef.current.get(cacheKey);
+      const now = Date.now();
+      const ttlMs = 20000;
+      if (cached && now - cached.ts < ttlMs) {
+        if (cached.promise) return cached.promise;
+        if (cached.value) return cached.value;
+      }
+      const buildPromise = (async () => {
+        const directPools = await listV3Pools(factory, a, b);
+        const directRoutes = directPools.map((pool) => ({
+          kind: "direct",
+          path: [a, b],
+          pools: [pool.pool],
+          fees: [pool.fee],
+        }));
 
-      const directPools = await listV3Pools(factory, a, b);
-      const directRoutes = directPools.map((pool) => ({
-        kind: "direct",
-        path: [a, b],
-        pools: [pool.pool],
-        fees: [pool.fee],
-      }));
+        const candidateMids = getRouteCandidates(a, b);
+        const hopCandidates = candidateMids.length
+          ? await Promise.all(
+              candidateMids.map(async (mid) => {
+                const poolsA = await listV3Pools(factory, a, mid);
+                if (!poolsA.length) return null;
+                const poolsB = await listV3Pools(factory, mid, b);
+                if (!poolsB.length) return null;
+                return { mid, poolsA, poolsB };
+              })
+            )
+          : [];
+        const hopRoutes = hopCandidates
+          .filter(Boolean)
+          .flatMap((candidate) =>
+            candidate.poolsA.flatMap((poolA) =>
+              candidate.poolsB.map((poolB) => ({
+                kind: "hop",
+                path: [a, candidate.mid, b],
+                pools: [poolA.pool, poolB.pool],
+                fees: [poolA.fee, poolB.fee],
+              }))
+            )
+          );
 
-      const candidateMids = getRouteCandidates(a, b);
-      const hopCandidates = candidateMids.length
-        ? await Promise.all(
-            candidateMids.map(async (mid) => {
-              const poolsA = await listV3Pools(factory, a, mid);
-              if (!poolsA.length) return null;
-              const poolsB = await listV3Pools(factory, mid, b);
-              if (!poolsB.length) return null;
-              return { mid, poolsA, poolsB };
-            })
-          )
-        : [];
-      const hopRoutes = hopCandidates
-        .filter(Boolean)
-        .flatMap((candidate) =>
-          candidate.poolsA.flatMap((poolA) =>
-            candidate.poolsB.map((poolB) => ({
-              kind: "hop",
-              path: [a, candidate.mid, b],
-              pools: [poolA.pool, poolB.pool],
-              fees: [poolA.fee, poolB.fee],
-            }))
-          )
-        );
-
-      return { directRoutes, hopRoutes };
+        return { directRoutes, hopRoutes };
+      })();
+      routeCandidateCacheRef.current.set(cacheKey, { ts: now, promise: buildPromise });
+      try {
+        const result = await buildPromise;
+        routeCandidateCacheRef.current.set(cacheKey, { ts: Date.now(), value: result });
+        return result;
+      } catch (err) {
+        routeCandidateCacheRef.current.delete(cacheKey);
+        throw err;
+      }
     },
     [
       buyMeta?.address,
@@ -1199,40 +1239,58 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
       const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
+      const cacheKey = `v2:${a.toLowerCase()}:${b.toLowerCase()}`;
+      const cached = routeCandidateCacheRef.current.get(cacheKey);
+      const now = Date.now();
+      const ttlMs = 20000;
+      if (cached && now - cached.ts < ttlMs) {
+        if (cached.promise) return cached.promise;
+        if (cached.value) return cached.value;
+      }
+      const buildPromise = (async () => {
+        const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
+        const hasDirect = directPair && directPair !== ZERO_ADDRESS;
+        const directRoute = hasDirect
+          ? {
+              protocol: "V2",
+              kind: "direct",
+              path: [a, b],
+              pairs: [directPair].filter(Boolean),
+            }
+          : null;
 
-      const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
-      const hasDirect = directPair && directPair !== ZERO_ADDRESS;
-      const directRoute = hasDirect
-        ? {
+        const candidateMids = getRouteCandidates(a, b);
+        const hopPairs = candidateMids.length
+          ? await Promise.all(
+              candidateMids.map(async (mid) => {
+                const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
+                if (!pairA || pairA === ZERO_ADDRESS) return null;
+                const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
+                if (!pairB || pairB === ZERO_ADDRESS) return null;
+                return { mid, pairA, pairB };
+              })
+            )
+          : [];
+        const hopRoutes = hopPairs
+          .filter(Boolean)
+          .map((pair) => ({
             protocol: "V2",
-            kind: "direct",
-            path: [a, b],
-            pairs: [directPair].filter(Boolean),
-          }
-        : null;
+            kind: "hop",
+            path: [a, pair.mid, b],
+            pairs: [pair.pairA, pair.pairB],
+          }));
 
-      const candidateMids = getRouteCandidates(a, b);
-      const hopPairs = candidateMids.length
-        ? await Promise.all(
-            candidateMids.map(async (mid) => {
-              const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
-              if (!pairA || pairA === ZERO_ADDRESS) return null;
-              const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
-              if (!pairB || pairB === ZERO_ADDRESS) return null;
-              return { mid, pairA, pairB };
-            })
-          )
-        : [];
-      const hopRoutes = hopPairs
-        .filter(Boolean)
-        .map((pair) => ({
-          protocol: "V2",
-          kind: "hop",
-          path: [a, pair.mid, b],
-          pairs: [pair.pairA, pair.pairB],
-        }));
-
-      return { directRoute, hopRoutes };
+        return { directRoute, hopRoutes };
+      })();
+      routeCandidateCacheRef.current.set(cacheKey, { ts: now, promise: buildPromise });
+      try {
+        const result = await buildPromise;
+        routeCandidateCacheRef.current.set(cacheKey, { ts: Date.now(), value: result });
+        return result;
+      } catch (err) {
+        routeCandidateCacheRef.current.delete(cacheKey);
+        throw err;
+      }
     },
     [
       buyMeta?.address,
@@ -1647,7 +1705,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       }
 
       quoteDebounceRef.current = setTimeout(async () => {
+        let inFlightSet = false;
         try {
+          const quoteKey = `${sellToken}-${buyToken}-${swapInputMode}-${amountIn}-${amountOutInput}-${routePreference}`;
+          if (quoteInFlightRef.current && quoteKey === lastQuoteKeyRef.current) {
+            return;
+          }
+          quoteInFlightRef.current = true;
+          inFlightSet = true;
+          lastQuoteKeyRef.current = quoteKey;
           const hadQuote = lastQuoteOutRef.current !== null;
           if (!hadQuote) {
             setQuoteLoading(true);
@@ -1830,7 +1896,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               allQuoted.length > 1
             ) {
               try {
-                const maxCandidates = 6;
+                const maxCandidates = 3;
                 const ranked = allQuoted
                   .slice()
                   .sort((a, b) => Number(b.amountOut - a.amountOut))
@@ -2287,7 +2353,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           if (cancelled) return;
           setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
         } finally {
-          if (!cancelled) setQuoteLoading(false);
+          if (inFlightSet) {
+            quoteInFlightRef.current = false;
+          }
+          if (!cancelled && inFlightSet) setQuoteLoading(false);
         }
       }, 250); // debounce 250ms to cut RPC spam
   };

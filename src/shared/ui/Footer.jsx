@@ -65,9 +65,6 @@ export default function Footer() {
           </span>
           <span className="text-slate-700">|</span>
           <LinkItem href={FOOTER_LINKS.docs}>Docs</LinkItem>
-          <LinkItem href="/about" external={false}>
-            About
-          </LinkItem>
         </div>
 
         <div className="flex w-full flex-col items-center gap-2 sm:w-auto sm:items-end">
