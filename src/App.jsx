@@ -14,8 +14,33 @@ import WalletModal from "./features/wallet/WalletModal";
 import Footer from "./shared/ui/Footer";
 import WhitelistBanner from "./shared/ui/WhitelistBanner";
 
+const TAB_ROUTES = {
+  dashboard: "/dashboard",
+  swap: "/swap",
+  liquidity: "/liquidity",
+  pools: "/pools",
+  farms: "/farms",
+  megavault: "/megavault",
+};
+
+const normalizePath = (path = "") => {
+  const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
+  return cleaned || "/";
+};
+
+const getTabFromPath = (path = "") => {
+  const cleaned = normalizePath(path);
+  if (cleaned === "/") return "dashboard";
+  const match = Object.entries(TAB_ROUTES).find(([, route]) => route === cleaned);
+  return match ? match[0] : "dashboard";
+};
+
+const getPathForTab = (tab) => TAB_ROUTES[tab] || "/dashboard";
+
 export default function App() {
-  const [tab, setTab] = useState("dashboard");
+  const [tab, setTab] = useState(() =>
+    getTabFromPath(window?.location?.pathname)
+  );
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [poolSelection, setPoolSelection] = useState(null);
@@ -23,6 +48,24 @@ export default function App() {
   const { disconnect: wagmiDisconnect } = useDisconnect();
   const { reconnect } = useReconnect();
   const { balances, refresh } = useBalances(address, chainId);
+
+  useEffect(() => {
+    const handlePop = () => {
+      const nextTab = getTabFromPath(window?.location?.pathname);
+      setTab((prev) => (prev === nextTab ? prev : nextTab));
+    };
+    window.addEventListener("popstate", handlePop);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, []);
+
+  useEffect(() => {
+    const targetPath = getPathForTab(tab);
+    const currentPath = normalizePath(window?.location?.pathname);
+    if (currentPath !== targetPath) {
+      const suffix = `${window?.location?.search || ""}${window?.location?.hash || ""}`;
+      window.history.pushState({}, "", `${targetPath}${suffix}`);
+    }
+  }, [tab]);
   useEffect(() => {
     if (!connectError) return undefined;
     const id = setTimeout(() => setConnectError(""), 4000);
