@@ -2098,3 +2098,10 @@ export const MULTICALL3_ABI = [
     type: "function",
   },
 ];
+
+// Chainlink AggregatorV3 ABI (latest + historical rounds)
+export const CHAINLINK_AGGREGATOR_ABI = [
+  "function decimals() view returns (uint8)",
+  "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+  "function getRoundData(uint80 _roundId) view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
+];

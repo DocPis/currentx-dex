@@ -1663,6 +1663,47 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
   const id = (poolId || "").toLowerCase();
   if (!id) return [];
   const count = Math.max(1, Math.min(Number(days) || 14, 1000));
+  const toOptionalPositive = (value) => {
+    if (value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  };
+  const hasPrice = (rows) =>
+    rows.some(
+      (row) =>
+        (Number.isFinite(row.token0Price) && row.token0Price > 0) ||
+        (Number.isFinite(row.token1Price) && row.token1Price > 0)
+    );
+  const normalizeRows = (rows, dateGetter) =>
+    rows
+      .map((row) => {
+        const tvl =
+          row.tvlUSD !== undefined && row.tvlUSD !== null
+            ? row.tvlUSD
+            : row.totalValueLockedUSD;
+        const open = toOptionalPositive(row.open);
+        const high = toOptionalPositive(row.high);
+        const low = toOptionalPositive(row.low);
+        const close = toOptionalPositive(row.close);
+        let token0Price = toOptionalPositive(row.token0Price);
+        let token1Price = toOptionalPositive(row.token1Price);
+        if (!token0Price) {
+          token0Price = close ?? open ?? high ?? low ?? null;
+        }
+        if (!token1Price && token0Price) {
+          token1Price = 1 / token0Price;
+        }
+        return {
+          date: dateGetter(row),
+          tvlUsd: toNumberSafe(tvl),
+          volumeUsd: toNumberSafe(row.volumeUSD),
+          feesUsd: row.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
+          token0Price,
+          token1Price,
+        };
+      })
+      .filter((row) => Number.isFinite(row.date) && row.date > 0)
+      .sort((a, b) => a.date - b.date);
 
   const candidates = ["pool", "poolAddress"];
   const variants = [
@@ -1674,6 +1715,32 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
       feesUSD
       token0Price
       token1Price
+      open
+      high
+      low
+      close
+    `,
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      token0Price
+      token1Price
+      open
+      high
+      low
+      close
+    `,
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      open
+      high
+      low
+      close
     `,
     `
       date
@@ -1691,6 +1758,7 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
     `,
   ];
 
+  let dayRows = null;
   for (const variant of variants) {
     for (const field of candidates) {
       const query = `
@@ -1709,25 +1777,13 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
       try {
         const res = await postSubgraphV3(query);
         const rows = res?.poolDayDatas || [];
-        const mapped = rows.map((row) => {
-          const tvl =
-            row.tvlUSD !== undefined && row.tvlUSD !== null
-              ? row.tvlUSD
-              : row.totalValueLockedUSD;
-          return {
-            date: Number(row.date || 0) * 1000,
-            tvlUsd: toNumberSafe(tvl),
-            volumeUsd: toNumberSafe(row.volumeUSD),
-            feesUsd: row.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
-            token0Price:
-              row.token0Price !== undefined ? toNumberSafe(row.token0Price) : null,
-            token1Price:
-              row.token1Price !== undefined ? toNumberSafe(row.token1Price) : null,
-          };
-        });
-        return mapped
-          .filter((row) => Number.isFinite(row.date) && row.date > 0)
-          .sort((a, b) => a.date - b.date);
+        const mapped = normalizeRows(rows, (row) => Number(row.date || 0) * 1000);
+        if (!dayRows && mapped.length) {
+          dayRows = mapped;
+        }
+        if (hasPrice(mapped)) {
+          return mapped;
+        }
       } catch (err) {
         const message = err?.message || "";
         if (isSchemaFieldMissing(message)) {
@@ -1738,7 +1794,326 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
     }
   }
 
-  return [];
+  const hourVariants = [
+    {
+      name: "periodStartUnix",
+      select: `
+        periodStartUnix
+        volumeUSD
+        tvlUSD
+        totalValueLockedUSD
+        feesUSD
+        token0Price
+        token1Price
+        open
+        high
+        low
+        close
+      `,
+      dateGetter: (row) => Number(row.periodStartUnix || 0) * 1000,
+    },
+    {
+      name: "hourStartUnix",
+      select: `
+        hourStartUnix
+        volumeUSD
+        tvlUSD
+        totalValueLockedUSD
+        feesUSD
+        token0Price
+        token1Price
+        open
+        high
+        low
+        close
+      `,
+      dateGetter: (row) => Number(row.hourStartUnix || 0) * 1000,
+    },
+    {
+      name: "date",
+      select: `
+        date
+        volumeUSD
+        tvlUSD
+        totalValueLockedUSD
+        feesUSD
+        token0Price
+        token1Price
+        open
+        high
+        low
+        close
+      `,
+      dateGetter: (row) => Number(row.date || 0) * 1000,
+    },
+  ];
+  const hourTarget = Math.max(24, Math.min(12000, count * 24));
+  const downsampleDaily = (rows, maxDays) => {
+    if (!rows.length) return rows;
+    const byDay = new Map();
+    rows.forEach((row) => {
+      const dayId = Math.floor(row.date / 86400000);
+      const existing = byDay.get(dayId);
+      if (!existing || row.date > existing.date) {
+        byDay.set(dayId, row);
+      }
+    });
+    const out = Array.from(byDay.values()).sort((a, b) => a.date - b.date);
+    if (out.length > maxDays) {
+      return out.slice(out.length - maxDays);
+    }
+    return out;
+  };
+
+  for (const variant of hourVariants) {
+    for (const field of candidates) {
+      let skip = 0;
+      let rows = [];
+      while (rows.length < hourTarget) {
+        const first = Math.min(1000, hourTarget - rows.length);
+        const query = `
+          query V3PoolHourHistory {
+            poolHourDatas(
+              first: ${first}
+              skip: ${skip}
+              orderBy: ${variant.name}
+              orderDirection: desc
+              where: { ${field}: "${id}" }
+            ) {
+              ${variant.select}
+            }
+          }
+        `;
+        try {
+          const res = await postSubgraphV3(query);
+          const chunk = res?.poolHourDatas || [];
+          if (!chunk.length) break;
+          rows = rows.concat(chunk);
+          if (chunk.length < first) break;
+          skip += chunk.length;
+          if (skip >= 12000) break;
+        } catch (err) {
+          const message = err?.message || "";
+          const orderByMissing =
+            message.includes("PoolHourData_orderBy") ||
+            message.includes("PoolHourData_orderBy!") ||
+            message.includes("is not a valid PoolHourData_orderBy");
+          if (isSchemaFieldMissing(message) || orderByMissing) {
+            rows = [];
+            break;
+          }
+          throw err;
+        }
+      }
+      if (!rows.length) {
+        continue;
+      }
+      const mapped = normalizeRows(rows, variant.dateGetter);
+      if (hasPrice(mapped)) {
+        return downsampleDaily(mapped, count);
+      }
+    }
+  }
+
+  return dayRows || [];
+}
+
+export async function fetchV3TokenPairHistory(token0Id, token1Id, days = 14) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+  const id0 = (token0Id || "").toLowerCase();
+  const id1 = (token1Id || "").toLowerCase();
+  if (!id0 || !id1) return [];
+  const count = Math.max(1, Math.min(Number(days) || 14, 1000));
+
+  const toOptionalPositive = (value) => {
+    if (value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  };
+  const pickPriceUsd = (row) =>
+    toOptionalPositive(row.priceUSD) ??
+    toOptionalPositive(row.close) ??
+    toOptionalPositive(row.open) ??
+    toOptionalPositive(row.high) ??
+    toOptionalPositive(row.low) ??
+    null;
+  const normalize = (rows, dateGetter) =>
+    rows
+      .map((row) => ({
+        date: dateGetter(row),
+        priceUsd: pickPriceUsd(row),
+      }))
+      .filter((row) => Number.isFinite(row.date) && row.date > 0)
+      .sort((a, b) => a.date - b.date);
+
+  const fetchTokenHistory = async (tokenId) => {
+    const candidates = ["token", "tokenAddress"];
+    const variants = [
+      `
+        date
+        priceUSD
+        open
+        high
+        low
+        close
+      `,
+      `
+        date
+        priceUSD
+      `,
+      `
+        date
+        open
+        high
+        low
+        close
+      `,
+    ];
+
+    for (const variant of variants) {
+      for (const field of candidates) {
+        const query = `
+          query TokenDayHistory {
+            tokenDayDatas(
+              first: ${count}
+              orderBy: date
+              orderDirection: desc
+              where: { ${field}: "${tokenId}" }
+            ) {
+              ${variant}
+            }
+          }
+        `;
+        try {
+          const res = await postSubgraphV3(query);
+          const rows = res?.tokenDayDatas || [];
+          const mapped = normalize(rows, (row) => Number(row.date || 0) * 1000);
+          if (mapped.length) return mapped;
+        } catch (err) {
+          const message = err?.message || "";
+          if (isSchemaFieldMissing(message)) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+
+    const hourVariants = [
+      {
+        name: "periodStartUnix",
+        select: `
+          periodStartUnix
+          priceUSD
+          open
+          high
+          low
+          close
+        `,
+        dateGetter: (row) => Number(row.periodStartUnix || 0) * 1000,
+      },
+      {
+        name: "hourStartUnix",
+        select: `
+          hourStartUnix
+          priceUSD
+          open
+          high
+          low
+          close
+        `,
+        dateGetter: (row) => Number(row.hourStartUnix || 0) * 1000,
+      },
+      {
+        name: "date",
+        select: `
+          date
+          priceUSD
+          open
+          high
+          low
+          close
+        `,
+        dateGetter: (row) => Number(row.date || 0) * 1000,
+      },
+    ];
+    const hourTarget = Math.max(24, Math.min(12000, count * 24));
+
+    for (const variant of hourVariants) {
+      for (const field of candidates) {
+        let skip = 0;
+        let rows = [];
+        while (rows.length < hourTarget) {
+          const first = Math.min(1000, hourTarget - rows.length);
+          const query = `
+            query TokenHourHistory {
+              tokenHourDatas(
+                first: ${first}
+                skip: ${skip}
+                orderBy: ${variant.name}
+                orderDirection: desc
+                where: { ${field}: "${tokenId}" }
+              ) {
+                ${variant.select}
+              }
+            }
+          `;
+          try {
+            const res = await postSubgraphV3(query);
+            const chunk = res?.tokenHourDatas || [];
+            if (!chunk.length) break;
+            rows = rows.concat(chunk);
+            if (chunk.length < first) break;
+            skip += chunk.length;
+            if (skip >= 12000) break;
+          } catch (err) {
+            const message = err?.message || "";
+            const orderByMissing =
+              message.includes("TokenHourData_orderBy") ||
+              message.includes("TokenHourData_orderBy!") ||
+              message.includes("is not a valid TokenHourData_orderBy");
+            if (isSchemaFieldMissing(message) || orderByMissing) {
+              rows = [];
+              break;
+            }
+            throw err;
+          }
+        }
+        if (!rows.length) continue;
+        const mapped = normalize(rows, variant.dateGetter);
+        if (mapped.length) return mapped;
+      }
+    }
+
+    return [];
+  };
+
+  const [token0Rows, token1Rows] = await Promise.all([
+    fetchTokenHistory(id0),
+    fetchTokenHistory(id1),
+  ]);
+  if (!token0Rows.length || !token1Rows.length) return [];
+
+  const byDay1 = new Map(
+    token1Rows.map((row) => [Math.floor(row.date / 86400000), row])
+  );
+  const combined = [];
+  token0Rows.forEach((row0) => {
+    const dayId = Math.floor(row0.date / 86400000);
+    const row1 = byDay1.get(dayId);
+    if (!row1) return;
+    const price0 = row0.priceUsd;
+    const price1 = row1.priceUsd;
+    if (!price0 || !price1) return;
+    const ratio = price0 / price1;
+    if (!Number.isFinite(ratio) || ratio <= 0) return;
+    combined.push({
+      date: row0.date,
+      token0Price: ratio,
+      token1Price: 1 / ratio,
+    });
+  });
+  return combined.sort((a, b) => a.date - b.date);
 }
 
 // Fetch latest pool-level TVL snapshot for a V3 pool

@@ -7,6 +7,7 @@ const active = getActiveNetworkConfig();
 export const MEGAETH_CHAIN_ID_HEX = active.chainIdHex;
 export const NETWORK_NAME = active.name;
 export const EXPLORER_BASE_URL = active.explorer;
+export const CHAINLINK_RPC_URL = active.chainlinkRpcUrl || "";
 
 // Infra
 export const MULTICALL3_ADDRESS = "0xcA11bde05977b3631167028862bE2a173976CA11";
@@ -53,3 +54,4 @@ export const UNIV3_MIGRATOR_ADDRESS = active.addresses.UNIV3_MIGRATOR_ADDRESS;
 export const UNIV3_POOL_INIT_CODE_HASH = active.addresses.UNIV3_POOL_INIT_CODE_HASH;
 export const UNIV3_UNIVERSAL_ROUTER_ADDRESS = active.addresses.UNIV3_UNIVERSAL_ROUTER_ADDRESS;
 export const PERMIT2_ADDRESS = active.addresses.PERMIT2_ADDRESS;
+export const CHAINLINK_ETH_USD_FEED_ADDRESS = active.addresses.CHAINLINK_ETH_USD_FEED || "";

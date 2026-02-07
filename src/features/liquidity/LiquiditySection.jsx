@@ -1,6 +1,6 @@
 // src/features/liquidity/LiquiditySection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, Interface, formatUnits, parseUnits } from "ethers";
+import { Contract, Interface, JsonRpcProvider, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -15,6 +15,8 @@ import {
   fetchMasterChefFarms,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
+  CHAINLINK_ETH_USD_FEED_ADDRESS,
+  CHAINLINK_RPC_URL,
   BTCB_ADDRESS,
   SUSDE_ADDRESS,
   EZETH_ADDRESS,
@@ -32,12 +34,14 @@ import {
   UNIV3_FACTORY_ABI,
   UNIV3_POOL_ABI,
   UNIV3_POSITION_MANAGER_ABI,
+  CHAINLINK_AGGREGATOR_ABI,
 } from "../../shared/config/abis";
 import {
   fetchV2PairData,
   fetchTokenPrices,
   fetchV3PoolHistory,
   fetchV3PoolSnapshot,
+  fetchV3TokenPairHistory,
 } from "../../shared/config/subgraph";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
@@ -70,6 +74,22 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TICK_BASE = 1.0001;
 const CHART_PADDING = 0.12;
 const V3_TVL_HISTORY_DAYS = 14;
+const getV3RangeDays = (timeframe) => {
+  switch (timeframe) {
+    case "1D":
+      return 2;
+    case "1W":
+      return 10;
+    case "1M":
+      return 40;
+    case "1Y":
+      return 370;
+    case "All":
+      return 730;
+    default:
+      return V3_TVL_HISTORY_DAYS;
+  }
+};
 
 const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
 const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
@@ -187,6 +207,175 @@ const formatPrice = (value) => {
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
 const getTickSpacingFromFee = (fee) => V3_TICK_SPACING[Number(fee)] || null;
 const isAddressLike = (value) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
+const isEthLikeAddress = (addr) =>
+  Boolean(
+    WETH_ADDRESS &&
+      addr &&
+      addr.toLowerCase &&
+      addr.toLowerCase() === WETH_ADDRESS.toLowerCase()
+  );
+const getChainlinkProvider = () =>
+  CHAINLINK_RPC_URL ? new JsonRpcProvider(CHAINLINK_RPC_URL) : getReadOnlyProvider(false, true);
+const CHAINLINK_BATCH_SIZE = 80;
+const CHAINLINK_MAX_BATCHES = 16;
+const CHAINLINK_SAMPLE_ROUNDS = 6;
+
+const fetchChainlinkEthUsdHistory = async ({
+  feed,
+  days,
+  provider,
+  poolToken0IsEthLike,
+}) => {
+  if (!feed || !days || !provider) return [];
+  const aggregator = new Contract(feed, CHAINLINK_AGGREGATOR_ABI, provider);
+  let decimals = 8;
+  try {
+    decimals = Number(await aggregator.decimals());
+  } catch {
+    // keep default
+  }
+  let latest;
+  try {
+    latest = await aggregator.latestRoundData();
+  } catch {
+    return [];
+  }
+  const latestRoundId = latest?.roundId ?? null;
+  const latestUpdatedAt = Number(latest?.updatedAt || 0);
+  const latestAnswer = latest?.answer;
+  if (!latestRoundId || !latestUpdatedAt || !latestAnswer) return [];
+
+  const latestPrice = safeNumber(formatUnits(latestAnswer, decimals));
+  if (!latestPrice || latestPrice <= 0) return [];
+
+  const priceToRow = (tsSec, price) => {
+    if (!Number.isFinite(tsSec) || tsSec <= 0) return null;
+    if (!Number.isFinite(price) || price <= 0) return null;
+    if (poolToken0IsEthLike) {
+      return {
+        date: tsSec * 1000,
+        token0Price: price,
+        token1Price: 1 / price,
+      };
+    }
+    return {
+      date: tsSec * 1000,
+      token0Price: 1 / price,
+      token1Price: price,
+    };
+  };
+
+  const roundInterface = new Interface(CHAINLINK_AGGREGATOR_ABI);
+  const batchFetch = async (roundIds) => {
+    if (!roundIds.length) return [];
+    const useMulticall = await hasMulticall(provider).catch(() => false);
+    if (useMulticall) {
+      const target = aggregator.target || aggregator.address;
+      const calls = roundIds.map((id) => ({
+        target,
+        callData: roundInterface.encodeFunctionData("getRoundData", [id]),
+      }));
+      const res = await multicall(calls, provider);
+      return res.map((item) => {
+        if (!item.success) return null;
+        try {
+          const decoded = roundInterface.decodeFunctionResult(
+            "getRoundData",
+            item.returnData
+          );
+          return {
+            roundId: decoded[0],
+            answer: decoded[1],
+            updatedAt: decoded[3],
+          };
+        } catch {
+          return null;
+        }
+      });
+    }
+    const out = new Array(roundIds.length);
+    await Promise.all(
+      roundIds.map(async (id, idx) => {
+        try {
+          const data = await aggregator.getRoundData(id);
+          out[idx] = data;
+        } catch {
+          out[idx] = null;
+        }
+      })
+    );
+    return out;
+  };
+
+  const sampleIds = [];
+  let sampleRound = BigInt(latestRoundId);
+  for (let i = 0; i < CHAINLINK_SAMPLE_ROUNDS; i += 1) {
+    if (sampleRound <= 1n) break;
+    sampleRound -= 1n;
+    sampleIds.push(sampleRound);
+  }
+  const sampleData = await batchFetch(sampleIds);
+  const sampleTimes = [latestUpdatedAt]
+    .concat(
+      sampleData
+        .map((row) => Number(row?.updatedAt || 0))
+        .filter((ts) => Number.isFinite(ts) && ts > 0)
+    )
+    .sort((a, b) => b - a);
+  let avgInterval = 3600;
+  if (sampleTimes.length >= 2) {
+    const diffs = [];
+    for (let i = 0; i < sampleTimes.length - 1; i += 1) {
+      const delta = sampleTimes[i] - sampleTimes[i + 1];
+      if (Number.isFinite(delta) && delta > 0) diffs.push(delta);
+    }
+    if (diffs.length) {
+      avgInterval = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+    }
+  }
+  const roundsPerDay = Math.max(1, Math.round(86400 / avgInterval));
+  const step = Math.max(1, Math.round(roundsPerDay));
+  const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+
+  const pointsByDay = new Map();
+  const latestRow = priceToRow(latestUpdatedAt, latestPrice);
+  if (latestRow) {
+    pointsByDay.set(Math.floor(latestUpdatedAt / 86400), latestRow);
+  }
+
+  let cursor = BigInt(latestRoundId) - BigInt(step);
+  for (let batch = 0; batch < CHAINLINK_MAX_BATCHES && cursor > 0n; batch += 1) {
+    const ids = [];
+    for (let i = 0; i < CHAINLINK_BATCH_SIZE && cursor > 0n; i += 1) {
+      ids.push(cursor);
+      cursor -= BigInt(step);
+    }
+    const rows = await batchFetch(ids);
+    let oldestTs = null;
+    rows.forEach((row) => {
+      if (!row) return;
+      const updatedAt = Number(row.updatedAt || 0);
+      if (!Number.isFinite(updatedAt) || updatedAt <= 0) return;
+      const answer = row.answer;
+      const price = safeNumber(formatUnits(answer, decimals));
+      const point = priceToRow(updatedAt, price);
+      if (point) {
+        const dayId = Math.floor(updatedAt / 86400);
+        if (!pointsByDay.has(dayId)) {
+          pointsByDay.set(dayId, point);
+        }
+      }
+      oldestTs = oldestTs === null ? updatedAt : Math.min(oldestTs, updatedAt);
+    });
+    if (oldestTs && oldestTs < cutoff && pointsByDay.size >= days) {
+      break;
+    }
+  }
+
+  return Array.from(pointsByDay.values())
+    .filter((row) => Number.isFinite(row.date))
+    .sort((a, b) => a.date - b.date);
+};
 
 const normalizeIpfsUri = (uri, gateway = IPFS_GATEWAYS[0]) => {
   if (!uri || typeof uri !== "string") return "";
@@ -499,6 +688,25 @@ const runWithConcurrency = async (items, limit, worker) => {
   });
   await Promise.all(runners);
   return results;
+};
+
+const pickHistoryPrice = (row) => {
+  const p0 = toOptionalNumber(row?.token0Price);
+  const p1 = toOptionalNumber(row?.token1Price);
+  if (p0 && p0 > 0) return p0;
+  if (p1 && p1 > 0) return p1;
+  return null;
+};
+
+const isFlatHistory = (rows, minPoints = 3) => {
+  const values = (rows || [])
+    .map((row) => pickHistoryPrice(row))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (values.length < minPoints) return true;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0) return true;
+  return (max - min) / min < 0.001;
 };
 
 const formatUsdPrice = (v) => {
@@ -930,6 +1138,8 @@ export default function LiquiditySection({
   const [v3PoolError, setV3PoolError] = useState("");
   const [v3PoolMetrics, setV3PoolMetrics] = useState({});
   const [v3PoolTvlHistory, setV3PoolTvlHistory] = useState([]);
+  const [v3TokenPriceHistory, setV3TokenPriceHistory] = useState([]);
+  const [v3TokenPriceKey, setV3TokenPriceKey] = useState("");
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
   const [v3PoolTvlError, setV3PoolTvlError] = useState("");
@@ -1000,6 +1210,7 @@ export default function LiquiditySection({
   const [v3ChartMode, setV3ChartMode] = useState("price-range");
   const [v3ChartMenuOpen, setV3ChartMenuOpen] = useState(false);
   const [v3RangeTimeframe, setV3RangeTimeframe] = useState("1M");
+  const v3RangeDays = useMemo(() => getV3RangeDays(v3RangeTimeframe), [v3RangeTimeframe]);
   const [v3StrategyId, setV3StrategyId] = useState("");
   const [customTokenAddress, setCustomTokenAddress] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
@@ -1141,6 +1352,17 @@ export default function LiquiditySection({
     if (v3Token0 === v3Token1 && v3TokenOptions.length > 1) {
       const next = v3TokenOptions.find((sym) => sym !== v3Token0);
       if (next) setV3Token1(next);
+    }
+    const isEthLike = (sym) => sym === "ETH" || sym === "WETH";
+    if (isEthLike(v3Token0) && isEthLike(v3Token1) && v3TokenOptions.length > 1) {
+      const stableAlt = v3TokenOptions.find(
+        (sym) => !isEthLike(sym) && isStableSymbol(sym)
+      );
+      const fallback = v3TokenOptions.find((sym) => !isEthLike(sym));
+      const next = stableAlt || fallback;
+      if (next && next !== v3Token1) {
+        setV3Token1(next);
+      }
     }
   }, [isV3View, v3Token0, v3Token1, v3TokenOptions]);
   useEffect(() => {
@@ -1468,6 +1690,25 @@ export default function LiquiditySection({
     const derived = price0 / price1;
     return Number.isFinite(derived) && derived > 0 ? derived : null;
   }, [v3Token0PriceUsd, v3Token1PriceUsd, v3Token0Meta, v3Token1Meta, v3Token0, v3Token1]);
+  const v3SubgraphCurrentPrice = useMemo(() => {
+    const history = v3TokenPriceHistory.length
+      ? v3TokenPriceHistory
+      : Array.isArray(v3PoolTvlHistory)
+      ? v3PoolTvlHistory
+      : [];
+    if (!history.length) return null;
+    const latest = history[history.length - 1];
+    const token0Price = toOptionalNumber(latest?.token0Price);
+    const token1Price = toOptionalNumber(latest?.token1Price);
+    let price = v3PoolIsReversed ? token1Price : token0Price;
+    if (!Number.isFinite(price) || price <= 0) {
+      const alt = v3PoolIsReversed ? token0Price : token1Price;
+      if (Number.isFinite(alt) && alt > 0) {
+        price = 1 / alt;
+      }
+    }
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }, [v3PoolTvlHistory, v3TokenPriceHistory, v3PoolIsReversed]);
   const v3ReferencePrice = useMemo(() => {
     if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
       return v3CurrentPrice;
@@ -1475,11 +1716,25 @@ export default function LiquiditySection({
     if (v3PoolNeedsInit && v3HasStartPrice) {
       return v3StartPriceNum;
     }
+    if (
+      v3SubgraphCurrentPrice &&
+      Number.isFinite(v3SubgraphCurrentPrice) &&
+      v3SubgraphCurrentPrice > 0
+    ) {
+      return v3SubgraphCurrentPrice;
+    }
     if (v3DerivedPrice && Number.isFinite(v3DerivedPrice) && v3DerivedPrice > 0) {
       return v3DerivedPrice;
     }
     return null;
-  }, [v3CurrentPrice, v3PoolNeedsInit, v3HasStartPrice, v3StartPriceNum, v3DerivedPrice]);
+  }, [
+    v3CurrentPrice,
+    v3PoolNeedsInit,
+    v3HasStartPrice,
+    v3StartPriceNum,
+    v3SubgraphCurrentPrice,
+    v3DerivedPrice,
+  ]);
   const v3ReferencePriceUsd = useMemo(() => {
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice) || v3ReferencePrice <= 0) {
       return null;
@@ -1785,6 +2040,46 @@ export default function LiquiditySection({
       min = v3ReferencePrice * (1 - CHART_PADDING);
       max = v3ReferencePrice * (1 + CHART_PADDING);
     }
+
+    const history = v3TokenPriceHistory.length
+      ? v3TokenPriceHistory
+      : Array.isArray(v3PoolTvlHistory)
+      ? v3PoolTvlHistory
+      : [];
+    const cutoff =
+      v3RangeTimeframe === "All" ? null : Date.now() - v3RangeDays * 86400000;
+    let historyMin = null;
+    let historyMax = null;
+    for (const row of history) {
+      const date = Number(row?.date || 0);
+      if (!Number.isFinite(date) || date <= 0) continue;
+      if (cutoff && date < cutoff) continue;
+      const token0Price = toOptionalNumber(row?.token0Price);
+      const token1Price = toOptionalNumber(row?.token1Price);
+      let price = v3PoolIsReversed ? token1Price : token0Price;
+      if (!Number.isFinite(price) || price <= 0) {
+        const alt = v3PoolIsReversed ? token0Price : token1Price;
+        if (Number.isFinite(alt) && alt > 0) {
+          price = 1 / alt;
+        }
+      }
+      if (!Number.isFinite(price) || price <= 0) continue;
+      historyMin = historyMin === null ? price : Math.min(historyMin, price);
+      historyMax = historyMax === null ? price : Math.max(historyMax, price);
+    }
+    const shouldExpand =
+      historyMin !== null &&
+      historyMax !== null &&
+      (historyMin < min || historyMax > max);
+    if (shouldExpand) {
+      min = Math.min(min, historyMin);
+      max = Math.max(max, historyMax);
+      const span = max - min;
+      const pad = span * (CHART_PADDING * 0.5);
+      min -= pad;
+      max += pad;
+    }
+
     if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
       return null;
     }
@@ -1805,7 +2100,17 @@ export default function LiquiditySection({
       rangeStart,
       rangeEnd,
     };
-  }, [v3ReferencePrice, v3HasCustomRange, v3RangeLowerNum, v3RangeUpperNum]);
+  }, [
+    v3ReferencePrice,
+    v3HasCustomRange,
+    v3RangeLowerNum,
+    v3RangeUpperNum,
+    v3PoolIsReversed,
+    v3PoolTvlHistory,
+    v3TokenPriceHistory,
+    v3RangeDays,
+    v3RangeTimeframe,
+  ]);
 
   const v3RangeStrategies = useMemo(
     () => [
@@ -1841,7 +2146,7 @@ export default function LiquiditySection({
     [applyV3RangeTickPreset, applyV3RangeAsymmetric]
   );
 
-  const v3PoolSeries = useMemo(() => {
+  const v3PoolSeriesRaw = useMemo(() => {
     const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
     return history
       .map((row) => ({
@@ -1855,6 +2160,24 @@ export default function LiquiditySection({
       .filter((row) => Number.isFinite(row.date) && row.date > 0)
       .sort((a, b) => a.date - b.date);
   }, [v3PoolTvlHistory]);
+
+  const v3PoolSeries = useMemo(() => {
+    if (!v3PoolSeriesRaw.length) return [];
+    if (v3RangeTimeframe === "All") return v3PoolSeriesRaw;
+    const cutoff = Date.now() - v3RangeDays * 86400000;
+    return v3PoolSeriesRaw.filter((row) => row.date >= cutoff);
+  }, [v3PoolSeriesRaw, v3RangeDays, v3RangeTimeframe]);
+  const v3TokenPriceSeries = useMemo(() => {
+    if (!v3TokenPriceHistory.length) return [];
+    if (v3RangeTimeframe === "All") return v3TokenPriceHistory;
+    const cutoff = Date.now() - v3RangeDays * 86400000;
+    return v3TokenPriceHistory.filter((row) => row.date >= cutoff);
+  }, [v3TokenPriceHistory, v3RangeDays, v3RangeTimeframe]);
+
+  const v3PriceSeriesSource = useMemo(
+    () => (v3TokenPriceSeries.length ? v3TokenPriceSeries : v3PoolSeries),
+    [v3TokenPriceSeries, v3PoolSeries]
+  );
 
   const v3TvlChart = useMemo(() => {
     const base = v3PoolSeries
@@ -1889,7 +2212,7 @@ export default function LiquiditySection({
   }, [v3PoolSeries, v3FeeTier]);
 
   const v3PriceChart = useMemo(() => {
-    const base = v3PoolSeries
+    const base = v3PriceSeriesSource
       .map((row) => {
         let price = v3PoolIsReversed ? row.token1Price : row.token0Price;
         if (!Number.isFinite(price) || price <= 0) {
@@ -1901,11 +2224,20 @@ export default function LiquiditySection({
         return { date: row.date, value: price };
       })
       .filter((row) => Number.isFinite(row.value) && row.value > 0);
-    const snapshot = safeNumber(v3CurrentPrice);
+    const snapshot = safeNumber(
+      v3CurrentPrice !== null && v3CurrentPrice !== undefined
+        ? v3CurrentPrice
+        : v3SubgraphCurrentPrice
+    );
     const merged =
       snapshot !== null && snapshot > 0 ? mergeSeriesSnapshot(base, snapshot) : base;
     return buildSeriesChart(merged);
-  }, [v3PoolSeries, v3PoolIsReversed, v3CurrentPrice]);
+  }, [
+    v3PriceSeriesSource,
+    v3PoolIsReversed,
+    v3CurrentPrice,
+    v3SubgraphCurrentPrice,
+  ]);
 
   const v3PriceSeriesFallback = useMemo(() => {
     if (v3PriceChart) return [];
@@ -1926,8 +2258,43 @@ export default function LiquiditySection({
     return null;
   }, [v3PriceChart, v3PriceSeriesFallback]);
 
+  const v3PriceRangeChartDisplay = useMemo(() => {
+    if (!v3PriceChartDisplay?.points?.length || !v3Chart) return v3PriceChartDisplay;
+    const min = v3Chart.min;
+    const max = v3Chart.max;
+    if (!Number.isFinite(min) || !Number.isFinite(max) || min >= max) {
+      return v3PriceChartDisplay;
+    }
+    const latest = safeNumber(v3PriceChartDisplay.latest);
+    const current = safeNumber(
+      v3CurrentPrice !== null && v3CurrentPrice !== undefined
+        ? v3CurrentPrice
+        : v3SubgraphCurrentPrice !== null && v3SubgraphCurrentPrice !== undefined
+        ? v3SubgraphCurrentPrice
+        : v3ReferencePrice
+    );
+    const scale =
+      latest !== null && latest > 0 && current !== null && current > 0 ? current / latest : 1;
+    const points = v3PriceChartDisplay.points.map((point) => {
+      const value = Number.isFinite(point.value) ? point.value * scale : point.value;
+      const rawY = 100 - ((value - min) / (max - min)) * 100;
+      const y = clampPercent(rawY);
+      return { ...point, value, y };
+    });
+    const line = points
+      .map((point, idx) => `${idx === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+      .join(" ");
+    return {
+      ...v3PriceChartDisplay,
+      latest: latest !== null ? latest * scale : v3PriceChartDisplay.latest,
+      points,
+      line,
+      area: `${line} L 100 100 L 0 100 Z`,
+    };
+  }, [v3PriceChartDisplay, v3Chart, v3CurrentPrice, v3SubgraphCurrentPrice, v3ReferencePrice]);
+
   const v3PriceAxisTicks = useMemo(() => {
-    const series = v3PriceSeriesFallback.length ? v3PriceSeriesFallback : v3PoolSeries;
+    const series = v3PriceSeriesFallback.length ? v3PriceSeriesFallback : v3PriceSeriesSource;
     if (!series.length) return [];
     const steps = [0, 0.33, 0.66, 1];
     return steps
@@ -1941,7 +2308,7 @@ export default function LiquiditySection({
         };
       })
       .filter(Boolean);
-  }, [v3PoolSeries]);
+  }, [v3PriceSeriesSource, v3PriceSeriesFallback]);
 
   const showV3PriceRangeChart = v3ChartMode === "price-range";
   const showV3TvlChart = v3ChartMode === "tvl";
@@ -2621,6 +2988,8 @@ export default function LiquiditySection({
           setV3PoolTvlSnapshot(null);
           setV3PoolTvlError("");
           setV3PoolTvlLoading(false);
+          setV3TokenPriceHistory([]);
+          setV3TokenPriceKey("");
         }
         return;
       }
@@ -2628,21 +2997,92 @@ export default function LiquiditySection({
       setV3PoolTvlError("");
       try {
         const [history, snapshot] = await Promise.all([
-          fetchV3PoolHistory(v3PoolInfo.address, V3_TVL_HISTORY_DAYS),
+          fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays),
           fetchV3PoolSnapshot(v3PoolInfo.address),
         ]);
         if (cancelled) return;
-        setV3PoolTvlHistory(Array.isArray(history) ? history : []);
+        const historyRows = Array.isArray(history) ? history : [];
+        setV3PoolTvlHistory(historyRows);
         const nextSnapshot =
           snapshot && Number.isFinite(Number(snapshot.tvlUsd))
             ? Number(snapshot.tvlUsd)
             : null;
         setV3PoolTvlSnapshot(nextSnapshot);
+
+        const stable0 = isStableSymbol(v3Token0Meta?.symbol || v3Token0);
+        const stable1 = isStableSymbol(v3Token1Meta?.symbol || v3Token1);
+        const stablePair = stable0 || stable1;
+        const flatPrice = isFlatHistory(historyRows);
+        const insufficientHistory =
+          historyRows.length < Math.min(v3RangeDays * 0.5, 30);
+        const hasPoolTokens = Boolean(v3PoolInfo.token0 && v3PoolInfo.token1);
+        const fallbackNeeded = stablePair && (flatPrice || insufficientHistory) && hasPoolTokens;
+        const poolToken0IsEthLike = isEthLikeAddress(v3PoolInfo.token0);
+        const poolToken1IsEthLike = isEthLikeAddress(v3PoolInfo.token1);
+        const chainlinkEligible =
+          stablePair &&
+          Boolean(CHAINLINK_ETH_USD_FEED_ADDRESS) &&
+          ((poolToken0IsEthLike && stable1) || (poolToken1IsEthLike && stable0));
+
+        let nextHistory = [];
+        let nextKey = "";
+
+        if (chainlinkEligible) {
+          const chainlinkKey = `chainlink-${CHAINLINK_ETH_USD_FEED_ADDRESS}-${v3RangeDays}-${
+            poolToken0IsEthLike ? "0" : "1"
+          }`;
+          if (v3TokenPriceKey === chainlinkKey && v3TokenPriceHistory.length) {
+            nextHistory = v3TokenPriceHistory;
+            nextKey = chainlinkKey;
+          } else {
+            const provider = getChainlinkProvider();
+            const chainlinkHistory = await fetchChainlinkEthUsdHistory({
+              feed: CHAINLINK_ETH_USD_FEED_ADDRESS,
+              days: v3RangeDays,
+              provider,
+              poolToken0IsEthLike,
+            });
+            if (chainlinkHistory.length) {
+              nextHistory = chainlinkHistory;
+              nextKey = chainlinkKey;
+            }
+          }
+        }
+
+        if (!nextKey && fallbackNeeded) {
+          const tokenKey = `${v3PoolInfo.token0}-${v3PoolInfo.token1}-${v3RangeDays}`;
+          let tokenHistory = [];
+          if (v3TokenPriceKey === tokenKey && v3TokenPriceHistory.length) {
+            tokenHistory = v3TokenPriceHistory;
+          } else {
+            tokenHistory = await fetchV3TokenPairHistory(
+              v3PoolInfo.token0,
+              v3PoolInfo.token1,
+              v3RangeDays
+            );
+          }
+          if (tokenHistory.length) {
+            nextHistory = tokenHistory;
+            nextKey = tokenKey;
+          }
+        }
+
+        if (!cancelled) {
+          if (nextKey) {
+            setV3TokenPriceHistory(Array.isArray(nextHistory) ? nextHistory : []);
+            setV3TokenPriceKey(nextKey);
+          } else {
+            setV3TokenPriceHistory([]);
+            setV3TokenPriceKey("");
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setV3PoolTvlHistory([]);
           setV3PoolTvlSnapshot(null);
           setV3PoolTvlError(err?.message || "Failed to load TVL data.");
+          setV3TokenPriceHistory([]);
+          setV3TokenPriceKey("");
         }
       } finally {
         if (!cancelled) setV3PoolTvlLoading(false);
@@ -2652,7 +3092,21 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [isV3View, hasV3Liquidity, v3PoolInfo.address, v3TvlRefreshTick, v3RefreshTick]);
+  }, [
+    isV3View,
+    hasV3Liquidity,
+    v3PoolInfo.address,
+    v3PoolInfo.token0,
+    v3PoolInfo.token1,
+    v3RangeDays,
+    v3Token0Meta,
+    v3Token1Meta,
+    v3Token0,
+    v3Token1,
+    v3TokenPriceKey,
+    v3TvlRefreshTick,
+    v3RefreshTick,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -6346,39 +6800,44 @@ export default function LiquiditySection({
                           </span>
                         )}
                       </div>
-                      <div className="text-[11px] text-slate-500">
-                        {v3PoolLoading
-                          ? "Fetching live pool data"
-                          : `Fee tier ${formatFeeTier(v3FeeTier)}`}
-                      </div>
+                      {!showV3PriceRangeChart && (
+                        <div className="text-[11px] text-slate-500">
+                          {v3PoolLoading
+                            ? "Fetching live pool data"
+                            : `Fee tier ${formatFeeTier(v3FeeTier)}`}
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-1 rounded-full border border-slate-800 bg-slate-900/80 px-2 py-1 text-[11px] text-slate-100">
-                        {v3Token1Meta?.logo ? (
-                          <img
-                            src={v3Token1Meta.logo}
-                            alt={`${v3Token1} logo`}
-                            className="h-4 w-4 rounded-full bg-slate-800 object-contain"
-                          />
-                        ) : (
-                          <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
-                            {(v3Token1 || "?").slice(0, 2)}
-                          </div>
-                        )}
-                        <span>{v3Token1}</span>
-                        <span className="mx-1 h-3 w-px bg-slate-700/80" />
-                        {v3Token0Meta?.logo ? (
-                          <img
-                            src={v3Token0Meta.logo}
-                            alt={`${v3Token0} logo`}
-                            className="h-4 w-4 rounded-full bg-slate-800 object-contain"
-                          />
-                        ) : (
-                          <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
-                            {(v3Token0 || "?").slice(0, 2)}
-                          </div>
-                        )}
-                        <span>{v3Token0}</span>
+                      <div className="flex items-center rounded-full border border-slate-700/60 bg-slate-900/80 p-1 text-[11px] text-slate-100 shadow-[0_8px_20px_rgba(0,0,0,0.45)]">
+                        <div className="flex items-center gap-1 rounded-full bg-slate-800/90 px-2 py-1 text-[11px] font-semibold text-slate-100">
+                          {v3Token1Meta?.logo ? (
+                            <img
+                              src={v3Token1Meta.logo}
+                              alt={`${v3Token1} logo`}
+                              className="h-4 w-4 rounded-full bg-slate-800 object-contain"
+                            />
+                          ) : (
+                            <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token1 || "?").slice(0, 2)}
+                            </div>
+                          )}
+                          <span>{v3Token1}</span>
+                        </div>
+                        <div className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-slate-300">
+                          {v3Token0Meta?.logo ? (
+                            <img
+                              src={v3Token0Meta.logo}
+                              alt={`${v3Token0} logo`}
+                              className="h-4 w-4 rounded-full bg-slate-800 object-contain"
+                            />
+                          ) : (
+                            <div className="h-4 w-4 rounded-full bg-slate-800 text-[8px] font-semibold text-slate-200 flex items-center justify-center">
+                              {(v3Token0 || "?").slice(0, 2)}
+                            </div>
+                          )}
+                          <span>{v3Token0}</span>
+                        </div>
                       </div>
                       <div className="relative" ref={v3ChartMenuRef}>
                         <button
@@ -6446,8 +6905,8 @@ export default function LiquiditySection({
                       {showV3PriceRangeChart ? (
                         <>
                           <div className="absolute inset-0 bg-[#1b1b1b]" />
-                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),transparent_45%)]" />
-                          <div className="absolute inset-0 bg-[linear-gradient(transparent_0,transparent_28px,rgba(255,255,255,0.05)_28px,rgba(255,255,255,0.05)_29px),linear-gradient(90deg,rgba(255,255,255,0.04)_0,rgba(255,255,255,0.04)_1px,transparent_1px,transparent_48px)] opacity-70" />
+                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_0%,rgba(255,255,255,0.06),transparent_45%),radial-gradient(circle_at_85%_65%,rgba(255,255,255,0.04),transparent_55%)]" />
+                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_42%)]" />
                         </>
                       ) : showV3MetricChart ? (
                         <>
@@ -6493,20 +6952,20 @@ export default function LiquiditySection({
                               }}
                             >
                               <div
-                                className="absolute left-0 right-10 rounded-md border border-fuchsia-300/40 bg-[linear-gradient(180deg,rgba(147,51,98,0.65)_0%,rgba(67,24,47,0.9)_100%)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
+                                className="absolute left-0 right-5 rounded-md border border-fuchsia-200/40 bg-[linear-gradient(180deg,rgba(187,61,139,0.6)_0%,rgba(92,24,70,0.92)_100%)] shadow-[0_0_24px_rgba(236,72,153,0.25)] transition-[top,height] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-10"
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
                                 }}
                               />
-                              {v3PriceChartDisplay ? (
+                              {v3PriceRangeChartDisplay ? (
                                 <svg
                                   viewBox="0 0 100 100"
                                   className="absolute inset-0 h-full w-full pointer-events-none z-20"
                                   preserveAspectRatio="none"
                                 >
                                   <path
-                                    d={v3PriceChartDisplay.line}
+                                    d={v3PriceRangeChartDisplay.line}
                                     fill="none"
                                     stroke="rgba(226,232,240,0.65)"
                                     strokeWidth="0.8"
@@ -6514,7 +6973,7 @@ export default function LiquiditySection({
                                     strokeLinejoin="round"
                                   />
                                   {(() => {
-                                    const points = v3PriceChartDisplay.points || [];
+                                    const points = v3PriceRangeChartDisplay.points || [];
                                     if (!points.length) return null;
                                     const start = Math.max(0, points.length - 8);
                                     const segment = points.slice(start);
@@ -6554,9 +7013,9 @@ export default function LiquiditySection({
                                   })()}
                                 </svg>
                               ) : null}
-                              <div className="absolute right-2 top-2 bottom-2 w-2.5 rounded-full bg-slate-800/80" />
+                              <div className="absolute right-1 top-3 bottom-3 w-3 rounded-full bg-slate-800/80 shadow-inner" />
                               <div
-                                className="absolute right-2 w-2.5 rounded-full bg-fuchsia-500/80 z-30"
+                                className="absolute right-1 w-3 rounded-full bg-[linear-gradient(180deg,#ff4fd8_0%,#d12aa8_60%,#8a146c_100%)] shadow-[0_0_18px_rgba(236,72,153,0.5)] z-30"
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -6564,27 +7023,26 @@ export default function LiquiditySection({
                               />
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute right-7 w-5 rounded-sm bg-fuchsia-500/70 shadow-[0_0_12px_rgba(236,72,153,0.5)] z-30"
+                                  className="absolute right-1 w-4 h-1.5 rounded-full bg-white/90 shadow-[0_0_8px_rgba(255,255,255,0.6)] z-40"
                                   style={{
                                     top: `${100 - v3Chart.currentPct}%`,
                                     transform: "translateY(-50%)",
-                                    height: "18px",
                                   }}
                                 />
                               )}
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute left-0 right-10 h-px border-t border-dashed border-slate-200/40 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-30"
+                                  className="absolute left-0 right-5 h-px border-t border-dotted border-slate-200/50 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-30"
                                   style={{ top: `${100 - v3Chart.currentPct}%` }}
                                 />
                               )}
 
                               <div
-                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className="absolute left-0 right-5 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               />
                               <div
-                                className="absolute left-0 right-10 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
+                                className="absolute left-0 right-5 h-px bg-fuchsia-200/80 transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-20"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               />
 
@@ -6595,7 +7053,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("lower");
                                 }}
-                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className="absolute right-1 h-6 w-6 -translate-y-1/2 rounded-full border-2 border-white bg-white shadow-[0_0_16px_rgba(236,72,153,0.55)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
@@ -6607,7 +7065,7 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("upper");
                                 }}
-                                className="absolute right-1 h-7 w-7 -translate-y-1/2 rounded-full border-2 border-fuchsia-500 bg-white shadow-[0_0_18px_rgba(236,72,153,0.6)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
+                                className="absolute right-1 h-6 w-6 -translate-y-1/2 rounded-full border-2 border-white bg-white shadow-[0_0_16px_rgba(236,72,153,0.55)] touch-none cursor-ns-resize transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] z-40"
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               >
                                 <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500" />
@@ -6615,9 +7073,9 @@ export default function LiquiditySection({
 
                               {/* Prices moved to the card below */}
                             </div>
-                            <div className="absolute left-5 right-10 bottom-7 h-px bg-slate-700/70 z-30" />
+                            <div className="absolute left-5 right-5 bottom-7 h-px bg-slate-700/70 z-30" />
                             {v3PriceAxisTicks.length ? (
-                              <div className="absolute left-5 right-10 bottom-2 text-[11px] text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
+                              <div className="absolute left-5 right-5 bottom-2 text-[11px] text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
                                 {v3PriceAxisTicks.map((tick) => (
                                   <span
                                     key={`${tick.label}-${tick.pct}`}
@@ -6710,18 +7168,24 @@ export default function LiquiditySection({
                     </div>
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        {["1D", "1W", "1M", "1Y", "All"].map((label) => (
+                        {[
+                          { label: "1D", value: "1D" },
+                          { label: "1W", value: "1W" },
+                          { label: "1M", value: "1M" },
+                          { label: "1Y", value: "1Y" },
+                          { label: "All time", value: "All" },
+                        ].map((item) => (
                           <button
-                            key={label}
+                            key={item.value}
                             type="button"
-                            onClick={() => setV3RangeTimeframe(label)}
+                            onClick={() => setV3RangeTimeframe(item.value)}
                             className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${
-                              v3RangeTimeframe === label
+                              v3RangeTimeframe === item.value
                                 ? "border-sky-400/70 bg-sky-500/15 text-sky-100"
                                 : "border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-600"
                             }`}
                           >
-                            {label}
+                            {item.label}
                           </button>
                         ))}
                       </div>
@@ -6740,11 +7204,16 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
-                          aria-label="Crosshair"
+                          aria-label="Fit view"
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
-                            <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="1.5" />
-                            <path d="M12 5v4M12 15v4M5 12h4M15 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                            <path
+                              d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            />
                           </svg>
                         </button>
                         <button
