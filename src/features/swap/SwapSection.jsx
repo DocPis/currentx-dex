@@ -3663,12 +3663,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </div>
           </div>
 
-          {quoteMeta?.protocol === "SPLIT" ? (
-            <div className="mt-2 text-[11px] text-amber-200">
-              Split routing (single transaction).
-            </div>
-          ) : null}
-
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[12px] text-slate-100">
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Expected</span>
