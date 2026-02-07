@@ -226,6 +226,17 @@ const getChainlinkProvider = () =>
 const CHAINLINK_BATCH_SIZE = 80;
 const CHAINLINK_MAX_BATCHES = 16;
 const CHAINLINK_SAMPLE_ROUNDS = 6;
+const buildHistorySignature = (rows) => {
+  if (!Array.isArray(rows) || rows.length === 0) return "0";
+  const first = rows[0] || {};
+  const last = rows[rows.length - 1] || {};
+  const pick = (row) =>
+    [
+      row?.date ?? 0,
+      row?.token0Price ?? row?.token1Price ?? row?.priceUsd ?? row?.tvlUsd ?? 0,
+    ].join(":");
+  return `${rows.length}|${pick(first)}|${pick(last)}`;
+};
 
 const fetchChainlinkEthUsdHistory = async ({
   feed,
@@ -1052,7 +1063,7 @@ const fetchAllowances = async (provider, owner, spender, tokenAddresses = []) =>
           /* ignore decode errors */
         }
       });
-    } catch (err) {
+    } catch {
       // Retry once with rotated RPC before falling back to per-token queries
       try {
         const alt = getReadOnlyProvider(true, true);
@@ -1147,6 +1158,12 @@ export default function LiquiditySection({
   const [v3PoolTvlHistory, setV3PoolTvlHistory] = useState([]);
   const [v3TokenPriceHistory, setV3TokenPriceHistory] = useState([]);
   const [v3TokenPriceKey, setV3TokenPriceKey] = useState("");
+  const v3TokenPriceCacheRef = useRef({
+    key: "",
+    sig: "0",
+    len: 0,
+    history: [],
+  });
   const [v3CachedPrice, setV3CachedPrice] = useState(null);
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
@@ -1189,7 +1206,7 @@ export default function LiquiditySection({
     return "v2";
   });
   const [nftMetaById, setNftMetaById] = useState({});
-  const [nftMetaRefreshTick, setNftMetaRefreshTick] = useState(0);
+  const [nftMetaRefreshTick] = useState(0);
   const [showNftDebug, setShowNftDebug] = useState(false);
   const [v3RefreshTick, setV3RefreshTick] = useState(0);
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
@@ -1417,12 +1434,24 @@ export default function LiquiditySection({
 
   const v3Token0Meta = tokenRegistry[v3Token0];
   const v3Token1Meta = tokenRegistry[v3Token1];
-  const v3Token0Balance = walletBalances?.[v3Token0] || 0;
-  const v3Token1Balance = walletBalances?.[v3Token1] || 0;
   const v3SelectedToken0Address =
     v3Token0 === "ETH" ? WETH_ADDRESS : v3Token0Meta?.address;
   const v3SelectedToken1Address =
     v3Token1 === "ETH" ? WETH_ADDRESS : v3Token1Meta?.address;
+  const v3PoolQueryKey = useMemo(() => {
+    if (!isV3View || !hasV3Liquidity) return "";
+    if (!v3SelectedToken0Address || !v3SelectedToken1Address) return "";
+    const token0 = v3SelectedToken0Address.toLowerCase();
+    const token1 = v3SelectedToken1Address.toLowerCase();
+    if (token0 === token1) return "";
+    return `${token0}|${token1}|${Number(v3FeeTier || 0)}`;
+  }, [
+    isV3View,
+    hasV3Liquidity,
+    v3SelectedToken0Address,
+    v3SelectedToken1Address,
+    v3FeeTier,
+  ]);
   const v3PriceCacheKey = useMemo(() => {
     if (!chainId || !v3SelectedToken0Address || !v3SelectedToken1Address) return "";
     const key0 = v3SelectedToken0Address.toLowerCase();
@@ -1448,6 +1477,15 @@ export default function LiquiditySection({
       setV3CachedPrice(null);
     }
   }, [isV3View, v3PriceCacheKey]);
+
+  useEffect(() => {
+    v3TokenPriceCacheRef.current = {
+      key: v3TokenPriceKey,
+      sig: buildHistorySignature(v3TokenPriceHistory),
+      len: Array.isArray(v3TokenPriceHistory) ? v3TokenPriceHistory.length : 0,
+      history: Array.isArray(v3TokenPriceHistory) ? v3TokenPriceHistory : [],
+    };
+  }, [v3TokenPriceKey, v3TokenPriceHistory, v3TokenPriceCacheRef]);
   const v3Token0PriceUsd = v3SelectedToken0Address
     ? tokenPrices[(v3SelectedToken0Address || "").toLowerCase()]
     : null;
@@ -2826,14 +2864,6 @@ export default function LiquiditySection({
         )
       : 50;
   const v3PoolBalanceRatio1 = 100 - v3PoolBalanceRatio0;
-  const v3LowerPct = useMemo(() => {
-    if (!v3ReferencePrice || !v3RangeLowerNum) return null;
-    return ((v3RangeLowerNum / v3ReferencePrice) - 1) * 100;
-  }, [v3ReferencePrice, v3RangeLowerNum]);
-  const v3UpperPct = useMemo(() => {
-    if (!v3ReferencePrice || !v3RangeUpperNum) return null;
-    return ((v3RangeUpperNum / v3ReferencePrice) - 1) * 100;
-  }, [v3ReferencePrice, v3RangeUpperNum]);
 
   const getStatusStyle = (status) => {
     if (status === null) {
@@ -3232,13 +3262,7 @@ export default function LiquiditySection({
   useEffect(() => {
     let cancelled = false;
     const loadV3PoolInfo = async () => {
-      if (!isV3View) return;
-      if (
-        !hasV3Liquidity ||
-        !v3SelectedToken0Address ||
-        !v3SelectedToken1Address ||
-        v3SelectedToken0Address.toLowerCase() === v3SelectedToken1Address.toLowerCase()
-      ) {
+      if (!v3PoolQueryKey) {
         if (!cancelled) {
           setV3PoolInfo({
             address: "",
@@ -3252,15 +3276,16 @@ export default function LiquiditySection({
         }
         return;
       }
+      const [token0Addr, token1Addr, feeRaw] = v3PoolQueryKey.split("|");
       setV3PoolLoading(true);
       setV3PoolError("");
       try {
         const provider = getReadOnlyProvider(false, true);
         const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
         const poolAddr = await factory.getPool(
-          v3SelectedToken0Address,
-          v3SelectedToken1Address,
-          Number(v3FeeTier)
+          token0Addr,
+          token1Addr,
+          Number(feeRaw || 0)
         );
         if (!poolAddr || poolAddr === ZERO_ADDRESS) {
           if (!cancelled) {
@@ -3314,13 +3339,7 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [
-    isV3View,
-    hasV3Liquidity,
-    v3SelectedToken0Address,
-    v3SelectedToken1Address,
-    v3FeeTier,
-  ]);
+  }, [v3PoolQueryKey]);
 
   useEffect(() => {
     if (!isV3View || !v3PoolInfo.address) return undefined;
@@ -3377,6 +3396,12 @@ export default function LiquiditySection({
           stablePair &&
           Boolean(CHAINLINK_ETH_USD_FEED_ADDRESS) &&
           ((poolToken0IsEthLike && stable1) || (poolToken1IsEthLike && stable0));
+        const {
+          key: cachedKey,
+          sig: cachedSig,
+          len: cachedLen,
+          history: cachedHistory,
+        } = v3TokenPriceCacheRef.current;
 
         let nextHistory = [];
         let nextKey = "";
@@ -3385,8 +3410,8 @@ export default function LiquiditySection({
           const chainlinkKey = `chainlink-${CHAINLINK_ETH_USD_FEED_ADDRESS}-${v3RangeDays}-${
             poolToken0IsEthLike ? "0" : "1"
           }`;
-          if (v3TokenPriceKey === chainlinkKey && v3TokenPriceHistory.length) {
-            nextHistory = v3TokenPriceHistory;
+          if (cachedKey === chainlinkKey && cachedHistory.length) {
+            nextHistory = cachedHistory;
             nextKey = chainlinkKey;
           } else {
             const provider = getChainlinkProvider();
@@ -3406,8 +3431,8 @@ export default function LiquiditySection({
         if (!nextKey && fallbackNeeded) {
           const tokenKey = `${v3PoolInfo.token0}-${v3PoolInfo.token1}-${v3RangeDays}`;
           let tokenHistory = [];
-          if (v3TokenPriceKey === tokenKey && v3TokenPriceHistory.length) {
-            tokenHistory = v3TokenPriceHistory;
+          if (cachedKey === tokenKey && cachedHistory.length) {
+            tokenHistory = cachedHistory;
           } else {
             tokenHistory = await fetchV3TokenPairHistory(
               v3PoolInfo.token0,
@@ -3422,10 +3447,14 @@ export default function LiquiditySection({
         }
 
         if (!cancelled) {
+          const nextSig = buildHistorySignature(nextHistory);
           if (nextKey) {
-            setV3TokenPriceHistory(Array.isArray(nextHistory) ? nextHistory : []);
-            setV3TokenPriceKey(nextKey);
-          } else {
+            const shouldUpdate = nextKey !== cachedKey || cachedSig !== nextSig;
+            if (shouldUpdate) {
+              setV3TokenPriceHistory(Array.isArray(nextHistory) ? nextHistory : []);
+              setV3TokenPriceKey(nextKey);
+            }
+          } else if (cachedKey || cachedLen) {
             setV3TokenPriceHistory([]);
             setV3TokenPriceKey("");
           }
@@ -3458,7 +3487,7 @@ export default function LiquiditySection({
     v3Token1Meta,
     v3Token0,
     v3Token1,
-    v3TokenPriceKey,
+    v3TokenPriceCacheRef,
     v3TvlRefreshTick,
     v3RefreshTick,
   ]);
@@ -3908,6 +3937,28 @@ export default function LiquiditySection({
     return () => clearInterval(id);
   }, [isV2View]);
 
+  // Shared helper: fetch a read-only RPC provider with rotation and chain guard.
+  const getRpcProviderWithRetry = useCallback(async () => {
+    let attempts = 0;
+    let provider = getReadOnlyProvider(false, true);
+    const targetChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
+    while (attempts < 4) {
+      try {
+        const net = await provider.getNetwork();
+        if (targetChain && Number(net?.chainId || 0) !== targetChain) {
+          throw new Error("Wrong RPC chain");
+        }
+        return provider;
+      } catch (err) {
+        attempts += 1;
+        rotateRpcProvider();
+        provider = getReadOnlyProvider(true, true);
+        if (attempts >= 4) throw err;
+      }
+    }
+    return provider;
+  }, []);
+
   // Load live data for all pools (subgraph + on-chain TVL fallback)
   useEffect(() => {
     if (!isV2View) return undefined;
@@ -4063,7 +4114,16 @@ export default function LiquiditySection({
     return () => {
       cancelled = true;
     };
-  }, [isV2View, lpRefreshTick, subgraphError, tokenRegistry, tokenPrices, trackedPools, tvlError]);
+  }, [
+    isV2View,
+    lpRefreshTick,
+    subgraphError,
+    tokenRegistry,
+    tokenPrices,
+    trackedPools,
+    tvlError,
+    getRpcProviderWithRetry,
+  ]);
 
   useEffect(() => {
     setDepositToken0("");
@@ -4233,6 +4293,8 @@ export default function LiquiditySection({
   const token1Address =
     selectedPool?.token1Address ||
     resolveTokenAddress(selectedPool?.token1Symbol, tokenRegistry);
+  const selectedToken0Symbol = selectedPool?.token0Symbol;
+  const selectedToken1Symbol = selectedPool?.token1Symbol;
   const poolSupportsActions = Boolean(token0Address && token1Address);
   const usesNativeEth =
     selectedPool &&
@@ -4242,27 +4304,6 @@ export default function LiquiditySection({
   const pairMissing =
     pairNotDeployed ||
     (pairError && pairError.toLowerCase().includes("pair not found"));
-  // Shared helper: fetch a read-only RPC provider with rotation and chain guard.
-  const getRpcProviderWithRetry = useCallback(async () => {
-    let attempts = 0;
-    let provider = getReadOnlyProvider(false, true);
-    const targetChain = parseInt(getActiveNetworkConfig()?.chainIdHex || "0", 16);
-    while (attempts < 4) {
-      try {
-        const net = await provider.getNetwork();
-        if (targetChain && Number(net?.chainId || 0) !== targetChain) {
-          throw new Error("Wrong RPC chain");
-        }
-        return provider;
-      } catch (err) {
-        attempts += 1;
-        rotateRpcProvider();
-        provider = getReadOnlyProvider(true, true);
-        if (attempts >= 4) throw err;
-      }
-    }
-    return provider;
-  }, []);
 
   // Listen for Sync events on the active pair to refresh reserves instantly
   useEffect(() => {
@@ -4412,6 +4453,7 @@ export default function LiquiditySection({
     selectedPool,
     token0Address,
     token1Address,
+    getRpcProviderWithRetry,
   ]);
 
   useEffect(() => {
@@ -4583,12 +4625,6 @@ export default function LiquiditySection({
       cancelled = true;
     };
   }, [address, isV2View, pools, tokenRegistry, lpRefreshTick, getRpcProviderWithRetry]);
-
-  const autopilotPool =
-    pools.find((p) => p.id === "crx-weth" && p.isActive !== false && p.hasAddresses) ||
-    pools.find((p) => p.isActive && p.hasAddresses) ||
-    pools.find((p) => p.hasAddresses) ||
-    null;
 
   useEffect(() => {
     let cancelled = false;
@@ -5642,8 +5678,8 @@ export default function LiquiditySection({
         };
 
         const [bal0, bal1] = await Promise.all([
-          fetchBalance(selectedPool.token0Symbol, token0Address, token0Meta),
-          fetchBalance(selectedPool.token1Symbol, token1Address, token1Meta),
+          fetchBalance(selectedToken0Symbol, token0Address, token0Meta),
+          fetchBalance(selectedToken1Symbol, token1Address, token1Meta),
         ]);
 
         if (!cancelled) {
@@ -5672,11 +5708,12 @@ export default function LiquiditySection({
     poolSupportsActions,
     pairMissing,
     selectedPoolId,
+    selectedPool,
     lpRefreshTick,
     token0Address,
     token1Address,
-    selectedPool?.token0Symbol,
-    selectedPool?.token1Symbol,
+    selectedToken0Symbol,
+    selectedToken1Symbol,
     token0Meta,
     token0Meta?.decimals,
     token1Meta,
@@ -6034,7 +6071,6 @@ export default function LiquiditySection({
         );
       } else {
         const token0Lower = (token0Address || "").toLowerCase();
-        const token1Lower = (token1Address || "").toLowerCase();
         const amountAMin =
           resolvedPair.token0?.toLowerCase?.() === token0Lower ? amount0Min : amount1Min;
         const amountBMin =
@@ -7955,10 +7991,6 @@ export default function LiquiditySection({
                     const nftMeta = metaState.meta || {};
                     const nftImage = nftMeta?.image || "";
                     const hasImage = Boolean(nftImage);
-                    const hasMetaTrace =
-                      Boolean(metaState.raw) ||
-                      Boolean(metaState.metaUrl) ||
-                      Boolean(metaState.image);
 
                     return (
                       <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.45fr,1fr] gap-5">

@@ -109,6 +109,8 @@ const amountTextClass = (value, baseClass = "text-2xl sm:text-3xl") => {
   if (len <= 30) return "text-sm sm:text-base tracking-tight";
   return "text-xs sm:text-sm tracking-tight";
 };
+const makeApprovalKey = (kind, token, spender) =>
+  `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
 const TokenLogo = ({
   token,
   fallbackSymbol,
@@ -122,13 +124,9 @@ const TokenLogo = ({
     (fallbackSymbol && TOKENS[fallbackSymbol]?.logo) ||
     (token?.symbol && TOKENS[token.symbol]?.logo) ||
     null;
-  const [src, setSrc] = useState(primaryLogo || fallbackLogo || null);
+  const imgSrc = primaryLogo || fallbackLogo || null;
 
-  useEffect(() => {
-    setSrc(primaryLogo || fallbackLogo || null);
-  }, [primaryLogo, fallbackLogo]);
-
-  if (!src) {
+  if (!imgSrc) {
     return (
       <div className={placeholderClassName}>
         {(displaySym || "?").slice(0, 3)}
@@ -138,14 +136,16 @@ const TokenLogo = ({
 
   return (
     <img
-      src={src}
+      src={imgSrc}
       alt={`${displaySym || token?.symbol || "token"} logo`}
       className={imgClassName}
-      onError={() => {
-        if (fallbackLogo && src !== fallbackLogo) {
-          setSrc(fallbackLogo);
+      onError={(e) => {
+        const target = e.currentTarget;
+        if (fallbackLogo && target.getAttribute("data-fallback") !== "1") {
+          target.setAttribute("data-fallback", "1");
+          target.src = fallbackLogo;
         } else {
-          setSrc(null);
+          target.removeAttribute("src");
         }
       }}
     />
@@ -383,27 +383,6 @@ const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
   return raw || "Quote unavailable right now. Retry or switch RPC.";
 };
 
-const buildRealtimeProof = (
-  receipt,
-  { buyDecimals, buySymbol, routeLabels, slippagePct, minRaw, expectedRaw }
-) => {
-  const actual = receipt?.logs?.length
-    ? (() => {
-        const target = receipt.to?.toLowerCase?.() || "";
-        const log = receipt.logs.find((l) => (l?.address || "").toLowerCase() === target);
-        return null;
-      })()
-    : null;
-  return {
-    route: routeLabels,
-    slippage: slippagePct,
-    minReceived: minRaw ? formatDisplayAmount(Number(formatUnits(minRaw, buyDecimals)), buySymbol) : "--",
-    expected: expectedRaw
-      ? formatDisplayAmount(Number(formatUnits(expectedRaw, buyDecimals)), buySymbol)
-      : "--",
-  };
-};
-
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function SwapSection({ balances, address, chainId, onBalancesRefresh }) {
@@ -461,6 +440,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
   const hasV2Support = Boolean(
     UNIV2_FACTORY_ADDRESS &&
+      UNIV2_ROUTER_ADDRESS &&
       UNIV3_UNIVERSAL_ROUTER_ADDRESS &&
       PERMIT2_ADDRESS
   );
@@ -494,7 +474,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [swapPulse, setSwapPulse] = useState(false);
   const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
-  const [quoteVolatilityPct, setQuoteVolatilityPct] = useState(0);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
@@ -515,10 +494,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const lastQuoteKeyRef = useRef("");
   const routeCandidateCacheRef = useRef(new Map());
 
-  const makeApprovalKey = (kind, token, spender) =>
-    `${kind}:${(token || "").toLowerCase()}:${(spender || "").toLowerCase()}`;
-  const getApprovalStorageKey = (wallet) =>
-    `${APPROVAL_CACHE_KEY}:${(activeChainHex || "").toLowerCase()}:${(wallet || "").toLowerCase()}`;
+  const getApprovalStorageKey = useCallback(
+    (wallet) =>
+      `${APPROVAL_CACHE_KEY}:${(activeChainHex || "").toLowerCase()}:${(wallet || "").toLowerCase()}`,
+    [activeChainHex]
+  );
   const loadApprovalCache = useCallback(
     (wallet) => {
       if (typeof window === "undefined" || !wallet) return new Map();
@@ -540,7 +520,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return new Map();
       }
     },
-    [activeChainHex]
+    [getApprovalStorageKey]
   );
   const persistApprovalCache = useCallback(
     (wallet) => {
@@ -559,27 +539,30 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         // ignore storage errors
       }
     },
-    [activeChainHex]
+    [getApprovalStorageKey]
   );
-  const getCachedApproval = (kind, token, spender) => {
+  const getCachedApproval = useCallback((kind, token, spender) => {
     if (!token || !spender) return null;
     const entry = approvalCacheRef.current.get(
       makeApprovalKey(kind, token, spender)
     );
     return entry || null;
-  };
-  const setCachedApproval = (target) => {
-    if (!target?.address || !target?.spender || !target?.kind) return;
-    approvalCacheRef.current.set(
-      makeApprovalKey(target.kind, target.address, target.spender),
-      {
-        amount: target.desiredAllowance ?? 0n,
-        expiration: target.expiration ?? MAX_UINT48,
-        at: Date.now(),
-      }
-    );
-    if (address) persistApprovalCache(address);
-  };
+  }, []);
+  const setCachedApproval = useCallback(
+    (target) => {
+      if (!target?.address || !target?.spender || !target?.kind) return;
+      approvalCacheRef.current.set(
+        makeApprovalKey(target.kind, target.address, target.spender),
+        {
+          amount: target.desiredAllowance ?? 0n,
+          expiration: target.expiration ?? MAX_UINT48,
+          at: Date.now(),
+        }
+      );
+      if (address) persistApprovalCache(address);
+    },
+    [address, persistApprovalCache]
+  );
 
   useEffect(() => {
     if (!address) {
@@ -739,13 +722,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       setExecutionProof(null);
       executionClearRef.current = null;
     }, 20000);
-  }, []);
-  const clearExecutionProof = useCallback(() => {
-    setExecutionProof(null);
-    if (executionClearRef.current) {
-      clearTimeout(executionClearRef.current);
-      executionClearRef.current = null;
-    }
   }, []);
   const listenForTx = useCallback(
     (txHash, meta) => {
@@ -1159,7 +1135,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
       const stripAmountOut = (route) => {
         if (!route) return null;
-        const { amountOut, ...rest } = route;
+        const { amountOut: _amountOut, ...rest } = route;
         return rest;
       };
 
@@ -1380,8 +1356,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         if (!best) return next;
         return next.amountOut > best.amountOut ? next : best;
       }, null);
-
-      throw new Error("No V2 route available for this pair.");
     },
     [
       buyMeta?.address,
@@ -1639,7 +1613,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         setQuotePairs([]);
         setQuoteMeta(null);
         setLastQuoteAt(null);
-        setQuoteVolatilityPct(0);
         lastQuoteOutRef.current = null;
       };
       if (!isChainMatch) {
@@ -2208,20 +2181,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           setQuotePairs(v2Pairs);
 
           setLastQuoteAt(Date.now());
-          const prevRaw = lastQuoteOutRef.current;
           lastQuoteOutRef.current = amountOut;
-          if (prevRaw) {
-            const prevNum = Number(formatUnits(prevRaw, buyMeta?.decimals ?? 18));
-            const currNum = Number(formattedOut);
-            if (prevNum > 0 && Number.isFinite(prevNum) && Number.isFinite(currNum)) {
-              const deltaPct = Math.abs((currNum - prevNum) / prevNum) * 100;
-              setQuoteVolatilityPct(deltaPct);
-            } else {
-              setQuoteVolatilityPct(0);
-            }
-          } else {
-            setQuoteVolatilityPct(0);
-          }
 
           const routeImpact =
             selectedRoute.estimatedSlippage ??
@@ -2371,7 +2331,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   }, [
     address,
     activeInputAmount,
+    amountIn,
     amountOutInput,
+    buildRouteKey,
+    buyMeta,
     buyMeta?.address,
     buyMeta?.decimals,
     buyToken,
@@ -2379,6 +2342,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     buildV2RouteCandidates,
     buildV3Route,
     buildV3RouteCandidates,
+    getCachedApproval,
     quoteV2Route,
     quoteV2RouteExactOut,
     quoteV3Route,
@@ -2388,9 +2352,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     isSupported,
     hasV2Support,
     hasV3Support,
+    sellMeta,
     sellMeta?.address,
     sellMeta?.decimals,
     sellToken,
+    setCachedApproval,
     swapInputMode,
     liveRouteTick,
     quoteLockedUntil,
@@ -2412,10 +2378,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     if (Number.isNaN(val) || val < 0) return 0.5;
     return Math.min(5, val);
   })();
-  const safePriceImpact = Number.isFinite(priceImpact) ? Math.max(priceImpact, 0) : 0;
-  const safeVolatility = Number.isFinite(quoteVolatilityPct)
-    ? Math.max(quoteVolatilityPct, 0)
-    : 0;
   const autoSlippagePct = Math.max(0.05, Math.min(baseSlippagePct || 0.3, 0.8));
   const effectiveSlippagePct = autoSlippagePct;
   const reQuoteThresholdPct = 0.9;
@@ -2723,7 +2685,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const reQuoteThreshold = reQuoteThresholdPct;
         guardedRouteMeta = candidateRoute;
         guardedAmountOut = freshOut;
-        setQuoteVolatilityPct(deltaPct);
 
         if (deltaPct > reQuoteThreshold) {
           const refreshedRoute = { ...candidateRoute, protocol: "V3", amountOut: freshOut };
@@ -2734,7 +2695,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           setQuoteMeta(refreshedRoute);
           setLastQuoteAt(Date.now());
           setPriceImpact(null);
-          setQuoteVolatilityPct(deltaPct);
           setSwapStatus({
             message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
             variant: "error",
@@ -2759,7 +2719,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const reQuoteThreshold = reQuoteThresholdPct;
         guardedRouteMeta = { ...candidateRoute, protocol: "V2", amountOut: freshOut };
         guardedAmountOut = freshOut;
-        setQuoteVolatilityPct(deltaPct);
 
         if (deltaPct > reQuoteThreshold) {
           const refreshedRoute = guardedRouteMeta;
@@ -2770,7 +2729,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           setQuoteMeta(refreshedRoute);
           setLastQuoteAt(Date.now());
           setPriceImpact(null);
-          setQuoteVolatilityPct(deltaPct);
           setSwapStatus({
             message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
             variant: "error",
@@ -2815,7 +2773,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           routes: refreshedLegs,
         };
         guardedAmountOut = freshTotal;
-        setQuoteVolatilityPct(deltaPct);
 
         if (deltaPct > reQuoteThreshold) {
           const refreshedRoute = guardedRouteMeta;
@@ -2824,7 +2781,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           setQuoteMeta(refreshedRoute);
           setLastQuoteAt(Date.now());
           setPriceImpact(null);
-          setQuoteVolatilityPct(deltaPct);
           setSwapStatus({
             message: `Quote updated (${deltaPct.toFixed(2)}% move). Review and sign again.`,
             variant: "error",

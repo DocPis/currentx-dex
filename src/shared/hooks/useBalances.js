@@ -16,17 +16,8 @@ import { getActiveNetworkConfig } from "../config/networks";
 
 export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const activeNetworkId = (getActiveNetworkConfig()?.id || "mainnet").toLowerCase();
-  const activeChainHex = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
   const BALANCE_POLL_INTERVAL_MS = 20000;
   const BALANCE_EPSILON = 1e-9;
-  const normalizeChainHex = (value) => {
-    if (value === null || value === undefined) return null;
-    const str = String(value).trim();
-    if (str.startsWith("0x") || str.startsWith("0X")) return str.toLowerCase().replace(/^0x0+/, "0x");
-    const num = Number(str);
-    if (Number.isFinite(num)) return `0x${num.toString(16)}`;
-    return str.toLowerCase();
-  };
   const tokenKeys = useMemo(() => {
     return Object.keys(tokenRegistry).filter((k) => k === "ETH" || tokenRegistry[k]?.address);
   }, [tokenRegistry]);
@@ -74,7 +65,6 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
       const shouldShowLoading = !silent && !hasLoadedRef.current;
       try {
         if (shouldShowLoading) setLoading(true);
-        const activeChainId = (getActiveNetworkConfig()?.chainIdHex || "").toLowerCase();
         const walletChainId = (chainId || "").toLowerCase();
         // Prefer the wallet provider when available, even if preset and wallet mismatch,
         // to avoid missing balances when the app preset lags the wallet chain.
@@ -135,6 +125,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         }
 
         const next = { ...makeZeroBalances(), ETH: eth };
+        const filledKeys = new Set();
         // Batch ERC20 decimals + balances via Multicall3 when available (retry with RPC pool if wallet provider blocks getCode)
         const erc20Keys = tokenKeys.filter((k) => k !== "ETH");
         let mcProvider = provider;
@@ -196,7 +187,10 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
                       ? decimalsCache.current[lower]
                       : token?.decimals;
                   const num = Number(formatUnits(raw, dec || 18));
-                  if (Number.isFinite(num)) next[meta.tokenKey] = num;
+                  if (Number.isFinite(num)) {
+                    next[meta.tokenKey] = num;
+                    filledKeys.add(meta.tokenKey);
+                  }
                 }
               } catch {
                 // ignore malformed decode
@@ -228,7 +222,10 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
                           ? decimalsCache.current[lower]
                           : token?.decimals;
                       const num = Number(formatUnits(raw, dec || 18));
-                      if (Number.isFinite(num)) next[meta.tokenKey] = num;
+                      if (Number.isFinite(num)) {
+                        next[meta.tokenKey] = num;
+                        filledKeys.add(meta.tokenKey);
+                      }
                     }
                   } catch {
                     /* ignore decode errors */
@@ -244,7 +241,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         // Fallback or fill missing tokens with direct RPC
         await Promise.all(
           erc20Keys.map(async (key) => {
-            if (typeof next[key] === "number" && next[key] !== undefined) return;
+            if (filledKeys.has(key)) return;
             const token = tokenRegistry[key];
             if (!token?.address) return;
             try {
@@ -305,7 +302,7 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
         }
       }
     },
-    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys, activeChainHex]
+    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys, balancesEqual]
   );
 
   useEffect(() => {

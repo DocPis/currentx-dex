@@ -1223,20 +1223,6 @@ export async function fetchTopPairsBreakdown(limit = 4) {
     return [];
   };
 
-  const safeQuery = async (query, field, variables = {}) => {
-    try {
-      const res = await postSubgraph(query, variables);
-      return res?.[field] || [];
-    } catch (err) {
-      const message = err?.message || "";
-      const noField =
-        message.includes(`Cannot query field "${field}"`) ||
-        message.includes(`Type \`Query\` has no field \`${field}\``);
-      if (noField) return [];
-      throw err;
-    }
-  };
-
   const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
 
   const dayTop = await fetchTopPairsDay(finalLimit);

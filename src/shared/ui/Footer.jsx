@@ -7,7 +7,7 @@ import megaLogo from "../../tokens/megaeth.png";
 import {
   GECKOTERMINAL_URL,
   SHOW_GECKOTERMINAL_ATTRIBUTION,
-} from "./GeckoTerminalAttribution";
+} from "./geckoTerminalConfig";
 
 const FOOTER_LINKS = {
   docs: "https://docs.currentx.app/",

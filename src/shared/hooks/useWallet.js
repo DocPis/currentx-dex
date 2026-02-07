@@ -10,22 +10,6 @@ import { getActiveNetworkConfig } from "../config/networks";
 
 const SESSION_KEY = "cx_session_connected";
 
-const isTrustWalletProvider = (provider) => {
-  const name =
-    (provider?.walletName ||
-      provider?.name ||
-      provider?.providerInfo?.name ||
-      provider?.info?.name ||
-      "")?.toLowerCase?.() || "";
-  return (
-    provider?.isTrustWallet ||
-    provider?.isTrustWalletV2 ||
-    provider?.isTrust ||
-    provider?.isTrustProvider ||
-    name.includes("trust")
-  );
-};
-
 const normalizeChainId = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value === "bigint") return `0x${value.toString(16)}`.toLowerCase();
@@ -138,8 +122,6 @@ export function useWallet() {
         "Selected wallet not detected. If you are on mobile (iOS/Android), open this page inside the Trust Wallet app and retry."
       );
     }
-    const isTrustWallet = isTrustWalletProvider(injected);
-
     const ensureCorrectNetwork = async () => {
       const addNetwork = async () => {
         try {

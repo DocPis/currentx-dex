@@ -1,5 +1,11 @@
 import { kv } from "@vercel/kv";
-// In-memory deduplication fallback (KV temporarily disabled)
+
+const IS_PROD = process.env.NODE_ENV === "production";
+const KV_ENABLED = Boolean(
+  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+);
+const ALLOW_INMEMORY = !IS_PROD;
+
 const submittedWallets =
   globalThis.__cxSubmittedWallets || (globalThis.__cxSubmittedWallets = new Set());
 
@@ -10,53 +16,59 @@ const MAX_BODY_BYTES = 20_000; // guardrail against oversized payloads
 const MAX_FIELD_LENGTH = 256;
 const MAX_WALLET_LENGTH = 120;
 const RATE_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+const RATE_WINDOW_SECONDS = Math.ceil(RATE_WINDOW_MS / 1000);
 const MAX_REQUESTS_PER_IP = 30;
 const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
-
-// KV opt-in: use if creds are present; fallback to in-memory on error.
-const kvEnabled = Boolean(
-  process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
-);
-let kvAvailable = kvEnabled;
+const WALLET_TTL_SECONDS = 60 * 60 * 24 * 180; // 180 days
 
 const sanitizeString = (val, max) => {
   if (typeof val !== "string") return "";
   return val.trim().slice(0, max);
 };
 
+const getWalletKey = (wallet) => `presale:wallet:${wallet}`;
+const getRateKey = (ip) =>
+  `presale:rate:${ip}:${Math.floor(Date.now() / RATE_WINDOW_MS)}`;
+
 const isDuplicateWallet = async (wallet) => {
   if (!wallet) return false;
-  if (kvAvailable) {
+  if (KV_ENABLED) {
     try {
-      const existing = await kv.get(wallet);
+      const existing = await kv.get(getWalletKey(wallet));
       if (existing) return true;
+      return false;
     } catch (e) {
-      const msg = (e?.message || "").toLowerCase();
-      if (msg.includes("payment required")) kvAvailable = false;
+      if (!ALLOW_INMEMORY) throw e;
       console.error("KV get error", e?.message || e);
     }
   }
-  return submittedWallets.has(wallet);
+  return ALLOW_INMEMORY ? submittedWallets.has(wallet) : false;
 };
 
-const storeWallet = async ({ wallet }) => {
+const storeWallet = async ({ wallet, discord, telegram, source, ts, ip }) => {
   if (!wallet) return { duplicate: false };
-  if (kvAvailable) {
+  if (KV_ENABLED) {
     try {
       const result = await kv.set(
-        wallet,
-        { wallet, ts: Date.now() },
-        { nx: true }
+        getWalletKey(wallet),
+        {
+          wallet,
+          discord: discord || null,
+          telegram: telegram || null,
+          source: source || "currentx-presale",
+          ts: ts || Date.now(),
+          ip: ip || null,
+        },
+        { nx: true, ex: WALLET_TTL_SECONDS }
       );
       if (result === null) return { duplicate: true };
       return { duplicate: false };
     } catch (e) {
-      const msg = (e?.message || "").toLowerCase();
-      if (msg.includes("payment required")) kvAvailable = false;
+      if (!ALLOW_INMEMORY) throw e;
       console.error("KV set error", e?.message || e);
     }
   }
-  submittedWallets.add(wallet);
+  if (ALLOW_INMEMORY) submittedWallets.add(wallet);
   return { duplicate: false };
 };
 
@@ -74,7 +86,22 @@ const getClientIp = (req) => {
   return req.socket?.remoteAddress || "unknown";
 };
 
-const isRateLimited = (ip) => {
+const isRateLimited = async (ip) => {
+  if (!ip) return false;
+  if (KV_ENABLED) {
+    try {
+      const key = getRateKey(ip);
+      const count = await kv.incr(key);
+      if (count === 1) {
+        await kv.expire(key, RATE_WINDOW_SECONDS);
+      }
+      return count > MAX_REQUESTS_PER_IP;
+    } catch (e) {
+      if (!ALLOW_INMEMORY) throw e;
+      console.error("KV rate-limit error", e?.message || e);
+    }
+  }
+  if (!ALLOW_INMEMORY) return false;
   const now = Date.now();
   const bucket = rateBuckets.get(ip);
   if (!bucket || bucket.resetAt < now) {
@@ -92,13 +119,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  const ip = getClientIp(req);
-  if (isRateLimited(ip)) {
-    res.status(429).json({ error: "Rate limit exceeded. Please retry later." });
+  if (IS_PROD && !KV_ENABLED) {
+    res.status(503).json({ error: "KV not configured for presale storage." });
     return;
   }
 
+  const ip = getClientIp(req);
   try {
+    const limited = await isRateLimited(ip);
+    if (limited) {
+      res.status(429).json({ error: "Rate limit exceeded. Please retry later." });
+      return;
+    }
+
     const rawSize = Buffer.byteLength(
       JSON.stringify(req.body || {}),
       "utf8"
@@ -147,6 +180,7 @@ export default async function handler(req, res) {
       telegram: safeTelegram,
       source: safeSource,
       ts,
+      ip,
     });
     if (storeResult?.duplicate) {
       res

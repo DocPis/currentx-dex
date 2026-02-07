@@ -379,7 +379,6 @@ export default function Dashboard() {
   const volumeHistory = data.volumeHistory;
   const topPairs = data.topPairs;
   const tvlStartDate = data.tvlStartDate;
-
   const tvlSeries = useMemo(() => {
     const filtered = tvlHistory.filter((d) => d.date >= tvlStartDate);
     return filtered
@@ -391,7 +390,7 @@ export default function Dashboard() {
         value: d.tvlUsd,
         rawDate: d.date,
       }));
-  }, [tvlHistory]);
+  }, [tvlHistory, tvlStartDate]);
 
   const volumeSeries = useMemo(
     () =>
@@ -422,36 +421,38 @@ export default function Dashboard() {
   const dailyVolumeUsd = dayVolume ?? todayVolume;
   const dailyFees = dailyVolumeUsd !== null ? dailyVolumeUsd * 0.003 : null;
   const liveTvl = stats?.totalLiquidityUsd;
+  const latestTvlDate = tvlHistory?.[0]?.date ?? null;
+  const latestVolumeDate = volumeHistory?.[0]?.date ?? null;
 
   const tvlSeriesWithToday = useMemo(() => {
     if (!tvlSeries.length) return [];
     const livePoint =
-      liveTvl !== undefined
+      liveTvl !== undefined && Number.isFinite(latestTvlDate)
         ? {
             label: "Today",
-            fullLabel: new Date().toLocaleString(),
+            fullLabel: new Date(latestTvlDate).toLocaleString(),
             value: liveTvl,
-            rawDate: Date.now(),
+            rawDate: latestTvlDate,
             isLive: true,
           }
         : null;
     return livePoint ? [...tvlSeries, livePoint] : tvlSeries;
-  }, [tvlSeries, liveTvl]);
+  }, [tvlSeries, liveTvl, latestTvlDate]);
 
   const volumeSeriesWithToday = useMemo(() => {
     if (!volumeSeries.length) return [];
     const todayPoint =
-      todayVolume !== null
+      todayVolume !== null && Number.isFinite(latestVolumeDate)
         ? {
             label: "Today",
-            fullLabel: new Date().toLocaleString(),
+            fullLabel: new Date(latestVolumeDate).toLocaleString(),
             value: todayVolume,
-            rawDate: Date.now(),
+            rawDate: latestVolumeDate,
             isLive: true,
           }
         : null;
     return todayPoint ? [...volumeSeries, todayPoint] : volumeSeries;
-  }, [volumeSeries, todayVolume]);
+  }, [volumeSeries, todayVolume, latestVolumeDate]);
 
   const calcChange = (series) => {
     if (!series?.length || series.length < 2) return null;
