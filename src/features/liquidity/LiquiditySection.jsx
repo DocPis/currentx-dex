@@ -2505,6 +2505,58 @@ export default function LiquiditySection({
   );
 
   const v3DepositRatio = useMemo(() => {
+    const scaleTo18 = (raw, decimals) => {
+      const dec = BigInt(decimals ?? 18);
+      if (dec === 18n) return raw;
+      if (dec < 18n) return raw * 10n ** (18n - dec);
+      return raw / 10n ** (dec - 18n);
+    };
+
+    if (v3RangeMath) {
+      const liquidity = 1_000_000n;
+      const amounts = getAmountsForLiquidity(
+        v3RangeMath.sqrtCurrentX96,
+        v3RangeMath.sqrtLowerX96,
+        v3RangeMath.sqrtUpperX96,
+        liquidity
+      );
+      if (amounts) {
+        const amount0Scaled = scaleTo18(amounts.amount0 ?? 0n, v3RangeMath.dec0);
+        const amount1Scaled = scaleTo18(amounts.amount1 ?? 0n, v3RangeMath.dec1);
+        if (amount0Scaled > 0n || amount1Scaled > 0n) {
+          let value0 = amount0Scaled;
+          let value1 = amount1Scaled;
+          const refPrice = safeNumber(v3ReferencePrice);
+          if (refPrice && refPrice > 0) {
+            const priceScaled = BigInt(Math.round(refPrice * 1_000_000));
+            if (priceScaled > 0n) {
+              value0 = (amount0Scaled * priceScaled) / 1_000_000n;
+            }
+          } else {
+            const price0 = safeNumber(v3Token0PriceUsd);
+            const price1 = safeNumber(v3Token1PriceUsd);
+            if (price0 && price1) {
+              const price0Scaled = BigInt(Math.round(price0 * 1_000_000));
+              const price1Scaled = BigInt(Math.round(price1 * 1_000_000));
+              if (price0Scaled > 0n && price1Scaled > 0n) {
+                value0 = (amount0Scaled * price0Scaled) / 1_000_000n;
+                value1 = (amount1Scaled * price1Scaled) / 1_000_000n;
+              }
+            }
+          }
+          const total = value0 + value1;
+          if (total > 0n) {
+            const ratio0 = Number((value0 * 1_000_000n) / total) / 1_000_000;
+            const ratio1 = 1 - ratio0;
+            return {
+              token0: clampPercent(ratio0 * 100) / 100,
+              token1: clampPercent(ratio1 * 100) / 100,
+            };
+          }
+        }
+      }
+    }
+
     const amount0Num = safeNumber(v3Amount0);
     const amount1Num = safeNumber(v3Amount1);
     if (!amount0Num && !amount1Num) return null;
@@ -2543,7 +2595,14 @@ export default function LiquiditySection({
       token0: v0 / total,
       token1: v1 / total,
     };
-  }, [v3Amount0, v3Amount1, v3ReferencePrice, v3Token0PriceUsd, v3Token1PriceUsd]);
+  }, [
+    v3RangeMath,
+    v3ReferencePrice,
+    v3Token0PriceUsd,
+    v3Token1PriceUsd,
+    v3Amount0,
+    v3Amount1,
+  ]);
 
   const v3TotalDeposit = useMemo(() => {
     const amount0Num = safeNumber(v3Amount0);
