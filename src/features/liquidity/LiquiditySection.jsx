@@ -1790,6 +1790,16 @@ export default function LiquiditySection({
       Boolean(v3PoolInfo.address) &&
       !v3PoolInitialized
   );
+  const v3PoolMissing = Boolean(
+    isV3View &&
+      hasV3Liquidity &&
+      v3SelectedToken0Address &&
+      v3SelectedToken1Address &&
+      v3SelectedToken0Address.toLowerCase() !== v3SelectedToken1Address.toLowerCase() &&
+      !v3PoolInfo.address &&
+      (!v3PoolError || v3PoolError.toLowerCase().includes("not deployed"))
+  );
+  const v3PoolRequiresInit = v3PoolNeedsInit || v3PoolMissing;
   const v3DerivedPrice = useMemo(() => {
     const raw0 = safeNumber(v3Token0PriceUsd);
     const raw1 = safeNumber(v3Token1PriceUsd);
@@ -1820,11 +1830,30 @@ export default function LiquiditySection({
     }
     return Number.isFinite(price) && price > 0 ? price : null;
   }, [v3PoolTvlHistory, v3TokenPriceHistory, v3PoolIsReversed]);
+  const v3SuggestedStartPrice = useMemo(() => {
+    if (v3DerivedPrice && Number.isFinite(v3DerivedPrice) && v3DerivedPrice > 0) {
+      return v3DerivedPrice;
+    }
+    if (
+      v3SubgraphCurrentPrice &&
+      Number.isFinite(v3SubgraphCurrentPrice) &&
+      v3SubgraphCurrentPrice > 0
+    ) {
+      return v3SubgraphCurrentPrice;
+    }
+    if (v3CachedPrice && Number.isFinite(v3CachedPrice) && v3CachedPrice > 0) {
+      return v3CachedPrice;
+    }
+    if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
+      return v3CurrentPrice;
+    }
+    return null;
+  }, [v3DerivedPrice, v3SubgraphCurrentPrice, v3CachedPrice, v3CurrentPrice]);
   const v3ReferencePrice = useMemo(() => {
     if (v3CurrentPrice && Number.isFinite(v3CurrentPrice) && v3CurrentPrice > 0) {
       return v3CurrentPrice;
     }
-    if (v3PoolNeedsInit && v3HasStartPrice) {
+    if (v3PoolRequiresInit && v3HasStartPrice) {
       return v3StartPriceNum;
     }
     if (
@@ -1843,7 +1872,7 @@ export default function LiquiditySection({
     return null;
   }, [
     v3CurrentPrice,
-    v3PoolNeedsInit,
+    v3PoolRequiresInit,
     v3HasStartPrice,
     v3StartPriceNum,
     v3SubgraphCurrentPrice,
@@ -1891,9 +1920,12 @@ export default function LiquiditySection({
     if (v3ReferencePrice) {
       return `${formatPrice(v3ReferencePrice)} ${v3Token1}/${v3Token0}`;
     }
-    if (v3PoolNeedsInit) {
+    if (v3PoolRequiresInit) {
       if (v3HasStartPrice) {
         return `${formatPrice(v3StartPriceNum)} ${v3Token1}/${v3Token0}`;
+      }
+      if (v3PoolMissing) {
+        return "Pool not deployed yet. Set a starting price to create it.";
       }
       return v3PoolError || "Pool not initialized. Set a starting price.";
     }
@@ -1903,10 +1935,11 @@ export default function LiquiditySection({
     v3ReferencePrice,
     v3Token1,
     v3Token0,
-    v3PoolNeedsInit,
+    v3PoolRequiresInit,
     v3HasStartPrice,
     v3StartPriceNum,
     v3PoolError,
+    v3PoolMissing,
   ]);
 
   const v3RangeMath = useMemo(() => {
@@ -7461,10 +7494,10 @@ export default function LiquiditySection({
                   </div>
                 </div>
 
-                {v3PoolNeedsInit && (
+                {v3PoolRequiresInit && (
                   <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                     <div className="text-[11px] uppercase tracking-wide text-amber-200">
-                      Pool initialization required
+                      {v3PoolMissing ? "Pool creation required" : "Pool initialization required"}
                     </div>
                     <div className="mt-1 text-[11px] text-amber-200/80">
                       Set a starting price for the pool. If left empty, we will infer it
@@ -7473,7 +7506,20 @@ export default function LiquiditySection({
                     <div className="mt-3 flex flex-col gap-1">
                       <div className="flex items-center justify-between text-xs text-amber-200/80">
                         <span>Starting price</span>
-                        <span>{v3Token1} per {v3Token0}</span>
+                        <div className="flex items-center gap-2">
+                          <span>{v3Token1} per {v3Token0}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!v3SuggestedStartPrice) return;
+                              setV3StartPrice(formatAutoAmount(v3SuggestedStartPrice));
+                            }}
+                            disabled={!v3SuggestedStartPrice}
+                            className="px-2 py-0.5 rounded-full border border-amber-400/40 text-[10px] uppercase tracking-wide text-amber-200 hover:border-amber-300 hover:text-amber-100 disabled:opacity-50"
+                          >
+                            Use market price
+                          </button>
+                        </div>
                       </div>
                       <input
                         name="v3-start-price"

@@ -2089,7 +2089,29 @@ export async function fetchV3PoolsDayData(ids = []) {
     }
 
     if (!matched) {
-      return out;
+      break;
+    }
+  }
+
+  const missing = list.filter((id) => !out[id]);
+  if (missing.length) {
+    const batches = chunkArray(missing, 6);
+    for (const batch of batches) {
+      const results = await Promise.allSettled(
+        batch.map((id) => fetchV3PoolHourStats(id, 24))
+      );
+      results.forEach((res, idx) => {
+        if (res.status !== "fulfilled" || !res.value) return;
+        const id = batch[idx];
+        out[id] = {
+          volumeUsd: toNumberSafe(res.value.volumeUsd),
+          tvlUsd: toNumberSafe(res.value.tvlUsd),
+          feesUsd:
+            res.value.feesUsd !== null && res.value.feesUsd !== undefined
+              ? toNumberSafe(res.value.feesUsd)
+              : null,
+        };
+      });
     }
   }
 
