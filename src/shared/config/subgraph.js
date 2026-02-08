@@ -1981,6 +1981,19 @@ const chunkArray = (items = [], size = 20) => {
   }
   return out;
 };
+const runWithConcurrency = async (items = [], limit = 4, worker) => {
+  if (!Array.isArray(items) || !items.length) return [];
+  const results = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+};
 
 const normalizeIds = (ids = []) =>
   Array.from(new Set((ids || []).filter(Boolean).map((id) => id.toLowerCase())));
@@ -1992,57 +2005,67 @@ export async function fetchV2PoolsDayData(ids = []) {
 
   const chunks = chunkArray(list, 20);
   const out = {};
+  const candidates = ["pairAddress", "pair"];
+  const runChunk = async (chunk, field) => {
+    const query = `
+      query V2PoolDayData {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: pairDayDatas(
+            first: 1
+            orderBy: date
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            date
+            dailyVolumeUSD
+            reserveUSD
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
 
-  for (const chunk of chunks) {
-    let schemaMissing = false;
-    const candidates = ["pairAddress", "pair"];
+    const res = await postSubgraph(query);
+    chunk.forEach((id, idx) => {
+      const row = res?.[`p${idx}`]?.[0];
+      if (!row) return;
+      out[id] = {
+        volumeUsd: toNumberSafe(row.dailyVolumeUSD),
+        tvlUsd: toNumberSafe(row.reserveUSD),
+      };
+    });
+  };
+
+  let resolvedField = null;
+  if (chunks.length) {
     for (const field of candidates) {
-      const query = `
-        query V2PoolDayData {
-          ${chunk
-            .map(
-              (id, idx) => `
-            p${idx}: pairDayDatas(
-              first: 1
-              orderBy: date
-              orderDirection: desc
-              where: { ${field}: "${id}" }
-            ) {
-              date
-              dailyVolumeUSD
-              reserveUSD
-            }
-          `
-            )
-            .join("\n")}
-        }
-      `;
-
       try {
-        const res = await postSubgraph(query);
-        chunk.forEach((id, idx) => {
-          const row = res?.[`p${idx}`]?.[0];
-          if (!row) return;
-          out[id] = {
-            volumeUsd: toNumberSafe(row.dailyVolumeUSD),
-            tvlUsd: toNumberSafe(row.reserveUSD),
-          };
-        });
-        schemaMissing = false;
+        await runChunk(chunks[0], field);
+        resolvedField = field;
         break;
       } catch (err) {
         const message = err?.message || "";
         if (isSchemaFieldMissing(message)) {
-          schemaMissing = true;
           continue;
         }
         throw err;
       }
     }
-    if (schemaMissing) {
-      return out;
-    }
   }
+  if (!resolvedField) return out;
+
+  await Promise.all(
+    chunks.slice(1).map(async (chunk) => {
+      try {
+        await runChunk(chunk, resolvedField);
+      } catch {
+        // ignore chunk failures to keep partial data
+      }
+    })
+  );
 
   return out;
 }
@@ -2081,57 +2104,57 @@ export async function fetchV3PoolsDayData(ids = []) {
       totalValueLockedUSD
     `,
   ];
+  const runChunk = async (chunk, field, select) => {
+    const query = `
+      query V3PoolDayData {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: poolDayDatas(
+            first: 1
+            orderBy: date
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            ${select}
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
+
+    const res = await postSubgraphV3(query);
+    chunk.forEach((id, idx) => {
+      const row = res?.[`p${idx}`]?.[0];
+      if (!row) return;
+      const tvl =
+        row.tvlUSD !== undefined && row.tvlUSD !== null
+          ? row.tvlUSD
+          : row.totalValueLockedUSD;
+      const feesUsd =
+        row.feesUSD !== undefined && row.feesUSD !== null
+          ? toNumberSafe(row.feesUSD)
+          : null;
+      out[id] = {
+        volumeUsd: toNumberSafe(row.volumeUSD),
+        tvlUsd: toNumberSafe(tvl),
+        feesUsd,
+      };
+    });
+  };
+
   let resolvedSelect = null;
   let resolvedField = null;
-
-  for (const chunk of chunks) {
+  if (chunks.length) {
     let matched = false;
-    const selectList = resolvedSelect ? [resolvedSelect] : selectVariants;
-    const fieldList = resolvedField ? [resolvedField] : candidates;
-
-    for (const select of selectList) {
-      for (const field of fieldList) {
-        const query = `
-          query V3PoolDayData {
-            ${chunk
-              .map(
-                (id, idx) => `
-              p${idx}: poolDayDatas(
-                first: 1
-                orderBy: date
-                orderDirection: desc
-                where: { ${field}: "${id}" }
-              ) {
-                ${select}
-              }
-            `
-              )
-              .join("\n")}
-          }
-        `;
-
+    for (const select of selectVariants) {
+      for (const field of candidates) {
         try {
-          const res = await postSubgraphV3(query);
-          chunk.forEach((id, idx) => {
-            const row = res?.[`p${idx}`]?.[0];
-            if (!row) return;
-            const tvl =
-              row.tvlUSD !== undefined && row.tvlUSD !== null
-                ? row.tvlUSD
-                : row.totalValueLockedUSD;
-            const feesUsd =
-              row.feesUSD !== undefined && row.feesUSD !== null
-                ? toNumberSafe(row.feesUSD)
-                : null;
-            out[id] = {
-              volumeUsd: toNumberSafe(row.volumeUSD),
-              tvlUsd: toNumberSafe(tvl),
-              feesUsd,
-            };
-          });
+          await runChunk(chunks[0], field, select);
+          resolvedSelect = select;
+          resolvedField = field;
           matched = true;
-          if (!resolvedSelect) resolvedSelect = select;
-          if (!resolvedField) resolvedField = field;
           break;
         } catch (err) {
           const message = err?.message || "";
@@ -2143,32 +2166,39 @@ export async function fetchV3PoolsDayData(ids = []) {
       }
       if (matched) break;
     }
+  }
 
-    if (!matched) {
-      break;
-    }
+  if (resolvedSelect && resolvedField) {
+    await Promise.all(
+      chunks.slice(1).map(async (chunk) => {
+        try {
+          await runChunk(chunk, resolvedField, resolvedSelect);
+        } catch {
+          // ignore chunk failures to keep partial data
+        }
+      })
+    );
   }
 
   const missing = list.filter((id) => !out[id]);
   if (missing.length) {
-    const batches = chunkArray(missing, 6);
-    for (const batch of batches) {
-      const results = await Promise.allSettled(
-        batch.map((id) => fetchV3PoolHourStats(id, 24))
-      );
-      results.forEach((res, idx) => {
-        if (res.status !== "fulfilled" || !res.value) return;
-        const id = batch[idx];
+    await runWithConcurrency(missing, 6, async (id) => {
+      try {
+        const res = await fetchV3PoolHourStats(id, 24);
+        if (!res) return null;
         out[id] = {
-          volumeUsd: toNumberSafe(res.value.volumeUsd),
-          tvlUsd: toNumberSafe(res.value.tvlUsd),
+          volumeUsd: toNumberSafe(res.volumeUsd),
+          tvlUsd: toNumberSafe(res.tvlUsd),
           feesUsd:
-            res.value.feesUsd !== null && res.value.feesUsd !== undefined
-              ? toNumberSafe(res.value.feesUsd)
+            res.feesUsd !== null && res.feesUsd !== undefined
+              ? toNumberSafe(res.feesUsd)
               : null,
         };
-      });
-    }
+      } catch {
+        // ignore single-pool failures
+      }
+      return null;
+    });
   }
 
   return out;
