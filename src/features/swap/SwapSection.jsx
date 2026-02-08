@@ -481,6 +481,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [tokenSearch, setTokenSearch] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
   const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
+  const [searchTokenMeta, setSearchTokenMeta] = useState(null);
+  const [searchTokenMetaLoading, setSearchTokenMetaLoading] = useState(false);
+  const [searchTokenMetaError, setSearchTokenMetaError] = useState("");
   const [copiedToken, setCopiedToken] = useState("");
   const [executionProof, setExecutionProof] = useState(null);
   const toastTimerRef = useRef(null);
@@ -521,19 +524,29 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (customTokenAddLoading) return false;
       setCustomTokenAddLoading(true);
       try {
-        const provider = await getProvider().catch(() => getReadOnlyProvider(false, true));
-        const erc20 = new Contract(addr, ERC20_ABI, provider);
-        const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
-          erc20.symbol().catch(() => "TOKEN"),
-          erc20.name().catch(() => "Custom Token"),
-          erc20.decimals().catch(() => 18),
-        ]);
-        let symbol = (symbolRaw || "TOKEN").toString();
-        symbol = symbol.replace(/\0/g, "").trim() || "TOKEN";
-        const tokenKey = symbol.toUpperCase();
-        const name = (nameRaw || tokenKey || "Custom Token").toString();
-        const decimalsNum = Number(decimalsRaw);
-        const decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
+        const metaOverride =
+          searchTokenMeta &&
+          (searchTokenMeta.address || "").toLowerCase() === lower
+            ? searchTokenMeta
+            : null;
+        let tokenKey = metaOverride?.symbol || "";
+        let name = metaOverride?.name || "";
+        let decimals = metaOverride?.decimals;
+        if (!tokenKey) {
+          const provider = await getProvider().catch(() => getReadOnlyProvider(false, true));
+          const erc20 = new Contract(addr, ERC20_ABI, provider);
+          const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+            erc20.symbol().catch(() => "TOKEN"),
+            erc20.name().catch(() => "Custom Token"),
+            erc20.decimals().catch(() => 18),
+          ]);
+          let symbol = (symbolRaw || "TOKEN").toString();
+          symbol = symbol.replace(/\0/g, "").trim() || "TOKEN";
+          tokenKey = symbol.toUpperCase();
+          name = (nameRaw || tokenKey || "Custom Token").toString();
+          const decimalsNum = Number(decimalsRaw);
+          decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
+        }
         if (tokenRegistry[tokenKey]) {
           setCustomTokenAddError("Symbol already in use. Try another token.");
           return false;
@@ -542,9 +555,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           ...customTokens,
           [tokenKey]: {
             symbol: tokenKey,
-            name,
+            name: name || tokenKey || "Custom Token",
             address: addr,
-            decimals,
+            decimals: Number.isFinite(decimals) ? decimals : 18,
             logo: TOKENS.CRX.logo,
           },
         };
@@ -561,7 +574,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         setCustomTokenAddLoading(false);
       }
     },
-    [customTokenAddLoading, customTokens, tokenRegistry]
+    [customTokenAddLoading, customTokens, tokenRegistry, searchTokenMeta]
   );
 
   const getApprovalStorageKey = useCallback(
@@ -690,6 +703,68 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const searchAddress = tokenSearch.trim();
   const searchIsAddress = isValidTokenAddress(searchAddress);
   const showQuickAdd = searchIsAddress && filteredTokens.length === 0;
+  useEffect(() => {
+    if (!selectorOpen) {
+      setSearchTokenMeta(null);
+      setSearchTokenMetaError("");
+      setSearchTokenMetaLoading(false);
+      return;
+    }
+    if (!searchIsAddress) {
+      setSearchTokenMeta(null);
+      setSearchTokenMetaError("");
+      setSearchTokenMetaLoading(false);
+      return;
+    }
+    const lower = searchAddress.toLowerCase();
+    const exists = Object.values(tokenRegistry).some(
+      (t) => (t.address || "").toLowerCase() === lower
+    );
+    if (exists) {
+      setSearchTokenMeta(null);
+      setSearchTokenMetaError("");
+      setSearchTokenMetaLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchTokenMetaLoading(true);
+    setSearchTokenMetaError("");
+    (async () => {
+      try {
+        const provider = await getProvider().catch(() => getReadOnlyProvider(false, true));
+        const erc20 = new Contract(searchAddress, ERC20_ABI, provider);
+        const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+          erc20.symbol().catch(() => "TOKEN"),
+          erc20.name().catch(() => "Custom Token"),
+          erc20.decimals().catch(() => 18),
+        ]);
+        let symbol = (symbolRaw || "TOKEN").toString();
+        symbol = symbol.replace(/\0/g, "").trim() || "TOKEN";
+        const tokenKey = symbol.toUpperCase();
+        const name = (nameRaw || tokenKey || "Custom Token").toString();
+        const decimalsNum = Number(decimalsRaw);
+        const decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
+        if (!cancelled) {
+          setSearchTokenMeta({
+            symbol: tokenKey,
+            name,
+            decimals,
+            address: searchAddress,
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setSearchTokenMeta(null);
+          setSearchTokenMetaError(err?.message || "Unable to load token metadata");
+        }
+      } finally {
+        if (!cancelled) setSearchTokenMetaLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectorOpen, searchIsAddress, searchAddress, tokenRegistry]);
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
   const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
   const sellMeta = tokenRegistry[sellKey];
@@ -4318,13 +4393,25 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               {showQuickAdd ? (
                 <div className="px-4 py-6 text-sm text-slate-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                   <div>
-                    <div className="text-slate-100 font-semibold">Token not listed</div>
+                    <div className="text-slate-100 font-semibold">
+                      {searchTokenMeta?.symbol
+                        ? `${searchTokenMeta.symbol} · ${searchTokenMeta.name || "Token"}`
+                        : searchTokenMetaLoading
+                          ? "Loading token..."
+                          : "Token not listed"}
+                    </div>
                     <div className="text-xs text-slate-500">{shortenAddress(searchAddress)}</div>
+                    {searchTokenMetaLoading && (
+                      <div className="text-xs text-slate-500">Loading token info...</div>
+                    )}
+                    {searchTokenMetaError && (
+                      <div className="text-xs text-amber-300">{searchTokenMetaError}</div>
+                    )}
                   </div>
                   <button
                     type="button"
                     onClick={() => addCustomTokenByAddress(searchAddress, { clearSearch: true })}
-                    disabled={customTokenAddLoading}
+                    disabled={customTokenAddLoading || searchTokenMetaLoading}
                     className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
                   >
                     {customTokenAddLoading ? "Adding..." : "Add token"}
