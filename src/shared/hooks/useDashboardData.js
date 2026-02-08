@@ -8,15 +8,8 @@ import {
 
 const DASHBOARD_REFETCH_MS = 5 * 60 * 1000;
 
-// Start the protocol TVL counter from "today" (UTC midnight) and keep counting forward.
-const TVL_START_DATE = (() => {
-  const now = new Date();
-  const start = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  );
-  start.setUTCDate(start.getUTCDate() - 1);
-  return start.getTime();
-})();
+// Start the protocol TVL counter from Feb 6, 2026 (UTC midnight) and keep counting forward.
+const TVL_START_DATE = Date.UTC(2026, 1, 6);
 
 const getTvlDays = () =>
   Math.min(

@@ -380,16 +380,43 @@ export default function Dashboard() {
   const topPairs = data.topPairs;
   const tvlStartDate = data.tvlStartDate;
   const tvlSeries = useMemo(() => {
-    const filtered = tvlHistory.filter((d) => d.date >= tvlStartDate);
-    return filtered
+    const dayMs = 86400000;
+    const filtered = tvlHistory
+      .filter((d) => d.date >= tvlStartDate)
       .slice()
-      .reverse()
-      .map((d) => ({
-        label: formatDateLabel(d.date),
-        fullLabel: new Date(d.date).toLocaleString(),
-        value: d.tvlUsd,
-        rawDate: d.date,
-      }));
+      .sort((a, b) => a.date - b.date);
+    if (!filtered.length) return [];
+    const firstNonZero = filtered.find(
+      (d) => Number.isFinite(Number(d.tvlUsd)) && Number(d.tvlUsd) > 0
+    );
+    let lastKnown =
+      firstNonZero && Number.isFinite(Number(firstNonZero.tvlUsd))
+        ? Number(firstNonZero.tvlUsd)
+        : null;
+    const byDay = new Map(
+      filtered.map((d) => [
+        Math.floor(d.date / dayMs) * dayMs,
+        Number.isFinite(Number(d.tvlUsd)) ? Number(d.tvlUsd) : null,
+      ])
+    );
+    const startDay = Math.floor(tvlStartDate / dayMs) * dayMs;
+    const lastDate = filtered[filtered.length - 1]?.date ?? tvlStartDate;
+    const endDay = Math.floor(lastDate / dayMs) * dayMs;
+    const filled = [];
+    for (let day = startDay; day <= endDay; day += dayMs) {
+      const raw = byDay.get(day);
+      if (raw !== null && raw > 0) {
+        lastKnown = raw;
+      }
+      const value = lastKnown !== null ? lastKnown : 0;
+      filled.push({
+        label: formatDateLabel(day),
+        fullLabel: new Date(day).toLocaleString(),
+        value,
+        rawDate: day,
+      });
+    }
+    return filled;
   }, [tvlHistory, tvlStartDate]);
 
   const volumeSeries = useMemo(

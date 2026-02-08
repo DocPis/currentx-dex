@@ -493,6 +493,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const quoteInFlightRef = useRef(false);
   const lastQuoteKeyRef = useRef("");
   const routeCandidateCacheRef = useRef(new Map());
+  const lastFullQuoteAtRef = useRef(0);
+  const lastRouteMetaRef = useRef(null);
+  const lastRouteKeyRef = useRef("");
 
   const getApprovalStorageKey = useCallback(
     (wallet) =>
@@ -1376,6 +1379,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const isExactOut = swapInputMode === "out";
   const activeInputAmount = isExactOut ? amountOutInput : amountIn;
 
+  useEffect(() => {
+    lastFullQuoteAtRef.current = 0;
+    lastRouteMetaRef.current = null;
+    lastRouteKeyRef.current = "";
+  }, [sellToken, buyToken, routePreference, swapInputMode]);
+
   const handleSelectToken = (symbol) => {
     if (!symbol) return;
     if (selectorOpen === "sell") {
@@ -1708,6 +1717,316 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           const desiredOutWei = isExactOut
             ? parseUnits(amountOutInput || "0", buyDecimals)
             : null;
+          const routeKey = `${sellAddress.toLowerCase()}-${buyAddress.toLowerCase()}-${routePreference}-${swapInputMode}`;
+          const sellLower = sellAddress.toLowerCase();
+          const buyLower = buyAddress.toLowerCase();
+
+          const applyQuoteFromRoute = (selectedRoute, markFull = false) => {
+            const amountOut = selectedRoute?.amountOut;
+            if (!amountOut) {
+              setQuoteError("Unable to compute quote.");
+              return;
+            }
+
+            const formattedOut = trimTrailingZeros(formatUnits(amountOut, buyDecimals));
+            setQuoteOut(formattedOut);
+            setQuoteOutRaw(amountOut);
+            setQuoteMeta(selectedRoute);
+            setQuoteRoute(selectedRoute.path || [sellToken, buyToken]);
+            if (isExactOut && selectedRoute.amountIn) {
+              const formattedIn = trimTrailingZeros(
+                formatUnits(selectedRoute.amountIn, sellDecimals)
+              );
+              if (formattedIn && formattedIn !== amountIn) {
+                setAmountIn(formattedIn);
+              }
+            }
+
+            const v2Pairs =
+              selectedRoute.protocol === "V2"
+                ? selectedRoute.pairs || []
+                : selectedRoute.protocol === "SPLIT"
+                  ? (selectedRoute.routes || [])
+                      .filter((r) => r.protocol === "V2")
+                      .flatMap((r) => r.pairs || [])
+                  : [];
+            setQuotePairs(v2Pairs);
+
+            setLastQuoteAt(Date.now());
+            lastQuoteOutRef.current = amountOut;
+
+            const routeImpact =
+              selectedRoute.estimatedSlippage ??
+              selectedRoute.priceImpact ??
+              null;
+            setPriceImpact(routeImpact);
+            const resolvedAmountInWei = isExactOut
+              ? selectedRoute.amountIn
+              : amountWei;
+
+            lastRouteMetaRef.current = selectedRoute;
+            lastRouteKeyRef.current = routeKey;
+            if (markFull) {
+              lastFullQuoteAtRef.current = Date.now();
+            }
+
+            if (allowanceDebounceRef.current) {
+              clearTimeout(allowanceDebounceRef.current);
+              allowanceDebounceRef.current = null;
+            }
+            if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
+              if (!resolvedAmountInWei || resolvedAmountInWei <= 0n) {
+                if (!cancelled) setApprovalTargets([]);
+                return;
+              }
+              allowanceDebounceRef.current = setTimeout(async () => {
+                try {
+                  const user = address;
+                  if (!user) {
+                    if (cancelled) return;
+                    setApprovalTargets([]);
+                    return;
+                  }
+                  const readProvider = getReadOnlyProvider(false, true);
+                  const token = new Contract(sellAddress, ERC20_ABI, readProvider);
+                  const desiredErc20Allowance = MAX_UINT256;
+                  const desiredPermit2Allowance = MAX_UINT160;
+                  const permit2Expiration = MAX_UINT48;
+
+                  const targets = [];
+                  const checkErc20 = async (spender, label) => {
+                    if (!spender) return;
+                    const cached = getCachedApproval("erc20", sellAddress, spender);
+                    if (cached && cached.amount >= resolvedAmountInWei) return;
+                    const allowance = await token.allowance(user, spender);
+                    if (allowance < resolvedAmountInWei) {
+                      targets.push({
+                        symbol: sellToken,
+                        address: sellAddress,
+                        desiredAllowance: desiredErc20Allowance,
+                        spender,
+                        label,
+                        kind: "erc20",
+                      });
+                    } else {
+                      setCachedApproval({
+                        symbol: sellToken,
+                        address: sellAddress,
+                        desiredAllowance: allowance,
+                        spender,
+                        label,
+                        kind: "erc20",
+                      });
+                    }
+                  };
+                  const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, readProvider);
+                  const checkPermit2 = async (spender, label) => {
+                    if (!spender) return;
+                    const cached = getCachedApproval("permit2", sellAddress, spender);
+                    if (cached) {
+                      const now = BigInt(Math.floor(Date.now() / 1000));
+                      const expired = !cached.expiration || cached.expiration < now;
+                      if (!expired && cached.amount >= resolvedAmountInWei) return;
+                    }
+                    const res = await permit2.allowance(user, sellAddress, spender);
+                    const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
+                    const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
+                    const allowance =
+                      typeof allowanceRaw === "bigint"
+                        ? allowanceRaw
+                        : BigInt(allowanceRaw || 0);
+                    const expiration =
+                      typeof expirationRaw === "bigint"
+                        ? expirationRaw
+                        : BigInt(expirationRaw || 0);
+                    const now = BigInt(Math.floor(Date.now() / 1000));
+                    const expired = !expiration || expiration < now;
+                    if (allowance < resolvedAmountInWei || expired) {
+                      targets.push({
+                        symbol: sellToken,
+                        address: sellAddress,
+                        desiredAllowance: desiredPermit2Allowance,
+                        spender,
+                        label,
+                        kind: "permit2",
+                        expiration: permit2Expiration,
+                      });
+                    } else {
+                      setCachedApproval({
+                        symbol: sellToken,
+                        address: sellAddress,
+                        desiredAllowance: allowance,
+                        spender,
+                        label,
+                        kind: "permit2",
+                        expiration,
+                      });
+                    }
+                  };
+
+                  if (
+                    selectedRoute.protocol === "V2" ||
+                    selectedRoute.protocol === "V3" ||
+                    selectedRoute.protocol === "SPLIT"
+                  ) {
+                    await checkErc20(PERMIT2_ADDRESS, "Token approval (Permit2)");
+                    await checkPermit2(
+                      UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+                      "Permit2 allowance (Universal Router)"
+                    );
+                  }
+
+                  if (cancelled) return;
+                  setApprovalTargets(targets);
+                } catch {
+                  if (cancelled) return;
+                  setApprovalTargets([]);
+                }
+              }, 200);
+            } else {
+              if (cancelled) return;
+              setApprovalTargets([]);
+            }
+          };
+
+          const isRouteCompatible = (route) => {
+            if (!route) return false;
+            const protocol = route.protocol || (route.fees ? "V3" : "V2");
+            if (protocol === "SPLIT") {
+              if (!Array.isArray(route.routes) || !route.routes.length) return false;
+              return route.routes.every((leg) => {
+                const path = Array.isArray(leg?.path) ? leg.path : [];
+                if (path.length < 2) return false;
+                const start = (path[0] || "").toLowerCase();
+                const end = (path[path.length - 1] || "").toLowerCase();
+                return start === sellLower && end === buyLower;
+              });
+            }
+            const path = Array.isArray(route.path) ? route.path : [];
+            if (path.length < 2) return false;
+            const start = (path[0] || "").toLowerCase();
+            const end = (path[path.length - 1] || "").toLowerCase();
+            return start === sellLower && end === buyLower;
+          };
+
+          const fastQuoteRoute = async (route) => {
+            if (!route) return null;
+            const protocol = route.protocol || (route.fees ? "V3" : "V2");
+            if (protocol === "SPLIT") {
+              if (isExactOut) return null;
+              if (!amountWei || amountWei <= 0n) return null;
+              const legs = Array.isArray(route.routes) ? route.routes : [];
+              if (!legs.length) return null;
+              let remaining = amountWei;
+              let totalOut = 0n;
+              const updatedLegs = [];
+              for (let i = 0; i < legs.length; i += 1) {
+                const leg = legs[i];
+                if (!leg) continue;
+                let legAmountIn = leg.amountIn;
+                if (!legAmountIn || legAmountIn <= 0n) {
+                  const sharePct = Number.isFinite(leg.sharePct)
+                    ? leg.sharePct
+                    : 100 / legs.length;
+                  const shareBps = Math.max(0, Math.min(10000, Math.round(sharePct * 100)));
+                  if (i === legs.length - 1) {
+                    legAmountIn = remaining;
+                  } else {
+                    legAmountIn = (amountWei * BigInt(shareBps)) / 10000n;
+                    remaining -= legAmountIn;
+                  }
+                }
+                if (!legAmountIn || legAmountIn <= 0n) continue;
+                let legOut = null;
+                let legPairs = leg.pairs || [];
+                if (leg.protocol === "V3") {
+                  legOut = await quoteV3Route(provider, legAmountIn, leg);
+                } else if (leg.protocol === "V2") {
+                  const v2Quote = await quoteV2Route(provider, legAmountIn, leg);
+                  legOut = v2Quote?.amountOut ?? null;
+                  legPairs = v2Quote?.pairs || legPairs;
+                }
+                if (!legOut || legOut <= 0n) continue;
+                totalOut += legOut;
+                updatedLegs.push({
+                  ...leg,
+                  amountIn: legAmountIn,
+                  amountOut: legOut,
+                  pairs: legPairs,
+                });
+              }
+              if (!totalOut || !updatedLegs.length) return null;
+              return {
+                ...route,
+                protocol: "SPLIT",
+                amountOut: totalOut,
+                routes: updatedLegs,
+              };
+            }
+            if (protocol === "V3") {
+              if (isExactOut) {
+                if (!desiredOutWei || desiredOutWei <= 0n) return null;
+                const amountIn = await quoteV3RouteExactOut(
+                  provider,
+                  desiredOutWei,
+                  route
+                );
+                return {
+                  ...route,
+                  protocol: "V3",
+                  amountIn,
+                  amountOut: desiredOutWei,
+                };
+              }
+              if (!amountWei || amountWei <= 0n) return null;
+              const amountOut = await quoteV3Route(provider, amountWei, route);
+              return { ...route, protocol: "V3", amountOut };
+            }
+            if (protocol === "V2") {
+              if (isExactOut) {
+                if (!desiredOutWei || desiredOutWei <= 0n) return null;
+                const v2Quote = await quoteV2RouteExactOut(
+                  provider,
+                  desiredOutWei,
+                  route
+                );
+                return {
+                  ...route,
+                  protocol: "V2",
+                  amountIn: v2Quote.amountIn,
+                  amountOut: desiredOutWei,
+                  pairs: v2Quote.pairs || route.pairs,
+                };
+              }
+              if (!amountWei || amountWei <= 0n) return null;
+              const v2Quote = await quoteV2Route(provider, amountWei, route);
+              return {
+                ...route,
+                protocol: "V2",
+                amountOut: v2Quote.amountOut,
+                priceImpact: v2Quote.priceImpact,
+                pairs: v2Quote.pairs || route.pairs,
+              };
+            }
+            return null;
+          };
+
+          const nowTs = Date.now();
+          const cachedRoute = lastRouteMetaRef.current;
+          const shouldFullQuote =
+            !cachedRoute ||
+            lastRouteKeyRef.current !== routeKey ||
+            nowTs - lastFullQuoteAtRef.current > 3000;
+
+          if (cachedRoute && isRouteCompatible(cachedRoute)) {
+            const fastRoute = await fastQuoteRoute(cachedRoute);
+            if (fastRoute) {
+              applyQuoteFromRoute(fastRoute, false);
+              if (!shouldFullQuote) {
+                return;
+              }
+            }
+          }
 
           let v3Route = null;
           let v2Route = null;
@@ -2150,165 +2469,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             return;
           }
 
-          const amountOut = selectedRoute.amountOut;
-          if (!amountOut) {
-            setQuoteError("Unable to compute quote.");
-            return;
-          }
-
-          const formattedOut = trimTrailingZeros(formatUnits(amountOut, buyDecimals));
-          setQuoteOut(formattedOut);
-          setQuoteOutRaw(amountOut);
-          setQuoteMeta(selectedRoute);
-          setQuoteRoute(selectedRoute.path || [sellToken, buyToken]);
-          if (isExactOut && selectedRoute.amountIn) {
-            const formattedIn = trimTrailingZeros(
-              formatUnits(selectedRoute.amountIn, sellDecimals)
-            );
-            if (formattedIn && formattedIn !== amountIn) {
-              setAmountIn(formattedIn);
-            }
-          }
-
-          const v2Pairs =
-            selectedRoute.protocol === "V2"
-              ? selectedRoute.pairs || []
-              : selectedRoute.protocol === "SPLIT"
-                ? (selectedRoute.routes || [])
-                    .filter((r) => r.protocol === "V2")
-                    .flatMap((r) => r.pairs || [])
-                : [];
-          setQuotePairs(v2Pairs);
-
-          setLastQuoteAt(Date.now());
-          lastQuoteOutRef.current = amountOut;
-
-          const routeImpact =
-            selectedRoute.estimatedSlippage ??
-            selectedRoute.priceImpact ??
-            null;
-          setPriceImpact(routeImpact);
-          const resolvedAmountInWei = isExactOut
-            ? selectedRoute.amountIn
-            : amountWei;
-
-          if (allowanceDebounceRef.current) {
-            clearTimeout(allowanceDebounceRef.current);
-            allowanceDebounceRef.current = null;
-          }
-          if (!isDirectEthWeth && sellToken !== "ETH" && sellAddress) {
-            if (!resolvedAmountInWei || resolvedAmountInWei <= 0n) {
-              if (!cancelled) setApprovalTargets([]);
-              return;
-            }
-            allowanceDebounceRef.current = setTimeout(async () => {
-              try {
-                const user = address;
-                if (!user) {
-                  if (cancelled) return;
-                  setApprovalTargets([]);
-                  return;
-                }
-                const readProvider = getReadOnlyProvider(false, true);
-                const token = new Contract(sellAddress, ERC20_ABI, readProvider);
-                const desiredErc20Allowance = MAX_UINT256;
-                const desiredPermit2Allowance = MAX_UINT160;
-                const permit2Expiration = MAX_UINT48;
-
-                const targets = [];
-                const checkErc20 = async (spender, label) => {
-                  if (!spender) return;
-                  const cached = getCachedApproval("erc20", sellAddress, spender);
-                  if (cached && cached.amount >= resolvedAmountInWei) return;
-                  const allowance = await token.allowance(user, spender);
-                  if (allowance < resolvedAmountInWei) {
-                    targets.push({
-                      symbol: sellToken,
-                      address: sellAddress,
-                      desiredAllowance: desiredErc20Allowance,
-                      spender,
-                      label,
-                      kind: "erc20",
-                    });
-                  } else {
-                    setCachedApproval({
-                      symbol: sellToken,
-                      address: sellAddress,
-                      desiredAllowance: allowance,
-                      spender,
-                      label,
-                      kind: "erc20",
-                    });
-                  }
-                };
-                const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, readProvider);
-                const checkPermit2 = async (spender, label) => {
-                  if (!spender) return;
-                  const cached = getCachedApproval("permit2", sellAddress, spender);
-                  if (cached) {
-                    const now = BigInt(Math.floor(Date.now() / 1000));
-                    const expired = !cached.expiration || cached.expiration < now;
-                    if (!expired && cached.amount >= resolvedAmountInWei) return;
-                  }
-                  const res = await permit2.allowance(user, sellAddress, spender);
-                  const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
-                  const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
-                  const allowance =
-                    typeof allowanceRaw === "bigint"
-                      ? allowanceRaw
-                      : BigInt(allowanceRaw || 0);
-                  const expiration =
-                    typeof expirationRaw === "bigint"
-                      ? expirationRaw
-                      : BigInt(expirationRaw || 0);
-                  const now = BigInt(Math.floor(Date.now() / 1000));
-                  const expired = !expiration || expiration < now;
-                  if (allowance < resolvedAmountInWei || expired) {
-                    targets.push({
-                      symbol: sellToken,
-                      address: sellAddress,
-                      desiredAllowance: desiredPermit2Allowance,
-                      spender,
-                      label,
-                      kind: "permit2",
-                      expiration: permit2Expiration,
-                    });
-                  } else {
-                    setCachedApproval({
-                      symbol: sellToken,
-                      address: sellAddress,
-                      desiredAllowance: allowance,
-                      spender,
-                      label,
-                      kind: "permit2",
-                      expiration,
-                    });
-                  }
-                };
-
-                if (
-                  selectedRoute.protocol === "V2" ||
-                  selectedRoute.protocol === "V3" ||
-                  selectedRoute.protocol === "SPLIT"
-                ) {
-                  await checkErc20(PERMIT2_ADDRESS, "Token approval (Permit2)");
-                  await checkPermit2(
-                    UNIV3_UNIVERSAL_ROUTER_ADDRESS,
-                    "Permit2 allowance (Universal Router)"
-                  );
-                }
-
-                if (cancelled) return;
-                setApprovalTargets(targets);
-              } catch {
-                if (cancelled) return;
-                setApprovalTargets([]);
-              }
-            }, 200);
-          } else {
-            if (cancelled) return;
-            setApprovalTargets([]);
-          }
+          applyQuoteFromRoute(selectedRoute, true);
         } catch (e) {
           if (cancelled) return;
           setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
