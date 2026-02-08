@@ -1601,6 +1601,20 @@ export default function LiquiditySection({
     },
     [walletBalances]
   );
+  const resolveWalletBalanceExact = useCallback(
+    (symbol) => {
+      if (!symbol || !walletBalances) return null;
+      const keys = Object.keys(walletBalances);
+      if (!keys.length) return null;
+      const normalized = String(symbol).trim();
+      if (!normalized) return null;
+      const lower = normalized.toLowerCase();
+      const match = keys.find((k) => k.toLowerCase() === lower);
+      if (match !== undefined) return walletBalances[match];
+      return null;
+    },
+    [walletBalances]
+  );
   const v3Token0IsWeth = Boolean(WETH_ADDRESS) &&
     v3SelectedToken0Address?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
   const v3Token1IsWeth = Boolean(WETH_ADDRESS) &&
@@ -5635,6 +5649,43 @@ export default function LiquiditySection({
       }
     } else if (amount0Desired <= 0n && amount1Desired <= 0n) {
       setV3ActionError("Enter an amount for at least one token.");
+      return;
+    }
+    const symbol0 = useEth0
+      ? "ETH"
+      : token0IsWeth
+      ? "WETH"
+      : (meta0?.symbol || position.token0Symbol);
+    const symbol1 = useEth1
+      ? "ETH"
+      : token1IsWeth
+      ? "WETH"
+      : (meta1?.symbol || position.token1Symbol);
+    const balance0Num = safeNumber(resolveWalletBalanceExact(symbol0));
+    const balance1Num = safeNumber(resolveWalletBalanceExact(symbol1));
+    const amount0Num = safeNumber(v3ActionAmount0) ?? 0;
+    const amount1Num = safeNumber(v3ActionAmount1) ?? 0;
+    const epsilon = 1e-9;
+    const checkBalance = (amount, balance, symbol) => {
+      if (!Number.isFinite(amount) || amount <= 0) return true;
+      if (balance === null || balance === undefined) return true;
+      if (!Number.isFinite(balance)) return true;
+      if (amount - balance > epsilon) {
+        if (symbol === "WETH") {
+          setV3ActionError("Insufficient WETH. Switch to ETH or wrap ETH, then retry.");
+        } else if (symbol === "ETH") {
+          setV3ActionError("Insufficient ETH for this deposit.");
+        } else {
+          setV3ActionError(`Insufficient ${symbol} balance for this deposit.`);
+        }
+        return false;
+      }
+      return true;
+    };
+    if (amount0Desired > 0n && !checkBalance(amount0Num, balance0Num, symbol0)) {
+      return;
+    }
+    if (amount1Desired > 0n && !checkBalance(amount1Num, balance1Num, symbol1)) {
       return;
     }
     setV3ActionLoading(true);
