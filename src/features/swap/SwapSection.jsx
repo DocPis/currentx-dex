@@ -31,6 +31,7 @@ import {
 } from "../../shared/config/abis";
 import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
+import { fetchTokenPrices } from "../../shared/config/subgraph";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA"];
 const MAX_ROUTE_CANDIDATES = 12;
@@ -45,6 +46,17 @@ const TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
 const WETH_WITHDRAWAL_TOPIC = id("Withdrawal(address,uint256)").toLowerCase();
 const WETH_DEPOSIT_TOPIC = id("Deposit(address,uint256)").toLowerCase();
 const V3_FEE_TIERS = [100, 500, 3000, 10000];
+const STABLE_SYMBOLS = new Set([
+  "USDM",
+  "USDT0",
+  "CUSD",
+  "USDC",
+  "USDT",
+  "DAI",
+  "USDE",
+  "SUSDE",
+  "STCUSD",
+]);
 const UR_COMMANDS = {
   V3_SWAP_EXACT_IN: 0x00,
   V3_SWAP_EXACT_OUT: 0x01,
@@ -59,6 +71,10 @@ const isValidTokenAddress = (value) => /^0x[a-fA-F0-9]{40}$/.test((value || "").
 const trimTrailingZeros = (value) => {
   if (typeof value !== "string" || !value.includes(".")) return value;
   return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
+};
+const toNumberSafe = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 };
 const sanitizeAmountInput = (raw, decimals) => {
   if (raw === null || raw === undefined) return "";
@@ -240,6 +256,28 @@ const computeProbeAmount = (amountWei, decimals) => {
   if (probe <= 0n) probe = amountWei;
   return probe;
 };
+const feeRateFromTier = (fee) => {
+  const num = Number(fee);
+  if (!Number.isFinite(num) || num <= 0) return 0;
+  return num / 1_000_000;
+};
+const computeRouteFeeFraction = (route) => {
+  if (!route) return 0;
+  const path = Array.isArray(route.path) ? route.path : [];
+  const hopCount = Math.max(0, path.length - 1);
+  if (!hopCount) return 0;
+  const protocol = route.protocol || (Array.isArray(route.fees) && route.fees.length ? "V3" : "V2");
+  let multiplier = 1;
+  for (let i = 0; i < hopCount; i += 1) {
+    const feeTier =
+      protocol === "V3" ? route.fees?.[i] ?? 3000 : 3000;
+    const feeRate = feeRateFromTier(feeTier);
+    if (feeRate > 0) {
+      multiplier *= 1 - feeRate;
+    }
+  }
+  return 1 - multiplier;
+};
 const safeParseUnits = (value, decimals) => {
   try {
     return parseUnits(value, decimals);
@@ -255,6 +293,13 @@ const formatDisplayAmount = (val, symbol) => {
   if (!Number.isFinite(num)) return "--";
   const str = formatCompactNumber(num);
   return symbol ? `${str} ${symbol}` : str;
+};
+const formatUsdAmount = (value) => {
+  if (!Number.isFinite(value)) return "--";
+  const num = Number(value);
+  if (num === 0) return "$0";
+  const str = formatCompactNumber(num);
+  return `$${str}`;
 };
 
 const extractTxHash = (err) => {
@@ -539,6 +584,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
   const [quoteLockedUntil, setQuoteLockedUntil] = useState(0);
+  const [sellTokenUsd, setSellTokenUsd] = useState(null);
+  const [sellTokenUsdLoading, setSellTokenUsdLoading] = useState(false);
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
@@ -1594,6 +1641,43 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const sellInputDecimals = sellToken === "ETH" ? 18 : sellMeta?.decimals ?? 18;
   const buyInputDecimals = buyToken === "ETH" ? 18 : buyMeta?.decimals ?? 18;
   const activeInputAmount = isExactOut ? amountOutInput : amountIn;
+
+  useEffect(() => {
+    let cancelled = false;
+    const symbol = (sellToken || "").toUpperCase();
+    const addr = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+    if (!addr) {
+      setSellTokenUsd(null);
+      setSellTokenUsdLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (STABLE_SYMBOLS.has(symbol)) {
+      setSellTokenUsd(1);
+      setSellTokenUsdLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setSellTokenUsdLoading(true);
+    fetchTokenPrices([addr])
+      .then((prices) => {
+        if (cancelled) return;
+        const price = prices?.[addr.toLowerCase()];
+        setSellTokenUsd(Number.isFinite(price) ? price : null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSellTokenUsd(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSellTokenUsdLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sellToken, sellMeta?.address]);
 
   useEffect(() => {
     if (!amountIn) return;
@@ -2799,6 +2883,51 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         displayBuySymbol
       )
     : "--";
+  const routeFeeUsd = useMemo(() => {
+    if (isDirectEthWeth) return 0;
+    if (!quoteMeta) return null;
+    if (!Number.isFinite(sellTokenUsd)) return null;
+    const amountInNum =
+      isExactOut && quoteMeta.amountIn
+        ? toNumberSafe(formatUnits(quoteMeta.amountIn, sellInputDecimals))
+        : toNumberSafe(amountIn);
+    const computeLegFee = (route, legAmount) => {
+      const feeFraction = computeRouteFeeFraction(route);
+      if (!Number.isFinite(feeFraction) || feeFraction <= 0) return 0;
+      if (!Number.isFinite(legAmount) || legAmount <= 0) return 0;
+      return legAmount * feeFraction;
+    };
+
+    if (quoteMeta.protocol === "SPLIT" && Array.isArray(quoteMeta.routes)) {
+      let totalFees = 0;
+      for (const leg of quoteMeta.routes) {
+        const legAmount = leg?.amountIn
+          ? toNumberSafe(formatUnits(leg.amountIn, sellInputDecimals))
+          : amountInNum !== null
+            ? amountInNum * ((leg.sharePct ?? 0) / 100)
+            : null;
+        if (!Number.isFinite(legAmount) || legAmount <= 0) continue;
+        totalFees += computeLegFee(leg, legAmount);
+      }
+      return totalFees * sellTokenUsd;
+    }
+
+    if (!Number.isFinite(amountInNum) || amountInNum <= 0) return null;
+    return computeLegFee(quoteMeta, amountInNum) * sellTokenUsd;
+  }, [
+    amountIn,
+    isDirectEthWeth,
+    isExactOut,
+    quoteMeta,
+    sellInputDecimals,
+    sellTokenUsd,
+  ]);
+  const routeFeeUsdLabel =
+    routeFeeUsd === null
+      ? sellTokenUsdLoading
+        ? "..."
+        : "--"
+      : formatUsdAmount(routeFeeUsd);
   const activeRouteTokens = (
     displayRoute && displayRoute.length ? displayRoute : [displaySellSymbol, displayBuySymbol]
   ).map((label) => resolveRouteToken(label));
@@ -4021,10 +4150,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               ) : (
                 <div className="mt-2 text-xs text-slate-500">No route data.</div>
               )}
+              <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
+                <span>Estimated LP fees</span>
+                <span className="text-slate-200">{routeFeeUsdLabel}</span>
+              </div>
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[12px] text-slate-100">
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
             <div className="flex flex-col gap-1">
               <span className="text-slate-500 text-[11px]">Expected</span>
               <span className="font-semibold">
@@ -4040,6 +4173,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               <span className="font-semibold">
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
               </span>
+            </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-slate-500 text-[11px]">LP fees (est.)</span>
+              <span className="font-semibold">{routeFeeUsdLabel}</span>
             </div>
           </div>
 
