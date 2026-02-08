@@ -15,6 +15,7 @@ import {
   getV2QuoteWithMeta,
   getRegisteredCustomTokens,
   getReadOnlyProvider,
+  setRegisteredCustomTokens,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
 } from "../../shared/config/web3";
@@ -54,6 +55,7 @@ const UR_COMMANDS = {
 };
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+const isValidTokenAddress = (value) => /^0x[a-fA-F0-9]{40}$/.test((value || "").trim());
 const trimTrailingZeros = (value) => {
   if (typeof value !== "string" || !value.includes(".")) return value;
   return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
@@ -435,6 +437,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       document.removeEventListener("visibilitychange", handleVisibility);
     };
   }, []);
+
   const activeChainHex = normalizeChainHex(getActiveNetworkConfig()?.chainIdHex || "");
   const walletChainHex = normalizeChainHex(chainId);
   const isChainMatch = !walletChainHex || walletChainHex === activeChainHex;
@@ -476,6 +479,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
+  const [customTokenAddError, setCustomTokenAddError] = useState("");
+  const [customTokenAddLoading, setCustomTokenAddLoading] = useState(false);
   const [copiedToken, setCopiedToken] = useState("");
   const [executionProof, setExecutionProof] = useState(null);
   const toastTimerRef = useRef(null);
@@ -496,6 +501,68 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const lastFullQuoteAtRef = useRef(0);
   const lastRouteMetaRef = useRef(null);
   const lastRouteKeyRef = useRef("");
+
+  const addCustomTokenByAddress = useCallback(
+    async (rawAddress, { clearSearch = false } = {}) => {
+      const addr = (rawAddress || "").trim();
+      setCustomTokenAddError("");
+      if (!isValidTokenAddress(addr)) {
+        setCustomTokenAddError("Enter a valid token contract address (0x...)");
+        return false;
+      }
+      const lower = addr.toLowerCase();
+      const exists = Object.values(tokenRegistry).find(
+        (t) => (t.address || "").toLowerCase() === lower
+      );
+      if (exists) {
+        setCustomTokenAddError("Token already listed.");
+        return false;
+      }
+      if (customTokenAddLoading) return false;
+      setCustomTokenAddLoading(true);
+      try {
+        const provider = await getProvider().catch(() => getReadOnlyProvider(false, true));
+        const erc20 = new Contract(addr, ERC20_ABI, provider);
+        const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+          erc20.symbol().catch(() => "TOKEN"),
+          erc20.name().catch(() => "Custom Token"),
+          erc20.decimals().catch(() => 18),
+        ]);
+        let symbol = (symbolRaw || "TOKEN").toString();
+        symbol = symbol.replace(/\0/g, "").trim() || "TOKEN";
+        const tokenKey = symbol.toUpperCase();
+        const name = (nameRaw || tokenKey || "Custom Token").toString();
+        const decimalsNum = Number(decimalsRaw);
+        const decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
+        if (tokenRegistry[tokenKey]) {
+          setCustomTokenAddError("Symbol already in use. Try another token.");
+          return false;
+        }
+        const next = {
+          ...customTokens,
+          [tokenKey]: {
+            symbol: tokenKey,
+            name,
+            address: addr,
+            decimals,
+            logo: TOKENS.CRX.logo,
+          },
+        };
+        setCustomTokens(next);
+        setRegisteredCustomTokens(next);
+        if (clearSearch) setTokenSearch("");
+        return true;
+      } catch (err) {
+        setCustomTokenAddError(
+          err?.message || "Unable to load token metadata"
+        );
+        return false;
+      } finally {
+        setCustomTokenAddLoading(false);
+      }
+    },
+    [customTokenAddLoading, customTokens, tokenRegistry]
+  );
 
   const getApprovalStorageKey = useCallback(
     (wallet) =>
@@ -620,6 +687,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       );
     });
   }, [tokenOptions, tokenRegistry, tokenSearch]);
+  const searchAddress = tokenSearch.trim();
+  const searchIsAddress = isValidTokenAddress(searchAddress);
+  const showQuickAdd = searchIsAddress && filteredTokens.length === 0;
   const sellKey = sellToken === "ETH" ? "WETH" : sellToken;
   const buyKey = buyToken === "ETH" ? "WETH" : buyToken;
   const sellMeta = tokenRegistry[sellKey];
@@ -4097,11 +4167,25 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 <input
                   name="swap-token-search"
                   value={tokenSearch}
-                  onChange={(e) => setTokenSearch(e.target.value)}
+                  onChange={(e) => {
+                    setTokenSearch(e.target.value);
+                    if (customTokenAddError) setCustomTokenAddError("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    if (!showQuickAdd) return;
+                    e.preventDefault();
+                    addCustomTokenByAddress(searchAddress, { clearSearch: true });
+                  }}
                   placeholder="Search name or paste token address"
                   className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500"
                 />
               </div>
+              {customTokenAddError && (
+                <div className="text-xs text-amber-300 px-1">
+                  {customTokenAddError}
+                </div>
+              )}
             </div>
 
             <div className="max-h-[480px] overflow-y-auto divide-y divide-slate-800">
@@ -4231,11 +4315,26 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   </button>
                 );
               })}
-              {!filteredTokens.length && (
+              {showQuickAdd ? (
+                <div className="px-4 py-6 text-sm text-slate-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="text-slate-100 font-semibold">Token not listed</div>
+                    <div className="text-xs text-slate-500">{shortenAddress(searchAddress)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addCustomTokenByAddress(searchAddress, { clearSearch: true })}
+                    disabled={customTokenAddLoading}
+                    className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+                  >
+                    {customTokenAddLoading ? "Adding..." : "Add token"}
+                  </button>
+                </div>
+              ) : !filteredTokens.length ? (
                 <div className="px-4 py-6 text-center text-sm text-slate-400">
                   No tokens found.
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
