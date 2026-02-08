@@ -592,6 +592,7 @@ export async function fetchProtocolHistory(days = 7) {
       dayId: Math.floor(Number(d.date) / 86400), // UTC day id
       tvlUsd: Number(d.totalLiquidityUSD || 0),
       volumeUsd: Number(d.dailyVolumeUSD || 0),
+      feesUsd: Number(d.dailyVolumeUSD || 0) * 0.003,
       cumulativeVolumeUsd: Number(d.totalVolumeUSD || 0),
     }));
 
@@ -610,6 +611,7 @@ export async function fetchProtocolHistory(days = 7) {
           date: entry.date,
           tvlUsd: entry.tvlUsd,
           volumeUsd: entry.volumeUsd,
+          feesUsd: entry.feesUsd,
           cumulativeVolumeUsd: entry.cumulativeVolumeUsd,
         });
       } else {
@@ -617,6 +619,7 @@ export async function fetchProtocolHistory(days = 7) {
           date: dayId * 86400000,
           tvlUsd: lastKnownTvl !== null ? lastKnownTvl : 0,
           volumeUsd: 0,
+          feesUsd: 0,
           cumulativeVolumeUsd: null,
         });
       }
@@ -655,6 +658,7 @@ export async function fetchProtocolHistoryV3(days = 7) {
             volumeUSD
             totalVolumeUSD
             tvlUSD
+            feesUSD
           }
         }
       `,
@@ -663,8 +667,60 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.tvlUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
         cumulativeVolumeUsd:
           d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            tvlUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.tvlUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            tvlUSD
+            feesUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.tvlUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
+        cumulativeVolumeUsd: null,
       }),
     },
     {
@@ -687,7 +743,35 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.tvlUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
         cumulativeVolumeUsd: null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            totalValueLockedUSD
+            feesUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
       }),
     },
     {
@@ -711,8 +795,34 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.totalValueLockedUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
         cumulativeVolumeUsd:
           d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "uniswapDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          uniswapDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalValueLockedUSD
+            feesUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
+        cumulativeVolumeUsd: null,
       }),
     },
     {
@@ -735,7 +845,35 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.totalValueLockedUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
         cumulativeVolumeUsd: null,
+      }),
+    },
+    {
+      field: "factoryDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          factoryDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalVolumeUSD
+            totalValueLockedUSD
+            feesUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
+        cumulativeVolumeUsd:
+          d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
       }),
     },
     {
@@ -759,8 +897,34 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.totalValueLockedUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
         cumulativeVolumeUsd:
           d.totalVolumeUSD !== undefined ? Number(d.totalVolumeUSD || 0) : null,
+      }),
+    },
+    {
+      field: "factoryDayDatas",
+      query: `
+        query ProtocolHistoryV3($days: Int!) {
+          factoryDayDatas(
+            first: $days
+            orderBy: date
+            orderDirection: desc
+          ) {
+            date
+            volumeUSD
+            totalValueLockedUSD
+            feesUSD
+          }
+        }
+      `,
+      map: (d) => ({
+        date: Number(d.date) * 1000,
+        dayId: Math.floor(Number(d.date) / 86400),
+        tvlUsd: Number(d.totalValueLockedUSD || 0),
+        volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: d.feesUSD !== undefined && d.feesUSD !== null ? Number(d.feesUSD || 0) : null,
+        cumulativeVolumeUsd: null,
       }),
     },
     {
@@ -783,6 +947,7 @@ export async function fetchProtocolHistoryV3(days = 7) {
         dayId: Math.floor(Number(d.date) / 86400),
         tvlUsd: Number(d.totalValueLockedUSD || 0),
         volumeUsd: Number(d.volumeUSD || 0),
+        feesUsd: null,
         cumulativeVolumeUsd: null,
       }),
     },
@@ -820,12 +985,18 @@ const mergeProtocolHistory = (v2 = [], v3 = []) => {
       date,
       tvlUsd: 0,
       volumeUsd: 0,
+      feesUsd: 0,
       cumulativeVolumeUsd: 0,
       _cumCount: 0,
+      _feesCount: 0,
     };
     existing.date = Math.max(existing.date || 0, date);
     existing.tvlUsd += Number(entry.tvlUsd || 0);
     existing.volumeUsd += Number(entry.volumeUsd || 0);
+    if (entry.feesUsd !== null && entry.feesUsd !== undefined) {
+      existing.feesUsd += Number(entry.feesUsd || 0);
+      existing._feesCount += 1;
+    }
     if (entry.cumulativeVolumeUsd !== null && entry.cumulativeVolumeUsd !== undefined) {
       existing.cumulativeVolumeUsd += Number(entry.cumulativeVolumeUsd || 0);
       existing._cumCount += 1;
@@ -837,18 +1008,32 @@ const mergeProtocolHistory = (v2 = [], v3 = []) => {
   v3.forEach(addEntry);
 
   const sources = [
-    { entries: v2, hasCum: v2.some((d) => typeof d.cumulativeVolumeUsd === "number") },
-    { entries: v3, hasCum: v3.some((d) => typeof d.cumulativeVolumeUsd === "number") },
+    {
+      entries: v2,
+      hasCum: v2.some((d) => typeof d.cumulativeVolumeUsd === "number"),
+      hasFees: v2.some((d) => typeof d.feesUsd === "number"),
+    },
+    {
+      entries: v3,
+      hasCum: v3.some((d) => typeof d.cumulativeVolumeUsd === "number"),
+      hasFees: v3.some((d) => typeof d.feesUsd === "number"),
+    },
   ].filter((s) => s.entries?.length);
 
   const requireCumulative = sources.length > 0 && sources.every((s) => s.hasCum);
   const expectedCumCount = requireCumulative ? sources.length : 0;
+  const requireFees = sources.length > 0 && sources.every((s) => s.hasFees);
+  const expectedFeesCount = requireFees ? sources.length : 0;
 
   return Array.from(map.values())
     .map((entry) => ({
       date: entry.date,
       tvlUsd: entry.tvlUsd,
       volumeUsd: entry.volumeUsd,
+      feesUsd:
+        requireFees && entry._feesCount >= expectedFeesCount
+          ? entry.feesUsd
+          : null,
       cumulativeVolumeUsd:
         requireCumulative && entry._cumCount >= expectedCumCount
           ? entry.cumulativeVolumeUsd
@@ -1813,59 +1998,97 @@ export async function fetchV3PoolsDayData(ids = []) {
 
   const chunks = chunkArray(list, 20);
   const out = {};
+  const candidates = ["pool", "poolAddress"];
+  const selectVariants = [
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      date
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+    `,
+    `
+      date
+      volumeUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      date
+      volumeUSD
+      totalValueLockedUSD
+    `,
+  ];
+  let resolvedSelect = null;
+  let resolvedField = null;
 
   for (const chunk of chunks) {
-    let schemaMissing = false;
-    const candidates = ["pool", "poolAddress"];
-    for (const field of candidates) {
-      const query = `
-        query V3PoolDayData {
-          ${chunk
-            .map(
-              (id, idx) => `
-            p${idx}: poolDayDatas(
-              first: 1
-              orderBy: date
-              orderDirection: desc
-              where: { ${field}: "${id}" }
-            ) {
-              date
-              volumeUSD
-              tvlUSD
-              totalValueLockedUSD
-            }
-          `
-            )
-            .join("\n")}
-        }
-      `;
+    let matched = false;
+    const selectList = resolvedSelect ? [resolvedSelect] : selectVariants;
+    const fieldList = resolvedField ? [resolvedField] : candidates;
 
-      try {
-        const res = await postSubgraphV3(query);
-        chunk.forEach((id, idx) => {
-          const row = res?.[`p${idx}`]?.[0];
-          if (!row) return;
-          const tvl =
-            row.tvlUSD !== undefined && row.tvlUSD !== null
-              ? row.tvlUSD
-              : row.totalValueLockedUSD;
-          out[id] = {
-            volumeUsd: toNumberSafe(row.volumeUSD),
-            tvlUsd: toNumberSafe(tvl),
-          };
-        });
-        schemaMissing = false;
-        break;
-      } catch (err) {
-        const message = err?.message || "";
-        if (isSchemaFieldMissing(message)) {
-          schemaMissing = true;
-          continue;
+    for (const select of selectList) {
+      for (const field of fieldList) {
+        const query = `
+          query V3PoolDayData {
+            ${chunk
+              .map(
+                (id, idx) => `
+              p${idx}: poolDayDatas(
+                first: 1
+                orderBy: date
+                orderDirection: desc
+                where: { ${field}: "${id}" }
+              ) {
+                ${select}
+              }
+            `
+              )
+              .join("\n")}
+          }
+        `;
+
+        try {
+          const res = await postSubgraphV3(query);
+          chunk.forEach((id, idx) => {
+            const row = res?.[`p${idx}`]?.[0];
+            if (!row) return;
+            const tvl =
+              row.tvlUSD !== undefined && row.tvlUSD !== null
+                ? row.tvlUSD
+                : row.totalValueLockedUSD;
+            const feesUsd =
+              row.feesUSD !== undefined && row.feesUSD !== null
+                ? toNumberSafe(row.feesUSD)
+                : null;
+            out[id] = {
+              volumeUsd: toNumberSafe(row.volumeUSD),
+              tvlUsd: toNumberSafe(tvl),
+              feesUsd,
+            };
+          });
+          matched = true;
+          if (!resolvedSelect) resolvedSelect = select;
+          if (!resolvedField) resolvedField = field;
+          break;
+        } catch (err) {
+          const message = err?.message || "";
+          if (isSchemaFieldMissing(message)) {
+            continue;
+          }
+          throw err;
         }
-        throw err;
       }
+      if (matched) break;
     }
-    if (schemaMissing) {
+
+    if (!matched) {
       return out;
     }
   }

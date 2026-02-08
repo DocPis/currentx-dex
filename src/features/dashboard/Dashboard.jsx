@@ -446,7 +446,7 @@ export default function Dashboard() {
     : null;
 
   const dailyVolumeUsd = dayVolume ?? todayVolume;
-  const dailyFees = dailyVolumeUsd !== null ? dailyVolumeUsd * 0.003 : null;
+  const dailyFees = latestDay?.feesUsd ?? null;
   const liveTvl = stats?.totalLiquidityUsd;
   const latestTvlDate = tvlHistory?.[0]?.date ?? null;
   const latestVolumeDate = volumeHistory?.[0]?.date ?? null;
@@ -523,10 +523,7 @@ export default function Dashboard() {
           label="24h Volume"
           value={dailyVolumeUsd}
         />
-        <StatCard
-          label="24h Fees (0.3%)"
-          value={dailyFees}
-        />
+        <StatCard label="24h Fees" value={dailyFees} />
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -574,7 +571,7 @@ export default function Dashboard() {
             <div>
               <div className="text-sm text-slate-400">Protocol volume (24h)</div>
               <div className="text-xl font-semibold">
-                ${formatNumber(volumeHistory[0]?.volumeUsd || stats?.totalVolumeUsd || 0)}
+                ${formatNumber(dailyVolumeUsd)}
               </div>
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">

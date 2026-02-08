@@ -111,6 +111,8 @@ const isLiquidityTokenBlocked = (token) => {
   return Boolean(addr && LIQUIDITY_BLOCKED_ADDRESSES.has(addr));
 };
 
+const isValidTokenAddress = (value) => /^0x[a-fA-F0-9]{40}$/.test((value || "").trim());
+
 const STABLE_SYMBOLS = new Set([
   "USDM",
   "USDT0",
@@ -4355,6 +4357,9 @@ export default function LiquiditySection({
       );
     });
   }, [tokenEntries, tokenSearch]);
+  const searchAddress = tokenSearch.trim();
+  const searchIsAddress = isValidTokenAddress(searchAddress);
+  const showQuickAdd = searchIsAddress && filteredTokens.length === 0;
 
   const baseSelected = tokenSelection?.baseSymbol
     ? tokenRegistry[tokenSelection.baseSymbol]
@@ -5710,64 +5715,77 @@ export default function LiquiditySection({
     }
   }, [poolSelection, tokenRegistry, allPools, showV2, showV3]);
 
+  const addCustomTokenByAddress = useCallback(
+    async (rawAddress, { resetInput = false, clearSearch = false } = {}) => {
+      const addr = (rawAddress || "").trim();
+      setCustomTokenAddError("");
+      if (!isValidTokenAddress(addr)) {
+        setCustomTokenAddError("Enter a valid token contract address (0x...)");
+        return false;
+      }
+      const lower = addr.toLowerCase();
+      const exists = Object.values(tokenRegistry).find(
+        (t) => (t.address || "").toLowerCase() === lower
+      );
+      if (exists) {
+        setCustomTokenAddError("Token already listed.");
+        return false;
+      }
+      if (customTokenAddLoading) return false;
+      setCustomTokenAddLoading(true);
+      try {
+        const provider = await getProvider().catch(() => getReadOnlyProvider(false, true));
+        const erc20 = new Contract(addr, ERC20_ABI, provider);
+        const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
+          erc20.symbol().catch(() => "TOKEN"),
+          erc20.name().catch(() => "Custom Token"),
+          erc20.decimals().catch(() => 18),
+        ]);
+        let symbol = (symbolRaw || "TOKEN").toString();
+        symbol = symbol.replace(/\0/g, "").trim() || "TOKEN";
+        const tokenKey = symbol.toUpperCase();
+        const name = (nameRaw || tokenKey || "Custom Token").toString();
+        const decimalsNum = Number(decimalsRaw);
+        const decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
+        if (isLiquidityTokenBlocked({ symbol: tokenKey, address: addr })) {
+          setCustomTokenAddError("Token not supported in liquidity yet.");
+          return false;
+        }
+        const alreadySymbol = tokenRegistry[tokenKey];
+        if (alreadySymbol) {
+          setCustomTokenAddError("Symbol already in use. Try another token.");
+          return false;
+        }
+        const next = {
+          ...customTokens,
+          [tokenKey]: {
+            symbol: tokenKey,
+            name,
+            address: addr,
+            decimals,
+            logo: TOKENS.CRX.logo,
+          },
+        };
+        setCustomTokens(next);
+        setRegisteredCustomTokens(next);
+        if (resetInput) setCustomTokenAddress("");
+        if (clearSearch) setTokenSearch("");
+        return true;
+      } catch (err) {
+        setCustomTokenAddError(
+          compactRpcMessage(err?.message, "Unable to load token metadata")
+        );
+        return false;
+      } finally {
+        setCustomTokenAddLoading(false);
+      }
+    },
+    [customTokenAddLoading, customTokens, tokenRegistry]
+  );
+
   const handleAddCustomToken = async (e) => {
     if (e?.preventDefault) e.preventDefault();
-    const addr = (customTokenAddress || "").trim();
-    setCustomTokenAddError("");
-    if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
-      setCustomTokenAddError("Enter a valid token contract address (0x...)");
-      return;
-    }
-    const lower = addr.toLowerCase();
-    const exists = Object.values(tokenRegistry).find(
-      (t) => (t.address || "").toLowerCase() === lower
-    );
-    if (exists) {
-      setCustomTokenAddError("Token already listed.");
-      return;
-    }
-    setCustomTokenAddLoading(true);
-    try {
-      const provider = await getProvider();
-      const erc20 = new Contract(addr, ERC20_ABI, provider);
-      const [symbolRaw, nameRaw, decimalsRaw] = await Promise.all([
-        erc20.symbol().catch(() => "TOKEN"),
-        erc20.name().catch(() => "Custom Token"),
-        erc20.decimals().catch(() => 18),
-      ]);
-      const symbol = (symbolRaw || "TOKEN").toString().toUpperCase();
-      const name = nameRaw || symbol;
-      const decimals = Number(decimalsRaw) || 18;
-      if (isLiquidityTokenBlocked({ symbol, address: addr })) {
-        setCustomTokenAddError("Token not supported in liquidity yet.");
-        return;
-      }
-      const tokenKey = symbol;
-      const alreadySymbol = tokenRegistry[tokenKey];
-      if (alreadySymbol) {
-        setCustomTokenAddError("Symbol already in use. Try another token.");
-        return;
-      }
-      const next = {
-        ...customTokens,
-        [tokenKey]: {
-          symbol: tokenKey,
-          name,
-          address: addr,
-          decimals,
-          logo: TOKENS.CRX.logo,
-        },
-      };
-      setCustomTokens(next);
-      setRegisteredCustomTokens(next);
-      setCustomTokenAddress("");
-    } catch (err) {
-      setCustomTokenAddError(
-        compactRpcMessage(err?.message, "Unable to load token metadata")
-      );
-    } finally {
-      setCustomTokenAddLoading(false);
-    }
+    await addCustomTokenByAddress(customTokenAddress, { resetInput: true });
   };
 
   useEffect(() => {
@@ -9939,6 +9957,12 @@ export default function LiquiditySection({
                   name="v2-token-search"
                   value={tokenSearch}
                   onChange={(e) => setTokenSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    if (!showQuickAdd) return;
+                    e.preventDefault();
+                    addCustomTokenByAddress(searchAddress, { clearSearch: true });
+                  }}
                   placeholder="Symbol or address..."
                   className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
                 />
@@ -10022,11 +10046,26 @@ export default function LiquiditySection({
                   </div>
                 </button>
               ))}
-              {!filteredTokens.length && (
+              {showQuickAdd ? (
+                <div className="px-5 py-6 text-sm text-slate-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="text-slate-100 font-semibold">Token not listed</div>
+                    <div className="text-xs text-slate-500">{shortenAddress(searchAddress)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addCustomTokenByAddress(searchAddress, { clearSearch: true })}
+                    disabled={customTokenAddLoading}
+                    className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+                  >
+                    {customTokenAddLoading ? "Adding..." : "Add token"}
+                  </button>
+                </div>
+              ) : !filteredTokens.length ? (
                 <div className="px-5 py-6 text-sm text-slate-400">
                   No tokens match this search.
                 </div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>

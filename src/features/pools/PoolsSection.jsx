@@ -118,10 +118,18 @@ export default function PoolsSection({ onSelectPool }) {
   const { data: dashboardData } = useDashboardData();
   const protocolStats = dashboardData?.stats || null;
   const protocolHistory = dashboardData?.volumeHistory || [];
-  const protocolVolume24h =
-    protocolHistory?.[0]?.volumeUsd ?? protocolStats?.totalVolumeUsd ?? 0;
-  const protocolFees24h = protocolVolume24h ? protocolVolume24h * 0.003 : 0;
-  const protocolTvl = protocolStats?.totalLiquidityUsd ?? 0;
+  const latestProtocolDay = protocolHistory?.[0] ?? null;
+  const dayVolume = latestProtocolDay?.volumeUsd ?? null;
+  const hasCumulativeVolume =
+    typeof latestProtocolDay?.cumulativeVolumeUsd === "number" &&
+    latestProtocolDay.cumulativeVolumeUsd > 0 &&
+    typeof protocolStats?.totalVolumeUsd === "number";
+  const todayVolume = hasCumulativeVolume
+    ? Math.max(0, protocolStats.totalVolumeUsd - latestProtocolDay.cumulativeVolumeUsd)
+    : null;
+  const protocolVolume24h = dayVolume ?? todayVolume;
+  const protocolFees24h = latestProtocolDay?.feesUsd ?? null;
+  const protocolTvl = protocolStats?.totalLiquidityUsd ?? null;
   const {
     v2Pools,
     v3Pools,
@@ -154,12 +162,18 @@ export default function PoolsSection({ onSelectPool }) {
           ? day.tvlUsd
           : pool.tvlUsd ?? null;
       const volume24hUsd =
-        day.volumeUsd !== undefined && day.volumeUsd !== null
-          ? day.volumeUsd
-          : pool.volumeUsd ?? null;
-      const feeRate = pool.feeTier ? Number(pool.feeTier) / 1_000_000 : 0.003;
+        day.volumeUsd !== undefined && day.volumeUsd !== null ? day.volumeUsd : null;
+      const feeTierNum = Number(pool.feeTier);
+      const feeRate =
+        Number.isFinite(feeTierNum) && feeTierNum > 0
+          ? feeTierNum / 1_000_000
+          : null;
       const fees24hUsd =
-        volume24hUsd !== null ? volume24hUsd * feeRate : null;
+        day.feesUsd !== undefined && day.feesUsd !== null
+          ? day.feesUsd
+          : volume24hUsd !== null && feeRate !== null
+          ? volume24hUsd * feeRate
+          : null;
       const apr =
         liquidityUsd && liquidityUsd > 0 && fees24hUsd !== null
           ? (fees24hUsd * 365 * 100) / liquidityUsd
@@ -167,7 +181,7 @@ export default function PoolsSection({ onSelectPool }) {
       list.push({
         ...pool,
         type: "V3",
-        feeLabel: formatFeePercent(pool.feeTier, "0.30%"),
+        feeLabel: formatFeePercent(pool.feeTier, ""),
         liquidityUsd,
         volume24hUsd,
         fees24hUsd,
@@ -190,9 +204,7 @@ export default function PoolsSection({ onSelectPool }) {
         }
       }
       const volume24hUsd =
-        day.volumeUsd !== undefined && day.volumeUsd !== null
-          ? day.volumeUsd
-          : pool.volumeUsd ?? null;
+        day.volumeUsd !== undefined && day.volumeUsd !== null ? day.volumeUsd : null;
       const feeRate = 0.003;
       const fees24hUsd =
         volume24hUsd !== null ? volume24hUsd * feeRate : null;
