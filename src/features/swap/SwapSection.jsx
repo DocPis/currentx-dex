@@ -166,6 +166,45 @@ const formatRelativeTime = (ts) => {
   const hrs = Math.floor(mins / 60);
   return `${hrs}h ago`;
 };
+const compactRpcMessage = (raw, fallback) => {
+  if (!raw) return fallback;
+  const rawStr = typeof raw === "string" ? raw : String(raw || "");
+  const stripped = rawStr
+    .replace(/\{.*$/s, "")
+    .replace(/\(error=.*$/i, "")
+    .trim();
+  const lower = stripped.toLowerCase();
+  if (
+    lower.includes("rate limit") ||
+    lower.includes("too many requests") ||
+    lower.includes("429") ||
+    lower.includes("being rate limited")
+  ) {
+    return "RPC rate-limited. Switch RPC or retry in a few seconds.";
+  }
+  if (lower.includes("failed to fetch") || lower.includes("network error")) {
+    return "RPC unreachable from your wallet. Switch RPC in network settings or retry.";
+  }
+  if (lower.includes("timeout") || lower.includes("timed out") || lower.includes("etimedout")) {
+    return "RPC timeout. Retry or switch to a faster RPC.";
+  }
+  if (lower.includes("eth_requestaccounts")) {
+    return "Open your wallet and approve the connection.";
+  }
+  if (
+    lower.includes("could not decode result data") ||
+    lower.includes("bad_data") ||
+    lower.includes("decode result")
+  ) {
+    return "Pool data not available right now. Please retry.";
+  }
+  if (lower.includes("unknown error")) {
+    return "Wallet RPC error. Please retry.";
+  }
+  const trimmed =
+    stripped.length > 140 ? `${stripped.slice(0, 140).trim()}...` : stripped;
+  return trimmed || fallback || "Service temporarily unavailable. Please retry.";
+};
 const formatV3Fee = (fee) => {
   const num = Number(fee);
   if (!Number.isFinite(num) || num <= 0) return "--";
@@ -567,7 +606,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return true;
       } catch (err) {
         setCustomTokenAddError(
-          err?.message || "Unable to load token metadata"
+          compactRpcMessage(err?.message, "Unable to load token metadata")
         );
         return false;
       } finally {
@@ -755,7 +794,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       } catch (err) {
         if (!cancelled) {
           setSearchTokenMeta(null);
-          setSearchTokenMetaError(err?.message || "Unable to load token metadata");
+          setSearchTokenMetaError(
+            compactRpcMessage(err?.message, "Unable to load token metadata")
+          );
         }
       } finally {
         if (!cancelled) setSearchTokenMetaLoading(false);
