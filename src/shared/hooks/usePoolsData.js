@@ -15,23 +15,24 @@ const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined;
 
 export function usePoolsData() {
-  const v2Query = useInfiniteQuery({
-    queryKey: ["pools", "v2"],
-    initialPageParam: 0,
-    queryFn: ({ pageParam = 0 }) =>
-      fetchV2PoolsPage({ limit: PAGE_SIZE, skip: pageParam }),
-    getNextPageParam,
-    staleTime: 60 * 1000,
-    refetchInterval: REFRESH_MS,
-    refetchIntervalInBackground: true,
-  });
-
   const v3Query = useInfiniteQuery({
     queryKey: ["pools", "v3"],
     initialPageParam: 0,
     queryFn: ({ pageParam = 0 }) =>
       fetchV3PoolsPage({ limit: PAGE_SIZE, skip: pageParam }),
     getNextPageParam,
+    staleTime: 60 * 1000,
+    refetchInterval: REFRESH_MS,
+    refetchIntervalInBackground: true,
+  });
+
+  const v2Query = useInfiniteQuery({
+    queryKey: ["pools", "v2"],
+    initialPageParam: 0,
+    queryFn: ({ pageParam = 0 }) =>
+      fetchV2PoolsPage({ limit: PAGE_SIZE, skip: pageParam }),
+    getNextPageParam,
+    enabled: v3Query.isFetched || v3Query.isError,
     staleTime: 60 * 1000,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
@@ -74,12 +75,10 @@ export function usePoolsData() {
   });
 
   const refetchAll = useCallback(async () => {
-    await Promise.allSettled([
-      v2Query.refetch(),
-      v3Query.refetch(),
-      v2DayQuery.refetch(),
-      v3DayQuery.refetch(),
-    ]);
+    await v3Query.refetch();
+    await v3DayQuery.refetch();
+    await v2Query.refetch();
+    await v2DayQuery.refetch();
   }, [v2Query, v3Query, v2DayQuery, v3DayQuery]);
 
   return {

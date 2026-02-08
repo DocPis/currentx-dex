@@ -395,7 +395,7 @@ const friendlySwapError = (e) => {
     return "Swap simulation failed (no revert data). Try a smaller size, a different route, or a higher slippage.";
   }
   if (lower.includes("permit2") && lower.includes("allowance")) {
-    return "Permit2 allowance missing or expired. Click Approve, then retry the swap.";
+    return "Approval missing or expired. Click Approve, then retry the swap.";
   }
   if (lower.includes("transfer helper")) {
     return "Token transfer failed. Check allowance and balance, then retry.";
@@ -514,7 +514,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
-  const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, label, kind, expiration }
+  const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
@@ -1980,7 +1980,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   const permit2Expiration = MAX_UINT48;
 
                   const targets = [];
-                  const checkErc20 = async (spender, label) => {
+                  const checkErc20 = async (spender) => {
                     if (!spender) return;
                     const cached = getCachedApproval("erc20", sellAddress, spender);
                     if (cached && cached.amount >= resolvedAmountInWei) return;
@@ -1991,7 +1991,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         address: sellAddress,
                         desiredAllowance: desiredErc20Allowance,
                         spender,
-                        label,
                         kind: "erc20",
                       });
                     } else {
@@ -2000,13 +1999,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         address: sellAddress,
                         desiredAllowance: allowance,
                         spender,
-                        label,
                         kind: "erc20",
                       });
                     }
                   };
                   const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, readProvider);
-                  const checkPermit2 = async (spender, label) => {
+                  const checkPermit2 = async (spender) => {
                     if (!spender) return;
                     const cached = getCachedApproval("permit2", sellAddress, spender);
                     if (cached) {
@@ -2033,7 +2031,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         address: sellAddress,
                         desiredAllowance: desiredPermit2Allowance,
                         spender,
-                        label,
                         kind: "permit2",
                         expiration: permit2Expiration,
                       });
@@ -2043,7 +2040,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         address: sellAddress,
                         desiredAllowance: allowance,
                         spender,
-                        label,
                         kind: "permit2",
                         expiration,
                       });
@@ -2055,11 +2051,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                     selectedRoute.protocol === "V3" ||
                     selectedRoute.protocol === "SPLIT"
                   ) {
-                    await checkErc20(PERMIT2_ADDRESS, "Token approval (Permit2)");
-                    await checkPermit2(
-                      UNIV3_UNIVERSAL_ROUTER_ADDRESS,
-                      "Permit2 allowance (Universal Router)"
-                    );
+                    await checkErc20(PERMIT2_ADDRESS);
+                    await checkPermit2(UNIV3_UNIVERSAL_ROUTER_ADDRESS);
                   }
 
                   if (cancelled) return;
@@ -2844,7 +2837,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           ordered.length > 1 ? ` (${i + 1}/${ordered.length})` : "";
         setSwapStatus({
           variant: "pending",
-          message: `Approving ${target.label || target.symbol}${stepLabel}...`,
+          message: `Approving ${target.symbol || sellToken}${stepLabel}...`,
         });
         let tx;
         if (target.kind === "permit2") {
@@ -2975,16 +2968,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const checkErc20Allowance = async (spender, label) => {
+        const checkErc20Allowance = async (spender) => {
           const allowance = await token.allowance(user, spender);
           if (allowance < amountWei) {
-            throw new Error(
-              `Approval required for ${sellToken}. Please approve ${label} before swapping.`
-            );
+            throw new Error(`Approval required for ${sellToken}. Please approve and retry.`);
           }
         };
         const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-        const checkPermit2Allowance = async (spender, label) => {
+        const checkPermit2Allowance = async (spender) => {
           const res = await permit2.allowance(user, sellAddress, spender);
           const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
           const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
@@ -2999,17 +2990,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           const now = BigInt(Math.floor(Date.now() / 1000));
           const expired = !expiration || expiration < now;
           if (allowance < amountWei || expired) {
-            throw new Error(
-              `Approval required for ${sellToken}. Please approve ${label} before swapping.`
-            );
+            throw new Error(`Approval required for ${sellToken}. Please approve and retry.`);
           }
         };
         if (routeProtocol === "V2" || routeProtocol === "V3" || routeProtocol === "SPLIT") {
-          await checkErc20Allowance(PERMIT2_ADDRESS, "Token approval (Permit2)");
-          await checkPermit2Allowance(
-            UNIV3_UNIVERSAL_ROUTER_ADDRESS,
-            "Permit2 allowance (Universal Router)"
-          );
+          await checkErc20Allowance(PERMIT2_ADDRESS);
+          await checkPermit2Allowance(UNIV3_UNIVERSAL_ROUTER_ADDRESS);
         }
       }
 
