@@ -882,6 +882,14 @@ const sanitizeAmountInput = (raw, decimals) => {
   if (fracPart.length) return `${safeInt}.${fracPart}`;
   return hasTrailingDot ? `${safeInt}.` : safeInt;
 };
+const applyMaxBuffer = (value, decimals) => {
+  if (!Number.isFinite(value)) return 0;
+  const dec = Number.isFinite(decimals) ? Math.max(0, decimals) : 18;
+  const step = Math.pow(10, -Math.min(6, dec));
+  const buffered = value - step;
+  if (buffered > 0) return buffered;
+  return Math.max(0, value);
+};
 
 const requireDecimals = (meta, symbol) => {
   const dec = meta?.decimals;
@@ -10389,28 +10397,84 @@ export default function LiquiditySection({
                 if (walletBalancesLoading) return;
                 if (side === 0 && !canUseSide0) return;
                 if (side === 1 && !canUseSide1) return;
-                const balance = side === 0 ? balance0Num : balance1Num;
+                const ethBalanceNum = safeNumber(resolveWalletBalanceExact("ETH"));
+                let balance0Effective = balance0Num;
+                let balance1Effective = balance1Num;
+                if (token0IsWeth && !useEth0 && (!balance0Effective || balance0Effective <= 0)) {
+                  if (ethBalanceNum !== null && ethBalanceNum > 0) {
+                    balance0Effective = ethBalanceNum;
+                    setV3ActionUseEth0(true);
+                  }
+                }
+                if (token1IsWeth && !useEth1 && (!balance1Effective || balance1Effective <= 0)) {
+                  if (ethBalanceNum !== null && ethBalanceNum > 0) {
+                    balance1Effective = ethBalanceNum;
+                    setV3ActionUseEth1(true);
+                  }
+                }
+                const balance = side === 0 ? balance0Effective : balance1Effective;
                 if (!Number.isFinite(balance) || balance <= 0) return;
-                const nextRaw = formatAutoAmount(balance * pct);
-                const next = sanitizeAmountInput(
-                  nextRaw,
-                  side === 0 ? displayMeta0?.decimals ?? 18 : displayMeta1?.decimals ?? 18
-                );
+                const sideDecimals =
+                  side === 0 ? displayMeta0?.decimals ?? 18 : displayMeta1?.decimals ?? 18;
+                const otherDecimals =
+                  side === 0 ? displayMeta1?.decimals ?? 18 : displayMeta0?.decimals ?? 18;
+                const base = balance * pct;
+                const buffered = pct === 1 ? applyMaxBuffer(base, sideDecimals) : base;
+                let nextRaw = formatAutoAmount(buffered, sideDecimals);
+                let next = sanitizeAmountInput(nextRaw, sideDecimals);
                 if (side === 0) {
                   setV3ActionAmount0(next);
                   if (v3ActionError) setV3ActionError("");
                   setV3ActionLastEdited("token0");
-                  const computed = computeV3ActionFromAmount0(next);
+                  let computed = computeV3ActionFromAmount0(next);
+                  const computedNum = safeNumber(computed);
+                  if (
+                    computedNum !== null &&
+                    Number.isFinite(computedNum) &&
+                    balance1Effective !== null &&
+                    computedNum > balance1Effective
+                  ) {
+                    const nextNum = safeNumber(next);
+                    if (nextNum !== null && nextNum > 0) {
+                      const ratio = balance1Effective / computedNum;
+                      const scaled = nextNum * ratio;
+                      nextRaw = formatAutoAmount(scaled, sideDecimals);
+                      next = sanitizeAmountInput(nextRaw, sideDecimals);
+                      setV3ActionAmount0(next);
+                      computed = computeV3ActionFromAmount0(next);
+                    }
+                  }
                   if (computed !== "" && computed !== v3ActionAmount1) {
-                    setV3ActionAmount1(computed);
+                    setV3ActionAmount1(
+                      sanitizeAmountInput(computed, otherDecimals)
+                    );
                   }
                 } else {
                   setV3ActionAmount1(next);
                   if (v3ActionError) setV3ActionError("");
                   setV3ActionLastEdited("token1");
-                  const computed = computeV3ActionFromAmount1(next);
+                  let computed = computeV3ActionFromAmount1(next);
+                  const computedNum = safeNumber(computed);
+                  if (
+                    computedNum !== null &&
+                    Number.isFinite(computedNum) &&
+                    balance0Effective !== null &&
+                    computedNum > balance0Effective
+                  ) {
+                    const nextNum = safeNumber(next);
+                    if (nextNum !== null && nextNum > 0) {
+                      const ratio = balance0Effective / computedNum;
+                      const scaled = nextNum * ratio;
+                      nextRaw = formatAutoAmount(scaled, sideDecimals);
+                      next = sanitizeAmountInput(nextRaw, sideDecimals);
+                      setV3ActionAmount1(next);
+                      computed = computeV3ActionFromAmount1(next);
+                    }
+                  }
                   if (computed !== "" && computed !== v3ActionAmount0) {
-                    setV3ActionAmount0(computed);
+                    setV3ActionAmount0(
+                      sanitizeAmountInput(computed, otherDecimals)
+                    );
                   }
                 }
               };
