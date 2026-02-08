@@ -60,6 +60,25 @@ const trimTrailingZeros = (value) => {
   if (typeof value !== "string" || !value.includes(".")) return value;
   return value.replace(/(\.\d*?[1-9])0+$/u, "$1").replace(/\.0+$/u, "");
 };
+const sanitizeAmountInput = (raw, decimals) => {
+  if (raw === null || raw === undefined) return "";
+  const value = String(raw).replace(/,/g, ".");
+  if (!value) return "";
+  const cleaned = value.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const hasTrailingDot = cleaned.endsWith(".");
+  const parts = cleaned.split(".");
+  const intPart = parts[0] ?? "";
+  let fracPart = parts.slice(1).join("");
+  const maxDecimals = Number.isFinite(decimals) ? Math.max(0, decimals) : null;
+  if (maxDecimals !== null) {
+    fracPart = fracPart.slice(0, maxDecimals);
+  }
+  const safeInt = intPart === "" ? "0" : intPart;
+  if (maxDecimals === 0) return safeInt;
+  if (fracPart.length) return `${safeInt}.${fracPart}`;
+  return hasTrailingDot ? `${safeInt}.` : safeInt;
+};
 const formatCompactNumber = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
@@ -221,6 +240,15 @@ const computeProbeAmount = (amountWei, decimals) => {
   if (probe <= 0n) probe = amountWei;
   return probe;
 };
+const safeParseUnits = (value, decimals) => {
+  try {
+    return parseUnits(value, decimals);
+  } catch {
+    return null;
+  }
+};
+const isIncompleteAmount = (value) =>
+  typeof value === "string" && (value === "." || value.endsWith("."));
 
 const formatDisplayAmount = (val, symbol) => {
   const num = Number(val);
@@ -1563,7 +1591,21 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     Boolean(sellMeta?.address || sellToken === "ETH") &&
     Boolean(buyMeta?.address || buyToken === "ETH");
   const isExactOut = swapInputMode === "out";
+  const sellInputDecimals = sellToken === "ETH" ? 18 : sellMeta?.decimals ?? 18;
+  const buyInputDecimals = buyToken === "ETH" ? 18 : buyMeta?.decimals ?? 18;
   const activeInputAmount = isExactOut ? amountOutInput : amountIn;
+
+  useEffect(() => {
+    if (!amountIn) return;
+    const next = sanitizeAmountInput(amountIn, sellInputDecimals);
+    if (next !== amountIn) setAmountIn(next);
+  }, [amountIn, sellInputDecimals]);
+
+  useEffect(() => {
+    if (!amountOutInput) return;
+    const next = sanitizeAmountInput(amountOutInput, buyInputDecimals);
+    if (next !== amountOutInput) setAmountOutInput(next);
+  }, [amountOutInput, buyInputDecimals]);
 
   useEffect(() => {
     lastFullQuoteAtRef.current = 0;
@@ -1820,7 +1862,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return;
       }
       setQuoteError("");
-      if (!activeInputAmount || Number.isNaN(Number(activeInputAmount))) {
+      if (
+        !activeInputAmount ||
+        Number.isNaN(Number(activeInputAmount)) ||
+        isIncompleteAmount(activeInputAmount)
+      ) {
         resetQuoteState();
         return;
       }
@@ -1854,7 +1900,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const sellDecimals = sellMeta?.decimals ?? 18;
         const buyDecimals = buyMeta?.decimals ?? 18;
         const directAmount = isExactOut ? amountOutInput : amountIn;
-        const directWei = parseUnits(directAmount, isExactOut ? buyDecimals : sellDecimals);
+        const directWei = safeParseUnits(
+          directAmount,
+          isExactOut ? buyDecimals : sellDecimals
+        );
+        if (!directWei) {
+          setQuoteError("Invalid amount format. Use dot for decimals.");
+          resetQuoteState();
+          return;
+        }
         const formattedIn = trimTrailingZeros(formatUnits(directWei, sellDecimals));
         const formattedOut = trimTrailingZeros(formatUnits(directWei, buyDecimals));
         if (isExactOut) {
@@ -1899,10 +1953,20 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           }
           const sellDecimals = requireDecimals(sellToken, sellMeta);
           const buyDecimals = requireDecimals(buyToken, buyMeta);
-          const amountWei = isExactOut ? null : parseUnits(amountIn, sellDecimals);
+          const amountWei = isExactOut
+            ? null
+            : safeParseUnits(amountIn, sellDecimals);
           const desiredOutWei = isExactOut
-            ? parseUnits(amountOutInput || "0", buyDecimals)
+            ? safeParseUnits(amountOutInput || "0", buyDecimals)
             : null;
+          if (!isExactOut && !amountWei) {
+            setQuoteError("Invalid amount format. Use dot for decimals.");
+            return;
+          }
+          if (isExactOut && !desiredOutWei) {
+            setQuoteError("Invalid amount format. Use dot for decimals.");
+            return;
+          }
           const routeKey = `${sellAddress.toLowerCase()}-${buyAddress.toLowerCase()}-${routePreference}-${swapInputMode}`;
           const sellLower = sellAddress.toLowerCase();
           const buyLower = buyAddress.toLowerCase();
@@ -2927,6 +2991,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (!amountIn || Number.isNaN(Number(amountIn))) {
         throw new Error("Enter a valid amount");
       }
+      if (isIncompleteAmount(amountIn)) {
+        throw new Error("Finish typing the amount.");
+      }
       if (!isSupported) {
         throw new Error("Select tokens with valid addresses.");
       }
@@ -2964,7 +3031,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       const user = await signer.getAddress();
       const sellAddress = sellMeta?.address;
       const sellDecimals = requireDecimals(sellToken, sellMeta);
-      const amountWei = parseUnits(amountIn, sellDecimals);
+      const amountWei = safeParseUnits(amountIn, sellDecimals);
+      if (!amountWei) {
+        throw new Error("Invalid amount format. Use dot for decimals.");
+      }
 
       if (sellToken !== "ETH" && !isDirectEthWeth) {
         const token = new Contract(sellAddress, ERC20_ABI, signer);
@@ -3681,7 +3751,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               name="swap-amount-in"
               value={amountIn}
               onChange={(e) => {
-                setAmountIn(e.target.value);
+                const next = sanitizeAmountInput(e.target.value, sellInputDecimals);
+                setAmountIn(next);
                 if (swapInputMode !== "in") {
                   setSwapInputMode("in");
                 }
@@ -3802,7 +3873,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 name="swap-amount-out"
                 value={isExactOut ? amountOutInput : quoteOut || ""}
                 onChange={(e) => {
-                  setAmountOutInput(e.target.value);
+                  const next = sanitizeAmountInput(e.target.value, buyInputDecimals);
+                  setAmountOutInput(next);
                   if (swapInputMode !== "out") {
                     setSwapInputMode("out");
                   }

@@ -831,7 +831,7 @@ const mergeSeriesSnapshot = (series, snapshot) => {
   return merged;
 };
 
-const formatAutoAmount = (value) => {
+const formatAutoAmount = (value, maxDecimals = null) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "";
   if (num === 0) return "0";
@@ -839,13 +839,16 @@ const formatAutoAmount = (value) => {
   let decimals = 6;
   if (abs < 0.0001) decimals = 10;
   else if (abs < 0.01) decimals = 8;
+  if (Number.isFinite(maxDecimals)) {
+    decimals = Math.min(decimals, Math.max(0, maxDecimals));
+  }
   return trimTrailingZeros(num.toFixed(decimals));
 };
 
 const formatAmountFromRaw = (raw, decimals) => {
   try {
     const num = Number(formatUnits(raw ?? 0n, decimals ?? 18));
-    return formatAutoAmount(num);
+    return formatAutoAmount(num, decimals ?? 18);
   } catch {
     return "";
   }
@@ -859,6 +862,25 @@ const safeParseUnits = (value, decimals) => {
   } catch {
     return null;
   }
+};
+const sanitizeAmountInput = (raw, decimals) => {
+  if (raw === null || raw === undefined) return "";
+  const value = String(raw).replace(/,/g, ".");
+  if (!value) return "";
+  const cleaned = value.replace(/[^0-9.]/g, "");
+  if (!cleaned) return "";
+  const hasTrailingDot = cleaned.endsWith(".");
+  const parts = cleaned.split(".");
+  const intPart = parts[0] ?? "";
+  let fracPart = parts.slice(1).join("");
+  const maxDecimals = Number.isFinite(decimals) ? Math.max(0, decimals) : null;
+  if (maxDecimals !== null) {
+    fracPart = fracPart.slice(0, maxDecimals);
+  }
+  const safeInt = intPart === "" ? "0" : intPart;
+  if (maxDecimals === 0) return safeInt;
+  if (fracPart.length) return `${safeInt}.${fracPart}`;
+  return hasTrailingDot ? `${safeInt}.` : safeInt;
 };
 
 const requireDecimals = (meta, symbol) => {
@@ -2020,7 +2042,10 @@ export default function LiquiditySection({
   );
 
   const applyV3MintAmount0 = useCallback(
-    (next) => {
+    (nextRaw) => {
+      const baseDec =
+        v3Token0 === "ETH" ? 18 : v3Token0Meta?.decimals ?? 18;
+      const next = sanitizeAmountInput(nextRaw, v3RangeMath?.dec0 ?? baseDec);
       setV3Amount0(next);
       if (v3MintError) setV3MintError("");
       if (actionStatus) setActionStatus(null);
@@ -2051,13 +2076,25 @@ export default function LiquiditySection({
       }
       if (!v3ReferencePrice) return;
       const computed = num * v3ReferencePrice;
-      setV3Amount1(formatAutoAmount(computed));
+      const targetDec =
+        v3Token1 === "ETH" ? 18 : v3Token1Meta?.decimals ?? 18;
+      setV3Amount1(formatAutoAmount(computed, targetDec));
     },
-    [actionStatus, v3MintError, v3RangeMath, v3ReferencePrice]
+    [
+      actionStatus,
+      v3MintError,
+      v3RangeMath,
+      v3ReferencePrice,
+      v3Token0,
+      v3Token0Meta,
+    ]
   );
 
   const applyV3MintAmount1 = useCallback(
-    (next) => {
+    (nextRaw) => {
+      const baseDec =
+        v3Token1 === "ETH" ? 18 : v3Token1Meta?.decimals ?? 18;
+      const next = sanitizeAmountInput(nextRaw, v3RangeMath?.dec1 ?? baseDec);
       setV3Amount1(next);
       if (v3MintError) setV3MintError("");
       if (actionStatus) setActionStatus(null);
@@ -2088,9 +2125,18 @@ export default function LiquiditySection({
       }
       if (!v3ReferencePrice) return;
       const computed = num / v3ReferencePrice;
-      setV3Amount0(formatAutoAmount(computed));
+      const targetDec =
+        v3Token0 === "ETH" ? 18 : v3Token0Meta?.decimals ?? 18;
+      setV3Amount0(formatAutoAmount(computed, targetDec));
     },
-    [actionStatus, v3MintError, v3RangeMath, v3ReferencePrice]
+    [
+      actionStatus,
+      v3MintError,
+      v3RangeMath,
+      v3ReferencePrice,
+      v3Token1,
+      v3Token1Meta,
+    ]
   );
 
   const applyV3MintQuickFill = useCallback(
@@ -5553,8 +5599,17 @@ export default function LiquiditySection({
     const meta1 = findTokenMetaByAddress(position.token1);
     const dec0 = meta0?.decimals ?? 18;
     const dec1 = meta1?.decimals ?? 18;
-    const amount0Desired = safeParseUnits(v3ActionAmount0 || "0", dec0) || 0n;
-    const amount1Desired = safeParseUnits(v3ActionAmount1 || "0", dec1) || 0n;
+    const amount0Parsed = safeParseUnits(v3ActionAmount0 || "0", dec0);
+    const amount1Parsed = safeParseUnits(v3ActionAmount1 || "0", dec1);
+    if (
+      (v3ActionAmount0 && amount0Parsed === null) ||
+      (v3ActionAmount1 && amount1Parsed === null)
+    ) {
+      setV3ActionError("Invalid amount format. Use dot for decimals.");
+      return;
+    }
+    const amount0Desired = amount0Parsed || 0n;
+    const amount1Desired = amount1Parsed || 0n;
     const token0IsWeth = Boolean(WETH_ADDRESS) &&
       position.token0?.toLowerCase?.() === WETH_ADDRESS.toLowerCase();
     const token1IsWeth = Boolean(WETH_ADDRESS) &&
@@ -10285,7 +10340,11 @@ export default function LiquiditySection({
                 if (side === 1 && !canUseSide1) return;
                 const balance = side === 0 ? balance0Num : balance1Num;
                 if (!Number.isFinite(balance) || balance <= 0) return;
-                const next = formatAutoAmount(balance * pct);
+                const nextRaw = formatAutoAmount(balance * pct);
+                const next = sanitizeAmountInput(
+                  nextRaw,
+                  side === 0 ? displayMeta0?.decimals ?? 18 : displayMeta1?.decimals ?? 18
+                );
                 if (side === 0) {
                   setV3ActionAmount0(next);
                   if (v3ActionError) setV3ActionError("");
@@ -10343,7 +10402,10 @@ export default function LiquiditySection({
                             name="v3-increase-0"
                             value={v3ActionAmount0}
                             onChange={(e) => {
-                              const next = e.target.value;
+                              const next = sanitizeAmountInput(
+                                e.target.value,
+                                displayMeta0?.decimals ?? 18
+                              );
                               setV3ActionAmount0(next);
                               if (v3ActionError) setV3ActionError("");
                               setV3ActionLastEdited("token0");
@@ -10444,7 +10506,10 @@ export default function LiquiditySection({
                             name="v3-increase-1"
                             value={v3ActionAmount1}
                             onChange={(e) => {
-                              const next = e.target.value;
+                              const next = sanitizeAmountInput(
+                                e.target.value,
+                                displayMeta1?.decimals ?? 18
+                              );
                               setV3ActionAmount1(next);
                               if (v3ActionError) setV3ActionError("");
                               setV3ActionLastEdited("token1");
