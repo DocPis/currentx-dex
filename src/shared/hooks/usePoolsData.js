@@ -114,7 +114,7 @@ export function usePoolsData() {
     initialData: cachedDay?.v2DayData || undefined,
     initialDataUpdatedAt: cachedDay?.ts,
     refetchOnMount: "always",
-    staleTime: 60 * 1000,
+    staleTime: 0,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
   });
@@ -126,7 +126,7 @@ export function usePoolsData() {
     initialData: cachedDay?.v3DayData || undefined,
     initialDataUpdatedAt: cachedDay?.ts,
     refetchOnMount: "always",
-    staleTime: 60 * 1000,
+    staleTime: 0,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
   });
