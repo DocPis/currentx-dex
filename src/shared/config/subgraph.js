@@ -1303,6 +1303,62 @@ export async function fetchTokenPrices(addresses = []) {
   return { ...v2Prices, ...v3Prices };
 }
 
+export async function fetchV3TokenTvls(addresses = []) {
+  if (SUBGRAPH_V3_MISSING_KEY) return {};
+  const ids = Array.from(
+    new Set(
+      (addresses || [])
+        .filter(Boolean)
+        .map((a) => a.toLowerCase())
+    )
+  );
+  if (!ids.length) return {};
+
+  const queries = [
+    `
+      query Tokens($ids: [Bytes!]!) {
+        tokens(where: { id_in: $ids }) {
+          id
+          totalValueLockedUSD
+        }
+      }
+    `,
+    `
+      query Tokens($ids: [Bytes!]!) {
+        tokens(where: { id_in: $ids }) {
+          id
+          totalValueLockedUSD
+          totalValueLockedUSDUntracked
+        }
+      }
+    `,
+  ];
+
+  for (const query of queries) {
+    try {
+      const res = await postSubgraphV3(query, { ids });
+      const out = {};
+      (res?.tokens || []).forEach((t) => {
+        const tvlRaw =
+          t?.totalValueLockedUSD ?? t?.totalValueLockedUSDUntracked ?? 0;
+        const tvl = Number(tvlRaw);
+        if (Number.isFinite(tvl) && tvl >= 0) {
+          out[(t.id || "").toLowerCase()] = tvl;
+        }
+      });
+      return out;
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      return {};
+    }
+  }
+
+  return {};
+}
+
 // Fetch top pairs by all-time volume (falling back gracefully if unavailable)
 export async function fetchTopPairsBreakdown(limit = 4) {
   const fetchTopPairsDay = async (finalLimit) => {

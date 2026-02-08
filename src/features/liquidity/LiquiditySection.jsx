@@ -39,6 +39,7 @@ import {
 import {
   fetchV2PairData,
   fetchTokenPrices,
+  fetchV3TokenTvls,
   fetchV3PoolHistory,
   fetchV3PoolHourStats,
   fetchV3PoolSnapshot,
@@ -1130,6 +1131,7 @@ export default function LiquiditySection({
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
   const [tokenPrices, setTokenPrices] = useState({});
+  const [v3TokenTvls, setV3TokenTvls] = useState({});
   const [tvlError, setTvlError] = useState("");
   const [subgraphError, setSubgraphError] = useState("");
   const [poolStats, setPoolStats] = useState({});
@@ -3815,6 +3817,29 @@ export default function LiquiditySection({
     };
   }, [tokenRegistry]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadTokenTvls = async () => {
+      const addrs = Object.values(tokenRegistry)
+        .map((t) => t.address)
+        .filter(Boolean);
+      if (!addrs.length) {
+        setV3TokenTvls({});
+        return;
+      }
+      try {
+        const tvls = await fetchV3TokenTvls(addrs);
+        if (!cancelled) setV3TokenTvls(tvls || {});
+      } catch {
+        if (!cancelled) setV3TokenTvls({});
+      }
+    };
+    loadTokenTvls();
+    return () => {
+      cancelled = true;
+    };
+  }, [tokenRegistry]);
+
   const trackedPools = useMemo(() => {
     const list = [...basePools];
     const base = tokenSelection?.baseSymbol;
@@ -4350,8 +4375,20 @@ export default function LiquiditySection({
         tvlMap[p.token1Symbol] = (tvlMap[p.token1Symbol] || 0) + share;
       }
     });
+    const v3TvlMap = {};
+    Object.values(tokenRegistry).forEach((token) => {
+      const addr = (token?.address || "").toLowerCase();
+      if (!addr) return;
+      const tvl = v3TokenTvls[addr];
+      if (Number.isFinite(tvl) && tvl > 0) {
+        v3TvlMap[token.symbol] = (v3TvlMap[token.symbol] || 0) + tvl;
+      }
+    });
     const ethLikeTvl =
-      (tvlMap.ETH || 0) + (tvlMap.WETH || 0);
+      (tvlMap.ETH || 0) +
+      (tvlMap.WETH || 0) +
+      (v3TvlMap.ETH || 0) +
+      (v3TvlMap.WETH || 0);
 
     return Object.values(tokenRegistry).map((t) => {
       const rawBalance = walletBalances?.[t.symbol];
@@ -4361,13 +4398,21 @@ export default function LiquiditySection({
           : address
             ? 0
             : null;
+      const v2Tvl =
+        t.symbol === "ETH" || t.symbol === "WETH"
+          ? (tvlMap.ETH || 0) + (tvlMap.WETH || 0)
+          : tvlMap[t.symbol] || 0;
+      const v3Tvl =
+        t.symbol === "ETH" || t.symbol === "WETH"
+          ? (v3TvlMap.ETH || 0) + (v3TvlMap.WETH || 0)
+          : v3TvlMap[t.symbol] || 0;
 
       return {
         ...t,
         tvlUsd:
           t.symbol === "ETH" || t.symbol === "WETH"
             ? ethLikeTvl
-            : tvlMap[t.symbol] || 0,
+            : v2Tvl + v3Tvl,
         priceUsd:
           tokenPrices[(t.address || "").toLowerCase()] ||
           (t.symbol === "ETH"
@@ -4378,7 +4423,7 @@ export default function LiquiditySection({
         walletBalance,
       };
     });
-  }, [address, pools, tokenPrices, tokenRegistry, walletBalances]);
+  }, [address, pools, tokenPrices, tokenRegistry, v3TokenTvls, walletBalances]);
 
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
