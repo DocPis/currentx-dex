@@ -2766,7 +2766,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       : quoteMeta?.protocol || "V3";
   const hopCount = routeSegments.reduce((sum, seg) => sum + (seg.hops?.length || 0), 0);
   const approvalSummary = approvalTargetsForSell.length
-    ? approvalTargetsForSell.map((t) => t.label || "Approval").join(" + ")
+    ? `${approvalTargetsForSell.length} approval${approvalTargetsForSell.length > 1 ? "s" : ""}`
     : "";
 
   useEffect(() => {
