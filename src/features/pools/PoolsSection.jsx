@@ -120,7 +120,7 @@ export default function PoolsSection({ onSelectPool }) {
   const tvlHistory = dashboardData?.tvlHistory || [];
   const volumeHistory = dashboardData?.volumeHistory || [];
   const protocolTvl = dashboardFresh
-    ? tvlHistory?.[0]?.tvlUsd ?? protocolStats?.totalLiquidityUsd ?? null
+    ? tvlHistory?.[0]?.tvlUsd || protocolStats?.totalLiquidityUsd || null
     : null;
   const latestDay = volumeHistory?.[0] || null;
   const dayVolume = latestDay?.volumeUsd ?? null;
