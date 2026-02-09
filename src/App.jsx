@@ -120,11 +120,11 @@ export default function App() {
       const unique = Array.from(new Set(addresses.map((a) => a.toLowerCase())));
       await Promise.all([
         queryClient.prefetchQuery({
-          queryKey: ["token-prices", unique],
+          queryKey: ["token-prices", "registry"],
           queryFn: () => subgraph.fetchTokenPrices(unique),
         }),
         queryClient.prefetchQuery({
-          queryKey: ["token-tvls", unique],
+          queryKey: ["token-tvls", "registry"],
           queryFn: () => subgraph.fetchV3TokenTvls(unique),
         }),
       ]);
@@ -232,10 +232,13 @@ export default function App() {
       Object.keys(SECTION_LOADERS).forEach((key) => {
         if (key !== tab) preloadSection(key);
       });
+      ["swap", "liquidity", "pools"].forEach((key) => {
+        if (key !== tab) prefetchTabData(key);
+      });
     }, { timeout: 1500 });
 
     return () => cancelIdle(handle);
-  }, [tab]);
+  }, [prefetchTabData, tab]);
 
 
   const handleConnect = () => {

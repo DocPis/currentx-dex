@@ -1,5 +1,6 @@
 // src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Contract, Interface, formatUnits, id, parseUnits, AbiCoder } from "ethers";
 import {
   TOKENS,
@@ -507,6 +508,7 @@ const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function SwapSection({ balances, address, chainId, onBalancesRefresh }) {
+  const queryClient = useQueryClient();
   const normalizeChainHex = (value) => {
     if (value === null || value === undefined) return null;
     const str = String(value).trim();
@@ -1654,6 +1656,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     let cancelled = false;
     const symbol = (sellToken || "").toUpperCase();
     const addr = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
+    const addrLower = addr ? addr.toLowerCase() : "";
     if (!addr) {
       setSellTokenUsd(null);
       setSellTokenUsdLoading(false);
@@ -1668,16 +1671,34 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         cancelled = true;
       };
     }
-    setSellTokenUsdLoading(true);
+    const cachedRegistryPrices =
+      queryClient.getQueryData(["token-prices", "registry"]) || null;
+    const cachedPrice = cachedRegistryPrices?.[addrLower];
+    if (!cancelled && Number.isFinite(cachedPrice)) {
+      setSellTokenUsd(cachedPrice);
+      setSellTokenUsdLoading(false);
+    } else {
+      setSellTokenUsdLoading(true);
+    }
     fetchTokenPrices([addr])
       .then((prices) => {
         if (cancelled) return;
-        const price = prices?.[addr.toLowerCase()];
-        setSellTokenUsd(Number.isFinite(price) ? price : null);
+        const price = prices?.[addrLower];
+        const nextPrice = Number.isFinite(price) ? price : null;
+        setSellTokenUsd(nextPrice);
+        if (nextPrice !== null) {
+          const merged = {
+            ...(cachedRegistryPrices || {}),
+            [addrLower]: nextPrice,
+          };
+          queryClient.setQueryData(["token-prices", "registry"], merged);
+        }
       })
       .catch(() => {
         if (cancelled) return;
-        setSellTokenUsd(null);
+        if (!Number.isFinite(cachedPrice)) {
+          setSellTokenUsd(null);
+        }
       })
       .finally(() => {
         if (!cancelled) setSellTokenUsdLoading(false);
@@ -1685,7 +1706,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     return () => {
       cancelled = true;
     };
-  }, [sellToken, sellMeta?.address]);
+  }, [queryClient, sellToken, sellMeta?.address]);
 
   useEffect(() => {
     if (!amountIn) return;

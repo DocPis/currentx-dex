@@ -1,5 +1,6 @@
 // src/features/liquidity/LiquiditySection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Contract, Interface, JsonRpcProvider, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
@@ -1157,6 +1158,7 @@ export default function LiquiditySection({
   showV2 = true,
   showV3 = false,
 }) {
+  const queryClient = useQueryClient();
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
@@ -3872,18 +3874,32 @@ export default function LiquiditySection({
         setTokenPrices({});
         return;
       }
+      const cachedRegistryPrices =
+        queryClient.getQueryData(["token-prices", "registry"]) || null;
+      if (!cancelled && cachedRegistryPrices) {
+        setTokenPrices(cachedRegistryPrices);
+      }
       try {
         const prices = await fetchTokenPrices(addrs);
-        if (!cancelled) setTokenPrices(prices || {});
+        if (!cancelled) {
+          const merged = {
+            ...(cachedRegistryPrices || {}),
+            ...(prices || {}),
+          };
+          setTokenPrices(merged);
+          queryClient.setQueryData(["token-prices", "registry"], merged);
+        }
       } catch {
-        if (!cancelled) setTokenPrices({});
+        if (!cancelled) {
+          setTokenPrices(cachedRegistryPrices || {});
+        }
       }
     };
     loadTokenPrices();
     return () => {
       cancelled = true;
     };
-  }, [tokenRegistry]);
+  }, [queryClient, tokenRegistry]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3895,18 +3911,32 @@ export default function LiquiditySection({
         setV3TokenTvls({});
         return;
       }
+      const cachedRegistryTvls =
+        queryClient.getQueryData(["token-tvls", "registry"]) || null;
+      if (!cancelled && cachedRegistryTvls) {
+        setV3TokenTvls(cachedRegistryTvls);
+      }
       try {
         const tvls = await fetchV3TokenTvls(addrs);
-        if (!cancelled) setV3TokenTvls(tvls || {});
+        if (!cancelled) {
+          const merged = {
+            ...(cachedRegistryTvls || {}),
+            ...(tvls || {}),
+          };
+          setV3TokenTvls(merged);
+          queryClient.setQueryData(["token-tvls", "registry"], merged);
+        }
       } catch {
-        if (!cancelled) setV3TokenTvls({});
+        if (!cancelled) {
+          setV3TokenTvls(cachedRegistryTvls || {});
+        }
       }
     };
     loadTokenTvls();
     return () => {
       cancelled = true;
     };
-  }, [tokenRegistry]);
+  }, [queryClient, tokenRegistry]);
 
   const trackedPools = useMemo(() => {
     const list = [...basePools];
