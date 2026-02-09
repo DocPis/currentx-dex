@@ -1,13 +1,7 @@
 ﻿// src/App.jsx
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useDisconnect, useReconnect } from "wagmi";
 import Header from "./shared/ui/Header";
-import SwapSection from "./features/swap/SwapSection";
-import LiquiditySection from "./features/liquidity/LiquiditySection";
-import Dashboard from "./features/dashboard/Dashboard";
-import Farms from "./features/farms/Farms";
-import PoolsSection from "./features/pools/PoolsSection";
-import MegaVaultSection from "./features/megavault/MegaVaultSection";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
@@ -23,6 +17,22 @@ const TAB_ROUTES = {
   megavault: "/megavault",
 };
 
+const SECTION_LOADERS = {
+  dashboard: () => import("./features/dashboard/Dashboard"),
+  swap: () => import("./features/swap/SwapSection"),
+  liquidity: () => import("./features/liquidity/LiquiditySection"),
+  pools: () => import("./features/pools/PoolsSection"),
+  farms: () => import("./features/farms/Farms"),
+  megavault: () => import("./features/megavault/MegaVaultSection"),
+};
+
+const Dashboard = React.lazy(SECTION_LOADERS.dashboard);
+const SwapSection = React.lazy(SECTION_LOADERS.swap);
+const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
+const PoolsSection = React.lazy(SECTION_LOADERS.pools);
+const Farms = React.lazy(SECTION_LOADERS.farms);
+const MegaVaultSection = React.lazy(SECTION_LOADERS.megavault);
+
 const normalizePath = (path = "") => {
   const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
   return cleaned || "/";
@@ -37,6 +47,13 @@ const getTabFromPath = (path = "") => {
 
 const getPathForTab = (tab) => TAB_ROUTES[tab] || "/dashboard";
 
+const initialPath = (typeof window !== "undefined" && window.location?.pathname) || "";
+const isWhitelistPath = initialPath.toLowerCase().includes("whitelist");
+const initialTab = getTabFromPath(initialPath);
+if (!isWhitelistPath && SECTION_LOADERS[initialTab]) {
+  SECTION_LOADERS[initialTab]();
+}
+
 export default function App() {
   const [tab, setTab] = useState(() =>
     getTabFromPath(window?.location?.pathname)
@@ -48,6 +65,7 @@ export default function App() {
   const { disconnect: wagmiDisconnect } = useDisconnect();
   const { reconnect } = useReconnect();
   const { balances, refresh } = useBalances(address, chainId);
+  const preloadedRef = useRef(new Set());
 
   useEffect(() => {
     const handlePop = () => {
@@ -71,6 +89,35 @@ export default function App() {
     const id = setTimeout(() => setConnectError(""), 4000);
     return () => clearTimeout(id);
   }, [connectError]);
+
+  const preloadSection = (id) => {
+    const loader = SECTION_LOADERS[id];
+    if (!loader || preloadedRef.current.has(id)) return;
+    preloadedRef.current.add(id);
+    loader();
+  };
+
+  useEffect(() => {
+    const connection = navigator?.connection;
+    const saveData = Boolean(connection?.saveData);
+    const effectiveType = String(connection?.effectiveType || "");
+    const lowBandwidth = effectiveType.includes("2g");
+    if (saveData || lowBandwidth) return undefined;
+
+    const idle =
+      window.requestIdleCallback ||
+      ((cb) => window.setTimeout(() => cb({ timeRemaining: () => 0 }), 800));
+    const cancelIdle =
+      window.cancelIdleCallback || ((id) => window.clearTimeout(id));
+
+    const handle = idle(() => {
+      Object.keys(SECTION_LOADERS).forEach((key) => {
+        if (key !== tab) preloadSection(key);
+      });
+    }, { timeout: 1500 });
+
+    return () => cancelIdle(handle);
+  }, [tab]);
 
 
   const handleConnect = () => {
@@ -101,7 +148,13 @@ export default function App() {
 
   const handlePoolSelect = (pool) => {
     setPoolSelection(pool || null);
+    preloadSection("liquidity");
     setTab("liquidity");
+  };
+
+  const handleTabClick = (nextTab) => {
+    preloadSection(nextTab);
+    setTab(nextTab);
   };
 
   return (
@@ -148,7 +201,9 @@ export default function App() {
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => setTab(item.id)}
+              onClick={() => handleTabClick(item.id)}
+              onMouseEnter={() => preloadSection(item.id)}
+              onFocus={() => preloadSection(item.id)}
               className={`px-4 py-2 rounded-xl border transition shadow-sm ${
                 tab === item.id
                   ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
@@ -162,32 +217,40 @@ export default function App() {
       </div>
 
       <main className="flex-1">
-        {tab === "swap" && (
-          <SwapSection
-            balances={balances}
-            address={address}
-            chainId={chainId}
-            onBalancesRefresh={refresh}
-          />
-        )}
-        {tab === "liquidity" && (
-          <LiquiditySection
-            address={address}
-            chainId={chainId}
-            balances={balances}
-            showV3={true}
-            poolSelection={poolSelection}
-            onBalancesRefresh={refresh}
-          />
-        )}
-        {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
-        {tab === "dashboard" && <Dashboard />}
-        {tab === "farms" && (
-          <Farms address={address} onConnect={handleConnect} />
-        )}
-        {tab === "megavault" && (
-          <MegaVaultSection address={address} onConnectWallet={handleConnect} />
-        )}
+        <Suspense
+          fallback={
+            <div className="px-6 py-12 text-center text-sm text-slate-400">
+              Loading section...
+            </div>
+          }
+        >
+          {tab === "swap" && (
+            <SwapSection
+              balances={balances}
+              address={address}
+              chainId={chainId}
+              onBalancesRefresh={refresh}
+            />
+          )}
+          {tab === "liquidity" && (
+            <LiquiditySection
+              address={address}
+              chainId={chainId}
+              balances={balances}
+              showV3={true}
+              poolSelection={poolSelection}
+              onBalancesRefresh={refresh}
+            />
+          )}
+          {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
+          {tab === "dashboard" && <Dashboard />}
+          {tab === "farms" && (
+            <Farms address={address} onConnect={handleConnect} />
+          )}
+          {tab === "megavault" && (
+            <MegaVaultSection address={address} onConnectWallet={handleConnect} />
+          )}
+        </Suspense>
       </main>
 
       <Footer />
