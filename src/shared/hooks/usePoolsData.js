@@ -4,15 +4,15 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   fetchV2PoolsPage,
   fetchV3PoolsPage,
-  fetchV2PoolsDayData,
-  fetchV3PoolsDayData,
+  fetchV2PoolsHourData,
+  fetchV3PoolsHourData,
 } from "../config/subgraph";
 
 const PAGE_SIZE = 50;
 const REFRESH_MS = 5 * 60 * 1000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const POOLS_CACHE_KEY = "cx_pools_cache_v1";
-const POOLS_DAY_CACHE_KEY = "cx_pools_day_cache_v1";
+const POOLS_ROLLING_CACHE_KEY = "cx_pools_rolling_cache_v1";
 
 const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined;
@@ -50,9 +50,9 @@ const buildPageParams = (pages = []) =>
 
 export function usePoolsData() {
   const cachedPools = useMemo(() => readCache(POOLS_CACHE_KEY), []);
-  const cachedDay = useMemo(() => readCache(POOLS_DAY_CACHE_KEY), []);
+  const cachedRolling = useMemo(() => readCache(POOLS_ROLLING_CACHE_KEY), []);
   const poolsCacheRef = useRef(cachedPools);
-  const dayCacheRef = useRef(cachedDay);
+  const rollingCacheRef = useRef(cachedRolling);
 
   const v3Query = useInfiniteQuery({
     queryKey: ["pools", "v3"],
@@ -107,24 +107,24 @@ export function usePoolsData() {
     [v3Pools]
   );
 
-  const v2DayQuery = useQuery({
-    queryKey: ["pools", "v2-day", v2Ids],
-    queryFn: () => fetchV2PoolsDayData(v2Ids),
+  const v2RollingQuery = useQuery({
+    queryKey: ["pools", "v2-roll-24h", v2Ids],
+    queryFn: () => fetchV2PoolsHourData(v2Ids, 24),
     enabled: v2Ids.length > 0,
-    initialData: cachedDay?.v2DayData || undefined,
-    initialDataUpdatedAt: cachedDay?.ts,
+    initialData: cachedRolling?.v2RollingData || undefined,
+    initialDataUpdatedAt: cachedRolling?.ts,
     refetchOnMount: "always",
     staleTime: 0,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
   });
 
-  const v3DayQuery = useQuery({
-    queryKey: ["pools", "v3-day", v3Ids],
-    queryFn: () => fetchV3PoolsDayData(v3Ids),
+  const v3RollingQuery = useQuery({
+    queryKey: ["pools", "v3-roll-24h", v3Ids],
+    queryFn: () => fetchV3PoolsHourData(v3Ids, 24),
     enabled: v3Ids.length > 0,
-    initialData: cachedDay?.v3DayData || undefined,
-    initialDataUpdatedAt: cachedDay?.ts,
+    initialData: cachedRolling?.v3RollingData || undefined,
+    initialDataUpdatedAt: cachedRolling?.ts,
     refetchOnMount: "always",
     staleTime: 0,
     refetchInterval: REFRESH_MS,
@@ -145,32 +145,34 @@ export function usePoolsData() {
   }, [v2Query.data, v3Query.data]);
 
   useEffect(() => {
-    const v2DayData = v2DayQuery.data;
-    const v3DayData = v3DayQuery.data;
-    if (!v2DayData && !v3DayData) return;
+    const v2RollingData = v2RollingQuery.data;
+    const v3RollingData = v3RollingQuery.data;
+    if (!v2RollingData && !v3RollingData) return;
     const next = {
       ts: Date.now(),
-      v2DayData: v2DayData ?? dayCacheRef.current?.v2DayData ?? {},
-      v3DayData: v3DayData ?? dayCacheRef.current?.v3DayData ?? {},
+      v2RollingData:
+        v2RollingData ?? rollingCacheRef.current?.v2RollingData ?? {},
+      v3RollingData:
+        v3RollingData ?? rollingCacheRef.current?.v3RollingData ?? {},
     };
-    dayCacheRef.current = next;
-    writeCache(POOLS_DAY_CACHE_KEY, next);
-  }, [v2DayQuery.data, v3DayQuery.data]);
+    rollingCacheRef.current = next;
+    writeCache(POOLS_ROLLING_CACHE_KEY, next);
+  }, [v2RollingQuery.data, v3RollingQuery.data]);
 
   const refetchAll = useCallback(async () => {
     await Promise.all([
       v3Query.refetch(),
       v2Query.refetch(),
-      v3DayQuery.refetch(),
-      v2DayQuery.refetch(),
+      v3RollingQuery.refetch(),
+      v2RollingQuery.refetch(),
     ]);
-  }, [v2Query, v3Query, v2DayQuery, v3DayQuery]);
+  }, [v2Query, v3Query, v2RollingQuery, v3RollingQuery]);
 
   return {
     v2Pools,
     v3Pools,
-    v2DayData: v2DayQuery.data || {},
-    v3DayData: v3DayQuery.data || {},
+    v2RollingData: v2RollingQuery.data || {},
+    v3RollingData: v3RollingQuery.data || {},
     v2Error: v2Query.error,
     v3Error: v3Query.error,
     v2IsLoading: v2Query.isLoading,

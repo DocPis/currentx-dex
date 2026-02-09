@@ -121,8 +121,8 @@ export default function PoolsSection({ onSelectPool }) {
   const {
     v2Pools,
     v3Pools,
-    v2DayData,
-    v3DayData,
+    v2RollingData,
+    v3RollingData,
     v2Error,
     v3Error,
     v2IsLoading,
@@ -144,21 +144,23 @@ export default function PoolsSection({ onSelectPool }) {
   const combinedPools = useMemo(() => {
     const list = [];
     v3Pools.forEach((pool) => {
-      const day = v3DayData[pool.id?.toLowerCase?.() || ""] || {};
+      const roll = v3RollingData[pool.id?.toLowerCase?.() || ""] || {};
       const liquidityUsd =
-        day.tvlUsd !== undefined && day.tvlUsd !== null
-          ? day.tvlUsd
+        roll.tvlUsd !== undefined && roll.tvlUsd !== null
+          ? roll.tvlUsd
           : pool.tvlUsd ?? null;
       const volume24hUsd =
-        day.volumeUsd !== undefined && day.volumeUsd !== null ? day.volumeUsd : null;
+        roll.volumeUsd !== undefined && roll.volumeUsd !== null
+          ? roll.volumeUsd
+          : null;
       const feeTierNum = Number(pool.feeTier);
       const feeRate =
         Number.isFinite(feeTierNum) && feeTierNum > 0
           ? feeTierNum / 1_000_000
           : null;
       const fees24hUsd =
-        day.feesUsd !== undefined && day.feesUsd !== null
-          ? day.feesUsd
+        roll.feesUsd !== undefined && roll.feesUsd !== null
+          ? roll.feesUsd
           : volume24hUsd !== null && feeRate !== null
           ? volume24hUsd * feeRate
           : null;
@@ -177,10 +179,10 @@ export default function PoolsSection({ onSelectPool }) {
       });
     });
     v2Pools.forEach((pool) => {
-      const day = v2DayData[pool.id?.toLowerCase?.() || ""] || {};
+      const roll = v2RollingData[pool.id?.toLowerCase?.() || ""] || {};
       let liquidityUsd =
-        day.tvlUsd !== undefined && day.tvlUsd !== null
-          ? day.tvlUsd
+        roll.tvlUsd !== undefined && roll.tvlUsd !== null
+          ? roll.tvlUsd
           : pool.tvlUsd ?? null;
       if (!liquidityUsd || liquidityUsd <= 0) {
         const stable0 = isStableSymbol(pool.token0Symbol);
@@ -192,7 +194,9 @@ export default function PoolsSection({ onSelectPool }) {
         }
       }
       const volume24hUsd =
-        day.volumeUsd !== undefined && day.volumeUsd !== null ? day.volumeUsd : null;
+        roll.volumeUsd !== undefined && roll.volumeUsd !== null
+          ? roll.volumeUsd
+          : null;
       const feeRate = 0.003;
       const fees24hUsd =
         volume24hUsd !== null ? volume24hUsd * feeRate : null;
@@ -211,7 +215,7 @@ export default function PoolsSection({ onSelectPool }) {
       });
     });
     return list;
-  }, [v2Pools, v3Pools, v2DayData, v3DayData]);
+  }, [v2Pools, v3Pools, v2RollingData, v3RollingData]);
 
   // Protocol rolling totals are derived from the pools list (rolling 24h when available).
   const protocolVolume24h = useMemo(() => {

@@ -1998,6 +1998,320 @@ const runWithConcurrency = async (items = [], limit = 4, worker) => {
 const normalizeIds = (ids = []) =>
   Array.from(new Set((ids || []).filter(Boolean).map((id) => id.toLowerCase())));
 
+// Fetch rolling 24h stats for V2 pools using hourly data.
+export async function fetchV2PoolsHourData(ids = [], hours = 24) {
+  if (SUBGRAPH_MISSING_KEY) return {};
+  const list = normalizeIds(ids);
+  if (!list.length) return {};
+
+  const count = Math.max(1, Math.min(Number(hours) || 24, 168));
+  const chunks = chunkArray(list, 8);
+  const out = {};
+  const candidates = ["pair", "pairAddress"];
+  const orderVariants = ["hourStartUnix", "periodStartUnix", "date"];
+  const selectVariants = [
+    `
+      hourlyVolumeUSD
+      reserveUSD
+      feesUSD
+    `,
+    `
+      hourlyVolumeUSD
+      reserveUSD
+    `,
+    `
+      volumeUSD
+      reserveUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      reserveUSD
+    `,
+    `
+      hourlyVolumeUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      hourlyVolumeUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+    `,
+  ];
+
+  const readVolume = (row) =>
+    row?.hourlyVolumeUSD !== undefined && row?.hourlyVolumeUSD !== null
+      ? row.hourlyVolumeUSD
+      : row?.volumeUSD;
+  const readTvl = (row) =>
+    row?.reserveUSD !== undefined && row?.reserveUSD !== null
+      ? row.reserveUSD
+      : row?.totalValueLockedUSD;
+
+  const parseRows = (rows) => {
+    if (!rows?.length) return null;
+    const volumeUsd = rows.reduce(
+      (sum, row) => sum + toNumberSafe(readVolume(row)),
+      0
+    );
+    const hasFees = rows.some(
+      (row) => row?.feesUSD !== undefined && row?.feesUSD !== null
+    );
+    const feesUsd = hasFees
+      ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
+      : null;
+    const tvlUsd = toNumberSafe(readTvl(rows[0]));
+    return {
+      volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
+      feesUsd,
+      tvlUsd,
+      hours: rows.length,
+    };
+  };
+
+  const runChunk = async (chunk, field, orderBy, select) => {
+    const query = `
+      query V2PoolHourData {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: pairHourDatas(
+            first: ${count}
+            orderBy: ${orderBy}
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            ${select}
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
+
+    const res = await postSubgraph(query);
+    chunk.forEach((id, idx) => {
+      const rows = res?.[`p${idx}`] || [];
+      const parsed = parseRows(rows);
+      if (!parsed) return;
+      out[id] = parsed;
+    });
+  };
+
+  let resolvedSelect = null;
+  let resolvedField = null;
+  let resolvedOrderBy = null;
+  if (chunks.length) {
+    let matched = false;
+    for (const select of selectVariants) {
+      for (const orderBy of orderVariants) {
+        for (const field of candidates) {
+          try {
+            await runChunk(chunks[0], field, orderBy, select);
+            resolvedSelect = select;
+            resolvedField = field;
+            resolvedOrderBy = orderBy;
+            matched = true;
+            break;
+          } catch (err) {
+            const message = err?.message || "";
+            const orderByMissing =
+              message.includes("PairHourData_orderBy") ||
+              message.includes("PairHourData_orderBy!") ||
+              message.includes("pairHourData_orderBy") ||
+              message.includes("pairHourDatas_orderBy") ||
+              message.includes("is not a valid PairHourData_orderBy");
+            if (isSchemaFieldMissing(message) || orderByMissing) {
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (matched) break;
+      }
+      if (matched) break;
+    }
+  }
+
+  if (resolvedSelect && resolvedField && resolvedOrderBy) {
+    await Promise.all(
+      chunks.slice(1).map(async (chunk) => {
+        try {
+          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect);
+        } catch {
+          // ignore chunk failures to keep partial data
+        }
+      })
+    );
+  }
+
+  return out;
+}
+
+// Fetch rolling 24h stats for V3 pools using hourly data.
+export async function fetchV3PoolsHourData(ids = [], hours = 24) {
+  if (SUBGRAPH_V3_MISSING_KEY) return {};
+  const list = normalizeIds(ids);
+  if (!list.length) return {};
+
+  const count = Math.max(1, Math.min(Number(hours) || 24, 168));
+  const chunks = chunkArray(list, 8);
+  const out = {};
+  const candidates = ["pool", "poolAddress"];
+  const orderVariants = ["periodStartUnix", "hourStartUnix", "date"];
+  const selectVariants = [
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+    `,
+    `
+      volumeUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+    `,
+  ];
+
+  const readTvl = (row) =>
+    row?.tvlUSD !== undefined && row?.tvlUSD !== null
+      ? row.tvlUSD
+      : row?.totalValueLockedUSD;
+
+  const parseRows = (rows) => {
+    if (!rows?.length) return null;
+    const volumeUsd = rows.reduce(
+      (sum, row) => sum + toNumberSafe(row?.volumeUSD),
+      0
+    );
+    const hasFees = rows.some(
+      (row) => row?.feesUSD !== undefined && row?.feesUSD !== null
+    );
+    const feesUsd = hasFees
+      ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
+      : null;
+    const tvlUsd = toNumberSafe(readTvl(rows[0]));
+    return {
+      volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
+      feesUsd,
+      tvlUsd,
+      hours: rows.length,
+    };
+  };
+
+  const runChunk = async (chunk, field, orderBy, select) => {
+    const query = `
+      query V3PoolHourData {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: poolHourDatas(
+            first: ${count}
+            orderBy: ${orderBy}
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            ${select}
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
+
+    const res = await postSubgraphV3(query);
+    chunk.forEach((id, idx) => {
+      const rows = res?.[`p${idx}`] || [];
+      const parsed = parseRows(rows);
+      if (!parsed) return;
+      out[id] = parsed;
+    });
+  };
+
+  let resolvedSelect = null;
+  let resolvedField = null;
+  let resolvedOrderBy = null;
+  if (chunks.length) {
+    let matched = false;
+    for (const select of selectVariants) {
+      for (const orderBy of orderVariants) {
+        for (const field of candidates) {
+          try {
+            await runChunk(chunks[0], field, orderBy, select);
+            resolvedSelect = select;
+            resolvedField = field;
+            resolvedOrderBy = orderBy;
+            matched = true;
+            break;
+          } catch (err) {
+            const message = err?.message || "";
+            const orderByMissing =
+              message.includes("PoolHourData_orderBy") ||
+              message.includes("PoolHourData_orderBy!") ||
+              message.includes("poolHourData_orderBy") ||
+              message.includes("poolHourDatas_orderBy") ||
+              message.includes("is not a valid PoolHourData_orderBy");
+            if (isSchemaFieldMissing(message) || orderByMissing) {
+              continue;
+            }
+            throw err;
+          }
+        }
+        if (matched) break;
+      }
+      if (matched) break;
+    }
+  }
+
+  if (resolvedSelect && resolvedField && resolvedOrderBy) {
+    await Promise.all(
+      chunks.slice(1).map(async (chunk) => {
+        try {
+          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect);
+        } catch {
+          // ignore chunk failures to keep partial data
+        }
+      })
+    );
+  }
+
+  return out;
+}
+
 export async function fetchV2PoolsDayData(ids = []) {
   if (SUBGRAPH_MISSING_KEY) return {};
   const list = normalizeIds(ids);
