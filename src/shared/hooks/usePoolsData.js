@@ -12,7 +12,6 @@ const PAGE_SIZE = 50;
 const REFRESH_MS = 5 * 60 * 1000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const POOLS_CACHE_KEY = "cx_pools_cache_v1";
-const POOLS_ROLLING_CACHE_KEY = "cx_pools_rolling_cache_v1";
 
 const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined;
@@ -50,9 +49,7 @@ const buildPageParams = (pages = []) =>
 
 export function usePoolsData() {
   const cachedPools = useMemo(() => readCache(POOLS_CACHE_KEY), []);
-  const cachedRolling = useMemo(() => readCache(POOLS_ROLLING_CACHE_KEY), []);
   const poolsCacheRef = useRef(cachedPools);
-  const rollingCacheRef = useRef(cachedRolling);
 
   const v3Query = useInfiniteQuery({
     queryKey: ["pools", "v3"],
@@ -113,8 +110,6 @@ export function usePoolsData() {
     queryKey: ["pools", "v2-roll-24h", v2Ids],
     queryFn: () => fetchV2PoolsHourData(v2Ids, 24),
     enabled: v2Ids.length > 0,
-    initialData: cachedRolling?.v2RollingData || undefined,
-    initialDataUpdatedAt: cachedRolling?.ts,
     refetchOnMount: "always",
     staleTime: 0,
     refetchInterval: REFRESH_MS,
@@ -125,8 +120,6 @@ export function usePoolsData() {
     queryKey: ["pools", "v3-roll-24h", v3Ids],
     queryFn: () => fetchV3PoolsHourData(v3Ids, 24),
     enabled: v3Ids.length > 0,
-    initialData: cachedRolling?.v3RollingData || undefined,
-    initialDataUpdatedAt: cachedRolling?.ts,
     refetchOnMount: "always",
     staleTime: 0,
     refetchInterval: REFRESH_MS,
@@ -145,21 +138,6 @@ export function usePoolsData() {
     poolsCacheRef.current = next;
     writeCache(POOLS_CACHE_KEY, next);
   }, [v2Query.data, v3Query.data]);
-
-  useEffect(() => {
-    const v2RollingData = v2RollingQuery.data;
-    const v3RollingData = v3RollingQuery.data;
-    if (!v2RollingData && !v3RollingData) return;
-    const next = {
-      ts: Date.now(),
-      v2RollingData:
-        v2RollingData ?? rollingCacheRef.current?.v2RollingData ?? {},
-      v3RollingData:
-        v3RollingData ?? rollingCacheRef.current?.v3RollingData ?? {},
-    };
-    rollingCacheRef.current = next;
-    writeCache(POOLS_ROLLING_CACHE_KEY, next);
-  }, [v2RollingQuery.data, v3RollingQuery.data]);
 
   const refetchAll = useCallback(async () => {
     await Promise.all([

@@ -1140,6 +1140,34 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
   const listV3Pools = useCallback(async (factory, tokenA, tokenB) => {
     if (!factory || !tokenA || !tokenB) return [];
+    const factoryAddr =
+      factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
+    const provider = factory?.runner || factory?.provider;
+    const iface = new Interface(UNIV3_FACTORY_ABI);
+    const calls = V3_FEE_TIERS.map((fee) => ({
+      target: factoryAddr,
+      callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
+    }));
+    try {
+      const res = await multicall(calls, provider);
+      const parsed = res
+        .map((r, idx) => {
+          if (!r?.success) return null;
+          try {
+            const pool = iface.decodeFunctionResult("getPool", r.returnData)[0];
+            if (pool && pool !== ZERO_ADDRESS) {
+              return { fee: V3_FEE_TIERS[idx], pool };
+            }
+          } catch {
+            // ignore decode failures
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (parsed.length) return parsed;
+    } catch {
+      // ignore multicall failures and fall back to direct RPCs
+    }
     const results = await Promise.all(
       V3_FEE_TIERS.map(async (fee) => {
         try {
@@ -1154,6 +1182,87 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       })
     );
     return results.filter(Boolean);
+  }, []);
+
+  const getV2PairsForMids = useCallback(async (factory, tokenA, tokenB, mids) => {
+    const factoryAddr =
+      factory?.target || factory?.address || UNIV2_FACTORY_ADDRESS;
+    const provider = factory?.runner || factory?.provider;
+    const iface = new Interface(UNIV2_FACTORY_ABI);
+    const calls = [];
+    const meta = [];
+
+    const pushCall = (kind, mid, a, b) => {
+      calls.push({
+        target: factoryAddr,
+        callData: iface.encodeFunctionData("getPair", [a, b]),
+      });
+      meta.push({ kind, mid });
+    };
+
+    pushCall("direct", null, tokenA, tokenB);
+    (mids || []).forEach((mid) => {
+      if (!mid) return;
+      pushCall("A", mid, tokenA, mid);
+      pushCall("B", mid, mid, tokenB);
+    });
+
+    const parsePair = (res, idx) => {
+      if (!res?.success) return null;
+      try {
+        const pair = iface.decodeFunctionResult("getPair", res.returnData)[0];
+        if (!pair || pair === ZERO_ADDRESS) return null;
+        return { pair, meta: meta[idx] };
+      } catch {
+        return null;
+      }
+    };
+
+    try {
+      const res = await multicall(calls, provider);
+      const hopMap = new Map();
+      let directPair = null;
+      res.forEach((r, idx) => {
+        const parsed = parsePair(r, idx);
+        if (!parsed) return;
+        if (parsed.meta.kind === "direct") {
+          directPair = parsed.pair;
+          return;
+        }
+        const mid = parsed.meta.mid;
+        if (!mid) return;
+        const entry = hopMap.get(mid) || {};
+        if (parsed.meta.kind === "A") entry.pairA = parsed.pair;
+        if (parsed.meta.kind === "B") entry.pairB = parsed.pair;
+        hopMap.set(mid, entry);
+      });
+      const hopPairs = [];
+      hopMap.forEach((value, mid) => {
+        if (value?.pairA && value?.pairB) {
+          hopPairs.push({ mid, pairA: value.pairA, pairB: value.pairB });
+        }
+      });
+      return { directPair, hopPairs };
+    } catch {
+      // fall back to direct RPC calls
+    }
+
+    const directPair = await factory.getPair(tokenA, tokenB).catch(() => ZERO_ADDRESS);
+    const hopPairs = (mids || []).length
+      ? await Promise.all(
+          mids.map(async (mid) => {
+            const pairA = await factory.getPair(tokenA, mid).catch(() => ZERO_ADDRESS);
+            if (!pairA || pairA === ZERO_ADDRESS) return null;
+            const pairB = await factory.getPair(mid, tokenB).catch(() => ZERO_ADDRESS);
+            if (!pairB || pairB === ZERO_ADDRESS) return null;
+            return { mid, pairA, pairB };
+          })
+        )
+      : [];
+    return {
+      directPair,
+      hopPairs: hopPairs.filter(Boolean),
+    };
   }, []);
 
   const quoteV3Route = useCallback(
@@ -1498,7 +1607,13 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         if (cached.value) return cached.value;
       }
       const buildPromise = (async () => {
-        const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
+        const candidateMids = getRouteCandidates(a, b);
+        const { directPair, hopPairs } = await getV2PairsForMids(
+          factory,
+          a,
+          b,
+          candidateMids
+        );
         const hasDirect = directPair && directPair !== ZERO_ADDRESS;
         const directRoute = hasDirect
           ? {
@@ -1509,26 +1624,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             }
           : null;
 
-        const candidateMids = getRouteCandidates(a, b);
-        const hopPairs = candidateMids.length
-          ? await Promise.all(
-              candidateMids.map(async (mid) => {
-                const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
-                if (!pairA || pairA === ZERO_ADDRESS) return null;
-                const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
-                if (!pairB || pairB === ZERO_ADDRESS) return null;
-                return { mid, pairA, pairB };
-              })
-            )
-          : [];
-        const hopRoutes = hopPairs
-          .filter(Boolean)
-          .map((pair) => ({
-            protocol: "V2",
-            kind: "hop",
-            path: [a, pair.mid, b],
-            pairs: [pair.pairA, pair.pairB],
-          }));
+        const hopRoutes = (hopPairs || []).map((pair) => ({
+          protocol: "V2",
+          kind: "hop",
+          path: [a, pair.mid, b],
+          pairs: [pair.pairA, pair.pairB],
+        }));
 
         return { directRoute, hopRoutes };
       })();
@@ -1546,6 +1647,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       buyMeta?.address,
       buyToken,
       getRouteCandidates,
+      getV2PairsForMids,
       hasV2Support,
       sellMeta?.address,
       sellToken,
@@ -1563,28 +1665,20 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
-      const directPair = await factory.getPair(a, b).catch(() => ZERO_ADDRESS);
-      const hasDirect = directPair && directPair !== ZERO_ADDRESS;
       const candidateMids = getRouteCandidates(a, b);
-      const hopPairs = candidateMids.length
-        ? await Promise.all(
-            candidateMids.map(async (mid) => {
-              const pairA = await factory.getPair(a, mid).catch(() => ZERO_ADDRESS);
-              if (!pairA || pairA === ZERO_ADDRESS) return null;
-              const pairB = await factory.getPair(mid, b).catch(() => ZERO_ADDRESS);
-              if (!pairB || pairB === ZERO_ADDRESS) return null;
-              return { mid, pairA, pairB };
-            })
-          )
-        : [];
-      const hopRoutes = hopPairs
-        .filter(Boolean)
-        .map((pair) => ({
-          protocol: "V2",
-          kind: "hop",
-          path: [a, pair.mid, b],
-          pairs: [pair.pairA, pair.pairB],
-        }));
+      const { directPair, hopPairs } = await getV2PairsForMids(
+        factory,
+        a,
+        b,
+        candidateMids
+      );
+      const hasDirect = directPair && directPair !== ZERO_ADDRESS;
+      const hopRoutes = (hopPairs || []).map((pair) => ({
+        protocol: "V2",
+        kind: "hop",
+        path: [a, pair.mid, b],
+        pairs: [pair.pairA, pair.pairB],
+      }));
       const hasHop = hopRoutes.length > 0;
 
       if (!hasDirect && !hasHop) {
@@ -1635,6 +1729,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       buyMeta?.address,
       buyToken,
       getRouteCandidates,
+      getV2PairsForMids,
       hasV2Support,
       quoteV2Route,
       sellMeta?.address,
