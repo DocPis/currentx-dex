@@ -13,7 +13,6 @@ import {
   UNIV2_FACTORY_ADDRESS,
   getRegisteredCustomTokens,
   setRegisteredCustomTokens,
-  fetchMasterChefFarms,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
   CHAINLINK_ETH_USD_FEED_ADDRESS,
@@ -4270,30 +4269,6 @@ export default function LiquiditySection({
       setSubgraphError("");
       setTvlError("");
 
-      // Map farm emissions by pair (normalized symbol key)
-      const farmAprMap = {};
-      const farmAprByLp = {};
-      try {
-        const farms = await fetchMasterChefFarms();
-        (farms?.pools || []).forEach((farm) => {
-          const lpAddr = (farm.lpToken || "").toLowerCase();
-          if (lpAddr && farm.apr !== null && farm.apr !== undefined) {
-            farmAprByLp[lpAddr] = farm.apr;
-          }
-          const symbols = (farm.tokens || [])
-            .map((t) => (t?.symbol || "").toUpperCase())
-            .filter(Boolean)
-            .map((s) => (s === "ETH" ? "WETH" : s));
-          if (symbols.length !== 2) return;
-          const key = symbols.sort().join("-");
-          if (farm.apr !== null && farm.apr !== undefined) {
-            farmAprMap[key] = farm.apr;
-          }
-        });
-      } catch {
-        // silently ignore farm fetch errors to avoid blocking pool stats
-      }
-
       await runWithConcurrency(trackedPools, 4, async (pool) => {
         const token0Addr =
           pool.token0Address ||
@@ -4391,22 +4366,6 @@ export default function LiquiditySection({
       });
 
       if (!cancelled && Object.keys(updates).length) {
-        // attach farm emission APR if available
-        Object.entries(updates).forEach(([id, data]) => {
-          const pool = trackedPools.find((p) => p.id === id);
-          if (!pool) return;
-          const normA = pool.token0Symbol === "ETH" ? "WETH" : pool.token0Symbol;
-          const normB = pool.token1Symbol === "ETH" ? "WETH" : pool.token1Symbol;
-          const key = [normA, normB].sort().join("-");
-          const lpKey = (data?.pairAddress || data?.pairId || "").toLowerCase();
-          const emissionApr =
-            (lpKey && farmAprByLp[lpKey] !== undefined
-              ? farmAprByLp[lpKey]
-              : farmAprMap[key]);
-          if (emissionApr !== undefined) {
-            updates[id] = { ...data, emissionApr };
-          }
-        });
         setPoolStats((prev) => ({ ...prev, ...updates }));
       }
       if (!cancelled) setPoolStatsReady(true);

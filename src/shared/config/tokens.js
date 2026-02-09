@@ -52,7 +52,7 @@ const RAW_TOKENS = {
     symbol: "CRX",
     name: "CurrentX",
     address: CRX_ADDRESS,
-    decimals: 6,
+    decimals: 18,
     logo: currentxLogo,
   },
   USDT0: {

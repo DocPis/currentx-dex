@@ -33,6 +33,7 @@ export const WUSDC_ADDRESS = active.addresses.WUSDC_ADDRESS;
 // Protocol contracts
 export const MASTER_CHEF_ADDRESS = active.addresses.MASTER_CHEF_ADDRESS;
 export const CRX_WETH_LP_ADDRESS = active.addresses.CRX_WETH_LP_ADDRESS;
+export const V3_STAKER_ADDRESS = active.addresses.V3_STAKER_ADDRESS;
 
 // Infra: high-precision timestamp oracle (microsecond)
 export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =
