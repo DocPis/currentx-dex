@@ -503,7 +503,28 @@ export default function Dashboard() {
   };
 
   const tvlChange = calcChange(tvlSeriesWithToday);
-  const volumeChange = calcChange(volumeSeriesWithToday, { preferNonZeroStart: true });
+  const calcRollingSumChange = (series, windowSize = 7) => {
+    if (!series?.length) return null;
+    const safeWindow = Math.max(1, Math.floor(windowSize));
+    if (series.length < safeWindow * 2) return null;
+    const sumWindow = (start, end) =>
+      series.slice(start, end).reduce((sum, point) => {
+        const value = Number(point?.value ?? 0);
+        return Number.isFinite(value) ? sum + value : sum;
+      }, 0);
+    const end = series.length;
+    const start = Math.max(0, end - safeWindow);
+    const prevEnd = start;
+    const prevStart = Math.max(0, prevEnd - safeWindow);
+    if (prevEnd <= prevStart) return null;
+    const currentSum = sumWindow(start, end);
+    const prevSum = sumWindow(prevStart, prevEnd);
+    const diff = currentSum - prevSum;
+    const pct = prevSum ? (diff / prevSum) * 100 : null;
+    return { diff, pct, window: safeWindow };
+  };
+
+  const volumeChange = calcRollingSumChange(volumeSeries, 7);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
@@ -579,7 +600,7 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Last {volumeHistory.length} days
+              Last 7 days
               {volumeChange && (
                 <span
                   className={`px-2 py-1 rounded-full border text-[11px] ${
