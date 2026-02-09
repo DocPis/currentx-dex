@@ -1177,6 +1177,7 @@ export default function LiquiditySection({
   const [v3FeeTier, setV3FeeTier] = useState(3000);
   const [v3Amount0, setV3Amount0] = useState("");
   const [v3Amount1, setV3Amount1] = useState("");
+  const [v3MintLastEdited, setV3MintLastEdited] = useState(null);
   const [v3MintUseEth0, setV3MintUseEth0] = useState(false);
   const [v3MintUseEth1, setV3MintUseEth1] = useState(false);
   const [v3RangeMode, setV3RangeMode] = useState("full");
@@ -1310,6 +1311,7 @@ export default function LiquiditySection({
   const v3DragDirtyRef = useRef(false);
   const v3RangeLowerRef = useRef(null);
   const v3RangeUpperRef = useRef(null);
+  const v3RangeMathRef = useRef(null);
   const v3ChartRef = useRef(null);
   const v3ChartMenuRef = useRef(null);
   const v3HoverIndexRef = useRef({ source: null, idx: null });
@@ -2068,6 +2070,7 @@ export default function LiquiditySection({
         v3Token0 === "ETH" ? 18 : v3Token0Meta?.decimals ?? 18;
       const next = sanitizeAmountInput(nextRaw, v3RangeMath?.dec0 ?? baseDec);
       setV3Amount0(next);
+      setV3MintLastEdited("token0");
       if (v3MintError) setV3MintError("");
       if (actionStatus) setActionStatus(null);
       const num = safeNumber(next);
@@ -2103,6 +2106,7 @@ export default function LiquiditySection({
     },
     [
       actionStatus,
+      setV3MintLastEdited,
       v3MintError,
       v3RangeMath,
       v3ReferencePrice,
@@ -2119,6 +2123,7 @@ export default function LiquiditySection({
         v3Token1 === "ETH" ? 18 : v3Token1Meta?.decimals ?? 18;
       const next = sanitizeAmountInput(nextRaw, v3RangeMath?.dec1 ?? baseDec);
       setV3Amount1(next);
+      setV3MintLastEdited("token1");
       if (v3MintError) setV3MintError("");
       if (actionStatus) setActionStatus(null);
       const num = safeNumber(next);
@@ -2154,6 +2159,7 @@ export default function LiquiditySection({
     },
     [
       actionStatus,
+      setV3MintLastEdited,
       v3MintError,
       v3RangeMath,
       v3ReferencePrice,
@@ -2163,6 +2169,39 @@ export default function LiquiditySection({
       v3Token0Meta,
     ]
   );
+
+  useEffect(() => {
+    const prev = v3RangeMathRef.current;
+    v3RangeMathRef.current = v3RangeMath;
+    if (!v3RangeMath || prev === v3RangeMath) return;
+    if (v3RangeSide !== "dual") return;
+    const amount0Num = safeNumber(v3Amount0);
+    const amount1Num = safeNumber(v3Amount1);
+    const inferredSide =
+      v3MintLastEdited ||
+      (amount0Num && !amount1Num
+        ? "token0"
+        : amount1Num && !amount0Num
+        ? "token1"
+        : amount0Num || amount1Num
+        ? "token0"
+        : null);
+    if (inferredSide === "token0" && amount0Num) {
+      applyV3MintAmount0(v3Amount0);
+      return;
+    }
+    if (inferredSide === "token1" && amount1Num) {
+      applyV3MintAmount1(v3Amount1);
+    }
+  }, [
+    v3RangeMath,
+    v3RangeSide,
+    v3MintLastEdited,
+    v3Amount0,
+    v3Amount1,
+    applyV3MintAmount0,
+    applyV3MintAmount1,
+  ]);
 
   const applyV3MintQuickFill = useCallback(
     (side, pct) => {

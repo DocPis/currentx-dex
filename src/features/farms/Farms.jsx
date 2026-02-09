@@ -975,7 +975,7 @@ function V3StakerList({ address, onConnect }) {
                               className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-white/5 bg-slate-900/40 px-3 py-2"
                             >
                               <div className="text-sm text-slate-100">
-                                #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
+                                NFT ID {pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
                                 {pos.token1Meta?.symbol || "Token1"} - Fee{" "}
                                 {(pos.fee / 10000).toFixed(2)}%
                               </div>
@@ -1014,7 +1014,7 @@ function V3StakerList({ address, onConnect }) {
                                 className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-white/5 bg-slate-900/40 px-3 py-2"
                               >
                                 <div className="text-sm text-slate-100">
-                                  #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
+                                  NFT ID {pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
                                   {pos.token1Meta?.symbol || "Token1"} - Fee{" "}
                                   {(pos.fee / 10000).toFixed(2)}%
                                   <span
