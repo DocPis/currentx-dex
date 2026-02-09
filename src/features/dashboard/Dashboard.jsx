@@ -225,152 +225,15 @@ function LineGlowChart({
             <div className="mb-2 whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900/95 px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/40">
               <div className="font-semibold text-slate-100">{activePoint.fullLabel || activePoint.label}</div>
               <div className="text-slate-300">
-                {label === "tvl" ? "TVL" : "Value"}: ${formatNumber(activePoint.value || 0)}
+                {label === "tvl"
+                  ? "TVL"
+                  : label === "volume"
+                  ? "Volume"
+                  : label === "fees"
+                  ? "Fees"
+                  : "Value"}: ${formatNumber(activePoint.value || 0)}
               </div>
               {activePoint.isLive && (
-                <div className="text-[10px] uppercase tracking-wide text-emerald-300/80">Live</div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
-        {ticks.map((i) => (
-          <span key={i}>{data[i]?.label || ""}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function BarGlowChart({
-  data,
-  height = 220,
-  color = "#4ade80",
-  label = "bars",
-}) {
-  const containerRef = useRef(null);
-  const [activeIndex, setActiveIndex] = useState(null);
-
-  if (!data || data.length === 0) {
-    return (
-      <div className="flex h-full items-center justify-center text-xs text-slate-500">
-        No data
-      </div>
-    );
-  }
-
-  const values = data.map((d) => d.value);
-  const max = Math.max(...values, 1);
-  const minWidth = 520;
-  const gap = 6;
-  const width = Math.max(minWidth, values.length * 28);
-  const barWidth = Math.max(6, (width - gap * (values.length - 1)) / values.length);
-  const barPositions = values.map((v, i) => {
-    const x = i * (barWidth + gap);
-    const h = (v / max) * (height - 10);
-    const y = height - h;
-    return { x, y, h };
-  });
-  const activeBar =
-    activeIndex !== null && barPositions[activeIndex]
-      ? {
-          ...data[activeIndex],
-          ...barPositions[activeIndex],
-        }
-      : null;
-
-  const ticks = [0, Math.floor(values.length / 2), values.length - 1].filter(
-    (i, idx, arr) => arr.indexOf(i) === idx && i >= 0 && i < values.length
-  );
-
-  const handleMove = (clientX) => {
-    const rect = containerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const relativeX = clientX - rect.left;
-    const ratio = Math.min(Math.max(relativeX / rect.width, 0), 1);
-    const idx = Math.round(ratio * (values.length - 1));
-    setActiveIndex(idx);
-  };
-
-  const clearActive = () => setActiveIndex(null);
-
-  return (
-    <div
-      ref={containerRef}
-      className="relative h-full"
-      onMouseMove={(e) => handleMove(e.clientX)}
-      onMouseLeave={clearActive}
-      onTouchMove={(e) => {
-        if (e.touches?.[0]) handleMove(e.touches[0].clientX);
-      }}
-      onTouchEnd={clearActive}
-      onTouchCancel={clearActive}
-    >
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="w-full h-full"
-        preserveAspectRatio="none"
-      >
-        <defs>
-          <filter id={`bar-glow-${label}`} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-            <feMerge>
-              <feMergeNode in="coloredBlur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <linearGradient id={`bar-grad-${label}`} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.9" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.35" />
-          </linearGradient>
-          <pattern id={`bar-grid-${label}`} width="36" height="18" patternUnits="userSpaceOnUse">
-            <path d="M 36 0 L 0 0 0 18" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill={`url(#bar-grid-${label})`} opacity="0.6" />
-        <rect width="100%" height="100%" fill={`url(#bar-grad-${label})`} opacity="0.12" />
-        {barPositions.map(({ x, y, h }, i) => (
-          <rect
-            key={`${label}-${i}`}
-            x={x}
-            y={y}
-            width={barWidth}
-            height={h}
-            fill={`url(#bar-grad-${label})`}
-            opacity="1"
-            filter={`url(#bar-glow-${label})`}
-          />
-        ))}
-        {activeBar && (
-          <rect
-            x={activeBar.x - 1}
-            y={0}
-            width={barWidth + 2}
-            height={height}
-            fill={color}
-            opacity="0.08"
-          />
-        )}
-      </svg>
-      {activeBar && (
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ left: 0, top: 0 }}
-        >
-          <div
-            className="absolute -translate-x-1/2"
-            style={{
-              left: `${((activeBar.x + barWidth / 2) / width) * 100}%`,
-              top: `${Math.max(0, (activeBar.y / height) * 100 - 8)}%`,
-            }}
-          >
-            <div className="mb-2 whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900/95 px-2.5 py-1.5 text-[11px] shadow-lg shadow-black/40">
-              <div className="font-semibold text-slate-100">{activeBar.fullLabel || activeBar.label}</div>
-              <div className="text-slate-300">
-                {label === "volume" ? "Volume" : "Value"}: ${formatNumber(activeBar.value || 0)}
-              </div>
-              {activeBar.isLive && (
                 <div className="text-[10px] uppercase tracking-wide text-emerald-300/80">Live</div>
               )}
             </div>
@@ -393,6 +256,7 @@ export default function Dashboard() {
   const volumeHistory = data.volumeHistory;
   const topPairs = data.topPairs;
   const tvlStartDate = data.tvlStartDate;
+  const volumeStartDate = data.volumeStartDate;
   const tvlSeries = useMemo(() => {
     const dayMs = 86400000;
     const filtered = tvlHistory
@@ -433,9 +297,14 @@ export default function Dashboard() {
     return filled;
   }, [tvlHistory, tvlStartDate]);
 
+  const volumeHistoryFiltered = useMemo(() => {
+    if (!volumeStartDate) return volumeHistory;
+    return volumeHistory.filter((d) => d.date >= volumeStartDate);
+  }, [volumeHistory, volumeStartDate]);
+
   const volumeSeries = useMemo(
     () =>
-      volumeHistory
+      volumeHistoryFiltered
         .slice()
         .reverse()
         .map((d) => ({
@@ -444,7 +313,24 @@ export default function Dashboard() {
           value: d.volumeUsd,
           rawDate: d.date,
         })),
-    [volumeHistory]
+    [volumeHistoryFiltered]
+  );
+
+  const feesSeries = useMemo(
+    () =>
+      volumeHistoryFiltered
+        .slice()
+        .reverse()
+        .map((d) => {
+          const feeValue = Number(d.feesUsd);
+          return {
+            label: formatDateLabel(d.date),
+            fullLabel: formatDateTooltip(d.date),
+            value: Number.isFinite(feeValue) ? feeValue : 0,
+            rawDate: d.date,
+          };
+        }),
+    [volumeHistoryFiltered]
   );
 
   const latestDay = volumeHistory?.[0];
@@ -551,17 +437,7 @@ export default function Dashboard() {
             )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Total TVL" value={stats?.totalLiquidityUsd} />
-        <StatCard label="Total Volume" value={stats?.totalVolumeUsd} />
-        <StatCard
-          label="24h Volume"
-          value={dailyVolumeUsd}
-        />
-        <StatCard label="24h Fees" value={dailyFees} />
-      </div>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -574,7 +450,7 @@ export default function Dashboard() {
               <span className="h-2 w-2 rounded-full bg-sky-400" />
             </div>
           </div>
-          <div className="h-56">
+          <div className="h-48">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
@@ -600,31 +476,47 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Last 7 days
-              {volumeChange && (
-                <span
-                  className={`px-2 py-1 rounded-full border text-[11px] ${
-                    volumeChange.diff >= 0
-                      ? "border-emerald-400/40 text-emerald-200 bg-emerald-400/10"
-                      : "border-rose-400/40 text-rose-200 bg-rose-400/10"
-                  }`}
-                >
-                  {volumeChange.diff >= 0 ? "+" : ""}
-                  {formatNumber(Math.abs(volumeChange.diff))} ({volumeChange.pct ? volumeChange.pct.toFixed(1) : "0"}%)
-                </span>
-              )}
             </div>
           </div>
-          <div className="h-56">
+          <div className="h-48">
             {isLoading ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-500">
                 Loading...
               </div>
             ) : (
-              <BarGlowChart
+              <LineGlowChart
                 data={volumeSeriesWithToday}
-                color="#38bdf8"
+                color="#34d399"
                 label="volume"
+                topPaddingRatio={0.2}
+              />
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-sm text-slate-400">Protocol fees (24h)</div>
+              <div className="text-xl font-semibold">
+                ${formatNumber(dailyFees)}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span className="h-2 w-2 rounded-full bg-amber-400" />
+            </div>
+          </div>
+          <div className="h-48">
+            {isLoading ? (
+              <div className="flex h-full items-center justify-center text-sm text-slate-500">
+                Loading...
+              </div>
+            ) : (
+              <LineGlowChart
+                data={feesSeries}
+                color="#f59e0b"
+                label="fees"
+                topPaddingRatio={0.2}
               />
             )}
           </div>
