@@ -318,12 +318,12 @@ export default function App() {
         <div className="flex flex-wrap justify-center gap-3 text-xs sm:text-sm">
           {[
             { id: "dashboard", label: "Dashboard" },
-            { id: "points", label: "Points" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
             { id: "pools", label: "Pools" },
             { id: "farms", label: "Farms" },
             { id: "megavault", label: "MegaVault" },
+            { id: "points", label: "Points" },
           ].map((item) => (
             <button
               key={item.id}
@@ -340,7 +340,7 @@ export default function App() {
                 tab === item.id
                   ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
                   : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
-              }`}
+              } ${item.id === "points" ? "sm:ml-auto" : ""}`}
             >
               {item.label}
             </button>
