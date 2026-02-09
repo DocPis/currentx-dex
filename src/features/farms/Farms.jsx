@@ -1,6 +1,6 @@
 // src/features/farms/Farms.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AbiCoder, Contract, formatUnits } from "ethers";
+import { AbiCoder, Contract, formatUnits, isAddress, parseUnits } from "ethers";
 import {
   EXPLORER_BASE_URL,
   NETWORK_NAME,
@@ -22,6 +22,7 @@ import {
   V3_STAKER_DEPLOY_BLOCK,
   fetchV3StakerDepositsForUser,
   fetchV3StakerIncentives,
+  getIncentiveId,
 } from "../../shared/services/v3Staker";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
@@ -64,6 +65,20 @@ const statusLabel = (now, start, end) => {
 };
 
 const shorten = (addr) => (!addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`);
+const parseDateToSec = (value) => {
+  if (!value) return 0;
+  const ts = Date.parse(value);
+  if (!Number.isFinite(ts)) return 0;
+  return Math.floor(ts / 1000);
+};
+const formatDuration = (seconds) => {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "--";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  const mins = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${mins}m`;
+};
 
 export default function Farms({ address, onConnect }) {
   return (
@@ -92,6 +107,21 @@ function V3StakerList({ address, onConnect }) {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState(null);
   const [action, setAction] = useState({ loading: false, key: "", error: "", hash: "" });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createForm, setCreateForm] = useState({
+    rewardToken: TOKENS.CRX?.address || "",
+    rewardAmount: "",
+    pool: "",
+    startTime: "",
+    endTime: "",
+    refundee: "",
+  });
+  const [createMeta, setCreateMeta] = useState({
+    rewardTokenMeta: null,
+    poolMeta: null,
+  });
   const tokenMetaCache = useRef({});
   const poolMetaCache = useRef({});
 
@@ -277,6 +307,37 @@ function V3StakerList({ address, onConnect }) {
   }, [address]);
 
   useEffect(() => {
+    setCreateForm((prev) => ({
+      ...prev,
+      refundee: prev.refundee || address || "",
+    }));
+  }, [address]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const provider = getReadOnlyProvider(false, true);
+      const rewardToken = createForm.rewardToken;
+      const poolAddr = createForm.pool;
+      let rewardTokenMeta = null;
+      let poolMeta = null;
+      if (isAddress(rewardToken)) {
+        rewardTokenMeta = await loadTokenMeta(provider, rewardToken);
+      }
+      if (isAddress(poolAddr)) {
+        poolMeta = await loadPoolMeta(provider, poolAddr);
+      }
+      if (!cancelled) {
+        setCreateMeta({ rewardTokenMeta, poolMeta });
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [createForm.rewardToken, createForm.pool]);
+
+  useEffect(() => {
     let cancelled = false;
     const loadStakeInfo = async () => {
       if (!expanded) return;
@@ -350,6 +411,89 @@ function V3StakerList({ address, onConnect }) {
         refundee: incentive.refundee,
       },
     ]);
+  };
+
+  const createKey = useMemo(() => {
+    const rewardToken = createForm.rewardToken;
+    const pool = createForm.pool;
+    const refundee = createForm.refundee;
+    const startTime = parseDateToSec(createForm.startTime);
+    const endTime = parseDateToSec(createForm.endTime);
+    if (!isAddress(rewardToken) || !isAddress(pool) || !isAddress(refundee)) return null;
+    if (!startTime || !endTime || endTime <= startTime) return null;
+    return { rewardToken, pool, startTime, endTime, refundee };
+  }, [createForm]);
+
+  const createIncentiveId = useMemo(() => {
+    if (!createKey) return "";
+    try {
+      return getIncentiveId(createKey);
+    } catch {
+      return "";
+    }
+  }, [createKey]);
+
+  const createDuration = useMemo(() => {
+    const start = parseDateToSec(createForm.startTime);
+    const end = parseDateToSec(createForm.endTime);
+    if (!start || !end || end <= start) return 0;
+    return end - start;
+  }, [createForm.startTime, createForm.endTime]);
+
+  const handleCreate = async () => {
+    if (!address) {
+      if (onConnect) onConnect();
+      return;
+    }
+    if (!createKey) {
+      setCreateError("Fill all fields with valid addresses and times.");
+      return;
+    }
+    const rewardMeta = createMeta.rewardTokenMeta;
+    if (!rewardMeta?.decimals && rewardMeta?.decimals !== 0) {
+      setCreateError("Reward token decimals not available.");
+      return;
+    }
+    const rewardAmount = createForm.rewardAmount;
+    if (!rewardAmount || Number(rewardAmount) <= 0) {
+      setCreateError("Enter a reward amount.");
+      return;
+    }
+    try {
+      setCreateLoading(true);
+      setCreateError("");
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const rewardWei = parseUnits(rewardAmount, rewardMeta.decimals || 18);
+      const rewardToken = new Contract(createKey.rewardToken, ERC20_ABI, signer);
+      const allowance = await rewardToken.allowance(address, V3_STAKER_ADDRESS);
+      if (allowance < rewardWei) {
+        const tx = await rewardToken.approve(V3_STAKER_ADDRESS, rewardWei);
+        await tx.wait();
+      }
+      const staker = new Contract(V3_STAKER_ADDRESS, V3_STAKER_ABI, signer);
+      const tx = await staker.createIncentive(createKey, rewardWei);
+      const receipt = await tx.wait();
+      setAction({
+        loading: false,
+        key: "create-incentive",
+        error: "",
+        hash: receipt?.hash || tx.hash,
+      });
+      setCreateOpen(false);
+      setCreateForm((prev) => ({
+        ...prev,
+        rewardAmount: "",
+        pool: "",
+        startTime: "",
+        endTime: "",
+      }));
+      await refreshAll();
+    } catch (e) {
+      setCreateError(e?.message || "Create incentive failed");
+    } finally {
+      setCreateLoading(false);
+    }
   };
 
   const handleStake = async (incentive, pos) => {
@@ -526,6 +670,13 @@ function V3StakerList({ address, onConnect }) {
               {formatNumber(activeCount)}
             </div>
           </div>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30"
+          >
+            Create Incentive
+          </button>
         </div>
       </div>
 
@@ -787,6 +938,177 @@ function V3StakerList({ address, onConnect }) {
           </div>
         )}
       </div>
+
+      {createOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={() => setCreateOpen(false)}
+          />
+          <div className="relative w-full max-w-xl rounded-3xl border border-slate-800 bg-[#0a0f24] p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-100">
+                  Create Incentive
+                </h3>
+                <p className="text-xs text-slate-400">
+                  On-chain creation of V3 incentives.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateOpen(false)}
+                className="px-2 py-1 text-xs rounded-full border border-slate-700 text-slate-300"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">Reward token</label>
+                  <input
+                    value={createForm.rewardToken}
+                    onChange={(e) =>
+                      setCreateForm((prev) => ({ ...prev, rewardToken: e.target.value }))
+                    }
+                    placeholder="0x..."
+                    className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                  />
+                  <div className="text-[11px] text-slate-500">
+                    {createMeta.rewardTokenMeta?.symbol || "Token"} ·{" "}
+                    {createMeta.rewardTokenMeta?.decimals ?? "--"} decimals
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">Reward amount</label>
+                  <input
+                    value={createForm.rewardAmount}
+                    onChange={(e) =>
+                      setCreateForm((prev) => ({ ...prev, rewardAmount: e.target.value }))
+                    }
+                    placeholder="0.0"
+                    className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">Pool address</label>
+                <input
+                  value={createForm.pool}
+                  onChange={(e) => setCreateForm((prev) => ({ ...prev, pool: e.target.value }))}
+                  placeholder="0x..."
+                  className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                />
+                <div className="text-[11px] text-slate-500">
+                  {createMeta.poolMeta
+                    ? `${createMeta.poolMeta.token0Meta?.symbol || "Token0"} / ${
+                        createMeta.poolMeta.token1Meta?.symbol || "Token1"
+                      } · Fee ${((createMeta.poolMeta.fee || 0) / 10000).toFixed(2)}%`
+                    : "Pool details will appear here"}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">Start time</label>
+                  <input
+                    type="datetime-local"
+                    value={createForm.startTime}
+                    onChange={(e) =>
+                      setCreateForm((prev) => ({ ...prev, startTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">End time</label>
+                  <input
+                    type="datetime-local"
+                    value={createForm.endTime}
+                    onChange={(e) =>
+                      setCreateForm((prev) => ({ ...prev, endTime: e.target.value }))
+                    }
+                    className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs text-slate-400">Refundee</label>
+                <div className="flex flex-col md:flex-row gap-2">
+                  <input
+                    value={createForm.refundee}
+                    onChange={(e) =>
+                      setCreateForm((prev) => ({ ...prev, refundee: e.target.value }))
+                    }
+                    placeholder="0x..."
+                    className="flex-1 rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCreateForm((prev) => ({ ...prev, refundee: address || "" }))
+                    }
+                    className="px-3 py-2 rounded-xl border border-slate-700 text-xs text-slate-200"
+                  >
+                    Use my address
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                Disclaimer: la creazione di incentives è riservata ai protocolli.
+                Procedendo confermi di essere autorizzato.
+              </div>
+
+              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-300">
+                <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-2">
+                  Details
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div>Reward token: {createForm.rewardToken || "--"}</div>
+                  <div>Pool: {createForm.pool || "--"}</div>
+                  <div>Refundee: {createForm.refundee || "--"}</div>
+                  <div>
+                    Start: {createForm.startTime ? formatTimestamp(parseDateToSec(createForm.startTime)) : "--"}
+                  </div>
+                  <div>
+                    End: {createForm.endTime ? formatTimestamp(parseDateToSec(createForm.endTime)) : "--"}
+                  </div>
+                  <div>Duration: {formatDuration(createDuration)}</div>
+                  <div>Reward amount: {createForm.rewardAmount || "0"}</div>
+                  <div>Incentive ID: {createIncentiveId || "--"}</div>
+                </div>
+              </div>
+
+              {createError && (
+                <div className="text-xs text-amber-300">{createError}</div>
+              )}
+
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCreateOpen(false)}
+                  className="px-3 py-2 rounded-xl border border-slate-700 text-xs text-slate-200"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={createLoading}
+                  onClick={handleCreate}
+                  className="px-3 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
+                >
+                  {createLoading ? "Creating..." : "Create Incentive"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

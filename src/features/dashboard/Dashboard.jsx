@@ -385,48 +385,6 @@ export default function Dashboard() {
     return todayPoint ? [...volumeSeries, todayPoint] : volumeSeries;
   }, [volumeSeries, todayVolume, latestVolumeDate]);
 
-  const calcChange = (series, options = {}) => {
-    if (!series?.length || series.length < 2) return null;
-    let startIdx = 0;
-    if (options.preferNonZeroStart) {
-      const idx = series.findIndex((point) => {
-        const value = Number(point?.value ?? 0);
-        return Number.isFinite(value) && value > 0;
-      });
-      if (idx >= 0 && idx < series.length - 1) {
-        startIdx = idx;
-      }
-    }
-    const first = Number(series[startIdx]?.value ?? 0);
-    const last = Number(series[series.length - 1]?.value ?? 0);
-    const diff = last - first;
-    const pct = first ? (diff / first) * 100 : null;
-    return { diff, pct };
-  };
-
-  const tvlChange = calcChange(tvlSeriesWithToday);
-  const calcRollingSumChange = (series, windowSize = 7) => {
-    if (!series?.length) return null;
-    const safeWindow = Math.max(1, Math.floor(windowSize));
-    if (series.length < safeWindow * 2) return null;
-    const sumWindow = (start, end) =>
-      series.slice(start, end).reduce((sum, point) => {
-        const value = Number(point?.value ?? 0);
-        return Number.isFinite(value) ? sum + value : sum;
-      }, 0);
-    const end = series.length;
-    const start = Math.max(0, end - safeWindow);
-    const prevEnd = start;
-    const prevStart = Math.max(0, prevEnd - safeWindow);
-    if (prevEnd <= prevStart) return null;
-    const currentSum = sumWindow(start, end);
-    const prevSum = sumWindow(prevStart, prevEnd);
-    const diff = currentSum - prevSum;
-    const pct = prevSum ? (diff / prevSum) * 100 : null;
-    return { diff, pct, window: safeWindow };
-  };
-
-  const volumeChange = calcRollingSumChange(volumeSeries, 7);
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">

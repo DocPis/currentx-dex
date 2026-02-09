@@ -137,7 +137,6 @@ export default function PoolsSection({ onSelectPool }) {
     v3HasNextPage,
     fetchNextV2,
     fetchNextV3,
-    refetchAll,
   } = usePoolsData();
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
