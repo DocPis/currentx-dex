@@ -452,12 +452,29 @@ export default function PointsPage({ address, onConnect }) {
             The boosted cap is 10x your active LP USD value on CRX/ETH and CRX/USDM.
           </AccordionItem>
           <AccordionItem title="Tier multipliers">
-            {MULTIPLIER_TIERS.map((tier) => (
-              <div key={tier.label} className="flex items-center justify-between">
-                <span>{tier.label}</span>
-                <span>{tier.multiplier}x</span>
-              </div>
-            ))}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              {MULTIPLIER_TIERS.map((tier) => (
+                <div
+                  key={tier.label}
+                  className="group relative overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/50 px-4 py-3"
+                >
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition">
+                    <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-sky-500/20 blur-2xl" />
+                  </div>
+                  <div className="relative">
+                    <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                      {tier.label}
+                    </div>
+                    <div className="mt-2 text-xl font-semibold text-slate-100">
+                      {tier.multiplier}x
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      Holding time
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </AccordionItem>
           <AccordionItem title="Out-of-range note">
             If your V3 position is out of range, the multiplier is reduced to
