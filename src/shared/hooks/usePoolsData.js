@@ -97,6 +97,8 @@ export function usePoolsData() {
     () => v3Query.data?.pages?.flat() || [],
     [v3Query.data]
   );
+  const v2PoolCount = v2Pools.length;
+  const v3PoolCount = v3Pools.length;
 
   const v2Ids = useMemo(
     () => v2Pools.map((p) => p.id).filter(Boolean),
@@ -171,8 +173,12 @@ export function usePoolsData() {
   return {
     v2Pools,
     v3Pools,
+    v2PoolCount,
+    v3PoolCount,
     v2RollingData: v2RollingQuery.data || {},
     v3RollingData: v3RollingQuery.data || {},
+    v2RollingFresh: v2RollingQuery.isFetchedAfterMount,
+    v3RollingFresh: v3RollingQuery.isFetchedAfterMount,
     v2Error: v2Query.error,
     v3Error: v3Query.error,
     v2IsLoading: v2Query.isLoading,

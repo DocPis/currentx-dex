@@ -115,14 +115,18 @@ const poolMatchesSearch = (pool, term) => {
 
 export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const { data: dashboardData } = useDashboardData();
+  const { data: dashboardData, isFetchedAfterMount: dashboardFresh } = useDashboardData();
   const protocolStats = dashboardData?.stats || null;
-  const protocolTvl = protocolStats?.totalLiquidityUsd ?? null;
+  const protocolTvl = dashboardFresh ? protocolStats?.totalLiquidityUsd ?? null : null;
   const {
     v2Pools,
     v3Pools,
+    v2PoolCount,
+    v3PoolCount,
     v2RollingData,
     v3RollingData,
+    v2RollingFresh,
+    v3RollingFresh,
     v2Error,
     v3Error,
     v2IsLoading,
@@ -218,21 +222,26 @@ export default function PoolsSection({ onSelectPool }) {
   }, [v2Pools, v3Pools, v2RollingData, v3RollingData]);
 
   // Protocol rolling totals are derived from the pools list (rolling 24h when available).
+  const protocolMetricsReady =
+    (v2PoolCount === 0 || v2RollingFresh) && (v3PoolCount === 0 || v3RollingFresh);
+
   const protocolVolume24h = useMemo(() => {
+    if (!protocolMetricsReady) return null;
     const values = combinedPools
       .map((pool) => pool.volume24hUsd)
       .filter((val) => val !== null && val !== undefined && Number.isFinite(val));
     if (!values.length) return null;
     return values.reduce((sum, val) => sum + val, 0);
-  }, [combinedPools]);
+  }, [combinedPools, protocolMetricsReady]);
 
   const protocolFees24h = useMemo(() => {
+    if (!protocolMetricsReady) return null;
     const values = combinedPools
       .map((pool) => pool.fees24hUsd)
       .filter((val) => val !== null && val !== undefined && Number.isFinite(val));
     if (!values.length) return null;
     return values.reduce((sum, val) => sum + val, 0);
-  }, [combinedPools]);
+  }, [combinedPools, protocolMetricsReady]);
 
   const filteredPools = useMemo(() => {
     if (!searchLower) return combinedPools;
