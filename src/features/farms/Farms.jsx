@@ -905,7 +905,7 @@ function V3StakerList({ address, onConnect }) {
                       {rewardAmount} {rewardSymbol}
                     </div>
                     <div className="col-span-3 text-right text-xs text-slate-400">
-                      {formatTimestamp(inc.startTime)} → {formatTimestamp(inc.endTime)}
+                      {formatTimestamp(inc.startTime)} {"->"} {formatTimestamp(inc.endTime)}
                     </div>
                     <div className="col-span-1 text-right">
                       <button
@@ -935,8 +935,8 @@ function V3StakerList({ address, onConnect }) {
                               className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2"
                             >
                               <div className="text-sm text-slate-100">
-                                #{pos.tokenId} · {pos.token0Meta?.symbol || "Token0"} /{" "}
-                                {pos.token1Meta?.symbol || "Token1"} · Fee{" "}
+                                #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
+                                {pos.token1Meta?.symbol || "Token1"} - Fee{" "}
                                 {(pos.fee / 10000).toFixed(2)}%
                               </div>
                               <button
@@ -974,8 +974,8 @@ function V3StakerList({ address, onConnect }) {
                                 className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2"
                               >
                                 <div className="text-sm text-slate-100">
-                                  #{pos.tokenId} · {pos.token0Meta?.symbol || "Token0"} /{" "}
-                                  {pos.token1Meta?.symbol || "Token1"} · Fee{" "}
+                                  #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
+                                  {pos.token1Meta?.symbol || "Token1"} - Fee{" "}
                                   {(pos.fee / 10000).toFixed(2)}%
                                   <span className="ml-2 text-xs text-slate-400">
                                     {isStaked ? "Staked" : "Not staked"}
@@ -1096,7 +1096,7 @@ function V3StakerList({ address, onConnect }) {
                     className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
                   />
                   <div className="text-[11px] text-slate-500">
-                    {createMeta.rewardTokenMeta?.symbol || "Token"} ·{" "}
+                    {createMeta.rewardTokenMeta?.symbol || "Token"} -{" "}
                     {createMeta.rewardTokenMeta?.decimals ?? "--"} decimals
                   </div>
                 </div>
@@ -1125,7 +1125,7 @@ function V3StakerList({ address, onConnect }) {
                   {createMeta.poolMeta
                     ? `${createMeta.poolMeta.token0Meta?.symbol || "Token0"} / ${
                         createMeta.poolMeta.token1Meta?.symbol || "Token1"
-                      } · Fee ${((createMeta.poolMeta.fee || 0) / 10000).toFixed(2)}%`
+                      } - Fee ${((createMeta.poolMeta.fee || 0) / 10000).toFixed(2)}%`
                     : "Pool details will appear here"}
                   {createMeta.poolMeta && (
                     <span
@@ -1213,8 +1213,7 @@ function V3StakerList({ address, onConnect }) {
 
 
               <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-                Disclaimer: la creazione di incentives è riservata ai protocolli.
-                Procedendo confermi di essere autorizzato.
+                Disclaimer: incentive creation is reserved for protocols. By proceeding you confirm you are authorized.
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-3 py-3 text-xs text-slate-300">
@@ -1265,5 +1264,8 @@ function V3StakerList({ address, onConnect }) {
     </div>
   );
 }
+
+
+
 
 
