@@ -59,7 +59,7 @@ export default function Footer() {
         <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
           <span className="inline-flex items-center gap-1 text-slate-300">
             Built on
-            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 p-0.5">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 p-0.5">
               <img src={megaLogo} alt="MegaETH" className="h-full w-full" />
             </span>
           </span>
