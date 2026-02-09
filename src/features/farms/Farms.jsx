@@ -630,7 +630,12 @@ function V3StakerList({ address, onConnect }) {
         signer
       );
       const data = buildIncentiveKey(incentive);
-      const tx = await manager.safeTransferFrom(address, V3_STAKER_ADDRESS, pos.tokenId, data);
+      const tx = await manager["safeTransferFrom(address,address,uint256,bytes)"](
+        address,
+        V3_STAKER_ADDRESS,
+        pos.tokenId,
+        data
+      );
       const receipt = await tx.wait();
       setAction({
         loading: false,

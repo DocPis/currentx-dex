@@ -4700,12 +4700,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           <div className="relative w-full max-w-2xl bg-[#0a0f24] border border-slate-800 rounded-3xl shadow-2xl shadow-black/50 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
               <div>
-                <div className="text-sm font-semibold text-slate-100">Select token</div>
+                <div className="text-sm font-semibold text-slate-100">Select Token</div>
               </div>
               <button
                 onClick={closeSelector}
                 className="h-9 w-9 rounded-full bg-slate-900 text-slate-200 flex items-center justify-center border border-slate-800 hover:border-slate-600"
-                aria-label="Close token select"
+                aria-label="Close token selector"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -4909,7 +4909,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                     disabled={customTokenAddLoading || searchTokenMetaLoading}
                     className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
                   >
-                    {customTokenAddLoading ? "Adding..." : "Add token"}
+                    {customTokenAddLoading ? "Adding..." : "Add Token"}
                   </button>
                 </div>
               ) : !filteredTokens.length ? (

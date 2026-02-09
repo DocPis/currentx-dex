@@ -5811,7 +5811,7 @@ export default function LiquiditySection({
       void refreshBalances();
       closeV3ActionModal();
     } catch (err) {
-      const msg = friendlyActionError(err, "Remove liquidity");
+      const msg = friendlyActionError(err, "Remove Liquidity");
       setV3ActionError(msg);
       setActionStatus({ variant: "error", message: msg });
     } finally {
@@ -6636,7 +6636,7 @@ export default function LiquiditySection({
                     <div className="flex flex-col text-left">
                       <span className="text-xs text-slate-400">Token you want to pair with</span>
                       <span className="text-sm font-semibold">
-                        {pairSelected?.symbol || "Select token"}
+                        {pairSelected?.symbol || "Select Token"}
                       </span>
                     </div>
                   </div>
@@ -6757,7 +6757,7 @@ export default function LiquiditySection({
                 <div className="flex items-center justify-between mb-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Pool status
+                      Pool Status
                     </div>
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
                       {getPoolLabel(selectedPool)}
@@ -7135,7 +7135,7 @@ export default function LiquiditySection({
         <div className="flex flex-col gap-4">
           {hasBothLiquidityViews && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3">
-              <div className="text-sm font-semibold text-slate-100">Liquidity view</div>
+              <div className="text-sm font-semibold text-slate-100">Liquidity View</div>
               <div className="flex items-center gap-1 rounded-full bg-slate-950/70 border border-slate-800 p-1 text-xs">
                 <button
                   type="button"
@@ -7392,7 +7392,7 @@ export default function LiquiditySection({
                                 name="v3-token0-search"
                                 value={v3Token0Search}
                                 onChange={(e) => setV3Token0Search(e.target.value)}
-                                placeholder="Search token..."
+                                placeholder="Search name or paste token address"
                                 className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500 text-xs"
                               />
                             </div>
@@ -7515,7 +7515,7 @@ export default function LiquiditySection({
                                 name="v3-token1-search"
                                 value={v3Token1Search}
                                 onChange={(e) => setV3Token1Search(e.target.value)}
-                                placeholder="Search token..."
+                                placeholder="Search name or paste token address"
                                 className="bg-transparent outline-none flex-1 text-slate-100 placeholder:text-slate-500 text-xs"
                               />
                             </div>
@@ -7778,7 +7778,7 @@ export default function LiquiditySection({
                       {!showV3PriceRangeChart && (
                         <div className="text-[11px] text-slate-500">
                           {v3PoolLoading
-                            ? "Fetching live pool data"
+                            ? "Loading pool data..."
                             : `Fee tier ${formatFeeTier(v3FeeTier)}`}
                         </div>
                       )}
@@ -8945,7 +8945,7 @@ export default function LiquiditySection({
                                 </div>
 
                                 {metaState.loading && (
-                                  <div className="mt-4 text-[11px] text-slate-500">Loading tokenURI...</div>
+                                  <div className="mt-4 text-[11px] text-slate-500">Loading token URI...</div>
                                 )}
                                 {metaState.error && (
                                   <div className="mt-3 text-[11px] text-amber-200">
@@ -9039,7 +9039,7 @@ export default function LiquiditySection({
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                        Add liquidity
+                        Add Liquidity
                       </div>
                       <div className="text-xs text-slate-400">
                         Deposit amounts to mint a new V3 position.
@@ -10177,7 +10177,7 @@ export default function LiquiditySection({
                 type="button"
                 onClick={() => setShowTokenList(false)}
                 className="h-9 w-9 rounded-full bg-slate-900 text-slate-200 flex items-center justify-center border border-slate-800 hover:border-slate-600"
-                aria-label="Close token list"
+                aria-label="Close token selector"
               >
                 <svg
                   viewBox="0 0 24 24"
@@ -10316,7 +10316,7 @@ export default function LiquiditySection({
                     disabled={customTokenAddLoading || searchTokenMetaLoading}
                     className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
                   >
-                    {customTokenAddLoading ? "Adding..." : "Add token"}
+                    {customTokenAddLoading ? "Adding..." : "Add Token"}
                   </button>
                 </div>
               ) : !filteredTokens.length ? (
@@ -10707,7 +10707,7 @@ export default function LiquiditySection({
                     <div className="mt-4 space-y-3">
                       <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
                         <div className="flex items-center justify-between text-[11px] text-slate-500">
-                          <span>Remove liquidity</span>
+                          <span>Remove Liquidity</span>
                           <span>{v3RemovePct || 0}%</span>
                         </div>
                         <input
