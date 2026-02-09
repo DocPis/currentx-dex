@@ -76,6 +76,13 @@ const toNumberSafe = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
+const formatAmountFloor = (value, decimals = 6) => {
+  if (!Number.isFinite(value)) return "";
+  const safeDecimals = Math.max(0, Math.min(18, Number(decimals) || 0));
+  const factor = 10 ** safeDecimals;
+  const floored = Math.floor((value + Number.EPSILON) * factor) / factor;
+  return trimTrailingZeros(floored.toFixed(safeDecimals));
+};
 const sanitizeAmountInput = (raw, decimals) => {
   if (raw === null || raw === undefined) return "";
   const value = String(raw).replace(/,/g, ".");
@@ -970,8 +977,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       setSwapStatus(null);
       return;
     }
-    const val = (bal * pct).toFixed(decimals);
-    setAmountIn(val);
+    const raw = bal * pct;
+    const val = formatAmountFloor(raw, decimals);
+    setAmountIn(val || "");
     setSwapInputMode("in");
     setQuoteError("");
     setSwapStatus(null);
