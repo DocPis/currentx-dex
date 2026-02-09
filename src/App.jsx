@@ -1,6 +1,7 @@
 ﻿// src/App.jsx
-import React, { Suspense, useEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useDisconnect, useReconnect } from "wagmi";
+import { useQueryClient } from "@tanstack/react-query";
 import Header from "./shared/ui/Header";
 import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
@@ -54,7 +55,14 @@ if (!isWhitelistPath && SECTION_LOADERS[initialTab]) {
   SECTION_LOADERS[initialTab]();
 }
 
+const PREFETCH_PAGE_SIZE = 50;
+const getNextPageParam = (lastPage, pages) =>
+  lastPage && lastPage.length === PREFETCH_PAGE_SIZE
+    ? pages.length * PREFETCH_PAGE_SIZE
+    : undefined;
+
 export default function App() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState(() =>
     getTabFromPath(window?.location?.pathname)
   );
@@ -66,6 +74,7 @@ export default function App() {
   const { reconnect } = useReconnect();
   const { balances, refresh } = useBalances(address, chainId);
   const preloadedRef = useRef(new Set());
+  const prefetchedDataRef = useRef(new Set());
 
   useEffect(() => {
     const handlePop = () => {
@@ -89,6 +98,115 @@ export default function App() {
     const id = setTimeout(() => setConnectError(""), 4000);
     return () => clearTimeout(id);
   }, [connectError]);
+
+  const canPrefetchData = useCallback(() => {
+    const connection = navigator?.connection;
+    if (connection?.saveData) return false;
+    const effectiveType = String(connection?.effectiveType || "");
+    if (effectiveType.includes("2g")) return false;
+    return true;
+  }, []);
+
+  const prefetchTokenData = useCallback(async () => {
+    try {
+      const [{ TOKENS }, subgraph] = await Promise.all([
+        import("./shared/config/tokens"),
+        import("./shared/config/subgraph"),
+      ]);
+      const addresses = Object.values(TOKENS || {})
+        .map((t) => t?.address)
+        .filter(Boolean);
+      if (!addresses.length) return;
+      const unique = Array.from(new Set(addresses.map((a) => a.toLowerCase())));
+      await Promise.all([
+        queryClient.prefetchQuery({
+          queryKey: ["token-prices", unique],
+          queryFn: () => subgraph.fetchTokenPrices(unique),
+        }),
+        queryClient.prefetchQuery({
+          queryKey: ["token-tvls", unique],
+          queryFn: () => subgraph.fetchV3TokenTvls(unique),
+        }),
+      ]);
+    } catch {
+      // ignore prefetch failures
+    }
+  }, [queryClient]);
+
+  const prefetchPoolsData = useCallback(async () => {
+    try {
+      const subgraph = await import("./shared/config/subgraph");
+      await Promise.all([
+        queryClient.prefetchInfiniteQuery({
+          queryKey: ["pools", "v2"],
+          queryFn: ({ pageParam = 0 }) =>
+            subgraph.fetchV2PoolsPage({
+              limit: PREFETCH_PAGE_SIZE,
+              skip: pageParam,
+            }),
+          initialPageParam: 0,
+          getNextPageParam,
+        }),
+        queryClient.prefetchInfiniteQuery({
+          queryKey: ["pools", "v3"],
+          queryFn: ({ pageParam = 0 }) =>
+            subgraph.fetchV3PoolsPage({
+              limit: PREFETCH_PAGE_SIZE,
+              skip: pageParam,
+            }),
+          initialPageParam: 0,
+          getNextPageParam,
+        }),
+      ]);
+
+      const v2Data = queryClient.getQueryData(["pools", "v2"]);
+      const v3Data = queryClient.getQueryData(["pools", "v3"]);
+      const v2Ids = (v2Data?.pages?.flat() || [])
+        .map((p) => p?.id)
+        .filter(Boolean);
+      const v3Ids = (v3Data?.pages?.flat() || [])
+        .map((p) => p?.id)
+        .filter(Boolean);
+
+      const rollPromises = [];
+      if (v2Ids.length) {
+        rollPromises.push(
+          queryClient.prefetchQuery({
+            queryKey: ["pools", "v2-roll-24h", v2Ids],
+            queryFn: () => subgraph.fetchV2PoolsHourData(v2Ids, 24),
+          })
+        );
+      }
+      if (v3Ids.length) {
+        rollPromises.push(
+          queryClient.prefetchQuery({
+            queryKey: ["pools", "v3-roll-24h", v3Ids],
+            queryFn: () => subgraph.fetchV3PoolsHourData(v3Ids, 24),
+          })
+        );
+      }
+      if (rollPromises.length) {
+        await Promise.all(rollPromises);
+      }
+    } catch {
+      // ignore prefetch failures
+    }
+  }, [queryClient]);
+
+  const prefetchTabData = useCallback(
+    (target) => {
+      if (!canPrefetchData()) return;
+      if (!target || prefetchedDataRef.current.has(target)) return;
+      prefetchedDataRef.current.add(target);
+      if (target === "pools") {
+        void prefetchPoolsData();
+      }
+      if (target === "swap" || target === "liquidity") {
+        void prefetchTokenData();
+      }
+    },
+    [canPrefetchData, prefetchPoolsData, prefetchTokenData]
+  );
 
   const preloadSection = (id) => {
     const loader = SECTION_LOADERS[id];
@@ -149,11 +267,13 @@ export default function App() {
   const handlePoolSelect = (pool) => {
     setPoolSelection(pool || null);
     preloadSection("liquidity");
+    prefetchTabData("liquidity");
     setTab("liquidity");
   };
 
   const handleTabClick = (nextTab) => {
     preloadSection(nextTab);
+    prefetchTabData(nextTab);
     setTab(nextTab);
   };
 
@@ -202,8 +322,14 @@ export default function App() {
             <button
               key={item.id}
               onClick={() => handleTabClick(item.id)}
-              onMouseEnter={() => preloadSection(item.id)}
-              onFocus={() => preloadSection(item.id)}
+              onMouseEnter={() => {
+                preloadSection(item.id);
+                prefetchTabData(item.id);
+              }}
+              onFocus={() => {
+                preloadSection(item.id);
+                prefetchTabData(item.id);
+              }}
               className={`px-4 py-2 rounded-xl border transition shadow-sm ${
                 tab === item.id
                   ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
