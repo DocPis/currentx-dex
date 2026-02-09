@@ -45,6 +45,8 @@ import {
   fetchV3PoolSnapshot,
   fetchV3TokenPairHistory,
 } from "../../shared/config/subgraph";
+import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
+import { isBoostPair } from "../../shared/lib/points";
 import { getRealtimeClient, TRANSFER_TOPIC } from "../../shared/services/realtime";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import { useBalances } from "../../shared/hooks/useBalances";
@@ -1156,6 +1158,14 @@ export default function LiquiditySection({
   showV3 = false,
 }) {
   const queryClient = useQueryClient();
+  const refreshPointsForPair = useCallback(
+    (token0, token1) => {
+      if (!address) return;
+      if (!isBoostPair(token0, token1)) return;
+      queryClient.invalidateQueries({ queryKey: getUserPointsQueryKey(address) });
+    },
+    [address, queryClient]
+  );
   const [basePools, setBasePools] = useState([]);
   const [onchainTokens, setOnchainTokens] = useState({});
   const [customTokens, setCustomTokens] = useState(() => getRegisteredCustomTokens());
@@ -5557,6 +5567,7 @@ export default function LiquiditySection({
         hash: receipt?.hash,
         message: "Position created.",
       });
+      refreshPointsForPair(token0Addr, token1Addr);
       setV3Amount0("");
       setV3Amount1("");
       setV3RefreshTick((t) => t + 1);
@@ -5783,6 +5794,7 @@ export default function LiquiditySection({
         hash: receipt?.hash,
         message: "Position increased.",
       });
+      refreshPointsForPair(position.token0, position.token1);
       setV3RefreshTick((t) => t + 1);
       void refreshBalances();
       closeV3ActionModal();
@@ -5846,6 +5858,7 @@ export default function LiquiditySection({
         hash: receipt?.hash,
         message: "Liquidity removed and fees collected.",
       });
+      refreshPointsForPair(position.token0, position.token1);
       setV3RefreshTick((t) => t + 1);
       void refreshBalances();
       closeV3ActionModal();

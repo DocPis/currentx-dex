@@ -11,6 +11,7 @@ import SeasonBanner from "./shared/ui/SeasonBanner";
 
 const TAB_ROUTES = {
   dashboard: "/dashboard",
+  points: "/points",
   swap: "/swap",
   liquidity: "/liquidity",
   pools: "/pools",
@@ -20,6 +21,7 @@ const TAB_ROUTES = {
 
 const SECTION_LOADERS = {
   dashboard: () => import("./features/dashboard/Dashboard"),
+  points: () => import("./features/points/PointsPage"),
   swap: () => import("./features/swap/SwapSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
   pools: () => import("./features/pools/PoolsSection"),
@@ -28,6 +30,7 @@ const SECTION_LOADERS = {
 };
 
 const Dashboard = React.lazy(SECTION_LOADERS.dashboard);
+const PointsPage = React.lazy(SECTION_LOADERS.points);
 const SwapSection = React.lazy(SECTION_LOADERS.swap);
 const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
@@ -315,6 +318,7 @@ export default function App() {
         <div className="flex flex-wrap justify-center gap-3 text-xs sm:text-sm">
           {[
             { id: "dashboard", label: "Dashboard" },
+            { id: "points", label: "Points" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
             { id: "pools", label: "Pools" },
@@ -372,6 +376,9 @@ export default function App() {
           )}
           {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
           {tab === "dashboard" && <Dashboard />}
+          {tab === "points" && (
+            <PointsPage address={address} onConnect={handleConnect} />
+          )}
           {tab === "farms" && (
             <Farms address={address} onConnect={handleConnect} />
           )}

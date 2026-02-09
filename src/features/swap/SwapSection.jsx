@@ -33,6 +33,7 @@ import {
 import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import { fetchTokenPrices } from "../../shared/config/subgraph";
+import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA"];
 const MAX_ROUTE_CANDIDATES = 12;
@@ -520,6 +521,11 @@ import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function SwapSection({ balances, address, chainId, onBalancesRefresh }) {
   const queryClient = useQueryClient();
+  const pointsSuffix = address ? " Points updated." : "";
+  const refreshPoints = useCallback(() => {
+    if (!address) return;
+    queryClient.invalidateQueries({ queryKey: getUserPointsQueryKey(address) });
+  }, [address, queryClient]);
   const normalizeChainHex = (value) => {
     if (value === null || value === undefined) return null;
     const str = String(value).trim();
@@ -3647,10 +3653,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           message: `Swap executed (wrap/unwrap). Received ${formatUnits(
             amountWei,
             buyMeta?.decimals ?? 18
-          )} ${buyToken}`,
+          )} ${buyToken}${pointsSuffix}`,
           hash: receipt.hash,
           variant: "success",
         });
+        refreshPoints();
         await refreshBalances();
         return;
       }
@@ -3786,10 +3793,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           message: `Split swap executed. Min received: ${formatUnits(
             totalMinOut,
             buyMeta?.decimals ?? 18
-          )} ${buyToken}`,
+          )} ${buyToken}${pointsSuffix}`,
           hash: receipt.hash,
           variant: "success",
         });
+        refreshPoints();
         await refreshBalances();
         return;
       }
@@ -3902,10 +3910,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           message: `Swap executed. Min received: ${formatUnits(
             minOut,
             buyMeta?.decimals ?? 18
-          )} ${buyToken}`,
+          )} ${buyToken}${pointsSuffix}`,
           hash: receipt.hash,
           variant: "success",
         });
+        refreshPoints();
         await refreshBalances();
         return;
       }
@@ -4037,10 +4046,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         message: `Swap executed. Min received: ${formatUnits(
           minOut,
           buyMeta?.decimals ?? 18
-        )} ${buyToken}`,
+        )} ${buyToken}${pointsSuffix}`,
         hash: receipt.hash,
         variant: "success",
       });
+      refreshPoints();
       await refreshBalances();
     } catch (e) {
       const txHash = extractTxHash(e) || pendingTxHashRef.current;
@@ -4052,8 +4062,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           setSwapStatus({
             variant: "success",
             hash: txHash,
-            message: "Swap confirmed. Check the explorer for details.",
+            message: `Swap confirmed. Check the explorer for details.${pointsSuffix}`,
           });
+          refreshPoints();
           await refreshBalances();
           return;
         }
