@@ -3281,3 +3281,153 @@ export async function fetchPairHistory(tokenA, tokenB, days = 7) {
     throw err;
   }
 }
+
+const normalizeUserAddress = (address) =>
+  (address || "").toLowerCase().trim();
+
+const sumSwapAmounts = (rows = [], amountKey = "amountUSD") =>
+  rows.reduce((sum, row) => {
+    const raw = row?.[amountKey];
+    const num = Number(raw);
+    return Number.isFinite(num) ? sum + num : sum;
+  }, 0);
+
+export async function fetchUserSwapVolume({
+  address,
+  startTime,
+  endTime,
+  source = "v2",
+  limit = 5000,
+} = {}) {
+  const user = normalizeUserAddress(address);
+  if (!user) return 0;
+  const isV3 = source === "v3";
+  if (isV3 && SUBGRAPH_V3_MISSING_KEY) return 0;
+  if (!isV3 && SUBGRAPH_MISSING_KEY) return 0;
+
+  const start = Math.floor(Number(startTime || 0) / 1000);
+  const end = Math.floor(Number(endTime || Date.now()) / 1000);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
+  if (end <= 0 || start <= 0 || end < start) return 0;
+
+  const queryRunner = isV3 ? postSubgraphV3 : postSubgraph;
+  const variants = isV3
+    ? [
+        { addressField: "origin", amountField: "amountUSD" },
+        { addressField: "sender", amountField: "amountUSD" },
+        { addressField: "recipient", amountField: "amountUSD" },
+      ]
+    : [
+        { addressField: "sender", amountField: "amountUSD" },
+        { addressField: "to", amountField: "amountUSD" },
+      ];
+
+  const pageSize = 1000;
+  for (const variant of variants) {
+    let skip = 0;
+    let total = 0;
+    let succeeded = false;
+    while (skip < limit) {
+      const first = Math.min(pageSize, limit - skip);
+      const query = `
+        query UserSwaps($user: Bytes!, $start: Int!, $end: Int!, $first: Int!, $skip: Int!) {
+          swaps(
+            first: $first
+            skip: $skip
+            orderBy: timestamp
+            orderDirection: desc
+            where: {
+              ${variant.addressField}: $user
+              timestamp_gte: $start
+              timestamp_lte: $end
+            }
+          ) {
+            ${variant.amountField}
+          }
+        }
+      `;
+      try {
+        const res = await queryRunner(query, {
+          user,
+          start,
+          end,
+          first,
+          skip,
+        });
+        const rows = res?.swaps || [];
+        succeeded = true;
+        total += sumSwapAmounts(rows, variant.amountField);
+        if (rows.length < first) break;
+        skip += rows.length;
+      } catch (err) {
+        const message = err?.message || "";
+        if (isSchemaFieldMissing(message)) {
+          succeeded = false;
+          break;
+        }
+        throw err;
+      }
+    }
+    if (succeeded) return total;
+  }
+
+  return 0;
+}
+
+export async function fetchV3PositionsCreatedAt(ids = []) {
+  if (SUBGRAPH_V3_MISSING_KEY) return {};
+  const cleaned = Array.from(
+    new Set((ids || []).map((id) => String(id)).filter(Boolean))
+  );
+  if (!cleaned.length) return {};
+
+  const variants = [
+    {
+      field: "createdAtTimestamp",
+      select: "createdAtTimestamp",
+      map: (row) => Number(row?.createdAtTimestamp || 0) * 1000,
+    },
+    {
+      field: "createdAt",
+      select: "createdAt",
+      map: (row) => Number(row?.createdAt || 0) * 1000,
+    },
+    {
+      field: "transaction",
+      select: "transaction { timestamp }",
+      map: (row) => Number(row?.transaction?.timestamp || 0) * 1000,
+    },
+  ];
+
+  for (const variant of variants) {
+    const results = {};
+    try {
+      for (const chunk of chunkArray(cleaned, 50)) {
+        const query = `
+          query PositionCreatedAt($ids: [ID!]!) {
+            positions(where: { id_in: $ids }) {
+              id
+              ${variant.select}
+            }
+          }
+        `;
+        const res = await postSubgraphV3(query, { ids: chunk });
+        const rows = res?.positions || [];
+        rows.forEach((row) => {
+          const id = row?.id ? String(row.id) : null;
+          const ts = variant.map(row);
+          if (id && ts) results[id] = ts;
+        });
+      }
+      return results;
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  return {};
+}
