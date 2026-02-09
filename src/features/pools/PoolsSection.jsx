@@ -153,7 +153,7 @@ export default function PoolsSection({ onSelectPool }) {
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
-  const [hideLowTvl, setHideLowTvl] = useState(false);
+  const [hideLowTvl, setHideLowTvl] = useState(true);
 
   const searchLower = searchTerm.trim().toLowerCase();
 
@@ -360,7 +360,7 @@ export default function PoolsSection({ onSelectPool }) {
                   : "border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-slate-500"
               }`}
             >
-              {hideLowTvl ? "Showing TVL >= $50" : "Hide low TVL (< $50)"}
+              {hideLowTvl ? "Show Low TVL" : "Hide Low TVL"}
             </button>
           </div>
         </div>
