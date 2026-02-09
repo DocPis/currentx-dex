@@ -588,7 +588,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
-  const routePreference = "smart";
+  const routePreference = "v3";
+  const v3HopOnly = true;
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -1522,7 +1523,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         return rest;
       };
 
-      const bestDirect = hasDirect ? await pickBestForAmount(buildDirectRoutes(), amountWei) : null;
+      const bestDirect =
+        !v3HopOnly && hasDirect
+          ? await pickBestForAmount(buildDirectRoutes(), amountWei)
+          : null;
       const bestHop = hasHop ? await pickBestHop() : null;
       if (bestDirect && bestHop) {
         return stripAmountOut(bestHop.amountOut > bestDirect.amountOut ? bestHop : bestDirect);
@@ -1540,6 +1544,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       quoteV3Route,
       sellMeta?.address,
       sellToken,
+      v3HopOnly,
     ]
   );
   const quoteV2Route = useCallback(
@@ -2491,7 +2496,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             if (hasV3Support && routePreference !== "v2") {
               try {
                 const { directRoutes, hopRoutes } = await buildV3RouteCandidates();
-                const candidates = [...directRoutes, ...hopRoutes];
+                const candidates = [
+                  ...(v3HopOnly ? [] : directRoutes),
+                  ...hopRoutes,
+                ];
                 const quoted = await Promise.all(
                   candidates.map(async (route) => {
                     try {
@@ -2581,9 +2589,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 ? await buildV2RouteCandidates()
                 : { directRoute: null, hopRoutes: [] };
 
-            const v3Routes = [...v3Candidates.directRoutes, ...v3Candidates.hopRoutes].map(
-              (route) => ({ ...route, protocol: "V3" })
-            );
+            const v3Routes = [
+              ...(v3HopOnly ? [] : v3Candidates.directRoutes),
+              ...v3Candidates.hopRoutes,
+            ].map((route) => ({ ...route, protocol: "V3" }));
             const v2Routes = [
               ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
               ...v2Candidates.hopRoutes,
@@ -2973,6 +2982,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     liveRouteTick,
     quoteLockedUntil,
     routePreference,
+    v3HopOnly,
     displaySellSymbol,
     displayBuySymbol,
     isChainMatch,
