@@ -1,5 +1,5 @@
 // src/features/farms/Farms.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AbiCoder, Contract, formatUnits, isAddress, parseUnits } from "ethers";
 import {
   EXPLORER_BASE_URL,
@@ -79,6 +79,13 @@ const formatDuration = (seconds) => {
   const mins = Math.floor((seconds % 3600) / 60);
   return `${hours}h ${mins}m`;
 };
+const formatLocalInput = (date) => {
+  if (!date) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate()
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
 
 export default function Farms({ address, onConnect }) {
   return (
@@ -121,11 +128,12 @@ function V3StakerList({ address, onConnect }) {
   const [createMeta, setCreateMeta] = useState({
     rewardTokenMeta: null,
     poolMeta: null,
+    stakerLimits: null,
   });
   const tokenMetaCache = useRef({});
   const poolMetaCache = useRef({});
 
-  const loadTokenMeta = async (provider, addr) => {
+  const loadTokenMeta = useCallback(async (provider, addr) => {
     const lower = (addr || "").toLowerCase();
     if (!lower) return null;
     if (tokenMetaCache.current[lower]) return tokenMetaCache.current[lower];
@@ -154,36 +162,44 @@ function V3StakerList({ address, onConnect }) {
     } catch {
       return null;
     }
-  };
+  }, []);
 
-  const loadPoolMeta = async (provider, poolAddress) => {
+  const loadPoolMeta = useCallback(async (provider, poolAddress) => {
     const lower = (poolAddress || "").toLowerCase();
     if (!lower) return null;
     if (poolMetaCache.current[lower]) return poolMetaCache.current[lower];
     try {
       const pool = new Contract(poolAddress, UNIV3_POOL_ABI, provider);
-      const [token0, token1, fee] = await Promise.all([
-        pool.token0(),
-        pool.token1(),
-        pool.fee(),
+      const [token0, token1, fee] = await Promise.all([pool.token0(), pool.token1(), pool.fee()]);
+      const [meta0, meta1] = await Promise.all([
+        loadTokenMeta(provider, token0),
+        loadTokenMeta(provider, token1),
       ]);
-      const meta0 = await loadTokenMeta(provider, token0);
-      const meta1 = await loadTokenMeta(provider, token1);
+      const feeNum = Number(fee || 0);
+      let isValid = false;
+      try {
+        const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+        const expected = await factory.getPool(token0, token1, feeNum);
+        if (expected && expected.toLowerCase() === lower) isValid = true;
+      } catch {
+        // ignore factory validation failures
+      }
       const meta = {
         token0,
         token1,
-        fee: Number(fee || 0),
+        fee: feeNum,
         token0Meta: meta0,
         token1Meta: meta1,
+        isValid,
       };
       poolMetaCache.current[lower] = meta;
       return meta;
     } catch {
       return null;
     }
-  };
+  }, [loadTokenMeta]);
 
-  const loadIncentives = async () => {
+  const loadIncentives = useCallback(async () => {
     const provider = getReadOnlyProvider(false, true);
     const raw = await fetchV3StakerIncentives(provider, {
       fromBlock: V3_STAKER_DEPLOY_BLOCK,
@@ -199,9 +215,9 @@ function V3StakerList({ address, onConnect }) {
       });
     }
     setIncentives(enriched);
-  };
+  }, [loadPoolMeta, loadTokenMeta]);
 
-  const loadPositions = async () => {
+  const loadPositions = useCallback(async () => {
     if (!address) {
       setPositions([]);
       setDepositInfo({});
@@ -277,9 +293,9 @@ function V3StakerList({ address, onConnect }) {
 
     setDepositInfo(nextDeposits);
     setPositions(nextPositions);
-  };
+  }, [address, loadTokenMeta]);
 
-  const refreshAll = async () => {
+  const refreshAll = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -290,7 +306,7 @@ function V3StakerList({ address, onConnect }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadIncentives, loadPositions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -304,7 +320,7 @@ function V3StakerList({ address, onConnect }) {
       cancelled = true;
       clearInterval(id);
     };
-  }, [address]);
+  }, [refreshAll]);
 
   useEffect(() => {
     setCreateForm((prev) => ({
@@ -312,6 +328,10 @@ function V3StakerList({ address, onConnect }) {
       refundee: prev.refundee || address || "",
     }));
   }, [address]);
+
+  useEffect(() => {
+    if (createError) setCreateError("");
+  }, [createForm, createError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -328,14 +348,52 @@ function V3StakerList({ address, onConnect }) {
         poolMeta = await loadPoolMeta(provider, poolAddr);
       }
       if (!cancelled) {
-        setCreateMeta({ rewardTokenMeta, poolMeta });
+        setCreateMeta((prev) => ({
+          ...prev,
+          rewardTokenMeta,
+          poolMeta,
+        }));
       }
     };
     load();
     return () => {
       cancelled = true;
     };
-  }, [createForm.rewardToken, createForm.pool]);
+  }, [createForm.rewardToken, createForm.pool, loadPoolMeta, loadTokenMeta]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const staker = new Contract(V3_STAKER_ADDRESS, V3_STAKER_ABI, provider);
+        const [maxLead, maxDuration] = await Promise.all([
+          staker.maxIncentiveStartLeadTime(),
+          staker.maxIncentiveDuration(),
+        ]);
+        if (!cancelled) {
+          setCreateMeta((prev) => ({
+            ...prev,
+            stakerLimits: {
+              maxLeadTime: Number(maxLead || 0),
+              maxDuration: Number(maxDuration || 0),
+            },
+          }));
+        }
+      } catch {
+        if (!cancelled) {
+          setCreateMeta((prev) => ({
+            ...prev,
+            stakerLimits: null,
+          }));
+        }
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -440,13 +498,74 @@ function V3StakerList({ address, onConnect }) {
     return end - start;
   }, [createForm.startTime, createForm.endTime]);
 
+  const nowSec = Math.floor(Date.now() / 1000);
+  const createValidation = useMemo(() => {
+    const errors = [];
+    const rewardToken = createForm.rewardToken;
+    const pool = createForm.pool;
+    const refundee = createForm.refundee;
+    const rewardAmount = Number(createForm.rewardAmount || 0);
+    const rewardMeta = createMeta.rewardTokenMeta;
+    const poolMeta = createMeta.poolMeta;
+    const startTime = parseDateToSec(createForm.startTime);
+    const endTime = parseDateToSec(createForm.endTime);
+    const maxLead = createMeta.stakerLimits?.maxLeadTime || 0;
+    const maxDuration = createMeta.stakerLimits?.maxDuration || 0;
+
+    if (!isAddress(rewardToken)) errors.push("Reward token address is invalid.");
+    if (!rewardMeta) errors.push("Reward token metadata not found.");
+    if (!(rewardAmount > 0)) errors.push("Reward amount must be greater than 0.");
+    if (!isAddress(pool)) errors.push("Pool address is invalid.");
+    if (!poolMeta) errors.push("Pool not found.");
+    if (poolMeta && poolMeta.isValid === false) {
+      errors.push("Pool is not a valid V3 pool for this factory.");
+    }
+    if (!isAddress(refundee)) errors.push("Refundee address is invalid.");
+    if (!startTime || !endTime) errors.push("Start and end time are required.");
+    if (startTime && startTime < nowSec) {
+      errors.push("Start time must be in the future.");
+    }
+    if (startTime && endTime && endTime <= startTime) {
+      errors.push("End time must be after start time.");
+    }
+    if (startTime && maxLead && startTime - nowSec > maxLead) {
+      errors.push(`Start time exceeds max lead time (${formatDuration(maxLead)}).`);
+    }
+    if (startTime && endTime && maxDuration && endTime - startTime > maxDuration) {
+      errors.push(`Duration exceeds max (${formatDuration(maxDuration)}).`);
+    }
+
+    return { valid: errors.length === 0, errors };
+  }, [createForm, createMeta, nowSec]);
+
+  const startMin = useMemo(() => formatLocalInput(new Date(nowSec * 1000)), [nowSec]);
+  const startMax = useMemo(() => {
+    const maxLead = createMeta.stakerLimits?.maxLeadTime || 0;
+    if (!maxLead) return "";
+    return formatLocalInput(new Date((nowSec + maxLead) * 1000));
+  }, [createMeta.stakerLimits, nowSec]);
+  const endMin = useMemo(() => {
+    const start = parseDateToSec(createForm.startTime);
+    const base = start || nowSec;
+    return formatLocalInput(new Date(base * 1000));
+  }, [createForm.startTime, nowSec]);
+  const endMax = useMemo(() => {
+    const maxDuration = createMeta.stakerLimits?.maxDuration || 0;
+    if (!maxDuration) return "";
+    const start = parseDateToSec(createForm.startTime);
+    const base = start || nowSec;
+    return formatLocalInput(new Date((base + maxDuration) * 1000));
+  }, [createForm.startTime, createMeta.stakerLimits, nowSec]);
+
   const handleCreate = async () => {
     if (!address) {
       if (onConnect) onConnect();
       return;
     }
-    if (!createKey) {
-      setCreateError("Fill all fields with valid addresses and times.");
+    if (!createKey || !createValidation.valid) {
+      setCreateError(
+        createValidation.errors?.[0] || "Fill all fields with valid addresses and times."
+      );
       return;
     }
     const rewardMeta = createMeta.rewardTokenMeta;
@@ -1008,6 +1127,17 @@ function V3StakerList({ address, onConnect }) {
                         createMeta.poolMeta.token1Meta?.symbol || "Token1"
                       } · Fee ${((createMeta.poolMeta.fee || 0) / 10000).toFixed(2)}%`
                     : "Pool details will appear here"}
+                  {createMeta.poolMeta && (
+                    <span
+                      className={`ml-2 ${
+                        createMeta.poolMeta.isValid ? "text-emerald-400" : "text-amber-300"
+                      }`}
+                    >
+                      {createMeta.poolMeta.isValid
+                        ? "Pool verified"
+                        : "Pool not found in factory"}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1020,6 +1150,8 @@ function V3StakerList({ address, onConnect }) {
                     onChange={(e) =>
                       setCreateForm((prev) => ({ ...prev, startTime: e.target.value }))
                     }
+                    min={startMin || undefined}
+                    max={startMax || undefined}
                     className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
                   />
                 </div>
@@ -1031,9 +1163,21 @@ function V3StakerList({ address, onConnect }) {
                     onChange={(e) =>
                       setCreateForm((prev) => ({ ...prev, endTime: e.target.value }))
                     }
+                    min={endMin || undefined}
+                    max={endMax || undefined}
                     className="w-full rounded-xl bg-slate-900 border border-slate-800 px-3 py-2 text-sm text-slate-100"
                   />
                 </div>
+              </div>
+
+              <div className="text-[11px] text-slate-500">
+                {createMeta.stakerLimits
+                  ? `Max lead time: ${formatDuration(
+                      createMeta.stakerLimits.maxLeadTime
+                    )} | Max duration: ${formatDuration(
+                      createMeta.stakerLimits.maxDuration
+                    )}`
+                  : "Incentive limits not available"}
               </div>
 
               <div className="space-y-1">
@@ -1058,6 +1202,15 @@ function V3StakerList({ address, onConnect }) {
                   </button>
                 </div>
               </div>
+
+              {!createValidation.valid && (
+                <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  {createValidation.errors.map((err) => (
+                    <div key={err}>- {err}</div>
+                  ))}
+                </div>
+              )}
+
 
               <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
                 Disclaimer: la creazione di incentives è riservata ai protocolli.
@@ -1098,7 +1251,7 @@ function V3StakerList({ address, onConnect }) {
                 </button>
                 <button
                   type="button"
-                  disabled={createLoading}
+                  disabled={createLoading || (address && !createValidation.valid)}
                   onClick={handleCreate}
                   className="px-3 py-2 rounded-xl bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30 disabled:opacity-60"
                 >
@@ -1112,3 +1265,5 @@ function V3StakerList({ address, onConnect }) {
     </div>
   );
 }
+
+

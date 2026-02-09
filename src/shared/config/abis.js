@@ -1046,6 +1046,13 @@ export const UNIV3_POOL_ABI = [
     stateMutability: "view",
     type: "function",
   },
+  {
+    inputs: [],
+    name: "fee",
+    outputs: [{ internalType: "uint24", name: "", type: "uint24" }],
+    stateMutability: "view",
+    type: "function",
+  },
 ];
 
 // CurrentX V3 Quoter (Quoter V2-style)

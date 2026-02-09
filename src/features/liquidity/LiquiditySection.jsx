@@ -2108,6 +2108,8 @@ export default function LiquiditySection({
       v3ReferencePrice,
       v3Token0,
       v3Token0Meta,
+      v3Token1,
+      v3Token1Meta,
     ]
   );
 
@@ -2157,6 +2159,8 @@ export default function LiquiditySection({
       v3ReferencePrice,
       v3Token1,
       v3Token1Meta,
+      v3Token0,
+      v3Token0Meta,
     ]
   );
 
