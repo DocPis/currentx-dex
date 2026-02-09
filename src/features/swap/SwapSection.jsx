@@ -51,8 +51,8 @@ const V3_FEE_PRIORITY = [3000, 500, 10000];
 const MAX_V3_HOPS = 4;
 const MAX_V3_PATHS = 30;
 const MAX_V3_ROUTE_CANDIDATES = 24;
-const MAX_V3_FEE_OPTIONS = 2;
-const MAX_V3_COMBOS_PER_PATH = 6;
+const MAX_V3_FEE_OPTIONS = 3;
+const MAX_V3_COMBOS_PER_PATH = 9;
 const STABLE_SYMBOLS = new Set([
   "USDM",
   "USDT0",
@@ -580,6 +580,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       UNIV3_UNIVERSAL_ROUTER_ADDRESS &&
       PERMIT2_ADDRESS
   );
+  const allowV2Routing = false;
+  const enableV2Routing = hasV2Support && allowV2Routing;
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("CRX");
   const [amountIn, setAmountIn] = useState("");
@@ -594,7 +596,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [quoteRoute, setQuoteRoute] = useState([]);
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
-  const routePreference = "v3";
+  const routePreference = "smart";
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -2032,6 +2034,16 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           : quoteMeta?.kind === "multi"
             ? "Multi-hop"
             : "";
+  const splitProtocolLabel = useMemo(() => {
+    if (quoteMeta?.protocol !== "SPLIT") return null;
+    const legs = Array.isArray(quoteMeta.routes) ? quoteMeta.routes : [];
+    const hasV2 = legs.some((leg) => leg?.protocol === "V2");
+    const hasV3 = legs.some((leg) => leg?.protocol === "V3");
+    if (hasV2 && hasV3) return "V2 + V3";
+    if (hasV3) return "V3";
+    if (hasV2) return "V2";
+    return "Split";
+  }, [quoteMeta]);
 
   // Re-run quotes when LP reserves move (Sync events via miniBlocks)
   useEffect(() => {
@@ -2142,12 +2154,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         resetQuoteState();
         return;
       }
-      if (!hasV2Support && !hasV3Support) {
+      if (!hasV3Support && !enableV2Routing) {
         setQuoteError("No router configured for this network.");
         resetQuoteState();
         return;
       }
-      if (routePreference === "v2" && !hasV2Support) {
+      if (routePreference === "v2" && !enableV2Routing) {
         setQuoteError("V2 support not configured for this network.");
         resetQuoteState();
         return;
@@ -2157,8 +2169,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         resetQuoteState();
         return;
       }
-      if (routePreference === "split" && (!hasV2Support || !hasV3Support)) {
-        setQuoteError("Split routing requires both V2 and V3 routers.");
+      if (
+        routePreference === "split" &&
+        (!hasV3Support || (allowV2Routing && !hasV2Support))
+      ) {
+        setQuoteError(
+          allowV2Routing
+            ? "Split routing requires both V2 and V3 routers."
+            : "Split routing requires V3 support."
+        );
         resetQuoteState();
         return;
       }
@@ -2582,7 +2601,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 v3Route = null;
               }
             }
-            if (hasV2Support && routePreference !== "v3") {
+            if (enableV2Routing && routePreference !== "v3") {
               try {
                 const { directRoute, hopRoutes } = await buildV2RouteCandidates();
                 const candidates = [
@@ -2637,7 +2656,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 ? await buildV3RouteCandidates()
                 : { directRoutes: [], hopRoutes: [] };
             const v2Candidates =
-              hasV2Support && routePreference !== "v3"
+              enableV2Routing && routePreference !== "v3"
                 ? await buildV2RouteCandidates()
                 : { directRoute: null, hopRoutes: [] };
 
@@ -2702,10 +2721,28 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             ) {
               try {
                 const maxCandidates = 3;
-                const ranked = allQuoted
+                const sorted = allQuoted
                   .slice()
-                  .sort((a, b) => Number(b.amountOut - a.amountOut))
-                  .slice(0, maxCandidates);
+                  .sort((a, b) => Number(b.amountOut - a.amountOut));
+                const bestByKind = new Map();
+                for (const route of sorted) {
+                  const kind = route?.kind || "unknown";
+                  if (!bestByKind.has(kind)) bestByKind.set(kind, route);
+                }
+                const ranked = [];
+                const seen = new Set();
+                const pushRoute = (route) => {
+                  if (!route) return;
+                  const key = buildRouteKey(route);
+                  if (seen.has(key)) return;
+                  seen.add(key);
+                  ranked.push(route);
+                };
+                bestByKind.forEach((route) => pushRoute(route));
+                for (const route of sorted) {
+                  if (ranked.length >= maxCandidates) break;
+                  pushRoute(route);
+                }
                 const pairSteps = [];
                 for (let pct = 5; pct <= 95; pct += 5) pairSteps.push(pct);
                 const tripleSteps = [];
@@ -3026,6 +3063,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     isSupported,
     hasV2Support,
     hasV3Support,
+    enableV2Routing,
+    allowV2Routing,
     sellMeta,
     sellMeta?.address,
     sellMeta?.decimals,
@@ -3127,14 +3166,17 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     }
     if (isDirectEthWeth) return "Direct wrap/unwrap (no fee)";
     if (quoteMeta?.protocol === "V2") return "Live quote via CurrentX API (V2)";
-    if (quoteMeta?.protocol === "SPLIT") return "Smart split via CurrentX API (V2 + V3)";
+    if (quoteMeta?.protocol === "SPLIT") {
+      const label = splitProtocolLabel || "V3";
+      return `Smart split via CurrentX API (${label})`;
+    }
     if (quoteMeta?.protocol === "V3") return "Live quote via CurrentX API (V3)";
     return lastQuoteSourceRef.current || "Live quote via CurrentX API...";
   })();
   const routeProtocolLabel = isDirectEthWeth
     ? "Wrap/Unwrap"
     : quoteMeta?.protocol === "SPLIT"
-      ? "V2 + V3"
+      ? splitProtocolLabel || "V3"
       : quoteMeta?.protocol || "V3";
   const hopCount = routeSegments.reduce((sum, seg) => sum + (seg.hops?.length || 0), 0);
   const approvalSummary = approvalTargetsForSell.length
@@ -3151,13 +3193,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       return;
     }
     if (quoteMeta?.protocol === "SPLIT") {
-      lastQuoteSourceRef.current = "Smart split via CurrentX API (V2 + V3)";
+      const label = splitProtocolLabel || "V3";
+      lastQuoteSourceRef.current = `Smart split via CurrentX API (${label})`;
       return;
     }
     if (quoteMeta?.protocol === "V3") {
       lastQuoteSourceRef.current = "Live quote via CurrentX API (V3)";
     }
-  }, [quoteMeta?.protocol, isDirectEthWeth]);
+  }, [quoteMeta?.protocol, isDirectEthWeth, splitProtocolLabel]);
 
   useEffect(() => {
     if (!swapStatus) return undefined;
@@ -3330,8 +3373,16 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (routeProtocol === "V3" && !hasV3Support) {
         throw new Error("V3 router not configured for this network.");
       }
-      if (routeProtocol === "SPLIT" && (!hasV2Support || !hasV3Support)) {
-        throw new Error("Split routing requires both V2 and V3 routers.");
+      if (routeProtocol === "SPLIT") {
+        const legs = Array.isArray(routePlan?.routes) ? routePlan.routes : [];
+        const needsV2 = legs.some((leg) => leg?.protocol === "V2");
+        if (!hasV3Support || (needsV2 && !hasV2Support)) {
+          throw new Error(
+            needsV2
+              ? "Split routing requires both V2 and V3 routers."
+              : "Split routing requires V3 support."
+          );
+        }
       }
 
       const decimalsOut = requireDecimals(buyToken, buyMeta);
