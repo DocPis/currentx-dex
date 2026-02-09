@@ -57,13 +57,11 @@ const SYNC_TOPIC =
 const V3_MIN_TICK = -887272;
 const V3_MAX_TICK = 887272;
 const V3_FEE_OPTIONS = [
-  { fee: 100, label: "0.01%" },
   { fee: 500, label: "0.05%" },
   { fee: 3000, label: "0.30%" },
   { fee: 10000, label: "1.00%" },
 ];
 const V3_TICK_SPACING = {
-  100: 1,
   500: 10,
   3000: 60,
   10000: 200,

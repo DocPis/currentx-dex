@@ -46,7 +46,13 @@ const SYNC_TOPIC =
 const TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
 const WETH_WITHDRAWAL_TOPIC = id("Withdrawal(address,uint256)").toLowerCase();
 const WETH_DEPOSIT_TOPIC = id("Deposit(address,uint256)").toLowerCase();
-const V3_FEE_TIERS = [100, 500, 3000, 10000];
+const V3_FEE_TIERS = [500, 3000, 10000];
+const V3_FEE_PRIORITY = [3000, 500, 10000];
+const MAX_V3_HOPS = 4;
+const MAX_V3_PATHS = 30;
+const MAX_V3_ROUTE_CANDIDATES = 24;
+const MAX_V3_FEE_OPTIONS = 2;
+const MAX_V3_COMBOS_PER_PATH = 6;
 const STABLE_SYMBOLS = new Set([
   "USDM",
   "USDT0",
@@ -589,7 +595,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [quotePairs, setQuotePairs] = useState([]); // legacy V2 Sync-based refresh (unused for V3)
   const [quoteMeta, setQuoteMeta] = useState(null);
   const routePreference = "v3";
-  const v3HopOnly = true;
   const [liveRouteTick, setLiveRouteTick] = useState(0);
   const [lastQuoteAt, setLastQuoteAt] = useState(null);
   const [quoteAgeLabel, setQuoteAgeLabel] = useState("--");
@@ -1185,6 +1190,64 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     return results.filter(Boolean);
   }, []);
 
+  const getV3PoolsForPairs = useCallback(async (factory, pairs) => {
+    const poolMap = new Map();
+    if (!factory || !Array.isArray(pairs) || !pairs.length) return poolMap;
+    const factoryAddr =
+      factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
+    const provider = factory?.runner || factory?.provider;
+    const iface = new Interface(UNIV3_FACTORY_ABI);
+    const calls = [];
+    const meta = [];
+    pairs.forEach(([tokenA, tokenB]) => {
+      if (!tokenA || !tokenB) return;
+      V3_FEE_TIERS.forEach((fee) => {
+        calls.push({
+          target: factoryAddr,
+          callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
+        });
+        meta.push({ tokenA, tokenB, fee });
+      });
+    });
+    if (!calls.length) return poolMap;
+    try {
+      const res = await multicall(calls, provider);
+      res.forEach((r, idx) => {
+        if (!r?.success) return;
+        const { tokenA, tokenB, fee } = meta[idx];
+        try {
+          const pool = iface.decodeFunctionResult("getPool", r.returnData)[0];
+          if (!pool || pool === ZERO_ADDRESS) return;
+          const aLower = tokenA.toLowerCase();
+          const bLower = tokenB.toLowerCase();
+          const key = `${aLower}-${bLower}`;
+          const revKey = `${bLower}-${aLower}`;
+          const entry = poolMap.get(key) || [];
+          entry.push({ fee, pool });
+          poolMap.set(key, entry);
+          const revEntry = poolMap.get(revKey) || [];
+          revEntry.push({ fee, pool });
+          poolMap.set(revKey, revEntry);
+        } catch {
+          // ignore decode failures
+        }
+      });
+      return poolMap;
+    } catch {
+      // ignore multicall failures and fall back to per-pair calls
+    }
+    for (const [tokenA, tokenB] of pairs) {
+      if (!tokenA || !tokenB) continue;
+      const pools = await listV3Pools(factory, tokenA, tokenB);
+      if (!pools.length) continue;
+      const aLower = tokenA.toLowerCase();
+      const bLower = tokenB.toLowerCase();
+      poolMap.set(`${aLower}-${bLower}`, pools);
+      poolMap.set(`${bLower}-${aLower}`, pools);
+    }
+    return poolMap;
+  }, [listV3Pools]);
+
   const getV2PairsForMids = useCallback(async (factory, tokenA, tokenB, mids) => {
     const factoryAddr =
       factory?.target || factory?.address || UNIV2_FACTORY_ADDRESS;
@@ -1350,40 +1413,121 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         if (cached.value) return cached.value;
       }
       const buildPromise = (async () => {
-        const directPools = await listV3Pools(factory, a, b);
-        const directRoutes = directPools.map((pool) => ({
-          kind: "direct",
-          path: [a, b],
-          pools: [pool.pool],
-          fees: [pool.fee],
-        }));
-
         const candidateMids = getRouteCandidates(a, b);
-        const hopCandidates = candidateMids.length
-          ? await Promise.all(
-              candidateMids.map(async (mid) => {
-                const poolsA = await listV3Pools(factory, a, mid);
-                if (!poolsA.length) return null;
-                const poolsB = await listV3Pools(factory, mid, b);
-                if (!poolsB.length) return null;
-                return { mid, poolsA, poolsB };
-              })
-            )
-          : [];
-        const hopRoutes = hopCandidates
-          .filter(Boolean)
-          .flatMap((candidate) =>
-            candidate.poolsA.flatMap((poolA) =>
-              candidate.poolsB.map((poolB) => ({
-                kind: "hop",
-                path: [a, candidate.mid, b],
-                pools: [poolA.pool, poolB.pool],
-                fees: [poolA.fee, poolB.fee],
-              }))
-            )
-          );
+        const tokenList = [];
+        const seen = new Set();
+        const pushToken = (token) => {
+          if (!token) return;
+          const lower = token.toLowerCase();
+          if (seen.has(lower)) return;
+          seen.add(lower);
+          tokenList.push(token);
+        };
+        pushToken(a);
+        pushToken(b);
+        candidateMids.forEach(pushToken);
+        if (tokenList.length < 2) {
+          return { directRoutes: [], hopRoutes: [], multiRoutes: [] };
+        }
 
-        return { directRoutes, hopRoutes };
+        const pairs = [];
+        for (let i = 0; i < tokenList.length; i += 1) {
+          for (let j = i + 1; j < tokenList.length; j += 1) {
+            pairs.push([tokenList[i], tokenList[j]]);
+          }
+        }
+        const poolMap = await getV3PoolsForPairs(factory, pairs);
+        const feePriorityIndex = new Map(
+          V3_FEE_PRIORITY.map((fee, idx) => [fee, idx])
+        );
+        const getPools = (tokenA, tokenB) =>
+          poolMap.get(`${tokenA.toLowerCase()}-${tokenB.toLowerCase()}`) || [];
+        const sortPools = (pools) =>
+          pools
+            .slice()
+            .sort(
+              (aPool, bPool) =>
+                (feePriorityIndex.get(aPool.fee) ?? 999) -
+                (feePriorityIndex.get(bPool.fee) ?? 999)
+            );
+
+        const aLower = a.toLowerCase();
+        const bLower = b.toLowerCase();
+        const paths = [];
+        const queue = [{ path: [a], visited: new Set([aLower]) }];
+        while (queue.length && paths.length < MAX_V3_PATHS) {
+          const current = queue.shift();
+          const path = current.path;
+          const visited = current.visited;
+          const last = path[path.length - 1];
+          const lastLower = last.toLowerCase();
+          const hops = path.length - 1;
+          if (hops >= MAX_V3_HOPS) continue;
+          for (const next of tokenList) {
+            const nextLower = next.toLowerCase();
+            if (nextLower === lastLower) continue;
+            if (visited.has(nextLower)) continue;
+            if (!getPools(last, next).length) continue;
+            const nextPath = [...path, next];
+            if (nextLower === bLower) {
+              paths.push(nextPath);
+              if (paths.length >= MAX_V3_PATHS) break;
+            } else {
+              const nextVisited = new Set(visited);
+              nextVisited.add(nextLower);
+              queue.push({ path: nextPath, visited: nextVisited });
+            }
+          }
+        }
+
+        const routes = [];
+        for (const path of paths) {
+          if (routes.length >= MAX_V3_ROUTE_CANDIDATES) break;
+          const edgePools = [];
+          let valid = true;
+          for (let i = 0; i < path.length - 1; i += 1) {
+            const pools = sortPools(getPools(path[i], path[i + 1]));
+            if (!pools.length) {
+              valid = false;
+              break;
+            }
+            edgePools.push(pools.slice(0, MAX_V3_FEE_OPTIONS));
+          }
+          if (!valid) continue;
+          let combos = [{ fees: [], pools: [] }];
+          for (const edge of edgePools) {
+            const nextCombos = [];
+            for (const combo of combos) {
+              for (const pool of edge) {
+                nextCombos.push({
+                  fees: [...combo.fees, pool.fee],
+                  pools: [...combo.pools, pool.pool],
+                });
+                if (nextCombos.length >= MAX_V3_COMBOS_PER_PATH) break;
+              }
+              if (nextCombos.length >= MAX_V3_COMBOS_PER_PATH) break;
+            }
+            combos = nextCombos;
+            if (!combos.length) break;
+          }
+          if (!combos.length) continue;
+          const hopCount = path.length - 1;
+          const kind = hopCount === 1 ? "direct" : hopCount === 2 ? "hop" : "multi";
+          for (const combo of combos) {
+            routes.push({
+              kind,
+              path,
+              pools: combo.pools,
+              fees: combo.fees,
+            });
+            if (routes.length >= MAX_V3_ROUTE_CANDIDATES) break;
+          }
+        }
+
+        const directRoutes = routes.filter((r) => r.kind === "direct");
+        const hopRoutes = routes.filter((r) => r.kind === "hop");
+        const multiRoutes = routes.filter((r) => r.kind === "multi");
+        return { directRoutes, hopRoutes, multiRoutes };
       })();
       routeCandidateCacheRef.current.set(cacheKey, { ts: now, promise: buildPromise });
       try {
@@ -1399,8 +1543,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       buyMeta?.address,
       buyToken,
       getRouteCandidates,
+      getV3PoolsForPairs,
       hasV3Support,
-      listV3Pools,
       sellMeta?.address,
       sellToken,
     ]
@@ -1413,138 +1557,46 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       }
       const { amountWei } = opts;
       const provider = getReadOnlyProvider();
-      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
       const a = sellToken === "ETH" ? WETH_ADDRESS : sellMeta?.address;
       const b = buyToken === "ETH" ? WETH_ADDRESS : buyMeta?.address;
       if (!a || !b) throw new Error("Select tokens with valid addresses.");
 
-      const directPools = await listV3Pools(factory, a, b);
-      const hasDirect = directPools.length > 0;
-      const candidateMids = getRouteCandidates(a, b);
-      const hopCandidates = candidateMids.length
-        ? await Promise.all(
-            candidateMids.map(async (mid) => {
-              const poolsA = await listV3Pools(factory, a, mid);
-              if (!poolsA.length) return null;
-              const poolsB = await listV3Pools(factory, mid, b);
-              if (!poolsB.length) return null;
-              return { mid, poolsA, poolsB };
-            })
-          )
-        : [];
-      const hopOptions = hopCandidates.filter(Boolean);
-      const hasHop = hopOptions.length > 0;
-
-      if (!hasDirect && !hasHop) {
+      const { directRoutes, hopRoutes, multiRoutes } = await buildV3RouteCandidates();
+      const candidates = [...directRoutes, ...hopRoutes, ...multiRoutes];
+      if (!candidates.length) {
         throw new Error("No V3 pools found for this pair.");
       }
-
-      const buildDirectRoutes = () =>
-        directPools.map((pool) => ({
-          kind: "direct",
-          path: [a, b],
-          pools: [pool.pool],
-          fees: [pool.fee],
-        }));
-
-      const pickBestForAmount = async (routes, amountIn) => {
-        if (!routes.length) return null;
-        if (!amountIn || amountIn <= 0n) return routes[0];
-        const results = await Promise.all(
-          routes.map(async (route) => {
-            try {
-              const amountOut = await quoteV3Route(provider, amountIn, route);
-              return { ...route, amountOut };
-            } catch {
-              return null;
-            }
-          })
-        );
-        const valid = results.filter(Boolean);
-        if (!valid.length) return null;
-        return valid.reduce((best, next) => {
-          if (!best) return next;
-          return next.amountOut > best.amountOut ? next : best;
-        }, null);
-      };
-
-      const pickBestHop = async () => {
-        if (!hopOptions.length) return null;
-        if (!amountWei || amountWei <= 0n) {
-          const first = hopOptions[0];
-          const poolA = first?.poolsA?.[0];
-          const poolB = first?.poolsB?.[0];
-          if (!poolA || !poolB) return null;
-          return {
-            kind: "hop",
-            path: [a, first.mid, b],
-            pools: [poolA.pool, poolB.pool],
-            fees: [poolA.fee, poolB.fee],
-          };
-        }
-        const results = await Promise.all(
-          hopOptions.map(async (candidate) => {
-            const routesA = candidate.poolsA.map((pool) => ({
-              kind: "direct",
-              path: [a, candidate.mid],
-              pools: [pool.pool],
-              fees: [pool.fee],
-            }));
-            const bestA = await pickBestForAmount(routesA, amountWei);
-            if (!bestA?.amountOut) return null;
-            const routesB = candidate.poolsB.map((pool) => ({
-              kind: "direct",
-              path: [candidate.mid, b],
-              pools: [pool.pool],
-              fees: [pool.fee],
-            }));
-            const bestB = await pickBestForAmount(routesB, bestA.amountOut);
-            if (!bestB?.amountOut) return null;
-            return {
-              kind: "hop",
-              path: [a, candidate.mid, b],
-              pools: [bestA.pools?.[0] || null, bestB.pools?.[0] || null],
-              fees: [bestA.fees?.[0], bestB.fees?.[0]],
-              amountOut: bestB.amountOut,
-            };
-          })
-        );
-        const valid = results.filter(Boolean);
-        if (!valid.length) return null;
-        return valid.reduce((best, next) => {
-          if (!best) return next;
-          return next.amountOut > best.amountOut ? next : best;
-        }, null);
-      };
-
-      const stripAmountOut = (route) => {
-        if (!route) return null;
-        const { amountOut: _amountOut, ...rest } = route;
-        return rest;
-      };
-
-      const bestDirect =
-        !v3HopOnly && hasDirect
-          ? await pickBestForAmount(buildDirectRoutes(), amountWei)
-          : null;
-      const bestHop = hasHop ? await pickBestHop() : null;
-      if (bestDirect && bestHop) {
-        return stripAmountOut(bestHop.amountOut > bestDirect.amountOut ? bestHop : bestDirect);
+      if (!amountWei || amountWei <= 0n) {
+        return candidates[0];
       }
-      if (bestDirect) return stripAmountOut(bestDirect);
-      if (bestHop) return stripAmountOut(bestHop);
-      throw new Error("No V3 route available for this pair.");
+      const quoted = await Promise.all(
+        candidates.map(async (route) => {
+          try {
+            const amountOut = await quoteV3Route(provider, amountWei, route);
+            return { ...route, amountOut };
+          } catch {
+            return null;
+          }
+        })
+      );
+      const valid = quoted.filter(Boolean);
+      if (!valid.length) throw new Error("No V3 route available for this pair.");
+      const best = valid.reduce((acc, next) => {
+        if (!acc) return next;
+        return next.amountOut > acc.amountOut ? next : acc;
+      }, null);
+      if (!best) throw new Error("No V3 route available for this pair.");
+      const { amountOut: _amountOut, ...rest } = best;
+      return rest;
     },
     [
       buyMeta?.address,
       buyToken,
-      getRouteCandidates,
+      buildV3RouteCandidates,
       hasV3Support,
-      listV3Pools,
       quoteV3Route,
       sellMeta?.address,
       sellToken,
-      v3HopOnly,
     ]
   );
   const quoteV2Route = useCallback(
@@ -1977,7 +2029,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         ? "Direct"
         : quoteMeta?.kind === "hop"
           ? "2-hop"
-          : "";
+          : quoteMeta?.kind === "multi"
+            ? "Multi-hop"
+            : "";
 
   // Re-run quotes when LP reserves move (Sync events via miniBlocks)
   useEffect(() => {
@@ -2495,11 +2549,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             }
             if (hasV3Support && routePreference !== "v2") {
               try {
-                const { directRoutes, hopRoutes } = await buildV3RouteCandidates();
-                const candidates = [
-                  ...(v3HopOnly ? [] : directRoutes),
-                  ...hopRoutes,
-                ];
+                const { directRoutes, hopRoutes, multiRoutes } =
+                  await buildV3RouteCandidates();
+                const candidates = [...directRoutes, ...hopRoutes, ...multiRoutes];
                 const quoted = await Promise.all(
                   candidates.map(async (route) => {
                     try {
@@ -2590,8 +2642,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 : { directRoute: null, hopRoutes: [] };
 
             const v3Routes = [
-              ...(v3HopOnly ? [] : v3Candidates.directRoutes),
+              ...v3Candidates.directRoutes,
               ...v3Candidates.hopRoutes,
+              ...v3Candidates.multiRoutes,
             ].map((route) => ({ ...route, protocol: "V3" }));
             const v2Routes = [
               ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
@@ -2982,7 +3035,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     liveRouteTick,
     quoteLockedUntil,
     routePreference,
-    v3HopOnly,
     displaySellSymbol,
     displayBuySymbol,
     isChainMatch,
