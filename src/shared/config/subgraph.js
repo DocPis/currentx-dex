@@ -2005,6 +2005,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
   if (!list.length) return {};
 
   const count = Math.max(1, Math.min(Number(hours) || 24, 168));
+  const since = Math.floor(Date.now() / 1000) - count * 3600;
   const chunks = chunkArray(list, 8);
   const out = {};
   const candidates = ["pair", "pairAddress"];
@@ -2078,7 +2079,14 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
     };
   };
 
-  const runChunk = async (chunk, field, orderBy, select) => {
+  const isFilterUnsupported = (message = "") =>
+    message.includes("Unknown argument") ||
+    message.includes("is not defined on") ||
+    message.includes("has no field") ||
+    message.includes("Cannot query field");
+
+  const runChunk = async (chunk, field, orderBy, select, useSince = true) => {
+    const timeField = useSince ? orderBy : null;
     const query = `
       query V2PoolHourData {
         ${chunk
@@ -2088,7 +2096,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
             first: ${count}
             orderBy: ${orderBy}
             orderDirection: desc
-            where: { ${field}: "${id}" }
+            where: { ${field}: "${id}"${timeField ? `, ${timeField}_gte: ${since}` : ""} }
           ) {
             ${select}
           }
@@ -2110,13 +2118,22 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
   let resolvedSelect = null;
   let resolvedField = null;
   let resolvedOrderBy = null;
+  let resolvedUseSince = true;
   if (chunks.length) {
     let matched = false;
     for (const select of selectVariants) {
       for (const orderBy of orderVariants) {
         for (const field of candidates) {
           try {
-            await runChunk(chunks[0], field, orderBy, select);
+            try {
+              await runChunk(chunks[0], field, orderBy, select, true);
+              resolvedUseSince = true;
+            } catch (err) {
+              const message = err?.message || "";
+              if (!isFilterUnsupported(message)) throw err;
+              await runChunk(chunks[0], field, orderBy, select, false);
+              resolvedUseSince = false;
+            }
             resolvedSelect = select;
             resolvedField = field;
             resolvedOrderBy = orderBy;
@@ -2146,7 +2163,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
     await Promise.all(
       chunks.slice(1).map(async (chunk) => {
         try {
-          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect);
+          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect, resolvedUseSince);
         } catch {
           // ignore chunk failures to keep partial data
         }
@@ -2164,6 +2181,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
   if (!list.length) return {};
 
   const count = Math.max(1, Math.min(Number(hours) || 24, 168));
+  const since = Math.floor(Date.now() / 1000) - count * 3600;
   const chunks = chunkArray(list, 8);
   const out = {};
   const candidates = ["pool", "poolAddress"];
@@ -2233,7 +2251,14 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
     };
   };
 
-  const runChunk = async (chunk, field, orderBy, select) => {
+  const isFilterUnsupported = (message = "") =>
+    message.includes("Unknown argument") ||
+    message.includes("is not defined on") ||
+    message.includes("has no field") ||
+    message.includes("Cannot query field");
+
+  const runChunk = async (chunk, field, orderBy, select, useSince = true) => {
+    const timeField = useSince ? orderBy : null;
     const query = `
       query V3PoolHourData {
         ${chunk
@@ -2243,7 +2268,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
             first: ${count}
             orderBy: ${orderBy}
             orderDirection: desc
-            where: { ${field}: "${id}" }
+            where: { ${field}: "${id}"${timeField ? `, ${timeField}_gte: ${since}` : ""} }
           ) {
             ${select}
           }
@@ -2265,13 +2290,22 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
   let resolvedSelect = null;
   let resolvedField = null;
   let resolvedOrderBy = null;
+  let resolvedUseSince = true;
   if (chunks.length) {
     let matched = false;
     for (const select of selectVariants) {
       for (const orderBy of orderVariants) {
         for (const field of candidates) {
           try {
-            await runChunk(chunks[0], field, orderBy, select);
+            try {
+              await runChunk(chunks[0], field, orderBy, select, true);
+              resolvedUseSince = true;
+            } catch (err) {
+              const message = err?.message || "";
+              if (!isFilterUnsupported(message)) throw err;
+              await runChunk(chunks[0], field, orderBy, select, false);
+              resolvedUseSince = false;
+            }
             resolvedSelect = select;
             resolvedField = field;
             resolvedOrderBy = orderBy;
@@ -2301,7 +2335,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
     await Promise.all(
       chunks.slice(1).map(async (chunk) => {
         try {
-          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect);
+          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect, resolvedUseSince);
         } catch {
           // ignore chunk failures to keep partial data
         }

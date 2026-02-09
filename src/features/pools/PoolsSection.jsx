@@ -11,6 +11,7 @@ const SORT_KEYS = {
   FEES: "fees",
   APR: "apr",
 };
+const LOW_TVL_THRESHOLD = 50;
 
 const trimTrailingZeros = (value) => {
   if (typeof value !== "string" || !value.includes(".")) return value;
@@ -152,6 +153,7 @@ export default function PoolsSection({ onSelectPool }) {
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
+  const [hideLowTvl, setHideLowTvl] = useState(false);
 
   const searchLower = searchTerm.trim().toLowerCase();
 
@@ -232,9 +234,18 @@ export default function PoolsSection({ onSelectPool }) {
   }, [v2Pools, v3Pools, v2RollingData, v3RollingData]);
 
   const filteredPools = useMemo(() => {
-    if (!searchLower) return combinedPools;
-    return combinedPools.filter((pool) => poolMatchesSearch(pool, searchLower));
-  }, [combinedPools, searchLower]);
+    let list = combinedPools;
+    if (searchLower) {
+      list = list.filter((pool) => poolMatchesSearch(pool, searchLower));
+    }
+    if (hideLowTvl) {
+      list = list.filter((pool) => {
+        if (!Number.isFinite(pool.liquidityUsd)) return true;
+        return pool.liquidityUsd >= LOW_TVL_THRESHOLD;
+      });
+    }
+    return list;
+  }, [combinedPools, searchLower, hideLowTvl]);
 
   const filteredByType = useMemo(() => {
     if (typeFilter === "all") return filteredPools;
@@ -338,8 +349,19 @@ export default function PoolsSection({ onSelectPool }) {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-6">
         <div>
           <h2 className="text-2xl font-semibold text-white">Pools</h2>
-          <div className="text-sm text-slate-400">
-            All available pools across V3 and V2.
+          <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 text-sm text-slate-400">
+            <span>All available pools across V3 and V2.</span>
+            <button
+              type="button"
+              onClick={() => setHideLowTvl((prev) => !prev)}
+              className={`mt-2 sm:mt-0 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                hideLowTvl
+                  ? "border-emerald-400/60 bg-emerald-500/10 text-emerald-200"
+                  : "border-slate-700/70 bg-slate-900/60 text-slate-300 hover:border-slate-500"
+              }`}
+            >
+              {hideLowTvl ? "Showing TVL >= $50" : "Hide low TVL (< $50)"}
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-3 w-full lg:w-auto">
