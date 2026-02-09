@@ -7,7 +7,6 @@ import { injected } from "wagmi/connectors";
 import { defineChain } from "viem";
 import { WidgetThemeProvider } from "@avon_xyz/widget";
 import App from "./App";
-import WhitelistPage from "./features/whitelist/WhitelistPage";
 import { getActiveNetworkConfig } from "./shared/config/networks";
 import "./index.css";
 
@@ -16,8 +15,6 @@ if (import.meta.env.MODE === "production") {
   inject();
 }
 
-const path = (window?.location?.pathname || "").toLowerCase();
-const isWhitelistPage = path.includes("whitelist");
 
 const queryClient = new QueryClient();
 const activeNetwork = getActiveNetworkConfig();
@@ -57,7 +54,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <WidgetThemeProvider>
-          {isWhitelistPage ? <WhitelistPage /> : <App />}
+          <App />
         </WidgetThemeProvider>
       </QueryClientProvider>
     </WagmiProvider>

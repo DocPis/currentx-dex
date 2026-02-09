@@ -117,16 +117,27 @@ export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
   const { data: dashboardData, isFetchedAfterMount: dashboardFresh } = useDashboardData();
   const protocolStats = dashboardData?.stats || null;
-  const protocolTvl = dashboardFresh ? protocolStats?.totalLiquidityUsd ?? null : null;
+  const tvlHistory = dashboardData?.tvlHistory || [];
+  const volumeHistory = dashboardData?.volumeHistory || [];
+  const protocolTvl = dashboardFresh
+    ? tvlHistory?.[0]?.tvlUsd ?? protocolStats?.totalLiquidityUsd ?? null
+    : null;
+  const latestDay = volumeHistory?.[0] || null;
+  const dayVolume = latestDay?.volumeUsd ?? null;
+  const hasCumulativeVolume =
+    typeof latestDay?.cumulativeVolumeUsd === "number" &&
+    latestDay.cumulativeVolumeUsd > 0 &&
+    typeof protocolStats?.totalVolumeUsd === "number";
+  const todayVolume = hasCumulativeVolume
+    ? Math.max(0, protocolStats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
+    : null;
+  const protocolVolumeUtc = dayVolume ?? todayVolume;
+  const protocolFeesUtc = latestDay?.feesUsd ?? null;
   const {
     v2Pools,
     v3Pools,
-    v2PoolCount,
-    v3PoolCount,
     v2RollingData,
     v3RollingData,
-    v2RollingFresh,
-    v3RollingFresh,
     v2Error,
     v3Error,
     v2IsLoading,
@@ -220,28 +231,6 @@ export default function PoolsSection({ onSelectPool }) {
     return list;
   }, [v2Pools, v3Pools, v2RollingData, v3RollingData]);
 
-  // Protocol rolling totals are derived from the pools list (rolling 24h when available).
-  const protocolMetricsReady =
-    (v2PoolCount === 0 || v2RollingFresh) && (v3PoolCount === 0 || v3RollingFresh);
-
-  const protocolVolume24h = useMemo(() => {
-    if (!protocolMetricsReady) return null;
-    const values = combinedPools
-      .map((pool) => pool.volume24hUsd)
-      .filter((val) => val !== null && val !== undefined && Number.isFinite(val));
-    if (!values.length) return null;
-    return values.reduce((sum, val) => sum + val, 0);
-  }, [combinedPools, protocolMetricsReady]);
-
-  const protocolFees24h = useMemo(() => {
-    if (!protocolMetricsReady) return null;
-    const values = combinedPools
-      .map((pool) => pool.fees24hUsd)
-      .filter((val) => val !== null && val !== undefined && Number.isFinite(val));
-    if (!values.length) return null;
-    return values.reduce((sum, val) => sum + val, 0);
-  }, [combinedPools, protocolMetricsReady]);
-
   const filteredPools = useMemo(() => {
     if (!searchLower) return combinedPools;
     return combinedPools.filter((pool) => poolMatchesSearch(pool, searchLower));
@@ -320,23 +309,23 @@ export default function PoolsSection({ onSelectPool }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol volume 24h
+                Protocol Volume (UTC Day)
               </div>
               <div className="text-xl font-semibold">
-                {formatUsd(protocolVolume24h)}
+                {formatUsd(protocolVolumeUtc)}
               </div>
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol fees 24h
+                Protocol Fees (UTC Day)
               </div>
               <div className="text-xl font-semibold">
-                {formatUsd(protocolFees24h)}
+                {formatUsd(protocolFeesUtc)}
               </div>
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                TVL
+                Protocol TVL
               </div>
               <div className="text-xl font-semibold">
                 {formatUsd(protocolTvl)}

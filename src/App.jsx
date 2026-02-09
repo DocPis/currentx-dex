@@ -7,7 +7,7 @@ import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
 import Footer from "./shared/ui/Footer";
-import WhitelistBanner from "./shared/ui/WhitelistBanner";
+import SeasonBanner from "./shared/ui/SeasonBanner";
 
 const TAB_ROUTES = {
   dashboard: "/dashboard",
@@ -49,9 +49,8 @@ const getTabFromPath = (path = "") => {
 const getPathForTab = (tab) => TAB_ROUTES[tab] || "/dashboard";
 
 const initialPath = (typeof window !== "undefined" && window.location?.pathname) || "";
-const isWhitelistPath = initialPath.toLowerCase().includes("whitelist");
 const initialTab = getTabFromPath(initialPath);
-if (!isWhitelistPath && SECTION_LOADERS[initialTab]) {
+if (SECTION_LOADERS[initialTab]) {
   SECTION_LOADERS[initialTab]();
 }
 
@@ -282,7 +281,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col relative">
-      <WhitelistBanner />
+      <SeasonBanner />
       {connectError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
           <div className="bg-slate-900/95 border border-rose-500/40 text-rose-100 px-4 py-3 rounded-2xl shadow-2xl shadow-rose-900/40 flex items-start gap-3 min-w-[260px]">
