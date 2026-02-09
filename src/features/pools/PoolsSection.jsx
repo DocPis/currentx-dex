@@ -309,7 +309,7 @@ export default function PoolsSection({ onSelectPool }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol Volume (UTC Day)
+                Protocol Volume Daily
               </div>
               <div className="text-xl font-semibold">
                 {formatUsd(protocolVolumeUtc)}
@@ -317,7 +317,7 @@ export default function PoolsSection({ onSelectPool }) {
             </div>
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol Fees (UTC Day)
+                Protocol Fees Daily
               </div>
               <div className="text-xl font-semibold">
                 {formatUsd(protocolFeesUtc)}

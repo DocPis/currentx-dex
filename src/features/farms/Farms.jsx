@@ -784,7 +784,7 @@ function V3StakerList({ address, onConnect }) {
               Live
             </div>
             <div className="text-sm text-slate-200">
-              Incentives for V3 positions, on-chain via V3 Staker.
+              Incentives for V3 positions.
             </div>
             <div className="text-xs text-slate-500">
               Stake, earn, and manage NFT positions without leaving the chain.
