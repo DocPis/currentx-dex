@@ -340,7 +340,11 @@ export default function App() {
                 tab === item.id
                   ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
                   : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
-              } ${item.id === "points" ? "sm:ml-auto" : ""}`}
+              } ${
+                item.id === "points"
+                  ? "relative border-cyan-400/50 text-cyan-100 shadow-[0_0_18px_rgba(15,245,255,0.35)] hover:shadow-[0_0_24px_rgba(15,245,255,0.45)]"
+                  : ""
+              }`}
             >
               {item.label}
             </button>
