@@ -773,48 +773,58 @@ function V3StakerList({ address, onConnect }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-3xl bg-slate-900/80 border border-slate-800 shadow-lg shadow-black/30 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <div className="text-sm text-slate-300">
-            Incentives for V3 positions (on-chain via V3Staker)
-          </div>
-          <div className="text-xs text-slate-500">Live</div>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-slate-400">Incentives</div>
-            <div className="text-lg font-semibold text-slate-100">
-              {formatNumber(incentives.length)}
+    <div className="space-y-6">
+      <div className="relative overflow-hidden rounded-[28px] border border-white/5 bg-gradient-to-br from-slate-950/90 via-slate-900/70 to-emerald-900/20 p-5 shadow-2xl shadow-black/40">
+        <div className="absolute -top-24 -right-20 h-52 w-52 rounded-full bg-emerald-500/10 blur-3xl" />
+        <div className="absolute -bottom-24 -left-20 h-60 w-60 rounded-full bg-sky-500/10 blur-3xl" />
+        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Live
+            </div>
+            <div className="text-sm text-slate-200">
+              Incentives for V3 positions, on-chain via V3 Staker.
+            </div>
+            <div className="text-xs text-slate-500">
+              Stake, earn, and manage NFT positions without leaving the chain.
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="text-xs text-slate-400">Active</div>
-            <div className="text-lg font-semibold text-slate-100">
-              {formatNumber(activeCount)}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                Incentives
+              </div>
+              <div className="text-lg font-semibold text-slate-100">
+                {formatNumber(incentives.length)}
+              </div>
             </div>
+            <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Active</div>
+              <div className="text-lg font-semibold text-slate-100">
+                {formatNumber(activeCount)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCreateOpen(true)}
+              className="px-4 py-2.5 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-xs font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:from-emerald-300 hover:to-emerald-500 transition"
+            >
+              Create Incentive
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="px-3 py-2 rounded-full bg-emerald-600 text-xs font-semibold text-white shadow-lg shadow-emerald-500/30"
-          >
-            Create Incentive
-          </button>
         </div>
       </div>
 
-      <div className="rounded-3xl bg-slate-950/70 border border-slate-800 shadow-lg shadow-black/30">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 py-3 border-b border-slate-800/70">
+      <div className="rounded-[26px] border border-white/5 bg-slate-950/60 backdrop-blur-xl shadow-2xl shadow-black/30">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-5 py-4 border-b border-white/5">
           <div className="flex items-center gap-2 text-sm text-slate-200">
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 text-xs"
-            >
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
               Live
-            </button>
+            </div>
           </div>
-          <div className="flex-1 flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-full px-3 py-2 text-sm text-slate-200 max-w-xl">
+          <div className="flex-1 flex items-center gap-2 bg-slate-900/70 border border-slate-800/80 rounded-full px-4 py-2 text-sm text-slate-200 max-w-xl">
             <svg
               viewBox="0 0 24 24"
               fill="none"
@@ -835,25 +845,28 @@ function V3StakerList({ address, onConnect }) {
         </div>
 
         {loading && (
-          <div className="p-4 space-y-3">
-            {[0, 1].map((i) => (
-              <div key={i} className="h-14 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse" />
+          <div className="p-5 space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="h-16 rounded-2xl border border-white/5 bg-slate-900/50 animate-pulse"
+              />
             ))}
           </div>
         )}
 
         {error && !loading && (
-          <div className="p-4 text-sm text-amber-100 bg-amber-500/10 border border-amber-500/30 rounded-2xl">
+          <div className="p-5 text-sm text-amber-100 bg-amber-500/10 border border-amber-500/30 rounded-2xl mx-4 my-4">
             {error}
           </div>
         )}
 
         {!loading && !error && filteredIncentives.length === 0 && (
-          <div className="p-4 text-sm text-slate-400">No incentives found.</div>
+          <div className="p-5 text-sm text-slate-400">No incentives found.</div>
         )}
 
         {!loading && !error && filteredIncentives.length > 0 && (
-          <div className="divide-y divide-slate-800/70">
+          <div className="p-3 space-y-3">
             {filteredIncentives.map((inc) => {
               const poolLabel = inc.poolMeta
                 ? `${inc.poolMeta.token0Meta?.symbol || "Token0"} / ${
@@ -877,8 +890,15 @@ function V3StakerList({ address, onConnect }) {
               const actionKey = action.key;
 
               return (
-                <div key={inc.id} className="px-4 py-3">
-                  <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
+                <div
+                  key={inc.id}
+                  className={`rounded-2xl border px-4 py-4 transition-colors ${
+                    isOpen
+                      ? "border-slate-700/60 bg-slate-900/60"
+                      : "border-white/5 bg-slate-950/50 hover:bg-slate-900/40"
+                  }`}
+                >
+                  <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-4">
                     <div className="col-span-5 flex items-center gap-3">
                       <div className="flex -space-x-2">
                         {[inc.poolMeta?.token0Meta, inc.poolMeta?.token1Meta].map((token, idx) => (
@@ -886,7 +906,7 @@ function V3StakerList({ address, onConnect }) {
                             key={`${inc.id}-${idx}`}
                             src={token?.logo || TOKENS.CRX?.logo}
                             alt={token?.symbol || "token"}
-                            className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900"
+                            className="h-11 w-11 rounded-full border border-slate-800 bg-slate-900"
                           />
                         ))}
                       </div>
@@ -906,17 +926,27 @@ function V3StakerList({ address, onConnect }) {
                         </div>
                       </div>
                     </div>
-                    <div className="col-span-3 text-right text-sm text-slate-200">
-                      {rewardAmount} {rewardSymbol}
+                    <div className="col-span-3 md:text-right">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Total Reward
+                      </div>
+                      <div className="text-sm font-semibold text-slate-100">
+                        {rewardAmount} {rewardSymbol}
+                      </div>
                     </div>
-                    <div className="col-span-3 text-right text-xs text-slate-400">
-                      {formatTimestamp(inc.startTime)} {"->"} {formatTimestamp(inc.endTime)}
+                    <div className="col-span-3 md:text-right">
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                        Window
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        {formatTimestamp(inc.startTime)} {"->"} {formatTimestamp(inc.endTime)}
+                      </div>
                     </div>
-                    <div className="col-span-1 text-right">
+                    <div className="col-span-1 md:text-right">
                       <button
                         type="button"
                         onClick={() => setExpanded(isOpen ? null : inc.id)}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-full border border-sky-500/60 text-sky-100 bg-sky-500/10 hover:bg-sky-500/20 hover:border-sky-300 transition-colors shadow-sm shadow-sky-500/30"
+                        className="px-3 py-1.5 text-xs font-semibold rounded-full border border-slate-700/70 text-slate-200 bg-slate-900/70 hover:bg-slate-800/80 transition-colors"
                       >
                         {isOpen ? "Hide" : "Details"}
                       </button>
@@ -924,20 +954,25 @@ function V3StakerList({ address, onConnect }) {
                   </div>
 
                   {isOpen && (
-                    <div className="mt-3 rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-4">
-                      <div className="text-sm text-slate-300">
-                        Incentive ID: <span className="text-slate-100">{inc.id}</span>
+                    <div className="mt-4 rounded-2xl border border-white/5 bg-slate-950/70 p-4 shadow-inner shadow-black/40 space-y-4">
+                      <div className="space-y-1">
+                        <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                          Incentive ID
+                        </div>
+                        <div className="text-sm font-mono text-slate-200 break-all">
+                          {inc.id}
+                        </div>
                       </div>
 
                       <div className="space-y-2">
                         <div className="text-xs uppercase tracking-wide text-slate-500">
-                          Wallet positions (eligible)
+                          Wallet Positions
                         </div>
                         {eligibleWallet.length ? (
                           eligibleWallet.map((pos) => (
                             <div
                               key={`wallet-${pos.tokenId}`}
-                              className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2"
+                              className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-white/5 bg-slate-900/40 px-3 py-2"
                             >
                               <div className="text-sm text-slate-100">
                                 #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
@@ -957,13 +992,13 @@ function V3StakerList({ address, onConnect }) {
                             </div>
                           ))
                         ) : (
-                          <div className="text-xs text-slate-500">No eligible wallet positions.</div>
+                          <div className="text-xs text-slate-500">No eligible wallet positions found.</div>
                         )}
                       </div>
 
                       <div className="space-y-2">
                         <div className="text-xs uppercase tracking-wide text-slate-500">
-                          Deposited positions
+                          Deposited Positions
                         </div>
                         {eligibleDeposits.length ? (
                           eligibleDeposits.map((pos) => {
@@ -976,19 +1011,25 @@ function V3StakerList({ address, onConnect }) {
                             return (
                               <div
                                 key={`staker-${pos.tokenId}`}
-                                className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2"
+                                className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 rounded-xl border border-white/5 bg-slate-900/40 px-3 py-2"
                               >
                                 <div className="text-sm text-slate-100">
                                   #{pos.tokenId} - {pos.token0Meta?.symbol || "Token0"} /{" "}
                                   {pos.token1Meta?.symbol || "Token1"} - Fee{" "}
                                   {(pos.fee / 10000).toFixed(2)}%
-                                  <span className="ml-2 text-xs text-slate-400">
+                                  <span
+                                    className={`ml-2 px-2 py-0.5 rounded-full text-[10px] border ${
+                                      isStaked
+                                        ? "border-emerald-400/40 text-emerald-200 bg-emerald-500/10"
+                                        : "border-slate-600/60 text-slate-300 bg-slate-800/40"
+                                    }`}
+                                  >
                                     {isStaked ? "Staked" : "Not staked"}
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <div className="text-xs text-slate-400">
-                                    Reward: {formatTokenAmount(reward, inc.rewardMeta?.decimals || 18, 6)}{" "}
+                                    Reward {formatTokenAmount(reward, inc.rewardMeta?.decimals || 18, 6)}{" "}
                                     {inc.rewardMeta?.symbol || "TOKEN"}
                                   </div>
                                   {isStaked ? (
@@ -1037,7 +1078,7 @@ function V3StakerList({ address, onConnect }) {
                             );
                           })
                         ) : (
-                          <div className="text-xs text-slate-500">No deposited positions.</div>
+                          <div className="text-xs text-slate-500">No deposited positions found.</div>
                         )}
                       </div>
 
