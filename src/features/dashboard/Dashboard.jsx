@@ -68,6 +68,18 @@ const formatDateLabel = (ts) => {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 };
 
+const formatDateTooltip = (ts) => {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleDateString("en-US", {
+      month: "short",
+      day: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+};
+
 function LineGlowChart({
   data,
   height = 220,
@@ -413,7 +425,7 @@ export default function Dashboard() {
       const value = lastKnown !== null ? lastKnown : 0;
       filled.push({
         label: formatDateLabel(day),
-        fullLabel: new Date(day).toLocaleString(),
+        fullLabel: formatDateTooltip(day),
         value,
         rawDate: day,
       });
@@ -428,7 +440,7 @@ export default function Dashboard() {
         .reverse()
         .map((d) => ({
           label: formatDateLabel(d.date),
-          fullLabel: new Date(d.date).toLocaleString(),
+          fullLabel: formatDateTooltip(d.date),
           value: d.volumeUsd,
           rawDate: d.date,
         })),
@@ -459,7 +471,7 @@ export default function Dashboard() {
       liveTvl !== undefined && Number.isFinite(latestTvlDate)
         ? {
             label: "Today",
-            fullLabel: new Date(latestTvlDate).toLocaleString(),
+            fullLabel: formatDateTooltip(latestTvlDate),
             value: liveTvl,
             rawDate: latestTvlDate,
             isLive: true,
@@ -474,7 +486,7 @@ export default function Dashboard() {
       todayVolume !== null && Number.isFinite(latestVolumeDate)
         ? {
             label: "Today",
-            fullLabel: new Date(latestVolumeDate).toLocaleString(),
+            fullLabel: formatDateTooltip(latestVolumeDate),
             value: todayVolume,
             rawDate: latestVolumeDate,
             isLive: true,
