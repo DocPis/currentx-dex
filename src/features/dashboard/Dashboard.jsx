@@ -86,6 +86,7 @@ function LineGlowChart({
   color = "#4ade80",
   label = "line",
   topPaddingRatio = 0,
+  centerMax = false,
 }) {
   const containerRef = useRef(null);
   const [activeIndex, setActiveIndex] = useState(null);
@@ -101,7 +102,10 @@ function LineGlowChart({
   const values = data.map((d) => d.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const maxWithPadding = max + Math.abs(max) * topPaddingRatio;
+  const baseRange = max - min || 1;
+  const maxWithPadding = centerMax
+    ? min + baseRange * 2
+    : max + Math.abs(max) * topPaddingRatio;
   const range = maxWithPadding - min || 1;
   const width = Math.max(520, values.length * 44);
 
@@ -460,7 +464,7 @@ export default function Dashboard() {
                 data={tvlSeriesWithToday}
                 color="#38bdf8"
                 label="tvl"
-                topPaddingRatio={0.5}
+                centerMax
               />
             )}
           </div>
@@ -488,7 +492,7 @@ export default function Dashboard() {
                 data={volumeSeriesWithToday}
                 color="#34d399"
                 label="volume"
-                topPaddingRatio={0.2}
+                centerMax
               />
             )}
           </div>
@@ -516,7 +520,7 @@ export default function Dashboard() {
                 data={feesSeries}
                 color="#f59e0b"
                 label="fees"
-                topPaddingRatio={0.2}
+                centerMax
               />
             )}
           </div>
