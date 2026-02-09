@@ -53,6 +53,11 @@ const MAX_V3_PATHS = 30;
 const MAX_V3_ROUTE_CANDIDATES = 24;
 const MAX_V3_FEE_OPTIONS = 3;
 const MAX_V3_COMBOS_PER_PATH = 9;
+const FAST_QUOTE_BUDGET_MS = 1400;
+const V3_QUOTE_BATCH_SIZE = 4;
+const MAX_V3_QUOTES = 8;
+const MAX_SPLIT_ROUTES = 2;
+const SPLIT_SHARE_STEPS = [25, 50, 75];
 const STABLE_SYMBOLS = new Set([
   "USDM",
   "USDT0",
@@ -2557,6 +2562,96 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             }
           }
 
+          const quoteBudgetStart = Date.now();
+          const withinQuoteBudget = () =>
+            Date.now() - quoteBudgetStart < FAST_QUOTE_BUDGET_MS;
+          const buildPrioritizedV3Routes = (candidates) => {
+            const directRoutes = candidates?.directRoutes || [];
+            const hopRoutes = candidates?.hopRoutes || [];
+            const multiRoutes = candidates?.multiRoutes || [];
+            const ordered = [];
+            let seen = new Set();
+            const pushRoute = (route, hopLimit) => {
+              if (!route) return;
+              if (Number.isFinite(hopLimit)) {
+                const hopCount = Array.isArray(route.path)
+                  ? Math.max(0, route.path.length - 1)
+                  : 0;
+                if (hopCount > hopLimit) return;
+              }
+              const key = buildRouteKey(route);
+              if (seen.has(key)) return;
+              seen.add(key);
+              ordered.push(route);
+            };
+            const fill = (hopLimit) => {
+              pushRoute(directRoutes[0], hopLimit);
+              pushRoute(hopRoutes[0], hopLimit);
+              pushRoute(multiRoutes[0], hopLimit);
+              [...directRoutes, ...hopRoutes, ...multiRoutes].forEach((route) =>
+                pushRoute(route, hopLimit)
+              );
+            };
+            // Fast phase: only allow up to 2 hops (direct/2-hop). If nothing found, allow all.
+            fill(2);
+            if (!ordered.length) {
+              seen = new Set();
+              fill(null);
+            }
+            return ordered.slice(0, MAX_V3_QUOTES);
+          };
+          const quoteV3ExactInWithBudget = async (routes, amountInWei) => {
+            if (!routes.length) return [];
+            const results = [];
+            for (let i = 0; i < routes.length; i += V3_QUOTE_BATCH_SIZE) {
+              if (i > 0 && !withinQuoteBudget()) break;
+              const batch = routes.slice(i, i + V3_QUOTE_BATCH_SIZE);
+              const quoted = await Promise.all(
+                batch.map(async (route) => {
+                  try {
+                    const amountOut = await quoteV3Route(provider, amountInWei, route);
+                    return { ...route, protocol: "V3", amountOut };
+                  } catch {
+                    return null;
+                  }
+                })
+              );
+              results.push(...quoted.filter(Boolean));
+              if (!withinQuoteBudget()) break;
+            }
+            return results;
+          };
+          const quoteV3ExactOutWithBudget = async (routes, amountOutWei) => {
+            if (!routes.length) return [];
+            const results = [];
+            for (let i = 0; i < routes.length; i += V3_QUOTE_BATCH_SIZE) {
+              if (i > 0 && !withinQuoteBudget()) break;
+              const batch = routes.slice(i, i + V3_QUOTE_BATCH_SIZE);
+              const quoted = await Promise.all(
+                batch.map(async (route) => {
+                  try {
+                    const amountIn = await quoteV3RouteExactOut(
+                      provider,
+                      amountOutWei,
+                      route
+                    );
+                    return {
+                      ...route,
+                      protocol: "V3",
+                      amountIn,
+                      amountOut: amountOutWei,
+                    };
+                  } catch {
+                    return null;
+                  }
+                })
+              );
+              results.push(...quoted.filter(Boolean));
+              if (!withinQuoteBudget()) break;
+            }
+            return results;
+          };
+
           let v3Route = null;
           let v2Route = null;
           let splitRoute = null;
@@ -2568,29 +2663,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             }
             if (hasV3Support && routePreference !== "v2") {
               try {
-                const { directRoutes, hopRoutes, multiRoutes } =
-                  await buildV3RouteCandidates();
-                const candidates = [...directRoutes, ...hopRoutes, ...multiRoutes];
-                const quoted = await Promise.all(
-                  candidates.map(async (route) => {
-                    try {
-                      const amountIn = await quoteV3RouteExactOut(
-                        provider,
-                        desiredOutWei,
-                        route
-                      );
-                      return {
-                        ...route,
-                        protocol: "V3",
-                        amountIn,
-                        amountOut: desiredOutWei,
-                      };
-                    } catch {
-                      return null;
-                    }
-                  })
+                const v3Candidates = await buildV3RouteCandidates();
+                const candidates = buildPrioritizedV3Routes(v3Candidates);
+                const valid = await quoteV3ExactOutWithBudget(
+                  candidates,
+                  desiredOutWei
                 );
-                const valid = quoted.filter(Boolean);
                 if (valid.length) {
                   v3Route = valid.reduce((best, next) => {
                     if (!best) return next;
@@ -2654,32 +2732,19 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             const v3Candidates =
               hasV3Support && routePreference !== "v2"
                 ? await buildV3RouteCandidates()
-                : { directRoutes: [], hopRoutes: [] };
+                : { directRoutes: [], hopRoutes: [], multiRoutes: [] };
             const v2Candidates =
               enableV2Routing && routePreference !== "v3"
                 ? await buildV2RouteCandidates()
                 : { directRoute: null, hopRoutes: [] };
 
-            const v3Routes = [
-              ...v3Candidates.directRoutes,
-              ...v3Candidates.hopRoutes,
-              ...v3Candidates.multiRoutes,
-            ].map((route) => ({ ...route, protocol: "V3" }));
+            const v3Routes = buildPrioritizedV3Routes(v3Candidates);
             const v2Routes = [
               ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
               ...v2Candidates.hopRoutes,
             ].map((route) => ({ ...route, protocol: "V2" }));
 
-            const quotedV3 = await Promise.all(
-              v3Routes.map(async (route) => {
-                try {
-                  const amountOut = await quoteV3Route(provider, amountWei, route);
-                  return { ...route, amountOut };
-                } catch {
-                  return null;
-                }
-              })
-            );
+            const quotedV3 = await quoteV3ExactInWithBudget(v3Routes, amountWei);
             const quotedV2 = await Promise.all(
               v2Routes.map(async (route) => {
                 try {
@@ -2720,7 +2785,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               allQuoted.length > 1
             ) {
               try {
-                const maxCandidates = 3;
+                const maxCandidates = MAX_SPLIT_ROUTES;
                 const sorted = allQuoted
                   .slice()
                   .sort((a, b) => Number(b.amountOut - a.amountOut));
@@ -2743,11 +2808,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   if (ranked.length >= maxCandidates) break;
                   pushRoute(route);
                 }
-                const pairSteps = [];
-                for (let pct = 5; pct <= 95; pct += 5) pairSteps.push(pct);
-                const tripleSteps = [];
-                for (let pct = 10; pct <= 90; pct += 10) tripleSteps.push(pct);
-                const tripleStepSet = new Set(tripleSteps);
+                const pairSteps = SPLIT_SHARE_STEPS;
                 const quoteCache = new Map();
                 const getCachedQuote = async (route, amountIn) => {
                   const key = `${buildRouteKey(route)}:${amountIn.toString()}`;
@@ -2759,12 +2820,22 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   return out;
                 };
                 let bestSplit = null;
+                const remainingBudget = Math.max(
+                  200,
+                  FAST_QUOTE_BUDGET_MS - (Date.now() - quoteBudgetStart)
+                );
+                const splitDeadline = Date.now() + Math.min(600, remainingBudget);
+                let splitTimedOut = false;
 
                 for (let i = 0; i < ranked.length; i += 1) {
                   for (let j = i + 1; j < ranked.length; j += 1) {
                     const routeA = ranked[i];
                     const routeB = ranked[j];
                     for (const share of pairSteps) {
+                      if (Date.now() > splitDeadline) {
+                        splitTimedOut = true;
+                        break;
+                      }
                       const amountA = (amountWei * BigInt(share)) / 100n;
                       const amountB = amountWei - amountA;
                       if (amountA <= 0n || amountB <= 0n) continue;
@@ -2796,58 +2867,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                         };
                       }
                     }
+                    if (splitTimedOut) break;
                   }
-                }
-
-                if (ranked.length >= 3 && tripleSteps.length) {
-                  const trio = ranked.slice(0, 3);
-                  for (let aIdx = 0; aIdx < tripleSteps.length; aIdx += 1) {
-                    const shareA = tripleSteps[aIdx];
-                    for (let bIdx = 0; bIdx < tripleSteps.length; bIdx += 1) {
-                      const shareB = tripleSteps[bIdx];
-                      const shareC = 100 - shareA - shareB;
-                      if (shareC <= 0 || shareC >= 100) continue;
-                      if (!tripleStepSet.has(shareC)) continue;
-                      const amountA = (amountWei * BigInt(shareA)) / 100n;
-                      const amountB = (amountWei * BigInt(shareB)) / 100n;
-                      const amountC = amountWei - amountA - amountB;
-                      if (amountA <= 0n || amountB <= 0n || amountC <= 0n) continue;
-                      const [outA, outB, outC] = await Promise.all([
-                        getCachedQuote(trio[0], amountA),
-                        getCachedQuote(trio[1], amountB),
-                        getCachedQuote(trio[2], amountC),
-                      ]);
-                      if (!outA || !outB || !outC) continue;
-                      const total = outA + outB + outC;
-                      if (!bestSplit || total > bestSplit.amountOut) {
-                        bestSplit = {
-                          protocol: "SPLIT",
-                          kind: "split",
-                          amountOut: total,
-                          routes: [
-                            {
-                              ...trio[0],
-                              amountIn: amountA,
-                              amountOut: outA,
-                              sharePct: shareA,
-                            },
-                            {
-                              ...trio[1],
-                              amountIn: amountB,
-                              amountOut: outB,
-                              sharePct: shareB,
-                            },
-                            {
-                              ...trio[2],
-                              amountIn: amountC,
-                              amountOut: outC,
-                              sharePct: shareC,
-                            },
-                          ],
-                        };
-                      }
-                    }
-                  }
+                  if (splitTimedOut) break;
                 }
 
                 if (bestSplit) {
