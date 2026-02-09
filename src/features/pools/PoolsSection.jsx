@@ -385,13 +385,6 @@ export default function PoolsSection({ onSelectPool }) {
               </button>
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => refetchAll()}
-            className="px-4 py-2 rounded-full bg-slate-900 border border-slate-700 text-xs text-slate-200 hover:border-slate-500"
-          >
-            Refresh
-          </button>
         </div>
       </div>
 
