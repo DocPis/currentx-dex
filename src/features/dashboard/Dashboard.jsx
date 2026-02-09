@@ -560,18 +560,6 @@ export default function Dashboard() {
             </div>
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <span className="h-2 w-2 rounded-full bg-sky-400" />
-              {tvlChange && (
-                <span
-                  className={`px-2 py-1 rounded-full border text-[11px] ${
-                    tvlChange.diff >= 0
-                      ? "border-emerald-400/40 text-emerald-200 bg-emerald-400/10"
-                      : "border-rose-400/40 text-rose-200 bg-rose-400/10"
-                  }`}
-                >
-                  {tvlChange.diff >= 0 ? "+" : ""}
-                  {formatNumber(Math.abs(tvlChange.diff))} ({tvlChange.pct ? tvlChange.pct.toFixed(1) : "0"}%)
-                </span>
-              )}
             </div>
           </div>
           <div className="h-56">
