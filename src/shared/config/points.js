@@ -12,7 +12,7 @@ export const SEASON_ID = "season-1";
 export const SEASON_LABEL = "Season 1";
 
 export const SEASON_START_MS =
-  parseTime(env.VITE_POINTS_SEASON_START) ?? Date.UTC(2026, 1, 10, 0, 0, 0);
+  parseTime(env.VITE_POINTS_SEASON_START) ?? Date.UTC(2026, 1, 12, 0, 0, 0);
 export const SEASON_END_MS = parseTime(env.VITE_POINTS_SEASON_END);
 export const SEASON_ONGOING = !SEASON_END_MS;
 
