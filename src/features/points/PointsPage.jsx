@@ -208,6 +208,7 @@ export default function PointsPage({ address, onConnect }) {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <Pill tone="sky">Season</Pill>
+              <Pill tone="amber">Coming soon</Pill>
               <div className="text-xs uppercase tracking-[0.35em] text-slate-400">
                 {seasonWindow}
               </div>
