@@ -1,4 +1,7 @@
 {
+  "crons": [
+    { "path": "/api/points/ingest", "schedule": "*/10 * * * *" }
+  ],
   "routes": [
     { "handle": "filesystem" },
     { "src": "/.*", "dest": "/index.html" }

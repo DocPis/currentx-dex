@@ -423,17 +423,32 @@ export const useUserPoints = (address) => {
 };
 
 export const useLeaderboard = (seasonId, page = 0) => {
-  const enabled = false;
   const query = useQuery({
     queryKey: getLeaderboardQueryKey(seasonId, page),
-    enabled,
-    queryFn: async () => [],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (seasonId) params.set("seasonId", seasonId);
+      if (page) params.set("page", String(page));
+      const res = await fetch(`/api/points/leaderboard?${params.toString()}`);
+      if (!res.ok) {
+        throw new Error("Leaderboard unavailable");
+      }
+      const data = await res.json();
+      return {
+        items: Array.isArray(data?.leaderboard) ? data.leaderboard : [],
+        updatedAt: data?.updatedAt || null,
+      };
+    },
     staleTime: 60 * 1000,
+    retry: 1,
   });
+
+  const items = query.data?.items || [];
+  const available = query.isSuccess && items.length > 0;
 
   return {
     ...query,
-    data: query.data || [],
-    available: enabled,
+    data: items,
+    available,
   };
 };
