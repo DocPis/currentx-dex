@@ -2,6 +2,7 @@
 
 const DEFAULT_SEASON_ID = "season-1";
 const DEFAULT_START_MS = Date.UTC(2026, 1, 10, 0, 0, 0);
+const DEFAULT_START_BLOCK = 7963659;
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
@@ -25,6 +26,12 @@ const parseTime = (value) => {
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : null;
 };
+const parseBlock = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.floor(num);
+};
 
 const getSeasonConfig = () => {
   const seasonId = process.env.POINTS_SEASON_ID || DEFAULT_SEASON_ID;
@@ -32,6 +39,10 @@ const getSeasonConfig = () => {
     parseTime(process.env.POINTS_SEASON_START) ||
     parseTime(process.env.VITE_POINTS_SEASON_START) ||
     DEFAULT_START_MS;
+  const startBlock =
+    parseBlock(process.env.POINTS_SEASON_START_BLOCK) ||
+    parseBlock(process.env.VITE_POINTS_SEASON_START_BLOCK) ||
+    DEFAULT_START_BLOCK;
   const endMs =
     parseTime(process.env.POINTS_SEASON_END) ||
     parseTime(process.env.VITE_POINTS_SEASON_END) ||
@@ -39,6 +50,7 @@ const getSeasonConfig = () => {
   return {
     seasonId,
     startMs,
+    startBlock,
     endMs,
   };
 };
@@ -107,7 +119,7 @@ const resolveWallet = (swap, isV3) => {
   return normalizeAddress(swap.sender) || normalizeAddress(swap.to);
 };
 
-const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
+const fetchSwapsPage = async ({ url, apiKey, start, end, isV3, includeBlock }) => {
   const query = `
     query Swaps($start: Int!, $end: Int!, $first: Int!) {
       swaps(
@@ -120,6 +132,7 @@ const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
         timestamp
         amountUSD
         ${isV3 ? "origin sender recipient" : "sender to"}
+        ${includeBlock ? "transaction { blockNumber }" : ""}
       }
     }
   `;
@@ -130,6 +143,15 @@ const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
     first: PAGE_LIMIT,
   });
   return data?.swaps || [];
+};
+
+const isMissingFieldError = (err) => {
+  const message = err?.message || "";
+  return (
+    message.includes("Cannot query field") ||
+    message.includes("has no field") ||
+    message.includes("Unknown field")
+  );
 };
 
 const getKeys = (seasonId, source) => {
@@ -148,25 +170,49 @@ const ingestSource = async ({
   apiKey,
   startSec,
   endSec,
+  startBlock,
 }) => {
   const totals = new Map();
   let cursor = startSec;
   let done = false;
   let iterations = 0;
+  let includeBlock = Number.isFinite(startBlock);
 
   while (!done && iterations < 50) {
     iterations += 1;
-    const swaps = await fetchSwapsPage({
-      url,
-      apiKey,
-      start: cursor,
-      end: endSec,
-      isV3: source === "v3",
-    });
+    let swaps = [];
+    try {
+      swaps = await fetchSwapsPage({
+        url,
+        apiKey,
+        start: cursor,
+        end: endSec,
+        isV3: source === "v3",
+        includeBlock,
+      });
+    } catch (err) {
+      if (includeBlock && isMissingFieldError(err)) {
+        includeBlock = false;
+        swaps = await fetchSwapsPage({
+          url,
+          apiKey,
+          start: cursor,
+          end: endSec,
+          isV3: source === "v3",
+          includeBlock,
+        });
+      } else {
+        throw err;
+      }
+    }
     if (!swaps.length) break;
 
     let lastTs = cursor;
     swaps.forEach((swap) => {
+      if (includeBlock && Number.isFinite(startBlock)) {
+        const blockNumber = Number(swap?.transaction?.blockNumber ?? swap?.blockNumber);
+        if (Number.isFinite(blockNumber) && blockNumber < startBlock) return;
+      }
       const wallet = resolveWallet(swap, source === "v3");
       if (!wallet) return;
       const amount = Math.abs(Number(swap.amountUSD || 0));
@@ -604,7 +650,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { seasonId, startMs, endMs } = getSeasonConfig();
+  const { seasonId, startMs, startBlock, endMs } = getSeasonConfig();
   const { v2Url, v2Key, v3Url, v3Key } = getSubgraphConfig();
   const addr = getAddressConfig();
   if (!v2Url && !v3Url) {
@@ -638,6 +684,7 @@ export default async function handler(req, res) {
         apiKey: src.apiKey,
         startSec: cursor,
         endSec,
+        startBlock,
       });
 
       if (nextCursor && nextCursor > cursor) {

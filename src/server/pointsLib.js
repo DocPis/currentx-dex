@@ -1,6 +1,7 @@
 ﻿/* eslint-env node */
 const DEFAULT_SEASON_ID = "season-1";
 const DEFAULT_START_MS = Date.UTC(2026, 1, 10, 0, 0, 0);
+const DEFAULT_START_BLOCK = 7963659;
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
@@ -24,6 +25,12 @@ const parseTime = (value) => {
   const parsed = Date.parse(String(value));
   return Number.isFinite(parsed) ? parsed : null;
 };
+const parseBlock = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.floor(num);
+};
 
 export const getSeasonConfig = () => {
   const seasonId = process.env.POINTS_SEASON_ID || DEFAULT_SEASON_ID;
@@ -31,6 +38,10 @@ export const getSeasonConfig = () => {
     parseTime(process.env.POINTS_SEASON_START) ||
     parseTime(process.env.VITE_POINTS_SEASON_START) ||
     DEFAULT_START_MS;
+  const startBlock =
+    parseBlock(process.env.POINTS_SEASON_START_BLOCK) ||
+    parseBlock(process.env.VITE_POINTS_SEASON_START_BLOCK) ||
+    DEFAULT_START_BLOCK;
   const endMs =
     parseTime(process.env.POINTS_SEASON_END) ||
     parseTime(process.env.VITE_POINTS_SEASON_END) ||
@@ -38,6 +49,7 @@ export const getSeasonConfig = () => {
   return {
     seasonId,
     startMs,
+    startBlock,
     endMs,
   };
 };
