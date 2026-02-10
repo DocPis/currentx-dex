@@ -393,9 +393,9 @@ export default function PointsPage({ address, onConnect }) {
         ) : leaderboardQuery.isLoading ? (
           <div className="text-sm text-slate-400">Loading leaderboard...</div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1">
             <table className="w-full text-sm">
-              <thead className="text-slate-400 text-[11px] uppercase tracking-wider">
+              <thead className="text-slate-400 text-[11px] uppercase tracking-wider sticky top-0 bg-slate-900/90 backdrop-blur z-10">
                 <tr>
                   <th className="text-left py-2">Rank</th>
                   <th className="text-left py-2">Wallet</th>
@@ -418,8 +418,8 @@ export default function PointsPage({ address, onConnect }) {
                           : "border-t border-slate-800/70 hover:bg-slate-900/40"
                       }
                     >
-                      <td className="py-2">{displayRank}</td>
-                      <td className="py-2">
+                      <td className="py-1.5">{displayRank}</td>
+                      <td className="py-1.5">
                         <div className="flex items-center gap-2">
                           <span>{shortenAddress(row.address)}</span>
                           <button
@@ -431,9 +431,13 @@ export default function PointsPage({ address, onConnect }) {
                           </button>
                         </div>
                       </td>
-                      <td className="py-2 text-right">{formatCompactNumber(row.points || 0)}</td>
-                      <td className="py-2 text-right">{formatMultiplier(row.multiplier || 1)}</td>
-                      <td className="py-2 text-right">{formatUsd(row.lpUsd || 0)}</td>
+                      <td className="py-1.5 text-right">
+                        {formatCompactNumber(row.points || 0)}
+                      </td>
+                      <td className="py-1.5 text-right">
+                        {formatMultiplier(row.multiplier || 1)}
+                      </td>
+                      <td className="py-1.5 text-right">{formatUsd(row.lpUsd || 0)}</td>
                     </tr>
                   );
                 })}
