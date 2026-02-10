@@ -1,7 +1,7 @@
 ﻿import { kv } from "@vercel/kv";
 
 const DEFAULT_SEASON_ID = "season-1";
-const DEFAULT_START_MS = Date.UTC(2026, 1, 4, 0, 0, 0);
+const DEFAULT_START_MS = Date.UTC(2026, 1, 10, 0, 0, 0);
 
 const parseTime = (value) => {
   if (!value) return null;
