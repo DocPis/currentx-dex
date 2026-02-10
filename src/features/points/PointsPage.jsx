@@ -393,7 +393,7 @@ export default function PointsPage({ address, onConnect }) {
         ) : leaderboardQuery.isLoading ? (
           <div className="text-sm text-slate-400">Loading leaderboard...</div>
         ) : (
-          <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1">
+          <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1 points-scrollbar">
             <table className="w-full text-sm">
               <thead className="text-slate-400 text-[11px] uppercase tracking-wider sticky top-0 bg-slate-900/90 backdrop-blur z-10">
                 <tr>
