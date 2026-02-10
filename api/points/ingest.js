@@ -376,6 +376,24 @@ const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
 const fetchPositions = async ({ url, apiKey, owner }) => {
   const queryVariants = [
     {
+      label: "createdAt+sqrt+tx",
+      query: `
+        query Positions($owner: Bytes!, $first: Int!, $skip: Int!) {
+          positions(where: { owner: $owner, liquidity_gt: 0 }, first: $first, skip: $skip) {
+            id
+            liquidity
+            createdAtTimestamp
+            transaction { timestamp }
+            tickLower { tickIdx }
+            tickUpper { tickIdx }
+            token0 { id decimals }
+            token1 { id decimals }
+            pool { id tick sqrtPrice }
+          }
+        }
+      `,
+    },
+    {
       label: "createdAt+sqrt",
       query: `
         query Positions($owner: Bytes!, $first: Int!, $skip: Int!) {
@@ -393,6 +411,23 @@ const fetchPositions = async ({ url, apiKey, owner }) => {
       `,
     },
     {
+      label: "tx+sqrt",
+      query: `
+        query Positions($owner: Bytes!, $first: Int!, $skip: Int!) {
+          positions(where: { owner: $owner, liquidity_gt: 0 }, first: $first, skip: $skip) {
+            id
+            liquidity
+            transaction { timestamp }
+            tickLower { tickIdx }
+            tickUpper { tickIdx }
+            token0 { id decimals }
+            token1 { id decimals }
+            pool { id tick sqrtPrice }
+          }
+        }
+      `,
+    },
+    {
       label: "createdAt",
       query: `
         query Positions($owner: Bytes!, $first: Int!, $skip: Int!) {
@@ -400,6 +435,23 @@ const fetchPositions = async ({ url, apiKey, owner }) => {
             id
             liquidity
             createdAtTimestamp
+            tickLower { tickIdx }
+            tickUpper { tickIdx }
+            token0 { id decimals }
+            token1 { id decimals }
+            pool { id tick }
+          }
+        }
+      `,
+    },
+    {
+      label: "tx",
+      query: `
+        query Positions($owner: Bytes!, $first: Int!, $skip: Int!) {
+          positions(where: { owner: $owner, liquidity_gt: 0 }, first: $first, skip: $skip) {
+            id
+            liquidity
+            transaction { timestamp }
             tickLower { tickIdx }
             tickUpper { tickIdx }
             token0 { id decimals }
@@ -515,7 +567,9 @@ const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
       const tickLower = Number(pos?.tickLower?.tickIdx ?? pos?.tickLower ?? 0);
       const tickUpper = Number(pos?.tickUpper?.tickIdx ?? pos?.tickUpper ?? 0);
       const liquidity = BigInt(pos?.liquidity || 0);
-      const createdAt = Number(pos?.createdAtTimestamp || 0);
+      const createdAt = Number(
+        pos?.createdAtTimestamp || pos?.transaction?.timestamp || 0
+      );
       const poolTick = pos?.pool?.tick ?? null;
       const poolSqrt = pos?.pool?.sqrtPrice ?? pos?.pool?.sqrtPriceX96 ?? null;
       const decimals0 = Number(pos?.token0?.decimals ?? 18);
