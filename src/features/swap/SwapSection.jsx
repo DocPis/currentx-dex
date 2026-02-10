@@ -210,6 +210,49 @@ const TokenLogo = ({
 };
 const paddedTopicAddress = (addr) =>
   `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+const NATIVE_PARAM_VALUES = new Set([
+  "eth",
+  "native",
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "0x0000000000000000000000000000000000000000",
+]);
+const getQueryParamInsensitive = (params, key) => {
+  if (!params || !key) return null;
+  if (params.has(key)) return params.get(key);
+  const target = String(key).toLowerCase();
+  for (const [k, v] of params.entries()) {
+    if (String(k).toLowerCase() === target) return v;
+  }
+  return null;
+};
+const isNativeParamValue = (value) => {
+  if (!value) return false;
+  const raw = String(value).trim().toLowerCase();
+  return NATIVE_PARAM_VALUES.has(raw);
+};
+const resolveSwapTokenPair = (currentSell, currentBuy, desiredSell, desiredBuy) => {
+  let sell = desiredSell || currentSell;
+  let buy = desiredBuy || currentBuy;
+  if (sell && buy && sell === buy) {
+    const fallback = sell === "ETH" ? "CRX" : "ETH";
+    if (desiredSell && !desiredBuy) {
+      buy = currentBuy && currentBuy !== sell ? currentBuy : fallback;
+    } else if (desiredBuy && !desiredSell) {
+      sell = currentSell && currentSell !== buy ? currentSell : fallback;
+    } else {
+      sell = currentSell && currentSell !== buy ? currentSell : fallback;
+    }
+  }
+  return { sell, buy };
+};
+const normalizeExactField = (value) => {
+  if (!value) return null;
+  const raw = String(value).trim().toLowerCase();
+  if (!raw) return null;
+  if (raw === "input" || raw === "in") return "in";
+  if (raw === "output" || raw === "out") return "out";
+  return null;
+};
 
 const formatRelativeTime = (ts) => {
   if (!ts) return "--";
@@ -718,6 +761,121 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     },
     [customTokenAddLoading, customTokens, tokenRegistry, searchTokenMeta]
   );
+
+  const urlParamsRef = useRef(null);
+  const urlAppliedRef = useRef(false);
+  const urlPendingRef = useRef(new Set());
+
+  const findTokenKeyBySymbol = useCallback(
+    (symbol) => {
+      if (!symbol) return null;
+      const raw = String(symbol).trim().toLowerCase();
+      if (!raw) return null;
+      const byKey = Object.keys(tokenRegistry).find(
+        (key) => key.toLowerCase() === raw
+      );
+      if (byKey) return byKey;
+      const byMeta = Object.entries(tokenRegistry).find(([, meta]) => {
+        const metaSymbol = (meta?.symbol || "").toLowerCase();
+        const display = (meta?.displaySymbol || "").toLowerCase();
+        return metaSymbol === raw || display === raw;
+      });
+      return byMeta ? byMeta[0] : null;
+    },
+    [tokenRegistry]
+  );
+
+  const findTokenKeyByAddress = useCallback(
+    (addressValue) => {
+      if (!addressValue) return null;
+      const lower = String(addressValue).trim().toLowerCase();
+      if (!lower) return null;
+      const match = Object.entries(tokenRegistry).find(
+        ([, meta]) => (meta?.address || "").toLowerCase() === lower
+      );
+      return match ? match[0] : null;
+    },
+    [tokenRegistry]
+  );
+
+  const resolveTokenParam = useCallback(
+    async (value) => {
+      if (!value) return null;
+      if (isNativeParamValue(value)) return "ETH";
+      const bySymbol = findTokenKeyBySymbol(value);
+      if (bySymbol) return bySymbol;
+      if (!isValidTokenAddress(value)) return null;
+      const byAddress = findTokenKeyByAddress(value);
+      if (byAddress) return byAddress;
+      const lower = String(value).trim().toLowerCase();
+      if (urlPendingRef.current.has(lower)) return "__PENDING__";
+      urlPendingRef.current.add(lower);
+      const added = await addCustomTokenByAddress(value);
+      if (!added) {
+        urlPendingRef.current.delete(lower);
+        return null;
+      }
+      return "__PENDING__";
+    },
+    [addCustomTokenByAddress, findTokenKeyByAddress, findTokenKeyBySymbol]
+  );
+
+  useEffect(() => {
+    if (urlAppliedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (!urlParamsRef.current) {
+      const params = new URLSearchParams(window.location.search || "");
+      const inputRaw = getQueryParamInsensitive(params, "inputCurrency");
+      const outputRaw = getQueryParamInsensitive(params, "outputCurrency");
+      const exactAmountRaw = getQueryParamInsensitive(params, "exactAmount");
+      const exactFieldRaw = getQueryParamInsensitive(params, "exactField");
+      if (!inputRaw && !outputRaw && !exactAmountRaw && !exactFieldRaw) {
+        urlAppliedRef.current = true;
+        return;
+      }
+      urlParamsRef.current = { inputRaw, outputRaw, exactAmountRaw, exactFieldRaw };
+    }
+
+    let cancelled = false;
+    const applyParams = async () => {
+      const { inputRaw, outputRaw } = urlParamsRef.current || {};
+      const inputSymbol = await resolveTokenParam(inputRaw);
+      const outputSymbol = await resolveTokenParam(outputRaw);
+      if (cancelled) return;
+      if (inputSymbol === "__PENDING__" || outputSymbol === "__PENDING__") return;
+      const { exactAmountRaw, exactFieldRaw } = urlParamsRef.current || {};
+      const exactField = normalizeExactField(exactFieldRaw) || "in";
+      const exactAmount = exactAmountRaw ? String(exactAmountRaw).trim() : "";
+      if (!inputSymbol && !outputSymbol && !exactAmount) {
+        urlAppliedRef.current = true;
+        return;
+      }
+      const next = resolveSwapTokenPair(
+        sellToken,
+        buyToken,
+        inputSymbol,
+        outputSymbol
+      );
+      if (next.sell && next.sell !== sellToken) setSellToken(next.sell);
+      if (next.buy && next.buy !== buyToken) setBuyToken(next.buy);
+      if (exactAmount) {
+        if (exactField === "out") {
+          setSwapInputMode("out");
+          setAmountOutInput(sanitizeAmountInput(exactAmount, buyInputDecimals));
+          setAmountIn("");
+        } else {
+          setSwapInputMode("in");
+          setAmountIn(sanitizeAmountInput(exactAmount, sellInputDecimals));
+          setAmountOutInput("");
+        }
+      }
+      urlAppliedRef.current = true;
+    };
+    void applyParams();
+    return () => {
+      cancelled = true;
+    };
+  }, [buyInputDecimals, buyToken, resolveTokenParam, sellInputDecimals, sellToken]);
 
   const getApprovalStorageKey = useCallback(
     (wallet) =>
