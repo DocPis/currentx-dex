@@ -11,7 +11,7 @@ import {
   normalizeAddress,
   runWithConcurrency,
   toNumberSafe,
-} from "./lib.js";
+} from "../../src/server/pointsLib.js";
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
