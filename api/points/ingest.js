@@ -312,7 +312,6 @@ const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
       }
       bundles(first: 1) {
         ethPriceUSD
-        ethPrice
       }
     }
   `;
