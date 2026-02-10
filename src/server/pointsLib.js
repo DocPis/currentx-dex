@@ -1,4 +1,6 @@
 ﻿/* eslint-env node */
+import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
+
 const DEFAULT_SEASON_ID = "season-1";
 const DEFAULT_START_MS = Date.UTC(2026, 1, 12, 0, 0, 0);
 const DEFAULT_START_BLOCK = 7963659;
@@ -19,6 +21,13 @@ const MULTIPLIER_TIERS = [
 const DEFAULT_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const DEFAULT_USDM_ADDRESS = "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7";
 const DEFAULT_CRX_ADDRESS = "0xBd5e387fa453ceBf03B1A6a9dFe2a828b93AA95B";
+const DEFAULT_UNIV3_FACTORY_ADDRESS = "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E";
+const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
+  "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
+const DEFAULT_RPC_URL = "https://mainnet.megaeth.com/rpc";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const MAX_ONCHAIN_POSITIONS = 50;
+const MAX_AGE_LOGS = 12;
 
 const parseTime = (value) => {
   if (!value) return null;
