@@ -820,63 +820,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [addCustomTokenByAddress, findTokenKeyByAddress, findTokenKeyBySymbol]
   );
 
-  useEffect(() => {
-    if (urlAppliedRef.current) return;
-    if (typeof window === "undefined") return;
-    if (!urlParamsRef.current) {
-      const params = new URLSearchParams(window.location.search || "");
-      const inputRaw = getQueryParamInsensitive(params, "inputCurrency");
-      const outputRaw = getQueryParamInsensitive(params, "outputCurrency");
-      const exactAmountRaw = getQueryParamInsensitive(params, "exactAmount");
-      const exactFieldRaw = getQueryParamInsensitive(params, "exactField");
-      if (!inputRaw && !outputRaw && !exactAmountRaw && !exactFieldRaw) {
-        urlAppliedRef.current = true;
-        return;
-      }
-      urlParamsRef.current = { inputRaw, outputRaw, exactAmountRaw, exactFieldRaw };
-    }
-
-    let cancelled = false;
-    const applyParams = async () => {
-      const { inputRaw, outputRaw } = urlParamsRef.current || {};
-      const inputSymbol = await resolveTokenParam(inputRaw);
-      const outputSymbol = await resolveTokenParam(outputRaw);
-      if (cancelled) return;
-      if (inputSymbol === "__PENDING__" || outputSymbol === "__PENDING__") return;
-      const { exactAmountRaw, exactFieldRaw } = urlParamsRef.current || {};
-      const exactField = normalizeExactField(exactFieldRaw) || "in";
-      const exactAmount = exactAmountRaw ? String(exactAmountRaw).trim() : "";
-      if (!inputSymbol && !outputSymbol && !exactAmount) {
-        urlAppliedRef.current = true;
-        return;
-      }
-      const next = resolveSwapTokenPair(
-        sellToken,
-        buyToken,
-        inputSymbol,
-        outputSymbol
-      );
-      if (next.sell && next.sell !== sellToken) setSellToken(next.sell);
-      if (next.buy && next.buy !== buyToken) setBuyToken(next.buy);
-      if (exactAmount) {
-        if (exactField === "out") {
-          setSwapInputMode("out");
-          setAmountOutInput(sanitizeAmountInput(exactAmount, buyInputDecimals));
-          setAmountIn("");
-        } else {
-          setSwapInputMode("in");
-          setAmountIn(sanitizeAmountInput(exactAmount, sellInputDecimals));
-          setAmountOutInput("");
-        }
-      }
-      urlAppliedRef.current = true;
-    };
-    void applyParams();
-    return () => {
-      cancelled = true;
-    };
-  }, [buyInputDecimals, buyToken, resolveTokenParam, sellInputDecimals, sellToken]);
-
   const getApprovalStorageKey = useCallback(
     (wallet) =>
       `${APPROVAL_CACHE_KEY}:${(activeChainHex || "").toLowerCase()}:${(wallet || "").toLowerCase()}`,
@@ -2042,6 +1985,70 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     const next = sanitizeAmountInput(amountOutInput, buyInputDecimals);
     if (next !== amountOutInput) setAmountOutInput(next);
   }, [amountOutInput, buyInputDecimals]);
+
+  useEffect(() => {
+    if (urlAppliedRef.current) return;
+    if (typeof window === "undefined") return;
+    if (!urlParamsRef.current) {
+      const params = new URLSearchParams(window.location.search || "");
+      const inputRaw = getQueryParamInsensitive(params, "inputCurrency");
+      const outputRaw = getQueryParamInsensitive(params, "outputCurrency");
+      const exactAmountRaw = getQueryParamInsensitive(params, "exactAmount");
+      const exactFieldRaw = getQueryParamInsensitive(params, "exactField");
+      if (!inputRaw && !outputRaw && !exactAmountRaw && !exactFieldRaw) {
+        urlAppliedRef.current = true;
+        return;
+      }
+      urlParamsRef.current = { inputRaw, outputRaw, exactAmountRaw, exactFieldRaw };
+    }
+
+    let cancelled = false;
+    const applyParams = async () => {
+      const { inputRaw, outputRaw } = urlParamsRef.current || {};
+      const inputSymbol = await resolveTokenParam(inputRaw);
+      const outputSymbol = await resolveTokenParam(outputRaw);
+      if (cancelled) return;
+      if (inputSymbol === "__PENDING__" || outputSymbol === "__PENDING__") return;
+      const { exactAmountRaw, exactFieldRaw } = urlParamsRef.current || {};
+      const exactField = normalizeExactField(exactFieldRaw) || "in";
+      const exactAmount = exactAmountRaw ? String(exactAmountRaw).trim() : "";
+      if (!inputSymbol && !outputSymbol && !exactAmount) {
+        urlAppliedRef.current = true;
+        return;
+      }
+      const next = resolveSwapTokenPair(
+        sellToken,
+        buyToken,
+        inputSymbol,
+        outputSymbol
+      );
+      if (next.sell && next.sell !== sellToken) setSellToken(next.sell);
+      if (next.buy && next.buy !== buyToken) setBuyToken(next.buy);
+      if (exactAmount) {
+        if (exactField === "out") {
+          setSwapInputMode("out");
+          setAmountOutInput(sanitizeAmountInput(exactAmount, buyInputDecimals));
+          setAmountIn("");
+        } else {
+          setSwapInputMode("in");
+          setAmountIn(sanitizeAmountInput(exactAmount, sellInputDecimals));
+          setAmountOutInput("");
+        }
+      }
+      urlAppliedRef.current = true;
+    };
+    void applyParams();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    amountOutInput,
+    buyInputDecimals,
+    buyToken,
+    resolveTokenParam,
+    sellInputDecimals,
+    sellToken,
+  ]);
 
   useEffect(() => {
     lastFullQuoteAtRef.current = 0;

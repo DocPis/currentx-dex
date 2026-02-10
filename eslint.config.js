@@ -35,4 +35,13 @@ export default defineConfig([
       },
     },
   },
+  {
+    files: ['src/server/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
 ])
