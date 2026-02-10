@@ -72,11 +72,13 @@ export default async function handler(req, res) {
       const points = Number(row?.points ?? score ?? 0);
       const multiplier = Number(row?.multiplier ?? 1);
       const lpUsd = Number(row?.lpUsd ?? 0);
+      const rank = Number(row?.rank);
       items.push({
         address,
         points: Number.isFinite(points) ? points : score,
         multiplier: Number.isFinite(multiplier) ? multiplier : 1,
         lpUsd: Number.isFinite(lpUsd) ? lpUsd : 0,
+        rank: Number.isFinite(rank) ? rank : null,
       });
     });
 

@@ -350,7 +350,9 @@ export default function Dashboard() {
     : null;
 
   const dailyVolumeUsd = dayVolume ?? todayVolume;
-  const dailyFees = latestDay?.feesUsd ?? null;
+  const dailyFeesRaw = latestDay?.feesUsd;
+  const dailyFees =
+    Number.isFinite(dailyFeesRaw) ? dailyFeesRaw : latestDay ? 0 : null;
   const liveTvl = stats?.totalLiquidityUsd;
   const latestTvlDate = tvlHistory?.[0]?.date ?? null;
   const latestVolumeDate = volumeHistory?.[0]?.date ?? null;

@@ -329,6 +329,65 @@ export const useUserPoints = (address) => {
     queryFn: async () => {
       const seasonStart = SEASON_START_MS;
       const seasonEnd = SEASON_END_MS || Date.now();
+      const normalized = (address || "").toLowerCase();
+
+      const toNumber = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      };
+      const toBool = (value) => {
+        if (value === true || value === "1" || value === 1) return true;
+        if (value === false || value === "0" || value === 0) return false;
+        return Boolean(value);
+      };
+
+      try {
+        const params = new URLSearchParams();
+        params.set("address", normalized);
+        params.set("seasonId", SEASON_ID);
+        const res = await fetch(`/api/points/user?${params.toString()}`);
+        if (res.ok) {
+          const payload = await res.json();
+          const user = payload?.user || {};
+          const volumeUsd = toNumber(user.volumeUsd) ?? 0;
+          const points = toNumber(user.points) ?? volumeUsd;
+          const basePoints = toNumber(user.basePoints) ?? volumeUsd;
+          const bonusPoints =
+            toNumber(user.bonusPoints) ?? Math.max(0, points - basePoints);
+          const lpAgeSeconds = toNumber(user.lpAgeSeconds);
+          const tierInfo =
+            Number.isFinite(lpAgeSeconds) ? getMultiplierTier(lpAgeSeconds) : null;
+
+          return {
+            seasonId: SEASON_ID,
+            seasonStart,
+            seasonEnd,
+            seasonOngoing: SEASON_ONGOING,
+            points,
+            basePoints,
+            bonusPoints,
+            rank: toNumber(user.rank),
+            volumeUsd,
+            boostedVolumeUsd: toNumber(user.boostedVolumeUsd) ?? 0,
+            boostedVolumeCap: toNumber(user.boostedVolumeCap) ?? 0,
+            multiplier: toNumber(user.multiplier) ?? 1,
+            baseMultiplier: toNumber(user.baseMultiplier) ?? 1,
+            lpUsd: toNumber(user.lpUsd) ?? 0,
+            lpInRangePct: toNumber(user.lpInRangePct) ?? 0,
+            hasBoostLp: toBool(user.hasBoostLp),
+            lpAgeSeconds,
+            lpAgeAvailable: Number.isFinite(lpAgeSeconds),
+            tier: tierInfo,
+            inRangeFactor: toNumber(user.inRangeFactor) ?? 1,
+            hasRangeData: toBool(user.hasRangeData),
+            hasInRange: toBool(user.hasInRange),
+            pricesAvailable: true,
+            source: "backend",
+          };
+        }
+      } catch {
+        // fall back to client computed
+      }
 
       let volumeV2 = 0;
       let volumeV3 = 0;

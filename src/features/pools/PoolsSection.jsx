@@ -133,7 +133,9 @@ export default function PoolsSection({ onSelectPool }) {
     ? Math.max(0, protocolStats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
     : null;
   const protocolVolumeUtc = dayVolume ?? todayVolume;
-  const protocolFeesUtc = latestDay?.feesUsd ?? null;
+  const protocolFeesRaw = latestDay?.feesUsd;
+  const protocolFeesUtc =
+    Number.isFinite(protocolFeesRaw) ? protocolFeesRaw : latestDay ? 0 : null;
   const {
     v2Pools,
     v3Pools,

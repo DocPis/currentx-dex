@@ -1,6 +1,4 @@
-﻿import { kv } from "@vercel/kv";
-
-const DEFAULT_SEASON_ID = "season-1";
+﻿const DEFAULT_SEASON_ID = "season-1";
 const DEFAULT_START_MS = Date.UTC(2026, 1, 4, 0, 0, 0);
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
@@ -26,7 +24,7 @@ const parseTime = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const getSeasonConfig = () => {
+export const getSeasonConfig = () => {
   const seasonId = process.env.POINTS_SEASON_ID || DEFAULT_SEASON_ID;
   const startMs =
     parseTime(process.env.POINTS_SEASON_START) ||
@@ -43,7 +41,7 @@ const getSeasonConfig = () => {
   };
 };
 
-const getSubgraphConfig = () => ({
+export const getSubgraphConfig = () => ({
   v2Url:
     process.env.UNIV2_SUBGRAPH_URL ||
     process.env.VITE_UNIV2_SUBGRAPH ||
@@ -62,7 +60,7 @@ const getSubgraphConfig = () => ({
     "",
 });
 
-const getAddressConfig = () => {
+export const getAddressConfig = () => {
   const normalize = (v) => (v ? String(v).toLowerCase() : "");
   return {
     crx: normalize(process.env.POINTS_CRX_ADDRESS || DEFAULT_CRX_ADDRESS),
@@ -77,7 +75,7 @@ const buildHeaders = (apiKey) => {
   return headers;
 };
 
-const postGraph = async (url, apiKey, query, variables) => {
+export const postGraph = async (url, apiKey, query, variables) => {
   const res = await fetch(url, {
     method: "POST",
     headers: buildHeaders(apiKey),
@@ -93,9 +91,9 @@ const postGraph = async (url, apiKey, query, variables) => {
   return json.data;
 };
 
-const normalizeAddress = (addr) => (addr ? String(addr).toLowerCase() : "");
+export const normalizeAddress = (addr) => (addr ? String(addr).toLowerCase() : "");
 
-const resolveWallet = (swap, isV3) => {
+export const resolveWallet = (swap, isV3) => {
   if (!swap) return "";
   if (isV3) {
     return (
@@ -107,7 +105,7 @@ const resolveWallet = (swap, isV3) => {
   return normalizeAddress(swap.sender) || normalizeAddress(swap.to);
 };
 
-const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
+export const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
   const query = `
     query Swaps($start: Int!, $end: Int!, $first: Int!) {
       swaps(
@@ -132,7 +130,7 @@ const fetchSwapsPage = async ({ url, apiKey, start, end, isV3 }) => {
   return data?.swaps || [];
 };
 
-const getKeys = (seasonId, source) => {
+export const getKeys = (seasonId, source) => {
   const base = `points:${seasonId}`;
   return {
     leaderboard: `${base}:leaderboard`,
@@ -142,7 +140,7 @@ const getKeys = (seasonId, source) => {
   };
 };
 
-const ingestSource = async ({
+export const ingestSource = async ({
   source,
   url,
   apiKey,
@@ -190,7 +188,7 @@ const ingestSource = async ({
   return { totals, cursor };
 };
 
-const runWithConcurrency = async (items, limit, fn) => {
+export const runWithConcurrency = async (items, limit, fn) => {
   const results = new Array(items.length);
   let index = 0;
   const workers = Array.from({ length: limit }, async () => {
@@ -204,12 +202,12 @@ const runWithConcurrency = async (items, limit, fn) => {
   return results;
 };
 
-const toNumberSafe = (value) => {
+export const toNumberSafe = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
 
-const getTierMultiplier = (ageSeconds) => {
+export const getTierMultiplier = (ageSeconds) => {
   if (!Number.isFinite(ageSeconds)) return 1;
   let multiplier = 1;
   MULTIPLIER_TIERS.forEach((tier) => {
@@ -218,7 +216,7 @@ const getTierMultiplier = (ageSeconds) => {
   return multiplier;
 };
 
-const computePoints = ({
+export const computePoints = ({
   volumeUsd,
   lpUsd,
   baseMultiplier,
@@ -245,7 +243,7 @@ const computePoints = ({
 };
 
 const Q96 = 2n ** 96n;
-const tickToSqrtPriceX96 = (tick) => {
+export const tickToSqrtPriceX96 = (tick) => {
   if (!Number.isFinite(tick)) return null;
   const ratio = Math.pow(1.0001, Number(tick));
   if (!Number.isFinite(ratio) || ratio <= 0) return null;
@@ -256,7 +254,7 @@ const tickToSqrtPriceX96 = (tick) => {
   return BigInt(Math.floor(scaled));
 };
 
-const getAmountsForLiquidity = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liquidity) => {
+export const getAmountsForLiquidity = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liquidity) => {
   if (
     !sqrtPriceX96 ||
     !sqrtPriceAX96 ||
@@ -284,7 +282,7 @@ const getAmountsForLiquidity = (sqrtPriceX96, sqrtPriceAX96, sqrtPriceBX96, liqu
   return { amount0: 0n, amount1 };
 };
 
-const formatUnits = (value, decimals = 18) => {
+export const formatUnits = (value, decimals = 18) => {
   if (value === null || value === undefined) return 0;
   const base = 10n ** BigInt(decimals);
   const whole = value / base;
@@ -292,7 +290,7 @@ const formatUnits = (value, decimals = 18) => {
   return Number(whole) + Number(frac) / Number(base);
 };
 
-const isBoostPair = (token0, token1, addr) => {
+export const isBoostPair = (token0, token1, addr) => {
   const a = normalizeAddress(token0);
   const b = normalizeAddress(token1);
   if (!a || !b) return false;
@@ -302,8 +300,8 @@ const isBoostPair = (token0, token1, addr) => {
   return hasCrx && (hasWeth || hasUsdm);
 };
 
-const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
-  if (!tokenIds.length) return {};
+export const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
+  if (!url || !tokenIds.length) return {};
   const query = `
     query TokenPrices($ids: [Bytes!]!) {
       tokens(where: { id_in: $ids }) {
@@ -328,7 +326,8 @@ const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
   return out;
 };
 
-const fetchPositions = async ({ url, apiKey, owner }) => {
+export const fetchPositions = async ({ url, apiKey, owner }) => {
+  if (!url) return [];
   const queryVariants = [
     {
       label: "createdAt+sqrt",
@@ -437,7 +436,7 @@ const fetchPositions = async ({ url, apiKey, owner }) => {
   return positions;
 };
 
-const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
+export const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
   if (!url) {
     return {
       hasBoostLp: false,
@@ -584,192 +583,5 @@ const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
   };
 };
 
-export default async function handler(req, res) {
-  const secret = process.env.POINTS_INGEST_TOKEN || "";
-  const authHeader = req.headers?.authorization || "";
-  const token = req.query?.token || "";
-
-  if (secret) {
-    const matches =
-      authHeader === `Bearer ${secret}` ||
-      authHeader === secret ||
-      token === secret;
-    if (!matches) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-  }
-
-  if (req.method !== "POST" && req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
-
-  const { seasonId, startMs, endMs } = getSeasonConfig();
-  const { v2Url, v2Key, v3Url, v3Key } = getSubgraphConfig();
-  const addr = getAddressConfig();
-  if (!v2Url && !v3Url) {
-    res.status(503).json({ error: "Subgraph URLs not configured" });
-    return;
-  }
-
-  const startSec = Math.floor(startMs / 1000);
-  const endSec = Math.floor((endMs || Date.now()) / 1000);
-  const keys = getKeys(seasonId);
-
-  try {
-    const sources = [];
-    if (v2Url) sources.push({ source: "v2", url: v2Url, apiKey: v2Key });
-    if (v3Url) sources.push({ source: "v3", url: v3Url, apiKey: v3Key });
-
-    const aggregated = new Map();
-    const cursorsToSet = [];
-
-    for (const src of sources) {
-      const cursorKey = getKeys(seasonId, src.source).cursor;
-      const storedCursor = await kv.get(cursorKey);
-      const cursor =
-        Number(storedCursor || 0) > startSec
-          ? Number(storedCursor)
-          : startSec;
-
-      const { totals, cursor: nextCursor } = await ingestSource({
-        source: src.source,
-        url: src.url,
-        apiKey: src.apiKey,
-        startSec: cursor,
-        endSec,
-      });
-
-      if (nextCursor && nextCursor > cursor) {
-        cursorsToSet.push({ key: cursorKey, value: nextCursor });
-      }
-
-      totals.forEach((amount, wallet) => {
-        aggregated.set(wallet, (aggregated.get(wallet) || 0) + amount);
-      });
-    }
-
-    const wallets = Array.from(aggregated.keys());
-    if (!wallets.length) {
-      res.status(200).json({ ok: true, seasonId, ingestedWallets: 0 });
-      return;
-    }
-
-    const readPipeline = kv.pipeline();
-    wallets.forEach((wallet) => readPipeline.hgetall(keys.user(wallet)));
-    const existingRows = await readPipeline.exec();
-
-    const priceMap = v3Url
-      ? await fetchTokenPrices({
-          url: v3Url,
-          apiKey: v3Key,
-          tokenIds: [addr.crx, addr.weth].filter(Boolean),
-        })
-      : {};
-    if (addr.usdm) priceMap[addr.usdm] = 1;
-    if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
-      priceMap[addr.weth] = 0;
-    }
-
-    const now = Date.now();
-
-    const computed = await runWithConcurrency(wallets, CONCURRENCY, async (wallet, idx) => {
-      const row = existingRows?.[idx] || {};
-      const increment = aggregated.get(wallet) || 0;
-      const currentVolume = (toNumberSafe(row?.volumeUsd) || 0) + increment;
-
-      const lpData = await computeLpData({
-        url: v3Url,
-        apiKey: v3Key,
-        wallet,
-        addr,
-        priceMap,
-      });
-
-      const points = computePoints({
-        volumeUsd: currentVolume,
-        lpUsd: lpData.lpUsd,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        hasRangeData: lpData.hasRangeData,
-        hasInRange: lpData.hasInRange,
-      });
-
-      return {
-        wallet,
-        volumeUsd: currentVolume,
-        basePoints: points.basePoints,
-        bonusPoints: points.bonusPoints,
-        points: points.totalPoints,
-        boostedVolumeUsd: points.boostedVolumeUsd,
-        boostedVolumeCap: points.boostedVolumeCap,
-        multiplier: points.effectiveMultiplier,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        lpUsd: lpData.lpUsd,
-        lpInRangePct: lpData.lpInRangePct,
-        hasBoostLp: lpData.hasBoostLp,
-        hasRangeData: lpData.hasRangeData,
-        hasInRange: lpData.hasInRange,
-        lpAgeSeconds: lpData.lpAgeSeconds,
-      };
-    });
-
-    const writePipeline = kv.pipeline();
-    computed.forEach((entry) => {
-      const userKey = keys.user(entry.wallet);
-      writePipeline.zadd(keys.leaderboard, {
-        score: entry.points,
-        member: entry.wallet,
-      });
-      writePipeline.hset(userKey, {
-        address: entry.wallet,
-        volumeUsd: entry.volumeUsd,
-        points: entry.points,
-        basePoints: entry.basePoints,
-        bonusPoints: entry.bonusPoints,
-        boostedVolumeUsd: entry.boostedVolumeUsd,
-        boostedVolumeCap: entry.boostedVolumeCap,
-        multiplier: entry.multiplier,
-        baseMultiplier: entry.baseMultiplier,
-        lpUsd: entry.lpUsd,
-        lpInRangePct: entry.lpInRangePct,
-        hasBoostLp: entry.hasBoostLp ? 1 : 0,
-        hasRangeData: entry.hasRangeData ? 1 : 0,
-        hasInRange: entry.hasInRange ? 1 : 0,
-        lpAgeSeconds: entry.lpAgeSeconds ?? "",
-        updatedAt: now,
-      });
-    });
-
-    cursorsToSet.forEach((cursor) => {
-      if (cursor?.key) writePipeline.set(cursor.key, cursor.value);
-    });
-
-    writePipeline.set(keys.updatedAt, now);
-    await writePipeline.exec();
-
-    const rankPipeline = kv.pipeline();
-    computed.forEach((entry) => {
-      rankPipeline.zrevrank(keys.leaderboard, entry.wallet);
-    });
-    const rankResults = await rankPipeline.exec();
-
-    const rankWrite = kv.pipeline();
-    computed.forEach((entry, idx) => {
-      const rankValue = Number(rankResults?.[idx]);
-      if (Number.isFinite(rankValue)) {
-        rankWrite.hset(keys.user(entry.wallet), { rank: rankValue + 1 });
-      }
-    });
-    await rankWrite.exec();
-
-    res.status(200).json({
-      ok: true,
-      seasonId,
-      updatedAt: now,
-      ingestedWallets: aggregated.size,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err?.message || "Server error" });
-  }
-}
+export const getConcurrency = () => CONCURRENCY;
+export const getPageLimit = () => PAGE_LIMIT;

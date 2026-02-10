@@ -407,6 +407,8 @@ export default function PointsPage({ address, onConnect }) {
               <tbody>
                 {leaderboardQuery.data.map((row, idx) => {
                   const isUser = address && row.address?.toLowerCase() === address.toLowerCase();
+                  const rankValue = Number(row.rank);
+                  const displayRank = Number.isFinite(rankValue) ? rankValue : idx + 1;
                   return (
                     <tr
                       key={row.address || idx}
@@ -416,7 +418,7 @@ export default function PointsPage({ address, onConnect }) {
                           : "border-t border-slate-800/70 hover:bg-slate-900/40"
                       }
                     >
-                      <td className="py-2">{row.rank || idx + 1}</td>
+                      <td className="py-2">{displayRank}</td>
                       <td className="py-2">
                         <div className="flex items-center gap-2">
                           <span>{shortenAddress(row.address)}</span>
