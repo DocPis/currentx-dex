@@ -27,6 +27,8 @@ export const MULTIPLIER_TIERS = [
   { minSeconds: 30 * 24 * 60 * 60, multiplier: 3.0, label: ">=30d" },
 ];
 
+export const SHOW_LEADERBOARD = false;
+
 export const POINTS_SEASON = {
   id: SEASON_ID,
   label: SEASON_LABEL,

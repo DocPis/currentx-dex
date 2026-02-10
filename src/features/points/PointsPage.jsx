@@ -8,6 +8,7 @@ import {
   BOOST_CAP_MULTIPLIER,
   OUT_OF_RANGE_FACTOR,
   MULTIPLIER_TIERS,
+  SHOW_LEADERBOARD,
 } from "../../shared/config/points";
 import { useLeaderboard, useUserPoints } from "../../shared/hooks/usePoints";
 
@@ -380,72 +381,75 @@ export default function PointsPage({ address, onConnect }) {
         </div>
       ) : null}
 
-      <div className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6 mb-10">
-        <div className="flex items-center justify-between mb-4">
-          <div className="text-lg font-semibold">Leaderboard</div>
-          <Pill tone="amber">Top 100</Pill>
+      {SHOW_LEADERBOARD ? (
+        <div className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6 mb-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-lg font-semibold">Leaderboard</div>
+            <Pill tone="amber">Top 100</Pill>
+          </div>
+          {!leaderboardQuery.available ? (
+            <div className="text-sm text-slate-400">
+              Top wallets leaderboard is coming soon. We will surface the top 100 once the
+              season indexer is live.
+            </div>
+          ) : leaderboardQuery.isLoading ? (
+            <div className="text-sm text-slate-400">Loading leaderboard...</div>
+          ) : (
+            <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1 points-scrollbar">
+              <table className="w-full text-sm">
+                <thead className="text-slate-400 text-[11px] uppercase tracking-wider sticky top-0 bg-slate-900/90 backdrop-blur z-10">
+                  <tr>
+                    <th className="text-left py-2">Rank</th>
+                    <th className="text-left py-2">Wallet</th>
+                    <th className="text-right py-2">Points</th>
+                    <th className="text-right py-2">Multiplier</th>
+                    <th className="text-right py-2">Active LP USD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboardQuery.data.map((row, idx) => {
+                    const isUser =
+                      address && row.address?.toLowerCase() === address.toLowerCase();
+                    const rankValue = Number(row.rank);
+                    const displayRank = Number.isFinite(rankValue) ? rankValue : idx + 1;
+                    return (
+                      <tr
+                        key={row.address || idx}
+                        className={
+                          isUser
+                            ? "bg-slate-800/70 text-slate-50"
+                            : "border-t border-slate-800/70 hover:bg-slate-900/40"
+                        }
+                      >
+                        <td className="py-1.5">{displayRank}</td>
+                        <td className="py-1.5">
+                          <div className="flex items-center gap-2">
+                            <span>{shortenAddress(row.address)}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(row.address)}
+                              className="text-xs text-slate-400 hover:text-slate-200"
+                            >
+                              {copied === row.address ? "Copied" : "Copy"}
+                            </button>
+                          </div>
+                        </td>
+                        <td className="py-1.5 text-right">
+                          {formatCompactNumber(row.points || 0)}
+                        </td>
+                        <td className="py-1.5 text-right">
+                          {formatMultiplier(row.multiplier || 1)}
+                        </td>
+                        <td className="py-1.5 text-right">{formatUsd(row.lpUsd || 0)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
-        {!leaderboardQuery.available ? (
-          <div className="text-sm text-slate-400">
-            Top wallets leaderboard is coming soon. We will surface the top 100 once the
-            season indexer is live.
-          </div>
-        ) : leaderboardQuery.isLoading ? (
-          <div className="text-sm text-slate-400">Loading leaderboard...</div>
-        ) : (
-          <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1 points-scrollbar">
-            <table className="w-full text-sm">
-              <thead className="text-slate-400 text-[11px] uppercase tracking-wider sticky top-0 bg-slate-900/90 backdrop-blur z-10">
-                <tr>
-                  <th className="text-left py-2">Rank</th>
-                  <th className="text-left py-2">Wallet</th>
-                  <th className="text-right py-2">Points</th>
-                  <th className="text-right py-2">Multiplier</th>
-                  <th className="text-right py-2">Active LP USD</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaderboardQuery.data.map((row, idx) => {
-                  const isUser = address && row.address?.toLowerCase() === address.toLowerCase();
-                  const rankValue = Number(row.rank);
-                  const displayRank = Number.isFinite(rankValue) ? rankValue : idx + 1;
-                  return (
-                    <tr
-                      key={row.address || idx}
-                      className={
-                        isUser
-                          ? "bg-slate-800/70 text-slate-50"
-                          : "border-t border-slate-800/70 hover:bg-slate-900/40"
-                      }
-                    >
-                      <td className="py-1.5">{displayRank}</td>
-                      <td className="py-1.5">
-                        <div className="flex items-center gap-2">
-                          <span>{shortenAddress(row.address)}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleCopy(row.address)}
-                            className="text-xs text-slate-400 hover:text-slate-200"
-                          >
-                            {copied === row.address ? "Copied" : "Copy"}
-                          </button>
-                        </div>
-                      </td>
-                      <td className="py-1.5 text-right">
-                        {formatCompactNumber(row.points || 0)}
-                      </td>
-                      <td className="py-1.5 text-right">
-                        {formatMultiplier(row.multiplier || 1)}
-                      </td>
-                      <td className="py-1.5 text-right">{formatUsd(row.lpUsd || 0)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      ) : null}
 
       <div className="mb-10">
         <div className="text-lg font-semibold mb-4">How it works</div>
