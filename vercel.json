@@ -4,6 +4,7 @@
     { "path": "/api/points/recalc?token=4r6Nq9pXv2A8mT5cH7kJ1wZ3sU0yL8dP", "schedule": "*/5 * * * *" }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
     { "handle": "filesystem" },
     { "src": "/.*", "dest": "/index.html" }
   ]
