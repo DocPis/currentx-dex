@@ -21,3 +21,4 @@ npm run dev -- --host --port 4173
 
 ## Network preset
 - Mainnet (MegaETH) only. Configure via `.env.local` as needed.
+\nDeploy trigger: 2026-02-10 22:32:54
