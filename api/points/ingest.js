@@ -1,4 +1,6 @@
 ﻿import { kv } from "@vercel/kv";
+import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
+
 
 const DEFAULT_SEASON_ID = "season-1";
 const DEFAULT_START_MS = Date.UTC(2026, 1, 12, 0, 0, 0);
@@ -20,6 +22,13 @@ const MULTIPLIER_TIERS = [
 const DEFAULT_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const DEFAULT_USDM_ADDRESS = "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7";
 const DEFAULT_CRX_ADDRESS = "0xBd5e387fa453ceBf03B1A6a9dFe2a828b93AA95B";
+const DEFAULT_UNIV3_FACTORY_ADDRESS = "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E";
+const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
+  "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
+const DEFAULT_RPC_URL = "https://mainnet.megaeth.com/rpc";
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const MAX_ONCHAIN_POSITIONS = 50;
+const MAX_AGE_LOGS = 12;
 
 const parseTime = (value) => {
   if (!value) return null;
@@ -31,6 +40,190 @@ const parseBlock = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return null;
   return Math.floor(num);
+};
+
+const parseRpcUrls = (value) => {
+  if (!value) return [];
+  return String(value)
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+};
+
+const getRpcUrl = () => {
+  const candidates = [
+    process.env.POINTS_RPC_URL,
+    process.env.RPC_URL,
+    process.env.VITE_RPC_URL,
+    process.env.VITE_RPC_URLS,
+    process.env.VITE_RPC_FALLBACK,
+    process.env.VITE_RPC_TATUM,
+    process.env.VITE_RPC_THIRDWEB,
+  ];
+  for (const candidate of candidates) {
+    const parsed = parseRpcUrls(candidate);
+    if (parsed.length) return parsed[0];
+  }
+  return DEFAULT_RPC_URL;
+};
+
+const getOnchainConfig = () => {
+  const normalize = (v) => (v ? String(v).toLowerCase() : "");
+  return {
+    rpcUrl: getRpcUrl(),
+    factory: normalize(
+      process.env.POINTS_UNIV3_FACTORY_ADDRESS ||
+        process.env.VITE_UNIV3_FACTORY_ADDRESS ||
+        DEFAULT_UNIV3_FACTORY_ADDRESS
+    ),
+    positionManager: normalize(
+      process.env.POINTS_UNIV3_POSITION_MANAGER_ADDRESS ||
+        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS ||
+        DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS
+    ),
+  };
+};
+
+const providerCache = new Map();
+const getRpcProvider = (rpcUrl) => {
+  if (!rpcUrl) return null;
+  if (providerCache.has(rpcUrl)) return providerCache.get(rpcUrl);
+  const provider = new JsonRpcProvider(rpcUrl);
+  providerCache.set(rpcUrl, provider);
+  return provider;
+};
+
+const POSITION_MANAGER_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+  "function positions(uint256 tokenId) view returns (uint96 nonce,address operator,address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 feeGrowthInside0LastX128,uint256 feeGrowthInside1LastX128,uint128 tokensOwed0,uint128 tokensOwed1)",
+];
+const UNIV3_FACTORY_ABI = [
+  "function getPool(address tokenA, address tokenB, uint24 fee) view returns (address)",
+];
+const UNIV3_POOL_ABI = [
+  "function slot0() view returns (uint160 sqrtPriceX96,int24 tick,uint16 observationIndex,uint16 observationCardinality,uint16 observationCardinalityNext,uint8 feeProtocol,bool unlocked)",
+];
+
+const toTopicAddress = (addr) =>
+  `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+
+const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
+  const { rpcUrl, factory, positionManager } = getOnchainConfig();
+  if (!rpcUrl || !factory || !positionManager) return null;
+  const provider = getRpcProvider(rpcUrl);
+  if (!provider) return null;
+  const manager = new Contract(positionManager, POSITION_MANAGER_ABI, provider);
+  const balanceRaw = await manager.balanceOf(wallet);
+  const count = Math.min(Number(balanceRaw || 0), MAX_ONCHAIN_POSITIONS);
+  if (!count) {
+    return { positions: [], lpAgeSeconds: null };
+  }
+
+  const ids = await Promise.all(
+    Array.from({ length: count }, (_, idx) => manager.tokenOfOwnerByIndex(wallet, idx))
+  );
+  const positionsRaw = await Promise.all(ids.map((id) => manager.positions(id)));
+  const normalized = positionsRaw.map((pos, idx) => {
+    const token0 = normalizeAddress(pos?.token0 || "");
+    const token1 = normalizeAddress(pos?.token1 || "");
+    return {
+      __normalized: true,
+      tokenId: ids[idx],
+      token0,
+      token1,
+      tickLower: Number(pos?.tickLower ?? 0),
+      tickUpper: Number(pos?.tickUpper ?? 0),
+      liquidity: BigInt(pos?.liquidity || 0),
+      fee: Number(pos?.fee ?? 0),
+      createdAt: null,
+      poolTick: null,
+      poolSqrt: null,
+      decimals0: 18,
+      decimals1: 18,
+    };
+  });
+
+  const factoryContract = new Contract(factory, UNIV3_FACTORY_ABI, provider);
+  const uniquePools = new Map();
+  normalized.forEach((pos) => {
+    if (!isBoostPair(pos.token0, pos.token1, addr)) return;
+    const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
+    if (!uniquePools.has(key)) uniquePools.set(key, pos);
+  });
+
+  const poolState = new Map();
+  for (const pos of uniquePools.values()) {
+    let poolAddress = await factoryContract.getPool(pos.token0, pos.token1, pos.fee);
+    if (!poolAddress || poolAddress === ZERO_ADDRESS) {
+      poolAddress = await factoryContract.getPool(pos.token1, pos.token0, pos.fee);
+    }
+    if (!poolAddress || poolAddress === ZERO_ADDRESS) continue;
+    try {
+      const pool = new Contract(poolAddress, UNIV3_POOL_ABI, provider);
+      const slot0 = await pool.slot0();
+      poolState.set(`${pos.token0}:${pos.token1}:${pos.fee}`, {
+        sqrtPriceX96: slot0?.sqrtPriceX96 ?? null,
+        tick: Number(slot0?.tick ?? 0),
+      });
+    } catch {
+      // ignore pool fetch errors
+    }
+  }
+
+  normalized.forEach((pos) => {
+    const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
+    const state = poolState.get(key);
+    if (state) {
+      pos.poolSqrt = state.sqrtPriceX96;
+      pos.poolTick = Number.isFinite(state.tick) ? state.tick : null;
+    }
+  });
+
+  const lpAgeSeconds = await fetchLpAgeSecondsOnchain({
+    provider,
+    wallet,
+    tokenIds: ids,
+    positionManager,
+    startBlock,
+  });
+
+  return { positions: normalized, lpAgeSeconds };
+};
+
+const fetchLpAgeSecondsOnchain = async ({
+  provider,
+  wallet,
+  tokenIds,
+  positionManager,
+  startBlock,
+}) => {
+  if (!provider || !positionManager || !wallet || !tokenIds?.length) return null;
+  const transferTopic = id("Transfer(address,address,uint256)");
+  const zeroTopic = toTopicAddress(ZERO_ADDRESS);
+  const walletTopic = toTopicAddress(wallet);
+  const fromBlock =
+    Number.isFinite(startBlock) && startBlock > 0 ? startBlock : 0;
+  let earliest = null;
+  const sample = tokenIds.slice(0, MAX_AGE_LOGS);
+  for (const tokenId of sample) {
+    const tokenHex = zeroPadValue(toBeHex(tokenId), 32);
+    const logs = await provider.getLogs({
+      address: positionManager,
+      fromBlock,
+      toBlock: "latest",
+      topics: [transferTopic, zeroTopic, walletTopic, tokenHex],
+    });
+    if (!logs?.length) continue;
+    const log = logs[0];
+    const block = await provider.getBlock(log.blockNumber);
+    const ts = Number(block?.timestamp || 0);
+    if (!Number.isFinite(ts) || ts <= 0) continue;
+    if (!earliest || ts < earliest) earliest = ts;
+  }
+  if (!earliest) return null;
+  const diff = Math.floor(Date.now() / 1000 - earliest);
+  return diff >= 0 ? diff : 0;
 };
 
 const getSeasonConfig = () => {
@@ -105,7 +298,9 @@ const postGraph = async (url, apiKey, query, variables) => {
   return json.data;
 };
 
-const normalizeAddress = (addr) => (addr ? String(addr).toLowerCase() : "");
+function normalizeAddress(addr) {
+  return addr ? String(addr).toLowerCase() : "";
+}
 
 const resolveWallet = (swap, isV3) => {
   if (!swap) return "";
@@ -515,7 +710,7 @@ const fetchPositions = async ({ url, apiKey, owner }) => {
     }
   }
 
-  if (!selectedQuery) return [];
+  if (!selectedQuery) return null;
 
   const positions = [];
   let skip = 0;
@@ -534,21 +729,40 @@ const fetchPositions = async ({ url, apiKey, owner }) => {
   return positions;
 };
 
-const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
-  if (!url) {
-    return {
-      hasBoostLp: false,
-      lpUsd: 0,
-      lpInRangePct: 0,
-      hasRangeData: false,
-      hasInRange: false,
-      lpAgeSeconds: null,
-      baseMultiplier: 1,
-    };
+const computeLpData = async ({
+  url,
+  apiKey,
+  wallet,
+  addr,
+  priceMap,
+  startBlock,
+}) => {
+  let positions = url ? await fetchPositions({ url, apiKey, owner: wallet }) : null;
+  let onchainAgeSeconds = null;
+
+  if (!positions || positions.length === 0) {
+    const onchain = await fetchPositionsOnchain({
+      wallet,
+      addr,
+      startBlock,
+    }).catch(() => null);
+    if (onchain?.positions?.length) {
+      positions = onchain.positions;
+      onchainAgeSeconds = onchain.lpAgeSeconds ?? null;
+    } else if (!positions) {
+      return {
+        hasBoostLp: false,
+        lpUsd: 0,
+        lpInRangePct: 0,
+        hasRangeData: false,
+        hasInRange: false,
+        lpAgeSeconds: null,
+        baseMultiplier: 1,
+      };
+    }
   }
 
-  const positions = await fetchPositions({ url, apiKey, owner: wallet });
-  if (!positions.length) {
+  if (!positions || !positions.length) {
     return {
       hasBoostLp: false,
       lpUsd: 0,
@@ -562,6 +776,7 @@ const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
 
   const active = positions
     .map((pos) => {
+      if (pos?.__normalized) return pos;
       const token0 = normalizeAddress(pos?.token0?.id || pos?.token0);
       const token1 = normalizeAddress(pos?.token1?.id || pos?.token1);
       const tickLower = Number(pos?.tickLower?.tickIdx ?? pos?.tickLower ?? 0);
@@ -667,7 +882,9 @@ const computeLpData = async ({ url, apiKey, wallet, addr, priceMap }) => {
 
   const lpInRangePct = lpUsd > 0 ? Math.min(1, lpInRangeUsd / lpUsd) : 0;
   const lpAgeSeconds =
-    earliestCreated && Number.isFinite(earliestCreated)
+    onchainAgeSeconds !== null && Number.isFinite(onchainAgeSeconds)
+      ? onchainAgeSeconds
+      : earliestCreated && Number.isFinite(earliestCreated)
       ? Math.max(0, Math.floor(Date.now() / 1000 - earliestCreated))
       : null;
   const baseMultiplier = lpAgeSeconds !== null ? getTierMultiplier(lpAgeSeconds) : 1;
@@ -785,6 +1002,7 @@ export default async function handler(req, res) {
         wallet,
         addr,
         priceMap,
+        startBlock,
       });
 
       const points = computePoints({

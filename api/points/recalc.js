@@ -45,7 +45,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { seasonId } = getSeasonConfig();
+  const { seasonId, startBlock } = getSeasonConfig();
   const targetSeason = req.query?.seasonId || seasonId;
   const { v3Url, v3Key } = getSubgraphConfig();
   if (!v3Url) {
@@ -129,6 +129,7 @@ export default async function handler(req, res) {
         wallet,
         addr,
         priceMap,
+        startBlock,
       });
 
       const points = computePoints({
