@@ -14,6 +14,12 @@ const subgraphCacheV3 = new Map();
 const SUBGRAPH_PROXY =
   (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
   "";
+const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
+];
+const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
+];
 
 // Fallback to global env when missing (align behavior across networks).
 if (!SUBGRAPH_URL) {
@@ -28,14 +34,62 @@ if (!SUBGRAPH_V3_URL) {
 if (!SUBGRAPH_V3_API_KEY) {
   SUBGRAPH_V3_API_KEY = env.VITE_UNIV3_SUBGRAPH_API_KEY || "";
 }
-const SUBGRAPH_MISSING_KEY =
-  SUBGRAPH_URL &&
-  !SUBGRAPH_API_KEY &&
-  (SUBGRAPH_URL.includes("thegraph.com") || SUBGRAPH_URL.includes("gateway"));
-const SUBGRAPH_V3_MISSING_KEY =
-  SUBGRAPH_V3_URL &&
-  !SUBGRAPH_V3_API_KEY &&
-  (SUBGRAPH_V3_URL.includes("thegraph.com") || SUBGRAPH_V3_URL.includes("gateway"));
+
+const parseUrlList = (...values) =>
+  values
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const dedupeUrls = (urls = []) => {
+  const out = [];
+  const seen = new Set();
+  urls.forEach((url) => {
+    const normalized = String(url || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+};
+
+const endpointRequiresApiKey = (url = "") =>
+  url.includes("thegraph.com") || url.includes("gateway");
+
+const buildSubgraphEndpoints = (primaryUrl, primaryApiKey, fallbackUrls = []) => {
+  const urls = dedupeUrls([primaryUrl, ...fallbackUrls]);
+  return urls.map((url) => ({
+    url,
+    // Apply key only to primary endpoint (The Graph); fallback endpoints are public.
+    apiKey: url === primaryUrl ? String(primaryApiKey || "").trim() : "",
+  }));
+};
+
+const hasUsableEndpoints = (endpoints = []) =>
+  endpoints.some(
+    (endpoint) =>
+      endpoint?.url &&
+      (!endpointRequiresApiKey(endpoint.url) || Boolean(endpoint.apiKey))
+  );
+
+const SUBGRAPH_ENDPOINTS = buildSubgraphEndpoints(
+  SUBGRAPH_URL,
+  SUBGRAPH_API_KEY,
+  parseUrlList(
+    env.VITE_UNIV2_SUBGRAPH_FALLBACKS,
+    DEFAULT_V2_FALLBACK_SUBGRAPHS.join(",")
+  )
+);
+const SUBGRAPH_V3_ENDPOINTS = buildSubgraphEndpoints(
+  SUBGRAPH_V3_URL,
+  SUBGRAPH_V3_API_KEY,
+  parseUrlList(
+    env.VITE_UNIV3_SUBGRAPH_FALLBACKS,
+    DEFAULT_V3_FALLBACK_SUBGRAPHS.join(",")
+  )
+);
+const SUBGRAPH_MISSING_KEY = !hasUsableEndpoints(SUBGRAPH_ENDPOINTS);
+const SUBGRAPH_V3_MISSING_KEY = !hasUsableEndpoints(SUBGRAPH_V3_ENDPOINTS);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -69,190 +123,135 @@ const isTransientSubgraphMessage = (value = "") => {
 };
 
 async function postSubgraph(query, variables = {}) {
-  if (!SUBGRAPH_URL) {
-    throw new Error("Missing VITE_UNIV2_SUBGRAPH env var");
-  }
-
-  const cacheKey = JSON.stringify({ q: query, v: variables });
-  const cached = subgraphCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && now - cached.ts < SUBGRAPH_CACHE_TTL_MS) {
-    return cached.data;
-  }
-
-  const buildHeaders = (useProxy) => {
-    const headers = {
-      "Content-Type": "application/json",
-    };
-    if (SUBGRAPH_API_KEY && !useProxy) {
-      headers.Authorization = `Bearer ${SUBGRAPH_API_KEY}`;
-    }
-    return headers;
-  };
-
-  let lastError = null;
-  let attemptedProxy = false;
-  for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
-    try {
-      const useProxy = attemptedProxy && Boolean(SUBGRAPH_PROXY);
-      const url = useProxy
-        ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_URL)}`
-        : SUBGRAPH_URL;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: buildHeaders(useProxy),
-        body: JSON.stringify({ query, variables }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        const rateLimited =
-          res.status === 429 ||
-          text.toLowerCase().includes("rate") ||
-          text.toLowerCase().includes("limit");
-        const indexerUnavailable = isIndexerUnavailableMessage(text);
-        lastError = new Error(
-          rateLimited
-            ? "Subgraph rate-limited. Please retry shortly."
-            : indexerUnavailable
-              ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
-              : `Subgraph HTTP ${res.status}`
-        );
-        if (
-          attempt < SUBGRAPH_MAX_RETRIES &&
-          (res.status >= 500 || rateLimited || indexerUnavailable)
-        ) {
-          await sleep(250 * (attempt + 1));
-          continue;
-        }
-        throw lastError;
-      }
-
-      const json = await res.json();
-      if (json.errors?.length) {
-        throw new Error(
-          normalizeSubgraphErrorMessage(
-            json.errors[0]?.message || "Subgraph error",
-            "Subgraph error"
-          )
-        );
-      }
-      subgraphCache.set(cacheKey, { ts: now, data: json.data });
-      return json.data;
-    } catch (err) {
-      const msg = (err?.message || "").toLowerCase();
-      const transient = isTransientSubgraphMessage(msg);
-      const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
-      if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
-        attemptedProxy = true;
-        // retry immediately with proxy
-        attempt -= 1;
-        continue;
-      }
-      lastError = err;
-      if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
-        await sleep(250 * (attempt + 1));
-        continue;
-      }
-      break;
-    }
-  }
-
-  throw new Error(
-    normalizeSubgraphErrorMessage(
-      lastError?.message || "",
-      "Subgraph unavailable"
-    )
-  );
+  return postSubgraphWithFallback({
+    query,
+    variables,
+    endpoints: SUBGRAPH_ENDPOINTS,
+    cache: subgraphCache,
+    missingConfigMessage: "Missing V2 subgraph endpoint configuration",
+  });
 }
 
 async function postSubgraphV3(query, variables = {}) {
-  if (!SUBGRAPH_V3_URL) {
-    throw new Error("Missing VITE_UNIV3_SUBGRAPH env var");
+  return postSubgraphWithFallback({
+    query,
+    variables,
+    endpoints: SUBGRAPH_V3_ENDPOINTS,
+    cache: subgraphCacheV3,
+    missingConfigMessage: "Missing V3 subgraph endpoint configuration",
+  });
+}
+
+const isUsableSubgraphEndpoint = (endpoint) =>
+  Boolean(
+    endpoint?.url &&
+      (!endpointRequiresApiKey(endpoint.url) || Boolean(endpoint.apiKey))
+  );
+
+const buildSubgraphHeaders = (endpoint, useProxy) => {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+  if (!useProxy && endpoint?.apiKey) {
+    headers.Authorization = `Bearer ${endpoint.apiKey}`;
+  }
+  return headers;
+};
+
+async function postSubgraphWithFallback({
+  query,
+  variables = {},
+  endpoints = [],
+  cache,
+  missingConfigMessage,
+}) {
+  const usableEndpoints = (endpoints || []).filter(isUsableSubgraphEndpoint);
+  if (!usableEndpoints.length) {
+    throw new Error(missingConfigMessage || "Subgraph unavailable");
   }
 
   const cacheKey = JSON.stringify({ q: query, v: variables });
-  const cached = subgraphCacheV3.get(cacheKey);
+  const cached = cache.get(cacheKey);
   const now = Date.now();
   if (cached && now - cached.ts < SUBGRAPH_CACHE_TTL_MS) {
     return cached.data;
   }
 
-  const buildHeaders = (useProxy) => {
-    const headers = {
-      "Content-Type": "application/json",
-    };
-    if (SUBGRAPH_V3_API_KEY && !useProxy) {
-      headers.Authorization = `Bearer ${SUBGRAPH_V3_API_KEY}`;
-    }
-    return headers;
-  };
-
   let lastError = null;
-  let attemptedProxy = false;
-  for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
-    try {
-      const useProxy = attemptedProxy && Boolean(SUBGRAPH_PROXY);
-      const url = useProxy
-        ? `${SUBGRAPH_PROXY}${encodeURIComponent(SUBGRAPH_V3_URL)}`
-        : SUBGRAPH_V3_URL;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: buildHeaders(useProxy),
-        body: JSON.stringify({ query, variables }),
-      });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        const rateLimited =
-          res.status === 429 ||
-          text.toLowerCase().includes("rate") ||
-          text.toLowerCase().includes("limit");
-        const indexerUnavailable = isIndexerUnavailableMessage(text);
-        lastError = new Error(
-          rateLimited
-            ? "Subgraph rate-limited. Please retry shortly."
-            : indexerUnavailable
-              ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
-              : `Subgraph HTTP ${res.status}`
-        );
-        if (
-          attempt < SUBGRAPH_MAX_RETRIES &&
-          (res.status >= 500 || rateLimited || indexerUnavailable)
-        ) {
+  for (const endpoint of usableEndpoints) {
+    let endpointError = null;
+    let attemptedProxy = false;
+
+    for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
+      try {
+        const useProxy = attemptedProxy && Boolean(SUBGRAPH_PROXY);
+        const url = useProxy
+          ? `${SUBGRAPH_PROXY}${encodeURIComponent(endpoint.url)}`
+          : endpoint.url;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: buildSubgraphHeaders(endpoint, useProxy),
+          body: JSON.stringify({ query, variables }),
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          const rateLimited =
+            res.status === 429 ||
+            text.toLowerCase().includes("rate") ||
+            text.toLowerCase().includes("limit");
+          const indexerUnavailable = isIndexerUnavailableMessage(text);
+          endpointError = new Error(
+            rateLimited
+              ? "Subgraph rate-limited. Please retry shortly."
+              : indexerUnavailable
+                ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
+                : `Subgraph HTTP ${res.status}`
+          );
+          if (
+            attempt < SUBGRAPH_MAX_RETRIES &&
+            (res.status >= 500 || rateLimited || indexerUnavailable)
+          ) {
+            await sleep(250 * (attempt + 1));
+            continue;
+          }
+          throw endpointError;
+        }
+
+        const json = await res.json();
+        if (json.errors?.length) {
+          endpointError = new Error(
+            normalizeSubgraphErrorMessage(
+              json.errors[0]?.message || "Subgraph error",
+              "Subgraph error"
+            )
+          );
+          throw endpointError;
+        }
+        cache.set(cacheKey, { ts: now, data: json.data });
+        return json.data;
+      } catch (err) {
+        const msg = String(err?.message || "").toLowerCase();
+        const transient = isTransientSubgraphMessage(msg);
+        const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
+        if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
+          attemptedProxy = true;
+          // retry immediately with proxy
+          attempt -= 1;
+          continue;
+        }
+        endpointError = err;
+        if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
           await sleep(250 * (attempt + 1));
           continue;
         }
-        throw lastError;
+        break;
       }
+    }
 
-      const json = await res.json();
-      if (json.errors?.length) {
-        throw new Error(
-          normalizeSubgraphErrorMessage(
-            json.errors[0]?.message || "Subgraph error",
-            "Subgraph error"
-          )
-        );
-      }
-      subgraphCacheV3.set(cacheKey, { ts: now, data: json.data });
-      return json.data;
-    } catch (err) {
-      const msg = (err?.message || "").toLowerCase();
-      const transient = isTransientSubgraphMessage(msg);
-      const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
-      if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
-        attemptedProxy = true;
-        // retry immediately with proxy
-        attempt -= 1;
-        continue;
-      }
-      lastError = err;
-      if (attempt < SUBGRAPH_MAX_RETRIES && transient) {
-        await sleep(250 * (attempt + 1));
-        continue;
-      }
-      break;
+    if (endpointError) {
+      lastError = endpointError;
     }
   }
 
@@ -273,7 +272,7 @@ export async function fetchV2PairData(tokenA, tokenB) {
       tvlUsd: undefined,
       volume24hUsd: undefined,
       fees24hUsd: undefined,
-      note: "Subgraph key missing; skipping live TVL/volume.",
+      note: "Subgraph unavailable or key missing; skipping live TVL/volume.",
     };
   }
   const tokenALower = tokenA.toLowerCase();

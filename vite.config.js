@@ -12,6 +12,13 @@ const certDir = path.resolve(process.cwd(), 'certs');
 const devKeyPath = path.join(certDir, 'dev.key');
 const devCertPath = path.join(certDir, 'dev.crt');
 const hasCustomCert = fs.existsSync(devKeyPath) && fs.existsSync(devCertPath);
+const PURE_ANNOTATION_WARNING_TEXT =
+  'contains an annotation that Rollup cannot interpret due to the position of the comment';
+const isIgnorablePureAnnotationWarning = (warning) => {
+  const message = String(warning?.message || '');
+  const id = String(warning?.id || '');
+  return message.includes(PURE_ANNOTATION_WARNING_TEXT) && id.includes('node_modules');
+};
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -62,6 +69,14 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 1024, // raise limit to 1 MB to avoid noisy warnings
+    rollupOptions: {
+      onwarn(warning, defaultHandler) {
+        if (isIgnorablePureAnnotationWarning(warning)) {
+          return;
+        }
+        defaultHandler(warning);
+      },
+    },
   },
   optimizeDeps: {
     exclude: ['@avon_xyz/widget'],
