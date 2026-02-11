@@ -1,11 +1,7 @@
 ﻿// src/features/points/PointsPage.jsx
 import React, { useState } from "react";
 import {
-  SEASON_LABEL,
   SEASON_ID,
-  SEASON_START_MS,
-  SEASON_END_MS,
-  BOOST_CAP_MULTIPLIER,
   OUT_OF_RANGE_FACTOR,
   MULTIPLIER_TIERS,
   SHOW_LEADERBOARD,
@@ -55,15 +51,6 @@ const formatPct = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   return `${(num * 100).toFixed(0)}%`;
-};
-
-const formatDate = (value) => {
-  if (!value) return "--";
-  return new Date(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 };
 
 const formatDuration = (seconds) => {
@@ -154,9 +141,9 @@ export default function PointsPage({ address, onConnect }) {
   const leaderboardQuery = useLeaderboard(SEASON_ID, 0);
   const { data: userStats, isLoading, error } = useUserPoints(address);
 
-  const seasonWindow = `${formatDate(SEASON_START_MS)} - ${
-    SEASON_END_MS ? formatDate(SEASON_END_MS) : "Ongoing"
-  }`;
+  const seasonHeadline = "SEASON 1 — Feb 12, 2026 → Mar 12, 2026 (28 days)";
+  const seasonFinalizationLine =
+    "Finalization: Mar 12–14 (48h). Claim opens after finalization.";
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
   const hasAge = Boolean(userStats?.lpAgeAvailable);
@@ -209,15 +196,12 @@ export default function PointsPage({ address, onConnect }) {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <Pill tone="sky">Season</Pill>
-              <div className="text-xs uppercase tracking-[0.35em] text-slate-400">
-                {seasonWindow}
-              </div>
             </div>
             <div className="mt-3 text-3xl sm:text-4xl font-semibold">
-              {SEASON_LABEL}
+              {seasonHeadline}
             </div>
             <div className="text-sm text-slate-400 mt-2">
-              $1 traded = 1 point · LP boosts capped at {BOOST_CAP_MULTIPLIER}x LP value
+              {seasonFinalizationLine}
             </div>
 
             <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -253,8 +237,10 @@ export default function PointsPage({ address, onConnect }) {
               </div>
               <div className="mt-2 space-y-1">
                 <div>1 USD traded = 1 point (all pairs).</div>
-                <div>Boosted cap = 10x active LP USD.</div>
-                <div>Out-of-range LP uses 50% of multiplier.</div>
+                <div>LP boosts apply only on CRX/ETH and CRX/USDM.</div>
+                <div>Boosted volume cap = 10x your active LP (USD).</div>
+                <div>Out-of-range V3 positions earn 50% of the multiplier.</div>
+                <div>Season 1: Feb 12 → Mar 12. Finalization: 48h. Claim after finalization.</div>
               </div>
             </div>
             {!address ? (
@@ -455,40 +441,56 @@ export default function PointsPage({ address, onConnect }) {
         <div className="text-lg font-semibold mb-4">How it works</div>
         <div className="grid grid-cols-1 gap-3">
           <AccordionItem title="Base rules">
-            1 USD traded = 1 point across all pairs. Season points reset each season.
+            <>
+              <div>1 USD traded = 1 point across all pairs. Season points reset each season.</div>
+              <div>
+                Final points are computed after a 48h finalization window (anti-wash checks +
+                final calculation).
+              </div>
+            </>
           </AccordionItem>
           <AccordionItem title="LP Boost formula">
-            Points = VolumeUSD + min(VolumeUSD, 10 x LP_USD) x (Multiplier - 1).
-            The boosted cap is 10x your active LP USD value on CRX/ETH and CRX/USDM.
+            <>
+              <div>Points = VolumeUSD + min(VolumeUSD, 10 x LP_USD) x (Multiplier - 1).</div>
+              <div>
+                LP boosts apply only to CRX/ETH and CRX/USDM. The boosted volume is capped at
+                10x your active in-range LP USD value.
+              </div>
+            </>
           </AccordionItem>
           <AccordionItem title="Tier multipliers">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-              {MULTIPLIER_TIERS.map((tier) => (
-                <div
-                  key={tier.label}
-                  className="group relative overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/50 px-4 py-3"
-                >
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition">
-                    <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-sky-500/20 blur-2xl" />
+            <>
+              <div className="mb-3">
+                Your multiplier increases with how long your V3 LP stays active (in-range).
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {MULTIPLIER_TIERS.map((tier) => (
+                  <div
+                    key={tier.label}
+                    className="group relative overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/50 px-4 py-3"
+                  >
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition">
+                      <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-sky-500/20 blur-2xl" />
+                    </div>
+                    <div className="relative">
+                      <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                        {tier.label}
+                      </div>
+                      <div className="mt-2 text-xl font-semibold text-slate-100">
+                        {tier.multiplier}x
+                      </div>
+                      <div className="text-[11px] text-slate-400 mt-1">
+                        Holding time
+                      </div>
+                    </div>
                   </div>
-                  <div className="relative">
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                      {tier.label}
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-slate-100">
-                      {tier.multiplier}x
-                    </div>
-                    <div className="text-[11px] text-slate-400 mt-1">
-                      Holding time
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </>
           </AccordionItem>
           <AccordionItem title="Out-of-range note">
-            If your V3 position is out of range, the multiplier is reduced to
-            {` ${OUT_OF_RANGE_FACTOR * 100}%`} of its value (example: 2.0x becomes 1.5x).
+            If your V3 position is out of range, the multiplier is reduced to 50% of its value
+            (example: 2.0x becomes 1.0x).
           </AccordionItem>
         </div>
       </div>
