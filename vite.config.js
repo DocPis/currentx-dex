@@ -7,6 +7,7 @@ import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
 const DEV_NONCE = 'dev-nonce-123';
+const API_PROXY_TARGET = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:3000';
 const certDir = path.resolve(process.cwd(), 'certs');
 const devKeyPath = path.join(certDir, 'dev.key');
 const devCertPath = path.join(certDir, 'dev.crt');
@@ -38,6 +39,13 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 4173,
     hmr: false,
+    proxy: {
+      '/api': {
+        target: API_PROXY_TARGET,
+        changeOrigin: true,
+        secure: false,
+      },
+    },
     // Dev-only permissive CSP to unblock HMR/preamble in browsers or extensions that inject stricter policies.
     // Do NOT mirror this header in production.
     headers: {

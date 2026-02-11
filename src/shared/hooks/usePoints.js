@@ -319,6 +319,12 @@ export const getLeaderboardQueryKey = (seasonId, page = 0) => [
   page,
 ];
 
+export const getWhitelistRewardsQueryKey = (address) => [
+  "whitelist-rewards",
+  SEASON_ID,
+  normalizeAddress(address),
+];
+
 export const useUserPoints = (address) => {
   return useQuery({
     queryKey: getUserPointsQueryKey(address),
@@ -511,4 +517,89 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     data: items,
     available,
   };
+};
+
+export const useWhitelistRewards = (address) => {
+  return useQuery({
+    queryKey: getWhitelistRewardsQueryKey(address),
+    enabled: Boolean(address),
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: true,
+    retry: 1,
+    queryFn: async () => {
+      const normalized = normalizeAddress(address);
+      const toNumber = (value, fallback = 0) => {
+        if (value === null || value === undefined || value === "") return fallback;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+      };
+      const toBool = (value) =>
+        value === true ||
+        value === 1 ||
+        value === "1" ||
+        value === "true" ||
+        value === "TRUE";
+
+      const params = new URLSearchParams();
+      params.set("address", normalized);
+      params.set("seasonId", SEASON_ID);
+      const res = await fetch(`/api/whitelist-rewards/user?${params.toString()}`);
+      if (res.status === 404) {
+        return {
+          available: false,
+          whitelisted: false,
+          pending: false,
+        };
+      }
+      if (!res.ok) {
+        throw new Error("Whitelist rewards unavailable");
+      }
+      const payload = await res.json();
+      const user = payload?.user || {};
+      return {
+        available: true,
+        whitelisted: toBool(user.whitelisted),
+        pending: toBool(user.pending),
+        claimOpen: toBool(user.claimOpen),
+        activationQualified: toBool(user.activationQualified),
+        hasSwap: toBool(user.hasSwap),
+        metVolumeThreshold: toBool(user.metVolumeThreshold),
+        metMicroLp: toBool(user.metMicroLp),
+        address: normalizeAddress(user.address || normalized),
+        whitelistedAt: toNumber(user.whitelistedAt, null),
+        activationWindowDays: toNumber(user.activationWindowDays, 0),
+        windowEndsAt: toNumber(user.windowEndsAt, null),
+        withinWindow: toBool(user.withinWindow),
+        activatedAt: toNumber(user.activatedAt, null),
+        volumeUsd: toNumber(user.volumeUsd, 0),
+        lpUsd: toNumber(user.lpUsd, 0),
+        volumeThresholdUsd: toNumber(user.volumeThresholdUsd, 0),
+        microLpUsd: toNumber(user.microLpUsd, 0),
+        baseRewardCrx: toNumber(user.baseRewardCrx, 0),
+        activationBonusCrx: toNumber(user.activationBonusCrx, 0),
+        totalRewardCrx: toNumber(user.totalRewardCrx, 0),
+        immediateClaimableCrx: toNumber(user.immediateClaimableCrx, 0),
+        streamedCrx: toNumber(user.streamedCrx, 0),
+        immediatePct: toNumber(user.immediatePct, 0.3),
+        streamDays: toNumber(user.streamDays, 0),
+        streamStartAt: toNumber(user.streamStartAt, null),
+        streamEndsAt: toNumber(user.streamEndsAt, null),
+        streamProgress: toNumber(user.streamProgress, 0),
+        immediateClaimedCrx: toNumber(user.immediateClaimedCrx, 0),
+        streamedClaimedCrx: toNumber(user.streamedClaimedCrx, 0),
+        totalClaimedCrx: toNumber(user.totalClaimedCrx, 0),
+        immediateRemainingCrx: toNumber(user.immediateRemainingCrx, 0),
+        streamedRemainingCrx: toNumber(user.streamedRemainingCrx, 0),
+        vestedStreamedCrx: toNumber(user.vestedStreamedCrx, 0),
+        claimableNowCrx: toNumber(user.claimableNowCrx, 0),
+        claimOpensAt: toNumber(user.claimOpensAt, null),
+        lastClaimAt: toNumber(user.lastClaimAt, null),
+        claimCount: toNumber(user.claimCount, 0),
+        budgetBaseScale: toNumber(user.budgetBaseScale, 1),
+        budgetBonusScale: toNumber(user.budgetBonusScale, 1),
+        updatedAt: toNumber(user.updatedAt, null),
+      };
+    },
+  });
 };

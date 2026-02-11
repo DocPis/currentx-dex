@@ -6,7 +6,13 @@ import {
   MULTIPLIER_TIERS,
   SHOW_LEADERBOARD,
 } from "../../shared/config/points";
-import { useLeaderboard, useUserPoints } from "../../shared/hooks/usePoints";
+import {
+  useLeaderboard,
+  useUserPoints,
+  useWhitelistRewards,
+} from "../../shared/hooks/usePoints";
+import { getProvider } from "../../shared/config/web3";
+import { buildWhitelistClaimMessage } from "../../shared/lib/whitelistRewards";
 
 const shortenAddress = (addr) =>
   !addr ? "" : `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -41,6 +47,9 @@ const formatCompactNumber = (value) => {
 const formatUsd = (value) =>
   value === null || value === undefined ? "--" : `$${formatCompactNumber(value)}`;
 
+const formatCrx = (value) =>
+  value === null || value === undefined ? "--" : `${formatCompactNumber(value)} CRX`;
+
 const formatMultiplier = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
@@ -62,6 +71,12 @@ const formatDuration = (seconds) => {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${mins}m`;
   return `${mins}m`;
+};
+
+const formatDateTime = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  return new Date(num).toLocaleString();
 };
 
 const Pill = ({ children, tone = "slate" }) => {
@@ -138,12 +153,18 @@ const AccordionItem = ({ title, children }) => (
 
 export default function PointsPage({ address, onConnect }) {
   const [copied, setCopied] = useState("");
+  const [claimState, setClaimState] = useState({
+    loading: false,
+    error: "",
+    success: "",
+  });
   const leaderboardQuery = useLeaderboard(SEASON_ID, 0, SHOW_LEADERBOARD);
   const { data: userStats, isLoading, error } = useUserPoints(address);
+  const whitelistQuery = useWhitelistRewards(address);
 
   const seasonHeadline = "SEASON 1 — Feb 12, 2026 → Mar 12, 2026 (28 days)";
   const seasonFinalizationLine =
-    "Finalization: Mar 12–14 (48h). Claim opens after finalization.";
+    "Points finalization: Mar 12–14 (48h). Whitelist claim opens Feb 12.";
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
   const hasAge = Boolean(userStats?.lpAgeAvailable);
@@ -173,6 +194,77 @@ export default function PointsPage({ address, onConnect }) {
       ? "--"
       : formatUsd(userStats?.boostedVolumeCap || 0);
   const boostedVolumeValue = formatUsd(userStats?.boostedVolumeUsd || 0);
+  const whitelist = whitelistQuery.data || null;
+  const immediatePct = Number(whitelist?.immediatePct ?? 0.3);
+  const streamedPct = Math.max(0, 1 - immediatePct);
+
+  const formatClaimButtonLabel = () => {
+    if (!whitelist?.whitelisted) return "Claim";
+    if (claimState.loading) return "Claiming...";
+    if (!whitelist.claimOpen) return "Claim locked";
+    if ((whitelist.claimableNowCrx || 0) <= 0) return "Nothing claimable";
+    return "Claim now";
+  };
+
+  const handleWhitelistClaim = async () => {
+    if (!address || !whitelist?.whitelisted || claimState.loading) return;
+    if (!whitelist.claimOpen) {
+      setClaimState({
+        loading: false,
+        error: `Claim opens at ${formatDateTime(whitelist.claimOpensAt)}.`,
+        success: "",
+      });
+      return;
+    }
+    if ((whitelist.claimableNowCrx || 0) <= 0) {
+      setClaimState({
+        loading: false,
+        error: "No claimable amount available right now.",
+        success: "",
+      });
+      return;
+    }
+
+    try {
+      setClaimState({ loading: true, error: "", success: "" });
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const issuedAt = Date.now();
+      const message = buildWhitelistClaimMessage({
+        address,
+        seasonId: SEASON_ID,
+        issuedAt,
+      });
+      const signature = await signer.signMessage(message);
+      const res = await fetch("/api/whitelist-rewards/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          seasonId: SEASON_ID,
+          issuedAt,
+          signature,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Claim failed");
+      }
+      const amount = Number(payload?.claim?.amountCrx || 0);
+      setClaimState({
+        loading: false,
+        error: "",
+        success: `Claimed ${formatCompactNumber(amount)} CRX.`,
+      });
+      await whitelistQuery.refetch();
+    } catch (err) {
+      setClaimState({
+        loading: false,
+        error: err?.message || "Claim failed.",
+        success: "",
+      });
+    }
+  };
 
   const handleCopy = (addr) => {
     if (!addr) return;
@@ -240,7 +332,8 @@ export default function PointsPage({ address, onConnect }) {
                 <div>LP boosts apply only on CRX/ETH and CRX/USDM.</div>
                 <div>Boosted volume cap = 10x your active LP (USD).</div>
                 <div>Out-of-range V3 positions earn 50% of the multiplier.</div>
-                <div>Season 1: Feb 12 → Mar 12. Finalization: 48h. Claim after finalization.</div>
+                <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
+                <div>Season 1: Feb 12 → Mar 12. Whitelist claim opens Feb 12 (UTC).</div>
               </div>
             </div>
             {!address ? (
@@ -363,6 +456,93 @@ export default function PointsPage({ address, onConnect }) {
                 hint="Eligible volume for boost (cap applied)."
               />
             </div>
+          </StatCard>
+
+          <StatCard title="Whitelist Rewards" accent="Activation">
+            {whitelistQuery.isLoading ? (
+              <div className="text-sm text-slate-400">Loading whitelist rewards...</div>
+            ) : whitelistQuery.error ? (
+              <div className="text-sm text-rose-300">
+                {whitelistQuery.error?.message || "Unable to load whitelist rewards."}
+              </div>
+            ) : !whitelist?.whitelisted ? (
+              <div className="text-sm text-slate-400">
+                This wallet is not in the whitelist rewards cohort.
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-semibold">
+                  {formatCrx(whitelist.totalRewardCrx || 0)}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {whitelist.pending
+                    ? "Snapshot pending: values will be finalized on next recalc."
+                    : whitelist.activationQualified
+                    ? `Activation complete (${formatDateTime(whitelist.activatedAt)})`
+                    : `Activation window ends ${formatDateTime(whitelist.windowEndsAt)}`}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {whitelist.claimOpen
+                    ? "Claim is open."
+                    : `Claim opens ${formatDateTime(whitelist.claimOpensAt)}.`}
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  <InfoRow label="Base reward" value={formatCrx(whitelist.baseRewardCrx || 0)} />
+                  <InfoRow
+                    label="Activation bonus"
+                    value={formatCrx(whitelist.activationBonusCrx || 0)}
+                  />
+                  <InfoRow
+                    label={`Immediate (${Math.round(immediatePct * 100)}%)`}
+                    value={formatCrx(whitelist.immediateClaimableCrx || 0)}
+                  />
+                  <InfoRow
+                    label={`Streamed (${Math.round(streamedPct * 100)}% / ${whitelist.streamDays || 0}d)`}
+                    value={formatCrx(whitelist.streamedCrx || 0)}
+                  />
+                  <InfoRow
+                    label="Claimable now"
+                    value={formatCrx(whitelist.claimableNowCrx || 0)}
+                  />
+                  <InfoRow
+                    label="Already claimed"
+                    value={formatCrx(whitelist.totalClaimedCrx || 0)}
+                  />
+                  <InfoRow
+                    label="Swap completed"
+                    value={whitelist.hasSwap ? "Done" : "Pending"}
+                  />
+                  <InfoRow
+                    label={`Volume >= $${formatCompactNumber(whitelist.volumeThresholdUsd || 0)}`}
+                    value={whitelist.metVolumeThreshold ? "Done" : "Pending"}
+                  />
+                  <InfoRow
+                    label={`LP >= $${formatCompactNumber(whitelist.microLpUsd || 0)}`}
+                    value={whitelist.metMicroLp ? "Done" : "Pending"}
+                  />
+                </div>
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={handleWhitelistClaim}
+                    disabled={
+                      claimState.loading ||
+                      !whitelist.claimOpen ||
+                      (whitelist.claimableNowCrx || 0) <= 0
+                    }
+                    className="px-4 py-2 rounded-xl border border-cyan-400/40 bg-cyan-500/20 text-cyan-100 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-cyan-500/30 transition"
+                  >
+                    {formatClaimButtonLabel()}
+                  </button>
+                  {claimState.success ? (
+                    <div className="text-xs text-emerald-300 mt-2">{claimState.success}</div>
+                  ) : null}
+                  {claimState.error ? (
+                    <div className="text-xs text-rose-300 mt-2">{claimState.error}</div>
+                  ) : null}
+                </div>
+              </>
+            )}
           </StatCard>
         </div>
       ) : null}
@@ -491,6 +671,23 @@ export default function PointsPage({ address, onConnect }) {
           <AccordionItem title="Out-of-range note">
             If your V3 position is out of range, the multiplier is reduced to 50% of its value
             (example: 2.0x becomes 1.0x).
+          </AccordionItem>
+          <AccordionItem title="Whitelist rewards activation">
+            <>
+              <div>
+                Whitelist rewards are funded from existing allocations (not extra supply). Budget
+                cap: 10,000 CRX.
+              </div>
+              <div>
+                Base reward is granted per whitelisted wallet. Activation bonus unlocks when the
+                wallet completes at least one swap and also meets either the volume threshold or
+                the micro LP threshold within the activation window.
+              </div>
+              <div>
+                Payout schedule: 30% immediate and 70% streamed over the configured vesting
+                duration.
+              </div>
+            </>
           </AccordionItem>
         </div>
       </div>

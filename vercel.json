@@ -1,7 +1,8 @@
 {
   "crons": [
     { "path": "/api/points/ingest?token=4r6Nq9pXv2A8mT5cH7kJ1wZ3sU0yL8dP", "schedule": "*/5 * * * *" },
-    { "path": "/api/points/recalc?token=4r6Nq9pXv2A8mT5cH7kJ1wZ3sU0yL8dP", "schedule": "*/5 * * * *" }
+    { "path": "/api/points/recalc?token=4r6Nq9pXv2A8mT5cH7kJ1wZ3sU0yL8dP", "schedule": "*/5 * * * *" },
+    { "path": "/api/whitelist-rewards/recalc?token=4r6Nq9pXv2A8mT5cH7kJ1wZ3sU0yL8dP", "schedule": "*/5 * * * *" }
   ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
