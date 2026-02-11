@@ -17,7 +17,6 @@ import {
 import {
   fetchTokenPrices,
   fetchUserSwapVolume,
-  fetchV3PositionsCreatedAt,
 } from "../config/subgraph";
 import { getReadOnlyProvider } from "../config/web3";
 import {
@@ -28,9 +27,8 @@ import {
 } from "../config/points";
 import {
   computePoints,
-  getMultiplierTier,
+  getBoostPairMultiplier,
   isBoostPair,
-  resolveInRangeFactor,
 } from "../lib/points";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -97,6 +95,8 @@ const fetchBoostPositions = async (address) => {
       positions: [],
       positionIds: [],
       lpUsd: 0,
+      lpUsdCrxEth: 0,
+      lpUsdCrxUsdm: 0,
       lpInRangePct: 0,
       hasInRange: false,
       hasRangeData: false,
@@ -118,6 +118,8 @@ const fetchBoostPositions = async (address) => {
       positions: [],
       positionIds: [],
       lpUsd: 0,
+      lpUsdCrxEth: 0,
+      lpUsdCrxUsdm: 0,
       lpInRangePct: 0,
       hasInRange: false,
       hasRangeData: false,
@@ -150,6 +152,8 @@ const fetchBoostPositions = async (address) => {
       positions: [],
       positionIds: [],
       lpUsd: 0,
+      lpUsdCrxEth: 0,
+      lpUsdCrxUsdm: 0,
       lpInRangePct: 0,
       hasInRange: false,
       hasRangeData: false,
@@ -215,9 +219,8 @@ const fetchBoostPositions = async (address) => {
   }
 
   let lpUsd = 0;
-  let lpInRangeUsd = 0;
-  let hasInRange = false;
-  let hasRangeData = false;
+  let lpUsdCrxEth = 0;
+  let lpUsdCrxUsdm = 0;
   let pricedPositions = 0;
   let missingPrice = false;
 
@@ -251,27 +254,19 @@ const fetchBoostPositions = async (address) => {
     const positionUsd =
       hasAmounts && hasPrices ? amount0 * price0 + amount1 * price1 : null;
 
-    const inRange = pool
-      ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper
-      : null;
-
     if (positionUsd !== null && Number.isFinite(positionUsd)) {
       lpUsd += positionUsd;
+      const pairMultiplier = getBoostPairMultiplier(pos.token0, pos.token1);
+      if (pairMultiplier >= 3) lpUsdCrxUsdm += positionUsd;
+      else if (pairMultiplier >= 2) lpUsdCrxEth += positionUsd;
       pricedPositions += 1;
-      if (inRange) {
-        lpInRangeUsd += positionUsd;
-        hasInRange = true;
-      }
     } else if (!hasPrices || !hasAmounts) {
       missingPrice = true;
     }
 
-    if (inRange !== null) hasRangeData = true;
-
     return {
       ...pos,
       poolAddress: pool?.address || null,
-      inRange,
       positionUsd,
     };
   });
@@ -280,29 +275,17 @@ const fetchBoostPositions = async (address) => {
     lpUsd = null;
   }
 
-  const lpInRangePct =
-    lpUsd && lpUsd > 0 ? Math.min(1, lpInRangeUsd / lpUsd) : 0;
-
   return {
     positions: enriched,
     positionIds: enriched.map((pos) => pos.tokenId).filter(Boolean),
     lpUsd,
-    lpInRangePct,
-    hasInRange,
-    hasRangeData,
+    lpUsdCrxEth: lpUsdCrxEth || 0,
+    lpUsdCrxUsdm: lpUsdCrxUsdm || 0,
+    lpInRangePct: 0,
+    hasInRange: false,
+    hasRangeData: false,
     pricesAvailable: !missingPrice,
   };
-};
-
-const fetchLpAgeSeconds = async (positionIds) => {
-  if (!positionIds?.length) return null;
-  const createdMap = await fetchV3PositionsCreatedAt(positionIds);
-  const timestamps = Object.values(createdMap).filter(Boolean);
-  if (!timestamps.length) return null;
-  const earliest = Math.min(...timestamps);
-  if (!Number.isFinite(earliest) || earliest <= 0) return null;
-  const diffMs = Date.now() - earliest;
-  return diffMs > 0 ? Math.floor(diffMs / 1000) : 0;
 };
 
 export const getUserPointsQueryKey = (address) => [
@@ -362,14 +345,12 @@ export const useUserPoints = (address) => {
           const basePoints = toNumber(user.basePoints) ?? volumeUsd;
           const bonusPoints =
             toNumber(user.bonusPoints) ?? Math.max(0, points - basePoints);
-          const lpAgeSecondsRaw = toNumber(user.lpAgeSeconds);
-          const lpAgeSeconds = seasonHasStarted ? lpAgeSecondsRaw : null;
-          const baseMultiplierRaw = toNumber(user.baseMultiplier) ?? 1;
+          const lpUsdCrxEth = toNumber(user.lpUsdCrxEth) ?? 0;
+          const lpUsdCrxUsdm = toNumber(user.lpUsdCrxUsdm) ?? 0;
+          const lpPoints = toNumber(user.lpPoints) ?? 0;
           const multiplierRaw = toNumber(user.multiplier) ?? 1;
-          const baseMultiplier = seasonHasStarted ? baseMultiplierRaw : 1;
           const multiplier = seasonHasStarted ? multiplierRaw : 1;
-          const tierInfo =
-            Number.isFinite(lpAgeSeconds) ? getMultiplierTier(lpAgeSeconds) : null;
+          const hasBoostLp = toBool(user.hasBoostLp);
 
           return {
             seasonId: SEASON_ID,
@@ -381,19 +362,22 @@ export const useUserPoints = (address) => {
             bonusPoints,
             rank: toNumber(user.rank),
             volumeUsd,
-            boostedVolumeUsd: seasonHasStarted ? toNumber(user.boostedVolumeUsd) ?? 0 : 0,
-            boostedVolumeCap: seasonHasStarted ? toNumber(user.boostedVolumeCap) ?? 0 : 0,
+            boostedVolumeUsd: 0,
+            boostedVolumeCap: 0,
             multiplier,
-            baseMultiplier,
+            baseMultiplier: multiplier,
             lpUsd: toNumber(user.lpUsd) ?? 0,
-            lpInRangePct: toNumber(user.lpInRangePct) ?? 0,
-            hasBoostLp: toBool(user.hasBoostLp),
-            lpAgeSeconds,
-            lpAgeAvailable: Number.isFinite(lpAgeSeconds),
-            tier: tierInfo,
-            inRangeFactor: toNumber(user.inRangeFactor) ?? 1,
-            hasRangeData: toBool(user.hasRangeData),
-            hasInRange: toBool(user.hasInRange),
+            lpUsdCrxEth,
+            lpUsdCrxUsdm,
+            lpPoints,
+            lpInRangePct: 0,
+            hasBoostLp,
+            lpAgeSeconds: null,
+            lpAgeAvailable: false,
+            tier: null,
+            inRangeFactor: 1,
+            hasRangeData: false,
+            hasInRange: hasBoostLp,
             pricesAvailable: true,
             source: "backend",
           };
@@ -433,6 +417,8 @@ export const useUserPoints = (address) => {
           positions: [],
           positionIds: [],
           lpUsd: 0,
+          lpUsdCrxEth: 0,
+          lpUsdCrxUsdm: 0,
           lpInRangePct: 0,
           hasInRange: false,
           hasRangeData: false,
@@ -440,39 +426,12 @@ export const useUserPoints = (address) => {
         };
       }
 
-      let lpAgeSeconds = null;
-      try {
-        lpAgeSeconds = await fetchLpAgeSeconds(lpData.positionIds);
-      } catch {
-        lpAgeSeconds = null;
-      }
-
-      if (!seasonHasStarted) {
-        lpAgeSeconds = null;
-      } else if (Number.isFinite(lpAgeSeconds)) {
-        const maxSeasonAgeSeconds = Math.max(
-          0,
-          Math.floor((nowMs - seasonStart) / 1000)
-        );
-        lpAgeSeconds = Math.min(lpAgeSeconds, maxSeasonAgeSeconds);
-      }
-
       const hasBoostLp = lpData.positions.length > 0;
-      const hasAge = Number.isFinite(lpAgeSeconds);
-      const tierInfo = hasAge ? getMultiplierTier(lpAgeSeconds) : null;
-      const baseMultiplier = hasBoostLp && hasAge ? tierInfo.multiplier : 1;
-      const inRangeFactor = hasBoostLp
-        ? resolveInRangeFactor({
-            hasRangeData: lpData.hasRangeData,
-            hasInRange: lpData.hasInRange,
-          })
-        : 1;
 
       const pointsBreakdown = computePoints({
         volumeUsd: volumeV2 + volumeV3,
-        lpUsd: lpData.lpUsd,
-        multiplier: baseMultiplier,
-        inRangeFactor,
+        lpUsdCrxEth: lpData.lpUsdCrxEth,
+        lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonHasStarted,
       });
 
@@ -489,16 +448,19 @@ export const useUserPoints = (address) => {
         boostedVolumeUsd: pointsBreakdown.boostedVolumeUsd,
         boostedVolumeCap: pointsBreakdown.boostedVolumeCap,
         multiplier: pointsBreakdown.effectiveMultiplier,
-        baseMultiplier,
-        lpUsd: lpData.lpUsd,
-        lpInRangePct: lpData.lpInRangePct,
+        baseMultiplier: pointsBreakdown.effectiveMultiplier,
+        lpUsd: pointsBreakdown.lpUsd,
+        lpUsdCrxEth: pointsBreakdown.lpUsdCrxEth,
+        lpUsdCrxUsdm: pointsBreakdown.lpUsdCrxUsdm,
+        lpPoints: pointsBreakdown.lpPoints,
+        lpInRangePct: 0,
         hasBoostLp,
-        lpAgeSeconds,
-        lpAgeAvailable: hasAge,
-        tier: tierInfo,
-        inRangeFactor,
-        hasRangeData: lpData.hasRangeData,
-        hasInRange: lpData.hasInRange,
+        lpAgeSeconds: null,
+        lpAgeAvailable: false,
+        tier: null,
+        inRangeFactor: 1,
+        hasRangeData: false,
+        hasInRange: hasBoostLp,
         pricesAvailable: lpData.pricesAvailable,
       };
     },

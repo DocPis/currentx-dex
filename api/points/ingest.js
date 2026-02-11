@@ -9,15 +9,6 @@ const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
 
-const BOOST_CAP_MULTIPLIER = 10;
-const OUT_OF_RANGE_FACTOR = 0.5;
-const MULTIPLIER_TIERS = [
-  { minSeconds: 0, multiplier: 1.2 },
-  { minSeconds: 24 * 60 * 60, multiplier: 1.5 },
-  { minSeconds: 72 * 60 * 60, multiplier: 2.0 },
-  { minSeconds: 7 * 24 * 60 * 60, multiplier: 2.5 },
-  { minSeconds: 30 * 24 * 60 * 60, multiplier: 3.0 },
-];
 
 const DEFAULT_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 const DEFAULT_USDM_ADDRESS = "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7";
@@ -450,42 +441,35 @@ const toNumberSafe = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
-const getTierMultiplier = (ageSeconds) => {
-  if (!Number.isFinite(ageSeconds)) return 1;
-  let multiplier = 1;
-  MULTIPLIER_TIERS.forEach((tier) => {
-    if (ageSeconds >= tier.minSeconds) multiplier = tier.multiplier;
-  });
-  return multiplier;
-};
-
 const computePoints = ({
   volumeUsd,
-  lpUsd,
-  baseMultiplier,
-  hasRangeData,
-  hasInRange,
+  lpUsdCrxEth = 0,
+  lpUsdCrxUsdm = 0,
   boostEnabled = true,
 }) => {
   const volume = toNumberSafe(volumeUsd) ?? 0;
-  const lpValue = toNumberSafe(lpUsd) ?? 0;
-  const boostActive = boostEnabled !== false;
-  const cap = boostActive && lpValue > 0 ? lpValue * BOOST_CAP_MULTIPLIER : 0;
-  const rangeFactor = hasRangeData ? (hasInRange ? 1 : OUT_OF_RANGE_FACTOR) : 1;
+  const lpEth = Math.max(0, toNumberSafe(lpUsdCrxEth) ?? 0);
+  const lpUsdm = Math.max(0, toNumberSafe(lpUsdCrxUsdm) ?? 0);
+  const lpPoints = boostEnabled !== false ? lpEth * 2 + lpUsdm * 3 : 0;
+  const activeLpUsd = lpEth + lpUsdm;
   const multiplier =
-    boostActive && baseMultiplier > 1
-      ? 1 + (baseMultiplier - 1) * rangeFactor
+    boostEnabled !== false
+      ? lpUsdm > 0
+        ? 3
+        : lpEth > 0
+          ? 2
+          : 1
       : 1;
-  const boostedVolumeUsd = cap > 0 ? Math.min(volume, cap) : 0;
-  const bonusPoints = boostActive && baseMultiplier > 1 && cap > 0
-    ? boostedVolumeUsd * (multiplier - 1)
-    : 0;
   return {
     basePoints: volume,
-    bonusPoints,
-    totalPoints: volume + bonusPoints,
-    boostedVolumeUsd,
-    boostedVolumeCap: cap,
+    bonusPoints: lpPoints,
+    totalPoints: volume + lpPoints,
+    boostedVolumeUsd: 0,
+    boostedVolumeCap: 0,
+    lpPoints,
+    lpUsd: activeLpUsd,
+    lpUsdCrxEth: lpEth,
+    lpUsdCrxUsdm: lpUsdm,
     effectiveMultiplier: multiplier,
   };
 };
@@ -558,6 +542,19 @@ const isBoostPair = (token0, token1, addr) => {
   const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
   const hasUsdm = a === addr.usdm || b === addr.usdm;
   return hasCrx && (hasWeth || hasUsdm);
+};
+
+const getBoostPairMultiplier = (token0, token1, addr) => {
+  const a = normalizeAddress(token0);
+  const b = normalizeAddress(token1);
+  if (!a || !b) return 1;
+  const hasCrx = a === addr.crx || b === addr.crx;
+  if (!hasCrx) return 1;
+  const hasUsdm = a === addr.usdm || b === addr.usdm;
+  if (hasUsdm) return 3;
+  const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
+  if (hasWeth) return 2;
+  return 1;
 };
 
 const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
@@ -753,11 +750,12 @@ const computeLpData = async ({
   addr,
   priceMap,
   startBlock,
-  seasonStartMs,
 }) => {
   const emptyData = () => ({
     hasBoostLp: false,
     lpUsd: 0,
+    lpUsdCrxEth: 0,
+    lpUsdCrxUsdm: 0,
     lpInRangePct: 0,
     hasRangeData: false,
     hasInRange: false,
@@ -809,7 +807,6 @@ const computeLpData = async ({
 
   let positions = url ? await fetchPositions({ url, apiKey, owner: wallet }) : null;
   let active = normalizeActive(positions);
-  let onchainAgeSeconds = null;
   const missingPoolData = !hasPoolPriceData(active);
 
   const needOnchain =
@@ -829,26 +826,17 @@ const computeLpData = async ({
     if ((!active.length || missingPoolData) && onchainActive.length) {
       active = onchainActive;
     }
-    onchainAgeSeconds =
-      Number.isFinite(onchain?.lpAgeSeconds) ? onchain.lpAgeSeconds : null;
   }
 
   if (!active.length) return emptyData();
 
   let lpUsd = 0;
-  let lpInRangeUsd = 0;
-  let hasRangeData = false;
-  let hasInRange = false;
+  let lpUsdCrxEth = 0;
+  let lpUsdCrxUsdm = 0;
   let missingPrice = false;
-  let earliestCreated = null;
+  let highestPoolMultiplier = 1;
 
   active.forEach((pos) => {
-    if (Number.isFinite(pos.createdAt) && pos.createdAt > 0) {
-      if (!earliestCreated || pos.createdAt < earliestCreated) {
-        earliestCreated = pos.createdAt;
-      }
-    }
-
     let sqrtPriceX96 = null;
     if (pos.poolSqrt) {
       try {
@@ -868,11 +856,6 @@ const computeLpData = async ({
       missingPrice = true;
       return;
     }
-
-    hasRangeData = true;
-    const inRange = sqrtPriceX96 > (sqrtA < sqrtB ? sqrtA : sqrtB) &&
-      sqrtPriceX96 < (sqrtA < sqrtB ? sqrtB : sqrtA);
-    if (inRange) hasInRange = true;
 
     const amounts = getAmountsForLiquidity(sqrtPriceX96, sqrtA, sqrtB, pos.liquidity);
     if (!amounts) {
@@ -896,49 +879,28 @@ const computeLpData = async ({
     }
 
     lpUsd += positionUsd;
-    if (inRange) lpInRangeUsd += positionUsd;
+    const pairMultiplier = getBoostPairMultiplier(pos.token0, pos.token1, addr);
+    if (pairMultiplier >= 3) lpUsdCrxUsdm += positionUsd;
+    else if (pairMultiplier >= 2) lpUsdCrxEth += positionUsd;
+    if (pairMultiplier > highestPoolMultiplier) {
+      highestPoolMultiplier = pairMultiplier;
+    }
   });
 
-  const lpInRangePct = lpUsd > 0 ? Math.min(1, lpInRangeUsd / lpUsd) : 0;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const seasonStartSec = Number.isFinite(seasonStartMs)
-    ? Math.floor(Number(seasonStartMs) / 1000)
-    : null;
-  const seasonStarted = Number.isFinite(seasonStartSec)
-    ? nowSec >= seasonStartSec
-    : true;
-  const maxSeasonAge =
-    Number.isFinite(seasonStartSec) ? Math.max(0, nowSec - seasonStartSec) : null;
-  const createdAgeSeconds =
-    earliestCreated && Number.isFinite(earliestCreated)
-      ? Math.max(
-          0,
-          nowSec -
-            Math.max(
-              earliestCreated,
-              Number.isFinite(seasonStartSec) ? seasonStartSec : earliestCreated
-            )
-        )
-      : null;
-  let normalizedOnchainAge =
-    onchainAgeSeconds !== null && Number.isFinite(onchainAgeSeconds)
-      ? onchainAgeSeconds
-      : null;
-  if (normalizedOnchainAge !== null && Number.isFinite(maxSeasonAge)) {
-    normalizedOnchainAge = Math.min(normalizedOnchainAge, maxSeasonAge);
-  }
-  const lpAgeSeconds = seasonStarted ? (normalizedOnchainAge ?? createdAgeSeconds) : null;
-  const baseMultiplier =
-    seasonStarted && lpAgeSeconds !== null ? getTierMultiplier(lpAgeSeconds) : 1;
+  const safeLpUsd = missingPrice && lpUsd === 0 ? 0 : lpUsd;
+  const safeLpUsdCrxEth = missingPrice && lpUsdCrxEth === 0 ? 0 : lpUsdCrxEth;
+  const safeLpUsdCrxUsdm = missingPrice && lpUsdCrxUsdm === 0 ? 0 : lpUsdCrxUsdm;
 
   return {
-    hasBoostLp: true,
-    lpUsd: missingPrice && lpUsd === 0 ? 0 : lpUsd,
-    lpInRangePct,
-    hasRangeData,
-    hasInRange,
-    lpAgeSeconds,
-    baseMultiplier,
+    hasBoostLp: safeLpUsd > 0,
+    lpUsd: safeLpUsd,
+    lpUsdCrxEth: safeLpUsdCrxEth,
+    lpUsdCrxUsdm: safeLpUsdCrxUsdm,
+    lpInRangePct: 0,
+    hasRangeData: false,
+    hasInRange: false,
+    lpAgeSeconds: null,
+    baseMultiplier: highestPoolMultiplier,
   };
 };
 
@@ -1046,15 +1008,12 @@ export default async function handler(req, res) {
         addr,
         priceMap,
         startBlock,
-        seasonStartMs: startMs,
       });
 
       const points = computePoints({
         volumeUsd: currentVolume,
-        lpUsd: lpData.lpUsd,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        hasRangeData: lpData.hasRangeData,
-        hasInRange: lpData.hasInRange,
+        lpUsdCrxEth: lpData.lpUsdCrxEth,
+        lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonBoostActive,
       });
 
@@ -1067,8 +1026,11 @@ export default async function handler(req, res) {
         boostedVolumeUsd: points.boostedVolumeUsd,
         boostedVolumeCap: points.boostedVolumeCap,
         multiplier: points.effectiveMultiplier,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        lpUsd: lpData.lpUsd,
+        baseMultiplier: points.effectiveMultiplier,
+        lpUsd: points.lpUsd,
+        lpUsdCrxEth: points.lpUsdCrxEth,
+        lpUsdCrxUsdm: points.lpUsdCrxUsdm,
+        lpPoints: points.lpPoints,
         lpInRangePct: lpData.lpInRangePct,
         hasBoostLp: lpData.hasBoostLp,
         hasRangeData: lpData.hasRangeData,
@@ -1095,6 +1057,9 @@ export default async function handler(req, res) {
         multiplier: entry.multiplier,
         baseMultiplier: entry.baseMultiplier,
         lpUsd: entry.lpUsd,
+        lpUsdCrxEth: entry.lpUsdCrxEth,
+        lpUsdCrxUsdm: entry.lpUsdCrxUsdm,
+        lpPoints: entry.lpPoints,
         lpInRangePct: entry.lpInRangePct,
         hasBoostLp: entry.hasBoostLp ? 1 : 0,
         hasRangeData: entry.hasRangeData ? 1 : 0,

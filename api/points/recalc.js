@@ -131,15 +131,12 @@ export default async function handler(req, res) {
         addr,
         priceMap,
         startBlock,
-        seasonStartMs: startMs,
       });
 
       const points = computePoints({
         volumeUsd,
-        lpUsd: lpData.lpUsd,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        hasRangeData: lpData.hasRangeData,
-        hasInRange: lpData.hasInRange,
+        lpUsdCrxEth: lpData.lpUsdCrxEth,
+        lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonBoostActive,
       });
 
@@ -152,8 +149,11 @@ export default async function handler(req, res) {
         boostedVolumeUsd: points.boostedVolumeUsd,
         boostedVolumeCap: points.boostedVolumeCap,
         multiplier: points.effectiveMultiplier,
-        baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
-        lpUsd: lpData.lpUsd,
+        baseMultiplier: points.effectiveMultiplier,
+        lpUsd: points.lpUsd,
+        lpUsdCrxEth: points.lpUsdCrxEth,
+        lpUsdCrxUsdm: points.lpUsdCrxUsdm,
+        lpPoints: points.lpPoints,
         lpInRangePct: lpData.lpInRangePct,
         hasBoostLp: lpData.hasBoostLp,
         hasRangeData: lpData.hasRangeData,
@@ -179,6 +179,9 @@ export default async function handler(req, res) {
         multiplier: entry.multiplier,
         baseMultiplier: entry.baseMultiplier,
         lpUsd: entry.lpUsd,
+        lpUsdCrxEth: entry.lpUsdCrxEth,
+        lpUsdCrxUsdm: entry.lpUsdCrxUsdm,
+        lpPoints: entry.lpPoints,
         lpInRangePct: entry.lpInRangePct,
         hasBoostLp: entry.hasBoostLp ? 1 : 0,
         hasRangeData: entry.hasRangeData ? 1 : 0,

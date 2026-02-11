@@ -16,16 +16,11 @@ export const SEASON_START_MS =
 export const SEASON_END_MS = parseTime(env.VITE_POINTS_SEASON_END);
 export const SEASON_ONGOING = !SEASON_END_MS;
 
-export const BOOST_CAP_MULTIPLIER = 10;
-export const OUT_OF_RANGE_FACTOR = 0.5;
-
-export const MULTIPLIER_TIERS = [
-  { minSeconds: 0, multiplier: 1.2, label: "<24h" },
-  { minSeconds: 24 * 60 * 60, multiplier: 1.5, label: ">=24h" },
-  { minSeconds: 72 * 60 * 60, multiplier: 2.0, label: ">=72h" },
-  { minSeconds: 7 * 24 * 60 * 60, multiplier: 2.5, label: ">=7d" },
-  { minSeconds: 30 * 24 * 60 * 60, multiplier: 3.0, label: ">=30d" },
-];
+export const LP_POOL_MULTIPLIERS = {
+  SWAP: 1,
+  CRX_ETH: 2,
+  CRX_USDM: 3,
+};
 
 export const SHOW_LEADERBOARD = false;
 

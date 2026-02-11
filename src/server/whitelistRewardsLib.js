@@ -13,7 +13,8 @@ const DEFAULTS = {
   microLpUsd: 100,
   immediatePct: 0.3,
   streamDays: 45,
-  claimOpensAtMs: Date.UTC(2026, 1, 12, 0, 0, 0),
+  finalizationWindowHours: 48,
+  claimOpensAtMs: Date.UTC(2026, 2, 14, 0, 0, 0),
   claimSignatureTtlMs: 10 * 60 * 1000,
 };
 
@@ -100,6 +101,19 @@ const parseScanResult = (result) => {
 
 export const getWhitelistRewardsConfig = (seasonIdOverride) => {
   const seasonId = seasonIdOverride || DEFAULT_SEASON_ID;
+  const seasonEndMs =
+    parseTime(process.env.POINTS_SEASON_END) ||
+    parseTime(process.env.VITE_POINTS_SEASON_END) ||
+    Date.UTC(2026, 2, 12, 0, 0, 0);
+  const finalizationWindowHours = clamp(
+    process.env.POINTS_FINALIZATION_WINDOW_HOURS,
+    0,
+    168,
+    DEFAULTS.finalizationWindowHours
+  );
+  const defaultClaimOpensAt = Number.isFinite(seasonEndMs)
+    ? seasonEndMs + finalizationWindowHours * 60 * 60 * 1000
+    : DEFAULTS.claimOpensAtMs;
   return {
     seasonId,
     budgetCapCrx: clamp(
@@ -162,10 +176,12 @@ export const getWhitelistRewardsConfig = (seasonIdOverride) => {
       365,
       DEFAULTS.streamDays
     ),
+    seasonEndMs,
+    finalizationWindowHours,
     claimOpensAtMs:
       parseTime(process.env.WHITELIST_CLAIM_OPENS_AT) ||
       parseTime(process.env.VITE_WHITELIST_CLAIM_OPENS_AT) ||
-      DEFAULTS.claimOpensAtMs,
+      defaultClaimOpensAt,
     claimSignatureTtlMs: clamp(
       process.env.WHITELIST_CLAIM_SIGNATURE_TTL_MS,
       60 * 1000,

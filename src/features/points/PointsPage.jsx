@@ -2,8 +2,6 @@
 import React, { useState } from "react";
 import {
   SEASON_ID,
-  OUT_OF_RANGE_FACTOR,
-  MULTIPLIER_TIERS,
   SHOW_LEADERBOARD,
 } from "../../shared/config/points";
 import {
@@ -54,23 +52,6 @@ const formatMultiplier = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
   return `${num.toFixed(2)}x`;
-};
-
-const formatPct = (value) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return "--";
-  return `${(num * 100).toFixed(0)}%`;
-};
-
-const formatDuration = (seconds) => {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "now";
-  const total = Math.floor(seconds);
-  const days = Math.floor(total / 86400);
-  const hours = Math.floor((total % 86400) / 3600);
-  const mins = Math.floor((total % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${mins}m`;
-  return `${mins}m`;
 };
 
 const formatDateTime = (value) => {
@@ -164,36 +145,30 @@ export default function PointsPage({ address, onConnect }) {
 
   const seasonHeadline = "SEASON 1 — Feb 12, 2026 → Mar 12, 2026 (28 days)";
   const seasonFinalizationLine =
-    "Points finalization: Mar 12–14 (48h). Whitelist claim opens Feb 12.";
+    "Points finalization: Mar 12–14 (48h). Whitelist claim opens after finalization.";
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
-  const hasAge = Boolean(userStats?.lpAgeAvailable);
-  const multiplier = userStats?.baseMultiplier || 1;
-  const effectiveMultiplier = userStats?.multiplier || multiplier;
-  const nextTier = userStats?.tier?.nextTier || null;
-  const nextIn = userStats?.tier?.secondsToNext;
-  const progressPct = userStats?.tier?.progressPct ?? 0;
-  const rangeStatus = hasBoostLp
-    ? hasAge
-      ? userStats?.hasRangeData
-        ? userStats?.hasInRange
-          ? "In range"
-          : `Out of range (${OUT_OF_RANGE_FACTOR * 100}% boost)`
-        : "Range pending"
-      : "LP detected"
-    : "No boost";
+  const effectiveMultiplier = Number(userStats?.multiplier || 1);
+  const lpUsdCrxEth = Number(userStats?.lpUsdCrxEth || 0);
+  const lpUsdCrxUsdm = Number(userStats?.lpUsdCrxUsdm || 0);
+  const lpPoints = Number(userStats?.lpPoints || 0);
+  const poolBoostStatus = lpUsdCrxUsdm > 0 && lpUsdCrxEth > 0
+    ? "CRX/USDM 3x + CRX/ETH 2x"
+    : lpUsdCrxUsdm > 0
+      ? "CRX/USDM 3x"
+      : lpUsdCrxEth > 0
+        ? "CRX/ETH 2x"
+        : "No LP boost";
 
   const pointsValue = isLoading ? "--" : formatCompactNumber(userStats?.points || 0);
   const lpUsdValue =
     userStats?.lpUsd === null && hasBoostLp
       ? "LP detected"
       : formatUsd(userStats?.lpUsd || 0);
+  const lpUsdCrxEthValue = formatUsd(lpUsdCrxEth);
+  const lpUsdCrxUsdmValue = formatUsd(lpUsdCrxUsdm);
   const volumeValue = formatUsd(userStats?.volumeUsd || 0);
-  const boostCapValue =
-    userStats?.boostedVolumeCap === null
-      ? "--"
-      : formatUsd(userStats?.boostedVolumeCap || 0);
-  const boostedVolumeValue = formatUsd(userStats?.boostedVolumeUsd || 0);
+  const lpPointsValue = formatCompactNumber(lpPoints);
   const whitelist = whitelistQuery.data || null;
   const immediatePct = Number(whitelist?.immediatePct ?? 0.3);
   const streamedPct = Math.max(0, 1 - immediatePct);
@@ -307,17 +282,23 @@ export default function PointsPage({ address, onConnect }) {
               <MetricTile
                 label="Multiplier"
                 value={formatMultiplier(effectiveMultiplier)}
-                sublabel={hasBoostLp ? rangeStatus : "Connect LP to unlock"}
+                sublabel={hasBoostLp ? poolBoostStatus : "Connect LP to unlock"}
               />
               <MetricTile
                 label="Active LP"
                 value={lpUsdValue}
-                sublabel={`Cap ${boostCapValue}`}
+                sublabel={
+                  hasBoostLp
+                    ? lpUsdCrxUsdm > 0
+                      ? "CRX/USDM 3x active"
+                      : "CRX/ETH 2x active"
+                    : "No active boost pools"
+                }
               />
               <MetricTile
                 label="Volume"
                 value={volumeValue}
-                sublabel={`Boosted ${boostedVolumeValue}`}
+                sublabel={`LP points ${lpPointsValue}`}
               />
             </div>
           </div>
@@ -329,11 +310,9 @@ export default function PointsPage({ address, onConnect }) {
               </div>
               <div className="mt-2 space-y-1">
                 <div>1 USD traded = 1 point (all pairs).</div>
-                <div>LP boosts apply only on CRX/ETH and CRX/USDM.</div>
-                <div>Boosted volume cap = 10x your active LP (USD).</div>
-                <div>Out-of-range V3 positions earn 50% of the multiplier.</div>
+                <div>Add Liquidity: CRX/ETH = 2x, CRX/USDM = 3x.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
-                <div>Season 1: Feb 12 → Mar 12. Whitelist claim opens Feb 12 (UTC).</div>
+                <div>Season 1: Feb 12 → Mar 12. Claim opens after finalization.</div>
               </div>
             </div>
             {!address ? (
@@ -351,7 +330,7 @@ export default function PointsPage({ address, onConnect }) {
                   {hasBoostLp ? "LP detected" : "No boost LP"}
                 </div>
                 <div className="text-xs text-slate-400 mt-1">
-                  {hasBoostLp && !hasAge ? "Age data pending" : "Live tracking"}
+                  {hasBoostLp ? poolBoostStatus : "Live tracking"}
                 </div>
               </div>
             )}
@@ -384,46 +363,21 @@ export default function PointsPage({ address, onConnect }) {
           <StatCard title="Wallet Multiplier" accent={hasBoostLp ? "LP boost" : "No LP"}>
             <div className="text-2xl font-semibold">
               {formatMultiplier(effectiveMultiplier)}
-              {hasBoostLp && effectiveMultiplier !== multiplier ? (
-                <span className="text-sm text-slate-400 ml-2">
-                  ({formatMultiplier(multiplier)} base)
-                </span>
-              ) : null}
             </div>
             <div className="text-xs text-slate-400 mt-1">
               {hasBoostLp
-                ? hasAge
-                  ? `${rangeStatus} · Tier ${multiplier.toFixed(1)}x`
-                  : "LP detected · Multiplier pending"
-                : "Add CRX/ETH or CRX/USDM V3 liquidity to unlock boosts."}
+                ? `${poolBoostStatus} active.`
+                : "Add CRX/ETH or CRX/USDM liquidity to unlock 2x/3x."}
             </div>
-            <div className="mt-4">
-              {hasBoostLp && hasAge ? (
-                nextTier ? (
-                  <div className="text-xs text-slate-400">
-                    Next tier: {nextTier.multiplier}x in {formatDuration(nextIn)}
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-500">Max tier reached.</div>
-                )
-              ) : (
-                <div className="text-xs text-slate-500">
-                  {hasBoostLp ? "Age data pending." : "Connect LP to start the timer."}
-                </div>
-              )}
-              <div className="mt-2 h-2 rounded-full bg-slate-800 overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-sky-500 via-indigo-400 to-emerald-400"
-                  style={{
-                    width: `${Math.round((hasBoostLp && hasAge ? progressPct : 0) * 100)}%`,
-                  }}
-                />
-              </div>
+            <div className="mt-4 grid grid-cols-1 gap-2">
+              <InfoRow label="Swap multiplier" value="1.00x" />
+              <InfoRow label="CRX/ETH LP multiplier" value="2.00x" />
+              <InfoRow label="CRX/USDM LP multiplier" value="3.00x" />
             </div>
           </StatCard>
 
           <StatCard
-            title="Active LP & Boost Cap"
+            title="Active LP Pools"
             accent={hasBoostLp ? "V3 LP" : "No LP"}
           >
             <div className="grid grid-cols-1 gap-2">
@@ -433,27 +387,25 @@ export default function PointsPage({ address, onConnect }) {
                 hint="Total USD value of active CRX/ETH + CRX/USDM V3 positions."
               />
               <InfoRow
-                label="Boosted Volume Cap (USD)"
-                value={boostCapValue}
-                hint="Boost applies to min(VolumeUSD, 10 x LP USD)."
+                label="CRX/ETH LP (USD)"
+                value={lpUsdCrxEthValue}
+                hint="This pool contributes with 2x points multiplier."
               />
               <InfoRow
-                label="LP in range"
-                value={
-                  userStats?.hasRangeData ? formatPct(userStats?.lpInRangePct || 0) : "--"
-                }
-                hint="If out of range, multiplier is reduced by 50%."
+                label="CRX/USDM LP (USD)"
+                value={lpUsdCrxUsdmValue}
+                hint="This pool contributes with 3x points multiplier."
               />
             </div>
           </StatCard>
 
           <StatCard title="Season Volume" accent="USD">
             <div className="grid grid-cols-1 gap-2">
-              <InfoRow label="Season Volume (USD)" value={volumeValue} />
+              <InfoRow label="Swap Volume (USD)" value={volumeValue} />
               <InfoRow
-                label="Boosted Volume (USD)"
-                value={boostedVolumeValue}
-                hint="Eligible volume for boost (cap applied)."
+                label="Liquidity points"
+                value={lpPointsValue}
+                hint="CRX/ETH adds 2x points, CRX/USDM adds 3x points."
               />
             </div>
           </StatCard>
@@ -629,48 +581,16 @@ export default function PointsPage({ address, onConnect }) {
               </div>
             </>
           </AccordionItem>
-          <AccordionItem title="LP Boost formula">
+          <AccordionItem title="Points model">
             <>
-              <div>Points = VolumeUSD + min(VolumeUSD, 10 x LP_USD) x (Multiplier - 1).</div>
               <div>
-                LP boosts apply only to CRX/ETH and CRX/USDM. The boosted volume is capped at
-                10x your active in-range LP USD value.
+                Swap actions score at 1x. Add-liquidity actions are pool-weighted:
+                CRX/ETH = 2x, CRX/USDM = 3x.
+              </div>
+              <div>
+                Formula applied in app: `Total Points = SwapVolumeUSD + LPPointsWeighted`.
               </div>
             </>
-          </AccordionItem>
-          <AccordionItem title="Tier multipliers">
-            <>
-              <div className="mb-3">
-                Your multiplier increases with how long your V3 LP stays active (in-range).
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                {MULTIPLIER_TIERS.map((tier) => (
-                  <div
-                    key={tier.label}
-                    className="group relative overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/50 px-4 py-3"
-                  >
-                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition">
-                      <div className="absolute -top-6 -right-6 h-20 w-20 rounded-full bg-sky-500/20 blur-2xl" />
-                    </div>
-                    <div className="relative">
-                      <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                        {tier.label}
-                      </div>
-                      <div className="mt-2 text-xl font-semibold text-slate-100">
-                        {tier.multiplier}x
-                      </div>
-                      <div className="text-[11px] text-slate-400 mt-1">
-                        Holding time
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          </AccordionItem>
-          <AccordionItem title="Out-of-range note">
-            If your V3 position is out of range, the multiplier is reduced to 50% of its value
-            (example: 2.0x becomes 1.0x).
           </AccordionItem>
           <AccordionItem title="Whitelist rewards activation">
             <>
@@ -686,6 +606,9 @@ export default function PointsPage({ address, onConnect }) {
               <div>
                 Payout schedule: 30% immediate and 70% streamed over the configured vesting
                 duration.
+              </div>
+              <div>
+                Claim unlocks only after the season finalization window is completed.
               </div>
             </>
           </AccordionItem>
