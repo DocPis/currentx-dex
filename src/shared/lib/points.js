@@ -82,16 +82,23 @@ export const computePoints = ({
   multiplier,
   inRangeFactor = 1,
   boostMultiplier = BOOST_CAP_MULTIPLIER,
+  boostEnabled = true,
 }) => {
   const volume = toNumberSafe(volumeUsd) ?? 0;
-  const cap = toNumberSafe(lpUsd) !== null ? computeBoostedCap(lpUsd, boostMultiplier) : null;
+  const boostActive = boostEnabled !== false;
+  const cap =
+    boostActive && toNumberSafe(lpUsd) !== null
+      ? computeBoostedCap(lpUsd, boostMultiplier)
+      : 0;
   const baseMultiplier = Number.isFinite(multiplier) ? Number(multiplier) : 1;
   const rangeFactor = Number.isFinite(inRangeFactor) ? inRangeFactor : 1;
   const effectiveMultiplier =
-    baseMultiplier > 1 ? 1 + (baseMultiplier - 1) * rangeFactor : 1;
-  const eligibleVolume = cap !== null ? Math.min(volume, cap) : 0;
+    boostActive && baseMultiplier > 1
+      ? 1 + (baseMultiplier - 1) * rangeFactor
+      : 1;
+  const eligibleVolume = Math.min(volume, cap);
   const bonusPoints =
-    baseMultiplier > 1 && cap !== null
+    boostActive && baseMultiplier > 1
       ? eligibleVolume * (effectiveMultiplier - 1)
       : 0;
   return {

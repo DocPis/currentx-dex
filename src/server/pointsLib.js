@@ -430,14 +430,19 @@ export const computePoints = ({
   baseMultiplier,
   hasRangeData,
   hasInRange,
+  boostEnabled = true,
 }) => {
   const volume = toNumberSafe(volumeUsd) ?? 0;
   const lpValue = toNumberSafe(lpUsd) ?? 0;
-  const cap = lpValue > 0 ? lpValue * BOOST_CAP_MULTIPLIER : 0;
+  const boostActive = boostEnabled !== false;
+  const cap = boostActive && lpValue > 0 ? lpValue * BOOST_CAP_MULTIPLIER : 0;
   const rangeFactor = hasRangeData ? (hasInRange ? 1 : OUT_OF_RANGE_FACTOR) : 1;
-  const multiplier = baseMultiplier > 1 ? 1 + (baseMultiplier - 1) * rangeFactor : 1;
+  const multiplier =
+    boostActive && baseMultiplier > 1
+      ? 1 + (baseMultiplier - 1) * rangeFactor
+      : 1;
   const boostedVolumeUsd = cap > 0 ? Math.min(volume, cap) : 0;
-  const bonusPoints = baseMultiplier > 1 && cap > 0
+  const bonusPoints = boostActive && baseMultiplier > 1 && cap > 0
     ? boostedVolumeUsd * (multiplier - 1)
     : 0;
   return {
@@ -865,6 +870,9 @@ export const computeLpData = async ({
   const seasonStartSec = Number.isFinite(seasonStartMs)
     ? Math.floor(Number(seasonStartMs) / 1000)
     : null;
+  const seasonStarted = Number.isFinite(seasonStartSec)
+    ? nowSec >= seasonStartSec
+    : true;
   const maxSeasonAge =
     Number.isFinite(seasonStartSec) ? Math.max(0, nowSec - seasonStartSec) : null;
   const createdAgeSeconds =
@@ -885,8 +893,9 @@ export const computeLpData = async ({
   if (normalizedOnchainAge !== null && Number.isFinite(maxSeasonAge)) {
     normalizedOnchainAge = Math.min(normalizedOnchainAge, maxSeasonAge);
   }
-  const lpAgeSeconds = normalizedOnchainAge ?? createdAgeSeconds;
-  const baseMultiplier = lpAgeSeconds !== null ? getTierMultiplier(lpAgeSeconds) : 1;
+  const lpAgeSeconds = seasonStarted ? (normalizedOnchainAge ?? createdAgeSeconds) : null;
+  const baseMultiplier =
+    seasonStarted && lpAgeSeconds !== null ? getTierMultiplier(lpAgeSeconds) : 1;
 
   return {
     hasBoostLp: true,

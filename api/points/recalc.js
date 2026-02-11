@@ -117,6 +117,7 @@ export default async function handler(req, res) {
     }
 
     const now = Date.now();
+    const seasonBoostActive = now >= startMs;
     const concurrency = getConcurrency?.() || 4;
 
     const computed = await runWithConcurrency(wallets, concurrency, async (wallet, idx) => {
@@ -139,6 +140,7 @@ export default async function handler(req, res) {
         baseMultiplier: lpData.hasBoostLp ? lpData.baseMultiplier : 1,
         hasRangeData: lpData.hasRangeData,
         hasInRange: lpData.hasInRange,
+        boostEnabled: seasonBoostActive,
       });
 
       return {

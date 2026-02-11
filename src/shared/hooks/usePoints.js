@@ -334,7 +334,9 @@ export const useUserPoints = (address) => {
     refetchIntervalInBackground: true,
     queryFn: async () => {
       const seasonStart = SEASON_START_MS;
-      const seasonEnd = SEASON_END_MS || Date.now();
+      const nowMs = Date.now();
+      const seasonEnd = SEASON_END_MS || nowMs;
+      const seasonHasStarted = nowMs >= seasonStart;
       const normalized = (address || "").toLowerCase();
 
       const toNumber = (value) => {
@@ -360,7 +362,12 @@ export const useUserPoints = (address) => {
           const basePoints = toNumber(user.basePoints) ?? volumeUsd;
           const bonusPoints =
             toNumber(user.bonusPoints) ?? Math.max(0, points - basePoints);
-          const lpAgeSeconds = toNumber(user.lpAgeSeconds);
+          const lpAgeSecondsRaw = toNumber(user.lpAgeSeconds);
+          const lpAgeSeconds = seasonHasStarted ? lpAgeSecondsRaw : null;
+          const baseMultiplierRaw = toNumber(user.baseMultiplier) ?? 1;
+          const multiplierRaw = toNumber(user.multiplier) ?? 1;
+          const baseMultiplier = seasonHasStarted ? baseMultiplierRaw : 1;
+          const multiplier = seasonHasStarted ? multiplierRaw : 1;
           const tierInfo =
             Number.isFinite(lpAgeSeconds) ? getMultiplierTier(lpAgeSeconds) : null;
 
@@ -374,10 +381,10 @@ export const useUserPoints = (address) => {
             bonusPoints,
             rank: toNumber(user.rank),
             volumeUsd,
-            boostedVolumeUsd: toNumber(user.boostedVolumeUsd) ?? 0,
-            boostedVolumeCap: toNumber(user.boostedVolumeCap) ?? 0,
-            multiplier: toNumber(user.multiplier) ?? 1,
-            baseMultiplier: toNumber(user.baseMultiplier) ?? 1,
+            boostedVolumeUsd: seasonHasStarted ? toNumber(user.boostedVolumeUsd) ?? 0 : 0,
+            boostedVolumeCap: seasonHasStarted ? toNumber(user.boostedVolumeCap) ?? 0 : 0,
+            multiplier,
+            baseMultiplier,
             lpUsd: toNumber(user.lpUsd) ?? 0,
             lpInRangePct: toNumber(user.lpInRangePct) ?? 0,
             hasBoostLp: toBool(user.hasBoostLp),
@@ -440,6 +447,16 @@ export const useUserPoints = (address) => {
         lpAgeSeconds = null;
       }
 
+      if (!seasonHasStarted) {
+        lpAgeSeconds = null;
+      } else if (Number.isFinite(lpAgeSeconds)) {
+        const maxSeasonAgeSeconds = Math.max(
+          0,
+          Math.floor((nowMs - seasonStart) / 1000)
+        );
+        lpAgeSeconds = Math.min(lpAgeSeconds, maxSeasonAgeSeconds);
+      }
+
       const hasBoostLp = lpData.positions.length > 0;
       const hasAge = Number.isFinite(lpAgeSeconds);
       const tierInfo = hasAge ? getMultiplierTier(lpAgeSeconds) : null;
@@ -456,6 +473,7 @@ export const useUserPoints = (address) => {
         lpUsd: lpData.lpUsd,
         multiplier: baseMultiplier,
         inRangeFactor,
+        boostEnabled: seasonHasStarted,
       });
 
       return {
