@@ -11,9 +11,12 @@ const SUBGRAPH_CACHE_TTL_MS = 20000;
 const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
 const subgraphCacheV3 = new Map();
+const DEFAULT_SUBGRAPH_PROXY = "/api/subgraph?url=";
 const SUBGRAPH_PROXY =
-  (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
-  "";
+  String(
+    (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
+      DEFAULT_SUBGRAPH_PROXY
+  ).trim();
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
@@ -158,6 +161,15 @@ const buildSubgraphHeaders = (endpoint, useProxy) => {
   return headers;
 };
 
+const shouldPreferProxyForEndpoint = (url = "") => {
+  if (!SUBGRAPH_PROXY) return false;
+  try {
+    return new URL(url).hostname.endsWith(".goldsky.com");
+  } catch {
+    return false;
+  }
+};
+
 async function postSubgraphWithFallback({
   query,
   variables = {},
@@ -181,7 +193,8 @@ async function postSubgraphWithFallback({
 
   for (const endpoint of usableEndpoints) {
     let endpointError = null;
-    let attemptedProxy = false;
+    let attemptedProxy = shouldPreferProxyForEndpoint(endpoint.url);
+    let canTryDirectFallback = attemptedProxy;
 
     for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
       try {
@@ -235,6 +248,13 @@ async function postSubgraphWithFallback({
         const msg = String(err?.message || "").toLowerCase();
         const transient = isTransientSubgraphMessage(msg);
         const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
+        if (canTryDirectFallback) {
+          attemptedProxy = false;
+          canTryDirectFallback = false;
+          // If proxy-first fails, retry immediately with direct endpoint.
+          attempt -= 1;
+          continue;
+        }
         if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
           attemptedProxy = true;
           // retry immediately with proxy
