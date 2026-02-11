@@ -284,7 +284,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col relative">
-      <SeasonBanner />
+      <SeasonBanner onClick={() => handleTabClick("points")} />
       {connectError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
           <div className="bg-slate-900/95 border border-rose-500/40 text-rose-100 px-4 py-3 rounded-2xl shadow-2xl shadow-rose-900/40 flex items-start gap-3 min-w-[260px]">

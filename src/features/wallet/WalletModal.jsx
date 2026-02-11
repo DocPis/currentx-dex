@@ -29,18 +29,36 @@ export default function WalletModal({
   onSelectWallet,
 }) {
   const isMobile = useMemo(() => isMobileBrowser(), []);
-  const trustDeepLink = useMemo(() => {
+  const currentUrl = useMemo(() => {
     if (!open || typeof window === "undefined") return "";
     try {
-      const currentUrl = window.location?.href || "";
-      if (!currentUrl) return "";
+      return window.location?.href || "";
+    } catch {
+      return "";
+    }
+  }, [open]);
+
+  const trustDeepLink = useMemo(() => {
+    if (!currentUrl) return "";
+    try {
       return `https://link.trustwallet.com/open_url?coin_id=60&url=${encodeURIComponent(
         currentUrl
       )}`;
     } catch {
       return "";
     }
-  }, [open]);
+  }, [currentUrl]);
+
+  const metaMaskDeepLink = useMemo(() => {
+    if (!currentUrl) return "";
+    try {
+      const withoutProtocol = currentUrl.replace(/^https?:\/\//iu, "");
+      if (!withoutProtocol) return "";
+      return `https://metamask.app.link/dapp/${withoutProtocol}`;
+    } catch {
+      return "";
+    }
+  }, [currentUrl]);
 
   const detected = useMemo(() => {
     if (!open) return {};
@@ -62,7 +80,21 @@ export default function WalletModal({
     window.location.assign(trustDeepLink);
   };
 
+  const openMetaMaskDeepLink = () => {
+    if (!metaMaskDeepLink || typeof window === "undefined") return;
+    window.location.assign(metaMaskDeepLink);
+  };
+
   const handleSelect = (id) => {
+    if (
+      id === "metamask" &&
+      isMobile &&
+      !detected.metamask &&
+      metaMaskDeepLink
+    ) {
+      openMetaMaskDeepLink();
+      return;
+    }
     if (
       id === "trustwallet" &&
       isMobile &&
@@ -144,6 +176,23 @@ export default function WalletModal({
               </div>
             </button>
           ))}
+          {isMobile && !detected.metamask && metaMaskDeepLink && (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-xs text-slate-200 space-y-2">
+              <div className="text-sm font-semibold text-slate-50">
+                MetaMask on mobile
+              </div>
+              <p className="text-slate-300">
+                If MetaMask is installed, tap below to reopen this page inside the MetaMask app.
+              </p>
+              <button
+                type="button"
+                onClick={openMetaMaskDeepLink}
+                className="w-full rounded-xl bg-orange-500 hover:bg-orange-400 text-white text-sm font-semibold px-3 py-2 transition"
+              >
+                Open in MetaMask
+              </button>
+            </div>
+          )}
           {isMobile && !detected.trustwallet && trustDeepLink && (
             <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-4 py-3 text-xs text-slate-200 space-y-2">
               <div className="text-sm font-semibold text-slate-50">
