@@ -337,7 +337,6 @@ export default function PointsPage({ address, onConnect }) {
                 <div>1 USD traded = 1 point (all pairs).</div>
                 <div>Add Liquidity: CRX/ETH = 2x, CRX/USDM = 3x.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
-                <div>Season window from env config. Claim opens after finalization.</div>
               </div>
             </div>
             {!address ? (

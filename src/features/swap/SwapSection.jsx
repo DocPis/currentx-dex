@@ -59,6 +59,8 @@ const V3_QUOTE_BATCH_SIZE = 4;
 const MAX_V3_QUOTES = 8;
 const MAX_SPLIT_ROUTES = 2;
 const SPLIT_SHARE_STEPS = [25, 50, 75];
+const ALLOW_V2_ROUTING = true;
+const SMART_MODE_V2_FALLBACK_ONLY = true;
 const STABLE_SYMBOLS = new Set([
   "USDM",
   "USDT0",
@@ -634,7 +636,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       UNIV3_UNIVERSAL_ROUTER_ADDRESS &&
       PERMIT2_ADDRESS
   );
-  const allowV2Routing = false;
+  const allowV2Routing = ALLOW_V2_ROUTING;
   const enableV2Routing = hasV2Support && allowV2Routing;
   const [sellToken, setSellToken] = useState("ETH");
   const [buyToken, setBuyToken] = useState("CRX");
@@ -2826,13 +2828,19 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           let v3Route = null;
           let v2Route = null;
           let splitRoute = null;
+          const shouldTryV3Routes = hasV3Support && routePreference !== "v2";
+          const shouldTryV2Routes = enableV2Routing && routePreference !== "v3";
+          const deferV2InSmartMode =
+            SMART_MODE_V2_FALLBACK_ONLY &&
+            routePreference === "smart" &&
+            shouldTryV3Routes;
 
           if (isExactOut) {
             if (!desiredOutWei || desiredOutWei <= 0n) {
               setQuoteError("Enter an amount to fetch a quote.");
               return;
             }
-            if (hasV3Support && routePreference !== "v2") {
+            if (shouldTryV3Routes) {
               try {
                 const v3Candidates = await buildV3RouteCandidates();
                 const candidates = buildPrioritizedV3Routes(v3Candidates);
@@ -2850,7 +2858,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 v3Route = null;
               }
             }
-            if (enableV2Routing && routePreference !== "v3") {
+            const shouldQuoteV2ExactOut =
+              shouldTryV2Routes &&
+              (routePreference === "v2" ||
+                routePreference === "split" ||
+                !shouldTryV3Routes ||
+                !deferV2InSmartMode ||
+                !v3Route);
+            if (shouldQuoteV2ExactOut) {
               try {
                 const { directRoute, hopRoutes } = await buildV2RouteCandidates();
                 const candidates = [
@@ -2900,46 +2915,61 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               return null;
             };
 
-            const v3Candidates =
-              hasV3Support && routePreference !== "v2"
-                ? await buildV3RouteCandidates()
-                : { directRoutes: [], hopRoutes: [], multiRoutes: [] };
-            const v2Candidates =
-              enableV2Routing && routePreference !== "v3"
-                ? await buildV2RouteCandidates()
-                : { directRoute: null, hopRoutes: [] };
+            let v3Candidates = { directRoutes: [], hopRoutes: [], multiRoutes: [] };
+            if (shouldTryV3Routes) {
+              try {
+                v3Candidates = await buildV3RouteCandidates();
+              } catch {
+                v3Candidates = { directRoutes: [], hopRoutes: [], multiRoutes: [] };
+              }
+            }
 
             const v3Routes = buildPrioritizedV3Routes(v3Candidates);
-            const v2Routes = [
-              ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
-              ...v2Candidates.hopRoutes,
-            ].map((route) => ({ ...route, protocol: "V2" }));
-
-            const quotedV3 = await quoteV3ExactInWithBudget(v3Routes, amountWei);
-            const quotedV2 = await Promise.all(
-              v2Routes.map(async (route) => {
-                try {
-                  const v2Quote = await quoteV2Route(provider, amountWei, route);
-                  return {
-                    ...route,
-                    amountOut: v2Quote.amountOut,
-                    priceImpact: v2Quote.priceImpact,
-                    pairs: v2Quote.pairs || route.pairs,
-                  };
-                } catch {
-                  return null;
-                }
-              })
-            );
-
+            const quotedV3 = shouldTryV3Routes
+              ? await quoteV3ExactInWithBudget(v3Routes, amountWei)
+              : [];
             const v3Valid = quotedV3.filter(Boolean);
-            const v2Valid = quotedV2.filter(Boolean);
             if (v3Valid.length) {
               v3Route = v3Valid.reduce((best, next) => {
                 if (!best) return next;
                 return next.amountOut > best.amountOut ? next : best;
               }, null);
             }
+
+            const shouldQuoteV2ExactIn =
+              shouldTryV2Routes &&
+              (routePreference === "v2" ||
+                routePreference === "split" ||
+                !shouldTryV3Routes ||
+                !deferV2InSmartMode ||
+                !v3Route);
+
+            const v2Candidates = shouldQuoteV2ExactIn
+              ? await buildV2RouteCandidates()
+              : { directRoute: null, hopRoutes: [] };
+            const v2Routes = [
+              ...(v2Candidates.directRoute ? [v2Candidates.directRoute] : []),
+              ...v2Candidates.hopRoutes,
+            ].map((route) => ({ ...route, protocol: "V2" }));
+
+            const quotedV2 = shouldQuoteV2ExactIn
+              ? await Promise.all(
+                  v2Routes.map(async (route) => {
+                    try {
+                      const v2Quote = await quoteV2Route(provider, amountWei, route);
+                      return {
+                        ...route,
+                        amountOut: v2Quote.amountOut,
+                        priceImpact: v2Quote.priceImpact,
+                        pairs: v2Quote.pairs || route.pairs,
+                      };
+                    } catch {
+                      return null;
+                    }
+                  })
+                )
+              : [];
+            const v2Valid = quotedV2.filter(Boolean);
             if (v2Valid.length) {
               v2Route = v2Valid.reduce((best, next) => {
                 if (!best) return next;
