@@ -498,12 +498,24 @@ export const formatUnits = (value, decimals = 18) => {
   return Number(whole) + Number(frac) / Number(base);
 };
 
+const ETH_ALIAS_ADDRESSES = new Set([
+  ZERO_ADDRESS,
+  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+]);
+
+const isWethLike = (token, addr) => {
+  const normalized = normalizeAddress(token);
+  if (!normalized) return false;
+  if (addr?.weth && normalized === addr.weth) return true;
+  return ETH_ALIAS_ADDRESSES.has(normalized);
+};
+
 export const isBoostPair = (token0, token1, addr) => {
   const a = normalizeAddress(token0);
   const b = normalizeAddress(token1);
   if (!a || !b) return false;
   const hasCrx = a === addr.crx || b === addr.crx;
-  const hasWeth = a === addr.weth || b === addr.weth;
+  const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
   const hasUsdm = a === addr.usdm || b === addr.usdm;
   return hasCrx && (hasWeth || hasUsdm);
 };
@@ -703,84 +715,85 @@ export const computeLpData = async ({
   priceMap,
   startBlock,
 }) => {
-  let positions = url ? await fetchPositions({ url, apiKey, owner: wallet }) : null;
-  let onchainAgeSeconds = null;
+  const emptyData = () => ({
+    hasBoostLp: false,
+    lpUsd: 0,
+    lpInRangePct: 0,
+    hasRangeData: false,
+    hasInRange: false,
+    lpAgeSeconds: null,
+    baseMultiplier: 1,
+  });
 
-  if (!positions || positions.length === 0) {
+  const normalizeActive = (rows) =>
+    (rows || [])
+      .map((pos) => {
+        if (pos?.__normalized) return pos;
+        const token0 = normalizeAddress(pos?.token0?.id || pos?.token0);
+        const token1 = normalizeAddress(pos?.token1?.id || pos?.token1);
+        const tickLower = Number(pos?.tickLower?.tickIdx ?? pos?.tickLower ?? 0);
+        const tickUpper = Number(pos?.tickUpper?.tickIdx ?? pos?.tickUpper ?? 0);
+        const liquidity = BigInt(pos?.liquidity || 0);
+        const createdAt = Number(
+          pos?.createdAtTimestamp || pos?.transaction?.timestamp || 0
+        );
+        const poolTick = pos?.pool?.tick ?? null;
+        const poolSqrt = pos?.pool?.sqrtPrice ?? pos?.pool?.sqrtPriceX96 ?? null;
+        const decimals0 = Number(pos?.token0?.decimals ?? 18);
+        const decimals1 = Number(pos?.token1?.decimals ?? 18);
+        return {
+          token0,
+          token1,
+          tickLower,
+          tickUpper,
+          liquidity,
+          createdAt,
+          poolTick: poolTick !== null ? Number(poolTick) : null,
+          poolSqrt,
+          decimals0,
+          decimals1,
+        };
+      })
+      .filter((pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr));
+
+  const hasCreatedAtData = (rows) =>
+    rows.some((pos) => Number.isFinite(pos?.createdAt) && pos.createdAt > 0);
+  const hasPoolPriceData = (rows) =>
+    rows.some(
+      (pos) =>
+        pos?.poolSqrt !== null &&
+        pos?.poolSqrt !== undefined &&
+        pos.poolSqrt !== "" ||
+        Number.isFinite(pos?.poolTick)
+    );
+
+  let positions = url ? await fetchPositions({ url, apiKey, owner: wallet }) : null;
+  let active = normalizeActive(positions);
+  let onchainAgeSeconds = null;
+  const missingPoolData = !hasPoolPriceData(active);
+
+  const needOnchain =
+    !positions ||
+    !positions.length ||
+    !active.length ||
+    !hasCreatedAtData(active) ||
+    missingPoolData;
+
+  if (needOnchain) {
     const onchain = await fetchPositionsOnchain({
       wallet,
       addr,
       startBlock,
     }).catch(() => null);
-    if (onchain?.positions?.length) {
-      positions = onchain.positions;
-      onchainAgeSeconds = onchain.lpAgeSeconds ?? null;
-    } else if (!positions) {
-      return {
-        hasBoostLp: false,
-        lpUsd: 0,
-        lpInRangePct: 0,
-        hasRangeData: false,
-        hasInRange: false,
-        lpAgeSeconds: null,
-        baseMultiplier: 1,
-      };
+    const onchainActive = normalizeActive(onchain?.positions || []);
+    if ((!active.length || missingPoolData) && onchainActive.length) {
+      active = onchainActive;
     }
+    onchainAgeSeconds =
+      Number.isFinite(onchain?.lpAgeSeconds) ? onchain.lpAgeSeconds : null;
   }
 
-  if (!positions || !positions.length) {
-    return {
-      hasBoostLp: false,
-      lpUsd: 0,
-      lpInRangePct: 0,
-      hasRangeData: false,
-      hasInRange: false,
-      lpAgeSeconds: null,
-      baseMultiplier: 1,
-    };
-  }
-
-  const active = positions
-    .map((pos) => {
-      if (pos?.__normalized) return pos;
-      const token0 = normalizeAddress(pos?.token0?.id || pos?.token0);
-      const token1 = normalizeAddress(pos?.token1?.id || pos?.token1);
-      const tickLower = Number(pos?.tickLower?.tickIdx ?? pos?.tickLower ?? 0);
-      const tickUpper = Number(pos?.tickUpper?.tickIdx ?? pos?.tickUpper ?? 0);
-      const liquidity = BigInt(pos?.liquidity || 0);
-      const createdAt = Number(
-        pos?.createdAtTimestamp || pos?.transaction?.timestamp || 0
-      );
-      const poolTick = pos?.pool?.tick ?? null;
-      const poolSqrt = pos?.pool?.sqrtPrice ?? pos?.pool?.sqrtPriceX96 ?? null;
-      const decimals0 = Number(pos?.token0?.decimals ?? 18);
-      const decimals1 = Number(pos?.token1?.decimals ?? 18);
-      return {
-        token0,
-        token1,
-        tickLower,
-        tickUpper,
-        liquidity,
-        createdAt,
-        poolTick: poolTick !== null ? Number(poolTick) : null,
-        poolSqrt,
-        decimals0,
-        decimals1,
-      };
-    })
-    .filter((pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr));
-
-  if (!active.length) {
-    return {
-      hasBoostLp: false,
-      lpUsd: 0,
-      lpInRangePct: 0,
-      hasRangeData: false,
-      hasInRange: false,
-      lpAgeSeconds: null,
-      baseMultiplier: 1,
-    };
-  }
+  if (!active.length) return emptyData();
 
   let lpUsd = 0;
   let lpInRangeUsd = 0;
