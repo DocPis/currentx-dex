@@ -714,6 +714,7 @@ export const computeLpData = async ({
   addr,
   priceMap,
   startBlock,
+  seasonStartMs,
 }) => {
   const emptyData = () => ({
     hasBoostLp: false,
@@ -860,12 +861,31 @@ export const computeLpData = async ({
   });
 
   const lpInRangePct = lpUsd > 0 ? Math.min(1, lpInRangeUsd / lpUsd) : 0;
-  const lpAgeSeconds =
+  const nowSec = Math.floor(Date.now() / 1000);
+  const seasonStartSec = Number.isFinite(seasonStartMs)
+    ? Math.floor(Number(seasonStartMs) / 1000)
+    : null;
+  const maxSeasonAge =
+    Number.isFinite(seasonStartSec) ? Math.max(0, nowSec - seasonStartSec) : null;
+  const createdAgeSeconds =
+    earliestCreated && Number.isFinite(earliestCreated)
+      ? Math.max(
+          0,
+          nowSec -
+            Math.max(
+              earliestCreated,
+              Number.isFinite(seasonStartSec) ? seasonStartSec : earliestCreated
+            )
+        )
+      : null;
+  let normalizedOnchainAge =
     onchainAgeSeconds !== null && Number.isFinite(onchainAgeSeconds)
       ? onchainAgeSeconds
-      : earliestCreated && Number.isFinite(earliestCreated)
-      ? Math.max(0, Math.floor(Date.now() / 1000 - earliestCreated))
       : null;
+  if (normalizedOnchainAge !== null && Number.isFinite(maxSeasonAge)) {
+    normalizedOnchainAge = Math.min(normalizedOnchainAge, maxSeasonAge);
+  }
+  const lpAgeSeconds = normalizedOnchainAge ?? createdAgeSeconds;
   const baseMultiplier = lpAgeSeconds !== null ? getTierMultiplier(lpAgeSeconds) : 1;
 
   return {
