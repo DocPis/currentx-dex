@@ -316,20 +316,19 @@ export const useUserPoints = (address) => {
     refetchInterval: 60 * 1000,
     refetchIntervalInBackground: true,
     queryFn: async () => {
-      if (!SEASON_ID || !Number.isFinite(SEASON_START_MS)) {
-        throw new Error(
-          "Missing points env config: set VITE_POINTS_SEASON_ID and VITE_POINTS_SEASON_START"
-        );
-      }
-      const seasonStart = SEASON_START_MS;
       const nowMs = Date.now();
-      const seasonEnd = Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : nowMs;
-      const seasonHasStarted = nowMs >= seasonStart;
+      const hasFrontendSeasonConfig =
+        Boolean(SEASON_ID) && Number.isFinite(SEASON_START_MS);
+      const seasonStart = Number.isFinite(SEASON_START_MS) ? SEASON_START_MS : null;
+      const seasonEnd = Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : null;
+      const seasonHasStarted = Number.isFinite(SEASON_START_MS)
+        ? nowMs >= SEASON_START_MS
+        : true;
       const normalized = (address || "").toLowerCase();
 
-      const toNumber = (value) => {
+      const toNumber = (value, fallback = null) => {
         const num = Number(value);
-        return Number.isFinite(num) ? num : null;
+        return Number.isFinite(num) ? num : fallback;
       };
       const toBool = (value) => {
         if (value === true || value === "1" || value === 1) return true;
@@ -345,6 +344,7 @@ export const useUserPoints = (address) => {
         if (res.ok) {
           const payload = await res.json();
           const user = payload?.user || {};
+          const seasonReward = user?.seasonReward || {};
           const volumeUsd = toNumber(user.volumeUsd) ?? 0;
           const points = toNumber(user.points) ?? volumeUsd;
           const basePoints = toNumber(user.basePoints) ?? volumeUsd;
@@ -358,10 +358,10 @@ export const useUserPoints = (address) => {
           const hasBoostLp = toBool(user.hasBoostLp);
 
           return {
-            seasonId: SEASON_ID,
+            seasonId: payload?.seasonId || SEASON_ID || "",
             seasonStart,
-            seasonEnd,
-            seasonOngoing: SEASON_ONGOING,
+            seasonEnd: seasonEnd ?? nowMs,
+            seasonOngoing: seasonStart ? SEASON_ONGOING : false,
             points,
             basePoints,
             bonusPoints,
@@ -384,6 +384,34 @@ export const useUserPoints = (address) => {
             hasRangeData: false,
             hasInRange: hasBoostLp,
             pricesAvailable: true,
+            seasonReward: {
+              totalPointsSeason: toNumber(seasonReward.totalPointsSeason),
+              seasonAllocationCrx: toNumber(seasonReward.seasonAllocationCrx),
+              sharePct: toNumber(seasonReward.sharePct),
+              rewardCrx: toNumber(seasonReward.rewardCrx),
+              rewardSnapshotCrx: toNumber(seasonReward.rewardSnapshotCrx),
+              claimCount: toNumber(seasonReward.claimCount, 0),
+              lastClaimAt: toNumber(seasonReward.lastClaimAt, null),
+              claimOpen: toBool(seasonReward.claimOpen),
+              claimOpensAt: toNumber(seasonReward.claimOpensAt, null),
+              claimableNowCrx: toNumber(seasonReward.claimableNowCrx, 0),
+              immediatePct: toNumber(seasonReward.immediatePct, 1),
+              streamDays: toNumber(seasonReward.streamDays, 0),
+              streamStartAt: toNumber(seasonReward.streamStartAt, null),
+              streamEndsAt: toNumber(seasonReward.streamEndsAt, null),
+              streamProgress: toNumber(seasonReward.streamProgress, 0),
+              immediateTotalCrx: toNumber(seasonReward.immediateTotalCrx, 0),
+              streamedTotalCrx: toNumber(seasonReward.streamedTotalCrx, 0),
+              immediateRemainingCrx: toNumber(
+                seasonReward.immediateRemainingCrx,
+                0
+              ),
+              streamedRemainingCrx: toNumber(
+                seasonReward.streamedRemainingCrx,
+                0
+              ),
+              totalClaimedCrx: toNumber(seasonReward.totalClaimedCrx, 0),
+            },
             source: "backend",
           };
         }
@@ -391,13 +419,46 @@ export const useUserPoints = (address) => {
         // fall back to client computed
       }
 
+      if (!hasFrontendSeasonConfig) {
+        return {
+          seasonId: SEASON_ID || "",
+          seasonStart,
+          seasonEnd: seasonEnd ?? nowMs,
+          seasonOngoing: false,
+          points: 0,
+          basePoints: 0,
+          bonusPoints: 0,
+          rank: null,
+          volumeUsd: 0,
+          boostedVolumeUsd: 0,
+          boostedVolumeCap: 0,
+          multiplier: 1,
+          baseMultiplier: 1,
+          lpUsd: 0,
+          lpUsdCrxEth: 0,
+          lpUsdCrxUsdm: 0,
+          lpPoints: 0,
+          lpInRangePct: 0,
+          hasBoostLp: false,
+          lpAgeSeconds: null,
+          lpAgeAvailable: false,
+          tier: null,
+          inRangeFactor: 1,
+          hasRangeData: false,
+          hasInRange: false,
+          pricesAvailable: true,
+          seasonReward: null,
+          source: "unconfigured",
+        };
+      }
+
       let volumeV2 = 0;
       let volumeV3 = 0;
       try {
         volumeV2 = await fetchUserSwapVolume({
           address,
-          startTime: seasonStart,
-          endTime: seasonEnd,
+          startTime: SEASON_START_MS,
+          endTime: Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : nowMs,
           source: "v2",
         });
       } catch {
@@ -406,8 +467,8 @@ export const useUserPoints = (address) => {
       try {
         volumeV3 = await fetchUserSwapVolume({
           address,
-          startTime: seasonStart,
-          endTime: seasonEnd,
+          startTime: SEASON_START_MS,
+          endTime: Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : nowMs,
           source: "v3",
         });
       } catch {
@@ -443,8 +504,8 @@ export const useUserPoints = (address) => {
       return {
         seasonId: SEASON_ID,
         seasonStart,
-        seasonEnd,
-        seasonOngoing: SEASON_ONGOING,
+        seasonEnd: seasonEnd ?? nowMs,
+        seasonOngoing: seasonStart ? SEASON_ONGOING : false,
         points: pointsBreakdown.totalPoints,
         basePoints: pointsBreakdown.basePoints,
         bonusPoints: pointsBreakdown.bonusPoints,
@@ -467,6 +528,7 @@ export const useUserPoints = (address) => {
         hasRangeData: false,
         hasInRange: hasBoostLp,
         pricesAvailable: lpData.pricesAvailable,
+        seasonReward: null,
       };
     },
   });
@@ -478,11 +540,8 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     enabled: Boolean(enabled),
     queryFn: async () => {
       const activeSeasonId = seasonId || SEASON_ID;
-      if (!activeSeasonId) {
-        throw new Error("Missing points env config: set VITE_POINTS_SEASON_ID");
-      }
       const params = new URLSearchParams();
-      params.set("seasonId", activeSeasonId);
+      if (activeSeasonId) params.set("seasonId", activeSeasonId);
       if (page) params.set("page", String(page));
       const res = await fetch(`/api/points/leaderboard?${params.toString()}`);
       if (!res.ok) {
@@ -492,6 +551,7 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
       return {
         items: Array.isArray(data?.leaderboard) ? data.leaderboard : [],
         updatedAt: data?.updatedAt || null,
+        summary: data?.summary || null,
       };
     },
     staleTime: 60 * 1000,
@@ -504,6 +564,8 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
   return {
     ...query,
     data: items,
+    summary: query.data?.summary || null,
+    updatedAt: query.data?.updatedAt || null,
     available,
   };
 };
@@ -517,9 +579,6 @@ export const useWhitelistRewards = (address) => {
     refetchIntervalInBackground: true,
     retry: 1,
     queryFn: async () => {
-      if (!SEASON_ID) {
-        throw new Error("Missing points env config: set VITE_POINTS_SEASON_ID");
-      }
       const normalized = normalizeAddress(address);
       const toNumber = (value, fallback = 0) => {
         if (value === null || value === undefined || value === "") return fallback;
@@ -535,7 +594,7 @@ export const useWhitelistRewards = (address) => {
 
       const params = new URLSearchParams();
       params.set("address", normalized);
-      params.set("seasonId", SEASON_ID);
+      if (SEASON_ID) params.set("seasonId", SEASON_ID);
       const res = await fetch(`/api/whitelist-rewards/user?${params.toString()}`);
       if (res.status === 404) {
         return {

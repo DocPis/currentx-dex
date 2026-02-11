@@ -14,6 +14,7 @@ import {
   useWhitelistRewards,
 } from "../../shared/hooks/usePoints";
 import { getProvider } from "../../shared/config/web3";
+import { buildPointsClaimMessage } from "../../shared/lib/pointsRewards";
 import { buildWhitelistClaimMessage } from "../../shared/lib/whitelistRewards";
 
 const shortenAddress = (addr) =>
@@ -148,13 +149,23 @@ const AccordionItem = ({ title, children }) => (
 
 export default function PointsPage({ address, onConnect }) {
   const [copied, setCopied] = useState("");
-  const [claimState, setClaimState] = useState({
+  const [whitelistClaimState, setWhitelistClaimState] = useState({
+    loading: false,
+    error: "",
+    success: "",
+  });
+  const [leaderboardClaimState, setLeaderboardClaimState] = useState({
     loading: false,
     error: "",
     success: "",
   });
   const leaderboardQuery = useLeaderboard(SEASON_ID, 0, SHOW_LEADERBOARD);
-  const { data: userStats, isLoading, error } = useUserPoints(address);
+  const {
+    data: userStats,
+    isLoading,
+    error,
+    refetch: refetchUserStats,
+  } = useUserPoints(address);
   const whitelistQuery = useWhitelistRewards(address);
 
   const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
@@ -168,9 +179,14 @@ export default function PointsPage({ address, onConnect }) {
   const seasonEndLabel = seasonIsOngoing
     ? "ONGOING"
     : formatDate(seasonEndValue);
-  const seasonHeadline = `${seasonTitle} — ${seasonStartLabel} → ${seasonEndLabel}`;
+  const seasonHeadline = `${seasonTitle} - ${seasonStartLabel} -> ${seasonEndLabel}`;
   const seasonFinalizationLine =
     "Points and whitelist rewards are finalized after the configured finalization window.";
+  const leaderboardSummary = leaderboardQuery.summary || null;
+  const leaderboardUpdatedAt = leaderboardQuery.updatedAt;
+  const summarySeasonRewardCrx = Number(leaderboardSummary?.seasonRewardCrx || 0);
+  const summaryTotalPoints = Number(leaderboardSummary?.totalPoints || 0);
+  const summaryWalletCount = Number(leaderboardSummary?.walletCount || 0);
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
   const effectiveMultiplier = Number(userStats?.multiplier || 1);
@@ -195,21 +211,30 @@ export default function PointsPage({ address, onConnect }) {
   const volumeValue = formatUsd(userStats?.volumeUsd || 0);
   const lpPointsValue = formatCompactNumber(lpPoints);
   const whitelist = whitelistQuery.data || null;
+  const seasonReward = userStats?.seasonReward || null;
   const immediatePct = Number(whitelist?.immediatePct ?? 0.3);
   const streamedPct = Math.max(0, 1 - immediatePct);
 
   const formatClaimButtonLabel = () => {
     if (!whitelist?.whitelisted) return "Claim";
-    if (claimState.loading) return "Claiming...";
+    if (whitelistClaimState.loading) return "Claiming...";
     if (!whitelist.claimOpen) return "Claim locked";
     if ((whitelist.claimableNowCrx || 0) <= 0) return "Nothing claimable";
     return "Claim now";
   };
 
+  const formatLeaderboardClaimButtonLabel = () => {
+    if (!seasonReward) return "Claim";
+    if (leaderboardClaimState.loading) return "Claiming...";
+    if (!seasonReward.claimOpen) return "Claim locked";
+    if ((seasonReward.claimableNowCrx || 0) <= 0) return "Nothing claimable";
+    return "Claim now";
+  };
+
   const handleWhitelistClaim = async () => {
-    if (!address || !whitelist?.whitelisted || claimState.loading) return;
+    if (!address || !whitelist?.whitelisted || whitelistClaimState.loading) return;
     if (!whitelist.claimOpen) {
-      setClaimState({
+      setWhitelistClaimState({
         loading: false,
         error: `Claim opens at ${formatDateTime(whitelist.claimOpensAt)}.`,
         success: "",
@@ -217,7 +242,7 @@ export default function PointsPage({ address, onConnect }) {
       return;
     }
     if ((whitelist.claimableNowCrx || 0) <= 0) {
-      setClaimState({
+      setWhitelistClaimState({
         loading: false,
         error: "No claimable amount available right now.",
         success: "",
@@ -226,7 +251,7 @@ export default function PointsPage({ address, onConnect }) {
     }
 
     try {
-      setClaimState({ loading: true, error: "", success: "" });
+      setWhitelistClaimState({ loading: true, error: "", success: "" });
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const issuedAt = Date.now();
@@ -251,14 +276,74 @@ export default function PointsPage({ address, onConnect }) {
         throw new Error(payload?.error || "Claim failed");
       }
       const amount = Number(payload?.claim?.amountCrx || 0);
-      setClaimState({
+      setWhitelistClaimState({
         loading: false,
         error: "",
         success: `Claimed ${formatCompactNumber(amount)} CRX.`,
       });
       await whitelistQuery.refetch();
     } catch (err) {
-      setClaimState({
+      setWhitelistClaimState({
+        loading: false,
+        error: err?.message || "Claim failed.",
+        success: "",
+      });
+    }
+  };
+
+  const handleLeaderboardClaim = async () => {
+    if (!address || !seasonReward || leaderboardClaimState.loading) return;
+    if (!seasonReward.claimOpen) {
+      setLeaderboardClaimState({
+        loading: false,
+        error: `Claim opens at ${formatDateTime(seasonReward.claimOpensAt)}.`,
+        success: "",
+      });
+      return;
+    }
+    if ((seasonReward.claimableNowCrx || 0) <= 0) {
+      setLeaderboardClaimState({
+        loading: false,
+        error: "No claimable amount available right now.",
+        success: "",
+      });
+      return;
+    }
+
+    try {
+      setLeaderboardClaimState({ loading: true, error: "", success: "" });
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const issuedAt = Date.now();
+      const message = buildPointsClaimMessage({
+        address,
+        seasonId: SEASON_ID,
+        issuedAt,
+      });
+      const signature = await signer.signMessage(message);
+      const res = await fetch("/api/points/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          address,
+          seasonId: SEASON_ID,
+          issuedAt,
+          signature,
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || !payload?.ok) {
+        throw new Error(payload?.error || "Claim failed");
+      }
+      const amount = Number(payload?.claim?.amountCrx || 0);
+      setLeaderboardClaimState({
+        loading: false,
+        error: "",
+        success: `Claimed ${formatCompactNumber(amount)} CRX.`,
+      });
+      await Promise.all([refetchUserStats(), leaderboardQuery.refetch()]);
+    } catch (err) {
+      setLeaderboardClaimState({
         loading: false,
         error: err?.message || "Claim failed.",
         success: "",
@@ -336,6 +421,9 @@ export default function PointsPage({ address, onConnect }) {
               <div className="mt-2 space-y-1">
                 <div>1 USD traded = 1 point (all pairs).</div>
                 <div>Add Liquidity: CRX/ETH = 2x, CRX/USDM = 3x.</div>
+                <div>
+                  Leaderboard reward formula: season CRX x (user points / total season points).
+                </div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
               </div>
             </div>
@@ -502,7 +590,7 @@ export default function PointsPage({ address, onConnect }) {
                     type="button"
                     onClick={handleWhitelistClaim}
                     disabled={
-                      claimState.loading ||
+                      whitelistClaimState.loading ||
                       !whitelist.claimOpen ||
                       (whitelist.claimableNowCrx || 0) <= 0
                     }
@@ -510,11 +598,80 @@ export default function PointsPage({ address, onConnect }) {
                   >
                     {formatClaimButtonLabel()}
                   </button>
-                  {claimState.success ? (
-                    <div className="text-xs text-emerald-300 mt-2">{claimState.success}</div>
+                  {whitelistClaimState.success ? (
+                    <div className="text-xs text-emerald-300 mt-2">
+                      {whitelistClaimState.success}
+                    </div>
                   ) : null}
-                  {claimState.error ? (
-                    <div className="text-xs text-rose-300 mt-2">{claimState.error}</div>
+                  {whitelistClaimState.error ? (
+                    <div className="text-xs text-rose-300 mt-2">
+                      {whitelistClaimState.error}
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </StatCard>
+
+          <StatCard title="Leaderboard Rewards" accent="Season payout">
+            {!seasonReward ? (
+              <div className="text-sm text-slate-400">
+                Reward data appears after points ingestion for this wallet.
+              </div>
+            ) : (
+              <>
+                <div className="text-2xl font-semibold">
+                  {formatCrx(seasonReward.rewardSnapshotCrx || seasonReward.rewardCrx || 0)}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {seasonReward.claimOpen
+                    ? "Claim is open."
+                    : `Claim opens ${formatDateTime(seasonReward.claimOpensAt)}.`}
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-2">
+                  <InfoRow
+                    label="Season allocation"
+                    value={formatCrx(seasonReward.seasonAllocationCrx || 0)}
+                  />
+                  <InfoRow
+                    label="Season total points"
+                    value={formatCompactNumber(seasonReward.totalPointsSeason || 0)}
+                  />
+                  <InfoRow
+                    label="Your share"
+                    value={`${formatCompactNumber(seasonReward.sharePct || 0)}%`}
+                  />
+                  <InfoRow
+                    label="Claimable now"
+                    value={formatCrx(seasonReward.claimableNowCrx || 0)}
+                  />
+                  <InfoRow
+                    label="Already claimed"
+                    value={formatCrx(seasonReward.totalClaimedCrx || 0)}
+                  />
+                </div>
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={handleLeaderboardClaim}
+                    disabled={
+                      leaderboardClaimState.loading ||
+                      !seasonReward.claimOpen ||
+                      (seasonReward.claimableNowCrx || 0) <= 0
+                    }
+                    className="px-4 py-2 rounded-xl border border-emerald-400/40 bg-emerald-500/20 text-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-emerald-500/30 transition"
+                  >
+                    {formatLeaderboardClaimButtonLabel()}
+                  </button>
+                  {leaderboardClaimState.success ? (
+                    <div className="text-xs text-emerald-300 mt-2">
+                      {leaderboardClaimState.success}
+                    </div>
+                  ) : null}
+                  {leaderboardClaimState.error ? (
+                    <div className="text-xs text-rose-300 mt-2">
+                      {leaderboardClaimState.error}
+                    </div>
                   ) : null}
                 </div>
               </>
@@ -526,7 +683,17 @@ export default function PointsPage({ address, onConnect }) {
       {SHOW_LEADERBOARD ? (
         <div className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-6 mb-10">
           <div className="flex items-center justify-between mb-4">
-            <div className="text-lg font-semibold">Leaderboard</div>
+            <div>
+              <div className="text-lg font-semibold">Leaderboard</div>
+              <div className="text-xs text-slate-400 mt-1">
+                {summarySeasonRewardCrx > 0
+                  ? `Season pool ${formatCrx(summarySeasonRewardCrx)} | Total points ${formatCompactNumber(summaryTotalPoints)} | Wallets ${formatCompactNumber(summaryWalletCount)}`
+                  : "Top 100 wallets by season points."}
+                {leaderboardUpdatedAt
+                  ? ` | Updated ${formatDateTime(leaderboardUpdatedAt)}`
+                  : ""}
+              </div>
+            </div>
             <Pill tone="amber">Top 100</Pill>
           </div>
           {!leaderboardQuery.available ? (
@@ -544,6 +711,7 @@ export default function PointsPage({ address, onConnect }) {
                     <th className="text-left py-2">Rank</th>
                     <th className="text-left py-2">Wallet</th>
                     <th className="text-right py-2">Points</th>
+                    <th className="text-right py-2">Reward CRX</th>
                     <th className="text-right py-2">Multiplier</th>
                     <th className="text-right py-2">Active LP USD</th>
                   </tr>
@@ -580,6 +748,9 @@ export default function PointsPage({ address, onConnect }) {
                           {formatCompactNumber(row.points || 0)}
                         </td>
                         <td className="py-1.5 text-right">
+                          {formatCompactNumber(row.rewardCrx || 0)}
+                        </td>
+                        <td className="py-1.5 text-right">
                           {formatMultiplier(row.multiplier || 1)}
                         </td>
                         <td className="py-1.5 text-right">{formatUsd(row.lpUsd || 0)}</td>
@@ -600,8 +771,7 @@ export default function PointsPage({ address, onConnect }) {
             <>
               <div>1 USD traded = 1 point across all pairs. Season points reset each season.</div>
               <div>
-                Final points are computed after a 48h finalization window (anti-wash checks +
-                final calculation).
+                Final points are computed after the configured finalization window.
               </div>
             </>
           </AccordionItem>
@@ -616,11 +786,16 @@ export default function PointsPage({ address, onConnect }) {
               </div>
             </>
           </AccordionItem>
+          <AccordionItem title="Claim">
+            <div>
+              Rewards are claimable at the end of each season, once finalization is complete.
+            </div>
+          </AccordionItem>
           <AccordionItem title="Whitelist rewards activation">
             <>
               <div>
-                Whitelist rewards are funded from existing allocations (not extra supply). Budget
-                cap: 10,000 CRX.
+                Whitelist rewards are funded from existing allocations (not additional supply).
+                Budget cap: 10,000 CRX.
               </div>
               <div>
                 Base reward is granted per whitelisted wallet. Activation bonus unlocks when the
@@ -631,9 +806,7 @@ export default function PointsPage({ address, onConnect }) {
                 Payout schedule: 30% immediate and 70% streamed over the configured vesting
                 duration.
               </div>
-              <div>
-                Claim unlocks only after the season finalization window is completed.
-              </div>
+              <div>Claim unlocks only after the season finalization window is completed.</div>
             </>
           </AccordionItem>
         </div>

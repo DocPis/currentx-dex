@@ -1,5 +1,9 @@
 import { kv } from "@vercel/kv";
 import {
+  buildPointsSummary,
+  getLeaderboardRewardsConfig,
+} from "../../src/server/leaderboardRewardsLib.js";
+import {
   computeLpData,
   computePoints,
   fetchTokenPrices,
@@ -169,6 +173,12 @@ export default async function handler(req, res) {
       return {
         wallet,
         volumeUsd,
+        rawVolumeUsd: points.rawVolumeUsd,
+        effectiveVolumeUsd: points.effectiveVolumeUsd,
+        scoringMode: points.scoringMode,
+        feeBps: points.feeBps,
+        volumeCapUsd: points.volumeCapUsd,
+        diminishingFactor: points.diminishingFactor,
         basePoints: points.basePoints,
         bonusPoints: points.bonusPoints,
         points: points.totalPoints,
@@ -197,6 +207,12 @@ export default async function handler(req, res) {
       writePipeline.hset(keys.user(entry.wallet), {
         address: entry.wallet,
         volumeUsd: entry.volumeUsd,
+        rawVolumeUsd: entry.rawVolumeUsd,
+        effectiveVolumeUsd: entry.effectiveVolumeUsd,
+        scoringMode: entry.scoringMode,
+        scoringFeeBps: entry.feeBps,
+        volumeCapUsd: entry.volumeCapUsd,
+        diminishingFactor: entry.diminishingFactor,
         points: entry.points,
         basePoints: entry.basePoints,
         bonusPoints: entry.bonusPoints,
@@ -234,6 +250,31 @@ export default async function handler(req, res) {
     });
     await rankWrite.exec();
 
+    const leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
+      withScores: true,
+    });
+    let walletCount = 0;
+    let totalPoints = 0;
+    for (let i = 0; i < leaderboardEntries.length; i += 2) {
+      const score = Number(leaderboardEntries[i + 1] || 0);
+      if (!Number.isFinite(score) || score <= 0) continue;
+      walletCount += 1;
+      totalPoints += score;
+    }
+    const rewardsConfig = getLeaderboardRewardsConfig(targetSeason);
+    const scoringSample = computed[0] || {};
+    const summary = buildPointsSummary({
+      seasonId: targetSeason,
+      walletCount,
+      totalPoints,
+      scoringMode: scoringSample.scoringMode || "",
+      scoringFeeBps: scoringSample.feeBps || 0,
+      volumeCapUsd: scoringSample.volumeCapUsd || 0,
+      diminishingFactor: scoringSample.diminishingFactor || 0,
+      config: rewardsConfig,
+      nowMs: now,
+    });
+    await kv.hset(keys.summary, summary);
     const nextCursor =
       cursor + wallets.length >= normalized.length ? null : cursor + wallets.length;
 

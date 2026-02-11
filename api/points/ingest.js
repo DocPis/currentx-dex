@@ -1,10 +1,18 @@
-﻿import { kv } from "@vercel/kv";
+import { kv } from "@vercel/kv";
 import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
+import {
+  buildPointsSummary,
+  getLeaderboardRewardsConfig,
+} from "../../src/server/leaderboardRewardsLib.js";
 
 
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
+const POINTS_DEFAULT_VOLUME_CAP_USD = 250_000;
+const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
+const POINTS_DEFAULT_SCORING_MODE = "volume";
+const POINTS_DEFAULT_FEE_BPS = 30;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -358,9 +366,11 @@ const getKeys = (seasonId, source) => {
   const base = `points:${seasonId}`;
   return {
     leaderboard: `${base}:leaderboard`,
+    summary: `${base}:summary`,
     updatedAt: `${base}:updatedAt`,
     cursor: source ? `${base}:cursor:${source}` : null,
     user: (address) => `${base}:user:${address}`,
+    rewardUser: (address) => `${base}:reward:user:${address}`,
   };
 };
 
@@ -455,13 +465,82 @@ const toNumberSafe = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const clampNumber = (value, min, max, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
+};
+
+const normalizeScoringMode = (value) => {
+  const mode = String(value || "").trim().toLowerCase();
+  if (mode === "fees" || mode === "fee") return "fees";
+  return "volume";
+};
+
+const getPointsScoringPolicy = () => {
+  const volumeCapUsd = clampNumber(
+    process.env.POINTS_WALLET_VOLUME_CAP_USD,
+    0,
+    1_000_000_000,
+    POINTS_DEFAULT_VOLUME_CAP_USD
+  );
+  const diminishingFactor = clampNumber(
+    process.env.POINTS_WALLET_DIMINISHING_FACTOR,
+    0,
+    1,
+    POINTS_DEFAULT_DIMINISHING_FACTOR
+  );
+  const scoringMode = normalizeScoringMode(
+    process.env.POINTS_SCORING_MODE || POINTS_DEFAULT_SCORING_MODE
+  );
+  const feeBps = clampNumber(
+    process.env.POINTS_SCORING_FEE_BPS,
+    1,
+    10000,
+    POINTS_DEFAULT_FEE_BPS
+  );
+  return {
+    volumeCapUsd,
+    diminishingFactor,
+    scoringMode,
+    feeBps,
+  };
+};
+
+const applyDiminishingVolume = (volumeUsd, policy) => {
+  const raw = Math.max(0, toNumberSafe(volumeUsd) ?? 0);
+  const cap = Math.max(0, toNumberSafe(policy?.volumeCapUsd) ?? 0);
+  const factor = clampNumber(
+    policy?.diminishingFactor,
+    0,
+    1,
+    POINTS_DEFAULT_DIMINISHING_FACTOR
+  );
+  if (!cap || raw <= cap) return raw;
+  const excess = raw - cap;
+  return cap + excess * factor;
+};
+
+const computeTradeBasePoints = (effectiveVolumeUsd, policy) => {
+  const scoringMode = normalizeScoringMode(policy?.scoringMode);
+  if (scoringMode === "fees") {
+    const feeBps = clampNumber(policy?.feeBps, 1, 10000, POINTS_DEFAULT_FEE_BPS);
+    return effectiveVolumeUsd * (feeBps / 10000);
+  }
+  return effectiveVolumeUsd;
+};
+
 const computePoints = ({
   volumeUsd,
   lpUsdCrxEth = 0,
   lpUsdCrxUsdm = 0,
   boostEnabled = true,
+  scoringPolicy = null,
 }) => {
-  const volume = toNumberSafe(volumeUsd) ?? 0;
+  const policy = scoringPolicy || getPointsScoringPolicy();
+  const rawVolume = Math.max(0, toNumberSafe(volumeUsd) ?? 0);
+  const effectiveVolume = applyDiminishingVolume(rawVolume, policy);
+  const tradePoints = computeTradeBasePoints(effectiveVolume, policy);
   const lpEth = Math.max(0, toNumberSafe(lpUsdCrxEth) ?? 0);
   const lpUsdm = Math.max(0, toNumberSafe(lpUsdCrxUsdm) ?? 0);
   const lpPoints = boostEnabled !== false ? lpEth * 2 + lpUsdm * 3 : 0;
@@ -475,9 +554,9 @@ const computePoints = ({
           : 1
       : 1;
   return {
-    basePoints: volume,
+    basePoints: tradePoints,
     bonusPoints: lpPoints,
-    totalPoints: volume + lpPoints,
+    totalPoints: tradePoints + lpPoints,
     boostedVolumeUsd: 0,
     boostedVolumeCap: 0,
     lpPoints,
@@ -485,6 +564,17 @@ const computePoints = ({
     lpUsdCrxEth: lpEth,
     lpUsdCrxUsdm: lpUsdm,
     effectiveMultiplier: multiplier,
+    rawVolumeUsd: rawVolume,
+    effectiveVolumeUsd: effectiveVolume,
+    scoringMode: normalizeScoringMode(policy?.scoringMode),
+    feeBps: clampNumber(policy?.feeBps, 1, 10000, POINTS_DEFAULT_FEE_BPS),
+    volumeCapUsd: Math.max(0, toNumberSafe(policy?.volumeCapUsd) ?? 0),
+    diminishingFactor: clampNumber(
+      policy?.diminishingFactor,
+      0,
+      1,
+      POINTS_DEFAULT_DIMINISHING_FACTOR
+    ),
   };
 };
 
@@ -1056,6 +1146,12 @@ export default async function handler(req, res) {
       return {
         wallet,
         volumeUsd: currentVolume,
+        rawVolumeUsd: points.rawVolumeUsd,
+        effectiveVolumeUsd: points.effectiveVolumeUsd,
+        scoringMode: points.scoringMode,
+        feeBps: points.feeBps,
+        volumeCapUsd: points.volumeCapUsd,
+        diminishingFactor: points.diminishingFactor,
         basePoints: points.basePoints,
         bonusPoints: points.bonusPoints,
         points: points.totalPoints,
@@ -1085,6 +1181,12 @@ export default async function handler(req, res) {
       writePipeline.hset(userKey, {
         address: entry.wallet,
         volumeUsd: entry.volumeUsd,
+        rawVolumeUsd: entry.rawVolumeUsd,
+        effectiveVolumeUsd: entry.effectiveVolumeUsd,
+        scoringMode: entry.scoringMode,
+        scoringFeeBps: entry.feeBps,
+        volumeCapUsd: entry.volumeCapUsd,
+        diminishingFactor: entry.diminishingFactor,
         points: entry.points,
         basePoints: entry.basePoints,
         bonusPoints: entry.bonusPoints,
@@ -1126,6 +1228,31 @@ export default async function handler(req, res) {
       }
     });
     await rankWrite.exec();
+    const leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
+      withScores: true,
+    });
+    let walletCount = 0;
+    let totalPoints = 0;
+    for (let i = 0; i < leaderboardEntries.length; i += 2) {
+      const score = Number(leaderboardEntries[i + 1] || 0);
+      if (!Number.isFinite(score) || score <= 0) continue;
+      walletCount += 1;
+      totalPoints += score;
+    }
+    const rewardsConfig = getLeaderboardRewardsConfig(seasonId);
+    const scoringSample = computed[0] || {};
+    const summary = buildPointsSummary({
+      seasonId,
+      walletCount,
+      totalPoints,
+      scoringMode: scoringSample.scoringMode || "",
+      scoringFeeBps: scoringSample.feeBps || 0,
+      volumeCapUsd: scoringSample.volumeCapUsd || 0,
+      diminishingFactor: scoringSample.diminishingFactor || 0,
+      config: rewardsConfig,
+      nowMs: now,
+    });
+    await kv.hset(keys.summary, summary);
 
     res.status(200).json({
       ok: true,
@@ -1137,3 +1264,5 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err?.message || "Server error" });
   }
 }
+
+

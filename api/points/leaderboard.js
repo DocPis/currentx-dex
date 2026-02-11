@@ -1,4 +1,11 @@
-﻿import { kv } from "@vercel/kv";
+import { kv } from "@vercel/kv";
+import {
+  buildPointsSummary,
+  computeLeaderboardReward,
+  getLeaderboardRewardsConfig,
+  normalizeAddress,
+  parsePointsSummaryRow,
+} from "../../src/server/leaderboardRewardsLib.js";
 
 const parseTime = (value) => {
   if (!value) return null;
@@ -41,12 +48,47 @@ const getKeys = (seasonId) => {
   const base = `points:${seasonId}`;
   return {
     leaderboard: `${base}:leaderboard`,
+    summary: `${base}:summary`,
     updatedAt: `${base}:updatedAt`,
     user: (address) => `${base}:user:${address}`,
   };
 };
 
-const normalizeAddress = (addr) => (addr ? String(addr).toLowerCase() : "");
+const toNumber = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const buildSummaryFromEntries = async ({
+  entries,
+  keys,
+  seasonId,
+  rewardsConfig,
+  sampleRow,
+  nowMs,
+}) => {
+  let walletCount = 0;
+  let totalPoints = 0;
+  for (let i = 0; i < entries.length; i += 2) {
+    const score = Number(entries[i + 1] || 0);
+    if (!Number.isFinite(score) || score <= 0) continue;
+    walletCount += 1;
+    totalPoints += score;
+  }
+  const summary = buildPointsSummary({
+    seasonId,
+    walletCount,
+    totalPoints,
+    scoringMode: sampleRow?.scoringMode || "",
+    scoringFeeBps: sampleRow?.scoringFeeBps || 0,
+    volumeCapUsd: sampleRow?.volumeCapUsd || 0,
+    diminishingFactor: sampleRow?.diminishingFactor || 0,
+    config: rewardsConfig,
+    nowMs,
+  });
+  await kv.hset(keys.summary, summary);
+  return parsePointsSummaryRow(summary);
+};
 
 export default async function handler(req, res) {
   if (req.method !== "GET") {
@@ -65,13 +107,15 @@ export default async function handler(req, res) {
   }
 
   const keys = getKeys(targetSeason);
+  const rewardsConfig = getLeaderboardRewardsConfig(targetSeason);
+  const nowMs = Date.now();
+
   try {
     const entries = await kv.zrange(keys.leaderboard, 0, 99, {
       rev: true,
       withScores: true,
     });
 
-    const items = [];
     const addresses = [];
     for (let i = 0; i < entries.length; i += 2) {
       const address = normalizeAddress(entries[i]);
@@ -88,19 +132,44 @@ export default async function handler(req, res) {
         })()
       : [];
 
-    addresses.forEach(({ address, score }, idx) => {
-      const row = userRows?.[idx] || {};
-      const points = Number(row?.points ?? score ?? 0);
-      const multiplier = Number(row?.multiplier ?? 1);
-      const lpUsd = Number(row?.lpUsd ?? 0);
-      const rank = Number(row?.rank);
-      items.push({
-        address,
-        points: Number.isFinite(points) ? points : score,
-        multiplier: Number.isFinite(multiplier) ? multiplier : 1,
-        lpUsd: Number.isFinite(lpUsd) ? lpUsd : 0,
-        rank: Number.isFinite(rank) ? rank : null,
+    let summary = parsePointsSummaryRow(await kv.hgetall(keys.summary));
+    if (!summary) {
+      summary = await buildSummaryFromEntries({
+        entries,
+        keys,
+        seasonId: targetSeason,
+        rewardsConfig,
+        sampleRow: userRows?.[0] || null,
+        nowMs,
       });
+    }
+
+    const totalPoints = toNumber(summary?.totalPoints, 0);
+    const seasonRewardCrx = toNumber(
+      summary?.seasonRewardCrx,
+      rewardsConfig.seasonRewardCrx
+    );
+
+    const items = addresses.map(({ address, score }, idx) => {
+      const row = userRows?.[idx] || {};
+      const points = toNumber(row?.points, score);
+      const multiplier = toNumber(row?.multiplier, 1);
+      const lpUsd = toNumber(row?.lpUsd, 0);
+      const rank = toNumber(row?.rank, idx + 1);
+      const reward = computeLeaderboardReward({
+        userPoints: points,
+        totalPoints,
+        seasonRewardCrx,
+      });
+      return {
+        address,
+        points,
+        multiplier,
+        lpUsd,
+        rank: Number.isFinite(rank) && rank > 0 ? rank : idx + 1,
+        rewardCrx: reward.rewardCrx,
+        rewardSharePct: reward.sharePct,
+      };
     });
 
     const updatedAt = await kv.get(keys.updatedAt);
@@ -108,6 +177,11 @@ export default async function handler(req, res) {
       seasonId: targetSeason,
       updatedAt: updatedAt || null,
       leaderboard: items,
+      summary: {
+        ...(summary || {}),
+        seasonRewardCrx,
+        totalPoints,
+      },
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });
