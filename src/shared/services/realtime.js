@@ -7,6 +7,23 @@ const DEFAULT_WS_FALLBACK = "wss://mainnet.megaeth.com/ws";
 const TRANSFER_TOPIC =
   "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
+const getWsPriority = (url) => {
+  const normalized = String(url || "").trim().toLowerCase();
+  if (!normalized) return 99;
+  if (normalized === DEFAULT_WS_FALLBACK) return 0;
+  if (normalized.includes("mainnet.megaeth.com/ws")) return 1;
+  return 2;
+};
+
+const prioritizeStableWs = (urls = []) =>
+  urls
+    .map((url, idx) => ({ url, idx, priority: getWsPriority(url) }))
+    .sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      return a.idx - b.idx;
+    })
+    .map((entry) => entry.url);
+
 const deriveWsCandidates = () => {
   const active = getActiveNetworkConfig();
   const list = [];
@@ -50,7 +67,7 @@ const deriveWsCandidates = () => {
 
   // 5) Fallback
   push(DEFAULT_WS_FALLBACK);
-  return list;
+  return prioritizeStableWs(list);
 };
 
 const normalizeAddress = (addr) =>
