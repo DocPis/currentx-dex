@@ -290,21 +290,21 @@ const fetchBoostPositions = async (address) => {
 
 export const getUserPointsQueryKey = (address) => [
   "points",
-  SEASON_ID,
+  SEASON_ID || "unconfigured",
   "user",
   normalizeAddress(address),
 ];
 
 export const getLeaderboardQueryKey = (seasonId, page = 0) => [
   "points",
-  seasonId || SEASON_ID,
+  seasonId || SEASON_ID || "unconfigured",
   "leaderboard",
   page,
 ];
 
 export const getWhitelistRewardsQueryKey = (address) => [
   "whitelist-rewards",
-  SEASON_ID,
+  SEASON_ID || "unconfigured",
   normalizeAddress(address),
 ];
 
@@ -316,9 +316,14 @@ export const useUserPoints = (address) => {
     refetchInterval: 60 * 1000,
     refetchIntervalInBackground: true,
     queryFn: async () => {
+      if (!SEASON_ID || !Number.isFinite(SEASON_START_MS)) {
+        throw new Error(
+          "Missing points env config: set VITE_POINTS_SEASON_ID and VITE_POINTS_SEASON_START"
+        );
+      }
       const seasonStart = SEASON_START_MS;
       const nowMs = Date.now();
-      const seasonEnd = SEASON_END_MS || nowMs;
+      const seasonEnd = Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : nowMs;
       const seasonHasStarted = nowMs >= seasonStart;
       const normalized = (address || "").toLowerCase();
 
@@ -335,7 +340,7 @@ export const useUserPoints = (address) => {
       try {
         const params = new URLSearchParams();
         params.set("address", normalized);
-        params.set("seasonId", SEASON_ID);
+        if (SEASON_ID) params.set("seasonId", SEASON_ID);
         const res = await fetch(`/api/points/user?${params.toString()}`);
         if (res.ok) {
           const payload = await res.json();
@@ -472,8 +477,12 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     queryKey: getLeaderboardQueryKey(seasonId, page),
     enabled: Boolean(enabled),
     queryFn: async () => {
+      const activeSeasonId = seasonId || SEASON_ID;
+      if (!activeSeasonId) {
+        throw new Error("Missing points env config: set VITE_POINTS_SEASON_ID");
+      }
       const params = new URLSearchParams();
-      if (seasonId) params.set("seasonId", seasonId);
+      params.set("seasonId", activeSeasonId);
       if (page) params.set("page", String(page));
       const res = await fetch(`/api/points/leaderboard?${params.toString()}`);
       if (!res.ok) {
@@ -508,6 +517,9 @@ export const useWhitelistRewards = (address) => {
     refetchIntervalInBackground: true,
     retry: 1,
     queryFn: async () => {
+      if (!SEASON_ID) {
+        throw new Error("Missing points env config: set VITE_POINTS_SEASON_ID");
+      }
       const normalized = normalizeAddress(address);
       const toNumber = (value, fallback = 0) => {
         if (value === null || value === undefined || value === "") return fallback;

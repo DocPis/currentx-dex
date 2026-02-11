@@ -22,6 +22,17 @@ export default async function handler(req, res) {
   }
 
   const config = getWhitelistRewardsConfig(req.query?.seasonId);
+  if (!config?.seasonId) {
+    res.status(503).json({ error: "Missing required env: POINTS_SEASON_ID" });
+    return;
+  }
+  if (!Number.isFinite(config?.claimOpensAtMs)) {
+    res.status(503).json({
+      error:
+        "Missing required env: set POINTS_SEASON_END (+ POINTS_FINALIZATION_WINDOW_HOURS) or WHITELIST_CLAIM_OPENS_AT",
+    });
+    return;
+  }
   const keys = getWhitelistKeys(config.seasonId);
   const nowMs = Date.now();
 

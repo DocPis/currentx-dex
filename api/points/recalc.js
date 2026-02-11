@@ -22,20 +22,34 @@ const clampNumber = (value, min, max, fallback) => {
   return Math.min(max, Math.max(min, Math.floor(num)));
 };
 
-const authorizeRequest = (req, secret) => {
-  if (!secret) return true;
+const getSecrets = () =>
+  [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+const authorizeRequest = (req, secrets) => {
+  const list = Array.isArray(secrets) ? secrets : [secrets];
+  const active = list.filter(Boolean);
+  if (!active.length) return true;
   const authHeader = req.headers?.authorization || "";
   const token = req.query?.token || "";
-  return (
-    authHeader === `Bearer ${secret}` ||
-    authHeader === secret ||
-    token === secret
+  return active.some(
+    (secret) =>
+      authHeader === `Bearer ${secret}` ||
+      authHeader === secret ||
+      token === secret
   );
 };
 
 export default async function handler(req, res) {
-  const secret = process.env.POINTS_INGEST_TOKEN || "";
-  if (!authorizeRequest(req, secret)) {
+  const secrets = getSecrets();
+  if (!secrets.length) {
+    res.status(503).json({
+      error: "Missing required env: set POINTS_INGEST_TOKEN or CRON_SECRET",
+    });
+    return;
+  }
+  if (!authorizeRequest(req, secrets)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -45,16 +59,28 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { seasonId, startBlock, startMs } = getSeasonConfig();
+  const { seasonId, startBlock, startMs, missing: missingSeasonEnv } = getSeasonConfig();
   const targetSeason = req.query?.seasonId || seasonId;
   const { v3Url, v3Key } = getSubgraphConfig();
   if (!v3Url) {
     res.status(503).json({ error: "V3 subgraph not configured" });
     return;
   }
+  if (!targetSeason || missingSeasonEnv?.length) {
+    res.status(503).json({
+      error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
+    });
+    return;
+  }
 
   const keys = getKeys(targetSeason);
   const addr = getAddressConfig();
+  if (addr?.missing?.length) {
+    res.status(503).json({
+      error: `Missing required env: ${addr.missing.join(", ")}`,
+    });
+    return;
+  }
 
   const cursor = clampNumber(req.query?.cursor, 0, Number.MAX_SAFE_INTEGER, 0);
   const limitParam = req.query?.limit;

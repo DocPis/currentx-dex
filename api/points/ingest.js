@@ -2,21 +2,11 @@
 import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
 
 
-const DEFAULT_SEASON_ID = "season-1";
-const DEFAULT_START_MS = Date.UTC(2026, 1, 12, 0, 0, 0);
-const DEFAULT_START_BLOCK = 7963659;
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
 
 
-const DEFAULT_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
-const DEFAULT_USDM_ADDRESS = "0xFAfDdbb3FC7688494971a79cc65DCa3EF82079E7";
-const DEFAULT_CRX_ADDRESS = "0xBd5e387fa453ceBf03B1A6a9dFe2a828b93AA95B";
-const DEFAULT_UNIV3_FACTORY_ADDRESS = "0x09cF8A0b9e8C89bff6d1ACbe1467e8E335Bdd03E";
-const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
-  "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
-const DEFAULT_RPC_URL = "https://mainnet.megaeth.com/rpc";
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
@@ -41,6 +31,15 @@ const parseRpcUrls = (value) => {
     .filter(Boolean);
 };
 
+const pickEnvValue = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+};
+
 const getRpcUrl = () => {
   const candidates = [
     process.env.POINTS_RPC_URL,
@@ -55,7 +54,7 @@ const getRpcUrl = () => {
     const parsed = parseRpcUrls(candidate);
     if (parsed.length) return parsed[0];
   }
-  return DEFAULT_RPC_URL;
+  return "";
 };
 
 const getOnchainConfig = () => {
@@ -63,14 +62,16 @@ const getOnchainConfig = () => {
   return {
     rpcUrl: getRpcUrl(),
     factory: normalize(
-      process.env.POINTS_UNIV3_FACTORY_ADDRESS ||
-        process.env.VITE_UNIV3_FACTORY_ADDRESS ||
-        DEFAULT_UNIV3_FACTORY_ADDRESS
+      pickEnvValue(
+        process.env.POINTS_UNIV3_FACTORY_ADDRESS,
+        process.env.VITE_UNIV3_FACTORY_ADDRESS
+      )
     ),
     positionManager: normalize(
-      process.env.POINTS_UNIV3_POSITION_MANAGER_ADDRESS ||
-        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS ||
-        DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS
+      pickEnvValue(
+        process.env.POINTS_UNIV3_POSITION_MANAGER_ADDRESS,
+        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS
+      )
     ),
   };
 };
@@ -218,24 +219,29 @@ const fetchLpAgeSecondsOnchain = async ({
 };
 
 const getSeasonConfig = () => {
-  const seasonId = process.env.POINTS_SEASON_ID || DEFAULT_SEASON_ID;
+  const seasonId = pickEnvValue(
+    process.env.POINTS_SEASON_ID,
+    process.env.VITE_POINTS_SEASON_ID
+  );
   const startMs =
     parseTime(process.env.POINTS_SEASON_START) ||
-    parseTime(process.env.VITE_POINTS_SEASON_START) ||
-    DEFAULT_START_MS;
+    parseTime(process.env.VITE_POINTS_SEASON_START);
   const startBlock =
     parseBlock(process.env.POINTS_SEASON_START_BLOCK) ||
-    parseBlock(process.env.VITE_POINTS_SEASON_START_BLOCK) ||
-    DEFAULT_START_BLOCK;
+    parseBlock(process.env.VITE_POINTS_SEASON_START_BLOCK);
   const endMs =
     parseTime(process.env.POINTS_SEASON_END) ||
-    parseTime(process.env.VITE_POINTS_SEASON_END) ||
-    null;
+    parseTime(process.env.VITE_POINTS_SEASON_END);
+  const missing = [];
+  if (!seasonId) missing.push("POINTS_SEASON_ID");
+  if (!Number.isFinite(startMs)) missing.push("POINTS_SEASON_START");
+  if (!Number.isFinite(startBlock)) missing.push("POINTS_SEASON_START_BLOCK");
   return {
     seasonId,
     startMs,
     startBlock,
-    endMs,
+    endMs: Number.isFinite(endMs) ? endMs : null,
+    missing,
   };
 };
 
@@ -260,10 +266,18 @@ const getSubgraphConfig = () => ({
 
 const getAddressConfig = () => {
   const normalize = (v) => (v ? String(v).toLowerCase() : "");
+  const crx = normalize(pickEnvValue(process.env.POINTS_CRX_ADDRESS, process.env.VITE_CRX_ADDRESS));
+  const weth = normalize(pickEnvValue(process.env.POINTS_WETH_ADDRESS, process.env.VITE_WETH_ADDRESS));
+  const usdm = normalize(pickEnvValue(process.env.POINTS_USDM_ADDRESS, process.env.VITE_USDM_ADDRESS));
+  const missing = [];
+  if (!crx) missing.push("POINTS_CRX_ADDRESS");
+  if (!weth) missing.push("POINTS_WETH_ADDRESS");
+  if (!usdm) missing.push("POINTS_USDM_ADDRESS");
   return {
-    crx: normalize(process.env.POINTS_CRX_ADDRESS || DEFAULT_CRX_ADDRESS),
-    weth: normalize(process.env.POINTS_WETH_ADDRESS || DEFAULT_WETH_ADDRESS),
-    usdm: normalize(process.env.POINTS_USDM_ADDRESS || DEFAULT_USDM_ADDRESS),
+    crx,
+    weth,
+    usdm,
+    missing,
   };
 };
 
@@ -905,15 +919,25 @@ const computeLpData = async ({
 };
 
 export default async function handler(req, res) {
-  const secret = process.env.POINTS_INGEST_TOKEN || "";
+  const secrets = [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!secrets.length) {
+    res.status(503).json({
+      error: "Missing required env: set POINTS_INGEST_TOKEN or CRON_SECRET",
+    });
+    return;
+  }
   const authHeader = req.headers?.authorization || "";
   const token = req.query?.token || "";
 
-  if (secret) {
-    const matches =
-      authHeader === `Bearer ${secret}` ||
-      authHeader === secret ||
-      token === secret;
+  if (secrets.length) {
+    const matches = secrets.some(
+      (secret) =>
+        authHeader === `Bearer ${secret}` ||
+        authHeader === secret ||
+        token === secret
+    );
     if (!matches) {
       res.status(401).json({ error: "Unauthorized" });
       return;
@@ -925,9 +949,21 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { seasonId, startMs, startBlock, endMs } = getSeasonConfig();
+  const { seasonId, startMs, startBlock, endMs, missing: missingSeasonEnv } = getSeasonConfig();
   const { v2Url, v2Key, v3Url, v3Key } = getSubgraphConfig();
   const addr = getAddressConfig();
+  if (!seasonId || missingSeasonEnv?.length) {
+    res.status(503).json({
+      error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
+    });
+    return;
+  }
+  if (addr?.missing?.length) {
+    res.status(503).json({
+      error: `Missing required env: ${addr.missing.join(", ")}`,
+    });
+    return;
+  }
   if (!v2Url && !v3Url) {
     res.status(503).json({ error: "Subgraph URLs not configured" });
     return;

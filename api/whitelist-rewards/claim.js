@@ -54,6 +54,17 @@ export default async function handler(req, res) {
     res.status(400).json({ error: "Missing issuedAt" });
     return;
   }
+  if (!config?.seasonId) {
+    res.status(503).json({ error: "Missing required env: POINTS_SEASON_ID" });
+    return;
+  }
+  if (!Number.isFinite(config?.claimOpensAtMs)) {
+    res.status(503).json({
+      error:
+        "Missing required env: set POINTS_SEASON_END (+ POINTS_FINALIZATION_WINDOW_HOURS) or WHITELIST_CLAIM_OPENS_AT",
+    });
+    return;
+  }
   if (Math.abs(nowMs - issuedAt) > config.claimSignatureTtlMs) {
     res.status(400).json({
       error: "Signature expired",
@@ -147,4 +158,3 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err?.message || "Server error" });
   }
 }
-

@@ -46,9 +46,21 @@ const buildRow = ({ address, parsed, rank, config, nowMs }) => {
 };
 
 export default async function handler(req, res) {
-  const secret =
-    process.env.WHITELIST_REWARDS_TOKEN || process.env.POINTS_INGEST_TOKEN || "";
-  if (!authorizeRequest(req, secret)) {
+  const secrets = [
+    process.env.WHITELIST_REWARDS_TOKEN,
+    process.env.POINTS_INGEST_TOKEN,
+    process.env.CRON_SECRET,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  if (!secrets.length) {
+    res.status(503).json({
+      error:
+        "Missing required env: set WHITELIST_REWARDS_TOKEN or POINTS_INGEST_TOKEN or CRON_SECRET",
+    });
+    return;
+  }
+  if (!authorizeRequest(req, secrets)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -59,6 +71,17 @@ export default async function handler(req, res) {
   }
 
   const config = getWhitelistRewardsConfig(req.query?.seasonId);
+  if (!config?.seasonId) {
+    res.status(503).json({ error: "Missing required env: POINTS_SEASON_ID" });
+    return;
+  }
+  if (!Number.isFinite(config?.claimOpensAtMs)) {
+    res.status(503).json({
+      error:
+        "Missing required env: set POINTS_SEASON_END (+ POINTS_FINALIZATION_WINDOW_HOURS) or WHITELIST_CLAIM_OPENS_AT",
+    });
+    return;
+  }
   const keys = getWhitelistKeys(config.seasonId);
   const nowMs = Date.now();
 
@@ -167,4 +190,3 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err?.message || "Server error" });
   }
 }
-

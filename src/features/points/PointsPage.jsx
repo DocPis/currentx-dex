@@ -2,6 +2,10 @@
 import React, { useState } from "react";
 import {
   SEASON_ID,
+  SEASON_LABEL,
+  SEASON_START_MS,
+  SEASON_END_MS,
+  SEASON_ONGOING,
   SHOW_LEADERBOARD,
 } from "../../shared/config/points";
 import {
@@ -58,6 +62,16 @@ const formatDateTime = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return "--";
   return new Date(num).toLocaleString();
+};
+
+const formatDate = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return "--";
+  return new Date(num).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 };
 
 const Pill = ({ children, tone = "slate" }) => {
@@ -143,9 +157,20 @@ export default function PointsPage({ address, onConnect }) {
   const { data: userStats, isLoading, error } = useUserPoints(address);
   const whitelistQuery = useWhitelistRewards(address);
 
-  const seasonHeadline = "SEASON 1 — Feb 12, 2026 → Mar 12, 2026 (28 days)";
+  const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
+  const seasonStartValue = userStats?.seasonStart ?? SEASON_START_MS;
+  const seasonEndValue = userStats?.seasonEnd ?? SEASON_END_MS;
+  const seasonIsOngoing =
+    typeof userStats?.seasonOngoing === "boolean"
+      ? userStats.seasonOngoing
+      : SEASON_ONGOING;
+  const seasonStartLabel = formatDate(seasonStartValue);
+  const seasonEndLabel = seasonIsOngoing
+    ? "ONGOING"
+    : formatDate(seasonEndValue);
+  const seasonHeadline = `${seasonTitle} — ${seasonStartLabel} → ${seasonEndLabel}`;
   const seasonFinalizationLine =
-    "Points finalization: Mar 12–14 (48h). Whitelist claim opens after finalization.";
+    "Points and whitelist rewards are finalized after the configured finalization window.";
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
   const effectiveMultiplier = Number(userStats?.multiplier || 1);
@@ -312,7 +337,7 @@ export default function PointsPage({ address, onConnect }) {
                 <div>1 USD traded = 1 point (all pairs).</div>
                 <div>Add Liquidity: CRX/ETH = 2x, CRX/USDM = 3x.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
-                <div>Season 1: Feb 12 → Mar 12. Claim opens after finalization.</div>
+                <div>Season window from env config. Claim opens after finalization.</div>
               </div>
             </div>
             {!address ? (

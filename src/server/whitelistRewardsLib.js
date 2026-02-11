@@ -1,6 +1,7 @@
 /* eslint-env node */
 
-const DEFAULT_SEASON_ID = process.env.POINTS_SEASON_ID || "season-1";
+const DEFAULT_SEASON_ID =
+  String(process.env.POINTS_SEASON_ID || process.env.VITE_POINTS_SEASON_ID || "").trim();
 
 const DEFAULTS = {
   budgetCapCrx: 10_000,
@@ -14,7 +15,7 @@ const DEFAULTS = {
   immediatePct: 0.3,
   streamDays: 45,
   finalizationWindowHours: 48,
-  claimOpensAtMs: Date.UTC(2026, 2, 14, 0, 0, 0),
+  claimOpensAtMs: null,
   claimSignatureTtlMs: 10 * 60 * 1000,
 };
 
@@ -103,8 +104,7 @@ export const getWhitelistRewardsConfig = (seasonIdOverride) => {
   const seasonId = seasonIdOverride || DEFAULT_SEASON_ID;
   const seasonEndMs =
     parseTime(process.env.POINTS_SEASON_END) ||
-    parseTime(process.env.VITE_POINTS_SEASON_END) ||
-    Date.UTC(2026, 2, 12, 0, 0, 0);
+    parseTime(process.env.VITE_POINTS_SEASON_END);
   const finalizationWindowHours = clamp(
     process.env.POINTS_FINALIZATION_WINDOW_HOURS,
     0,
@@ -207,13 +207,16 @@ export const getPresaleKey = (address) =>
   `${WHITELIST_KEY_PREFIX}${normalizeAddress(address)}`;
 
 export const authorizeRequest = (req, secret) => {
-  if (!secret) return true;
+  const secrets = Array.isArray(secret) ? secret : [secret];
+  const active = secrets.filter(Boolean);
+  if (!active.length) return true;
   const authHeader = req.headers?.authorization || "";
   const token = req.query?.token || "";
-  return (
-    authHeader === `Bearer ${secret}` ||
-    authHeader === secret ||
-    token === secret
+  return active.some(
+    (entry) =>
+      authHeader === `Bearer ${entry}` ||
+      authHeader === entry ||
+      token === entry
   );
 };
 
@@ -458,8 +461,8 @@ export const getWhitelistClaimState = (rewardRow, config, nowMs = Date.now()) =>
   const streamDays = Math.max(1, toNumberSafe(rewardRow?.streamDays, config?.streamDays || 1));
   const streamDurationMs = streamDays * 86400 * 1000;
 
-  const claimOpensAt = toMsSafe(config?.claimOpensAtMs, DEFAULTS.claimOpensAtMs);
-  const claimOpen = nowMs >= claimOpensAt;
+  const claimOpensAt = toMsSafe(config?.claimOpensAtMs, null);
+  const claimOpen = Number.isFinite(claimOpensAt) ? nowMs >= claimOpensAt : false;
 
   const elapsedMs = streamStartAt ? Math.max(0, nowMs - streamStartAt) : 0;
   const streamProgress =

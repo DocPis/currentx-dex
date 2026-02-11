@@ -1,6 +1,5 @@
 import { kv } from "@vercel/kv";
 
-const DEFAULT_SEASON_ID = "season-1";
 const DELETE_BATCH_SIZE = 200;
 const SCAN_BATCH_SIZE = 1000;
 const MAX_SCAN_ROUNDS = 2000;
@@ -11,31 +10,65 @@ const parseTime = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseBlock = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return Math.floor(num);
+};
+
+const pickEnvValue = (...values) => {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+};
+
 const getSeasonConfig = () => {
-  const seasonId = process.env.POINTS_SEASON_ID || DEFAULT_SEASON_ID;
+  const seasonId = pickEnvValue(
+    process.env.POINTS_SEASON_ID,
+    process.env.VITE_POINTS_SEASON_ID
+  );
   const startMs =
     parseTime(process.env.POINTS_SEASON_START) ||
-    parseTime(process.env.VITE_POINTS_SEASON_START) ||
-    Date.UTC(2026, 1, 12, 0, 0, 0);
+    parseTime(process.env.VITE_POINTS_SEASON_START);
+  const startBlock =
+    parseBlock(process.env.POINTS_SEASON_START_BLOCK) ||
+    parseBlock(process.env.VITE_POINTS_SEASON_START_BLOCK);
   const endMs =
     parseTime(process.env.POINTS_SEASON_END) ||
-    parseTime(process.env.VITE_POINTS_SEASON_END) ||
-    null;
+    parseTime(process.env.VITE_POINTS_SEASON_END);
+  const missing = [];
+  if (!seasonId) missing.push("POINTS_SEASON_ID");
+  if (!Number.isFinite(startMs)) missing.push("POINTS_SEASON_START");
+  if (!Number.isFinite(startBlock)) missing.push("POINTS_SEASON_START_BLOCK");
   return {
     seasonId,
     startMs,
-    endMs,
+    startBlock,
+    endMs: Number.isFinite(endMs) ? endMs : null,
+    missing,
   };
 };
 
-const authorizeRequest = (req, secret) => {
-  if (!secret) return true;
+const getSecrets = () =>
+  [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+
+const authorizeRequest = (req, secrets) => {
+  const list = Array.isArray(secrets) ? secrets : [secrets];
+  const active = list.filter(Boolean);
+  if (!active.length) return true;
   const authHeader = req.headers?.authorization || "";
   const token = req.query?.token || "";
-  return (
-    authHeader === `Bearer ${secret}` ||
-    authHeader === secret ||
-    token === secret
+  return active.some(
+    (secret) =>
+      authHeader === `Bearer ${secret}` ||
+      authHeader === secret ||
+      token === secret
   );
 };
 
@@ -104,8 +137,14 @@ const deleteInBatches = async (keys) => {
 };
 
 export default async function handler(req, res) {
-  const secret = process.env.POINTS_INGEST_TOKEN || "";
-  if (!authorizeRequest(req, secret)) {
+  const secrets = getSecrets();
+  if (!secrets.length) {
+    res.status(503).json({
+      error: "Missing required env: set POINTS_INGEST_TOKEN or CRON_SECRET",
+    });
+    return;
+  }
+  if (!authorizeRequest(req, secrets)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -115,8 +154,14 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { seasonId } = getSeasonConfig();
+  const { seasonId, missing: missingSeasonEnv } = getSeasonConfig();
   const targetSeason = req.query?.seasonId || seasonId;
+  if (!targetSeason || missingSeasonEnv?.length) {
+    res.status(503).json({
+      error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
+    });
+    return;
+  }
   const prefix = `points:${targetSeason}:`;
 
   try {

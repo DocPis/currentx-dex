@@ -8,13 +8,20 @@ const parseTime = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-export const SEASON_ID = "season-1";
-export const SEASON_LABEL = "Season 1";
+const parseBool = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
+export const SEASON_ID =
+  String(env.VITE_POINTS_SEASON_ID || env.POINTS_SEASON_ID || "").trim();
+export const SEASON_LABEL =
+  String(env.VITE_POINTS_SEASON_LABEL || env.POINTS_SEASON_LABEL || SEASON_ID).trim();
 
 export const SEASON_START_MS =
-  parseTime(env.VITE_POINTS_SEASON_START) ?? Date.UTC(2026, 1, 12, 0, 0, 0);
+  parseTime(env.VITE_POINTS_SEASON_START) ?? null;
 export const SEASON_END_MS = parseTime(env.VITE_POINTS_SEASON_END);
-export const SEASON_ONGOING = !SEASON_END_MS;
+export const SEASON_ONGOING = Boolean(SEASON_START_MS) && !SEASON_END_MS;
 
 export const LP_POOL_MULTIPLIERS = {
   SWAP: 1,
@@ -22,7 +29,7 @@ export const LP_POOL_MULTIPLIERS = {
   CRX_USDM: 3,
 };
 
-export const SHOW_LEADERBOARD = false;
+export const SHOW_LEADERBOARD = parseBool(env.VITE_POINTS_SHOW_LEADERBOARD);
 
 export const POINTS_SEASON = {
   id: SEASON_ID,
