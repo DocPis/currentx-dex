@@ -39,6 +39,35 @@ const SUBGRAPH_V3_MISSING_KEY =
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isIndexerUnavailableMessage = (value = "") => {
+  const msg = String(value || "").toLowerCase();
+  return (
+    msg.includes("bad indexers") ||
+    msg.includes("indexer not available") ||
+    msg.includes("unavailable(no status")
+  );
+};
+
+const normalizeSubgraphErrorMessage = (value = "", fallback = "Subgraph unavailable") => {
+  const msg = String(value || "").trim();
+  if (!msg) return fallback;
+  if (isIndexerUnavailableMessage(msg)) {
+    return "Subgraph temporarily unavailable (indexer issue). Please retry shortly.";
+  }
+  return msg;
+};
+
+const isTransientSubgraphMessage = (value = "") => {
+  const msg = String(value || "").toLowerCase();
+  return (
+    msg.includes("fetch") ||
+    msg.includes("network") ||
+    msg.includes("timeout") ||
+    msg.includes("rate") ||
+    isIndexerUnavailableMessage(msg)
+  );
+};
+
 async function postSubgraph(query, variables = {}) {
   if (!SUBGRAPH_URL) {
     throw new Error("Missing VITE_UNIV2_SUBGRAPH env var");
@@ -81,8 +110,18 @@ async function postSubgraph(query, variables = {}) {
           res.status === 429 ||
           text.toLowerCase().includes("rate") ||
           text.toLowerCase().includes("limit");
-        lastError = new Error(rateLimited ? "Subgraph rate-limited. Please retry shortly." : `Subgraph HTTP ${res.status}`);
-        if (attempt < SUBGRAPH_MAX_RETRIES && (res.status >= 500 || rateLimited)) {
+        const indexerUnavailable = isIndexerUnavailableMessage(text);
+        lastError = new Error(
+          rateLimited
+            ? "Subgraph rate-limited. Please retry shortly."
+            : indexerUnavailable
+              ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
+              : `Subgraph HTTP ${res.status}`
+        );
+        if (
+          attempt < SUBGRAPH_MAX_RETRIES &&
+          (res.status >= 500 || rateLimited || indexerUnavailable)
+        ) {
           await sleep(250 * (attempt + 1));
           continue;
         }
@@ -91,17 +130,18 @@ async function postSubgraph(query, variables = {}) {
 
       const json = await res.json();
       if (json.errors?.length) {
-        throw new Error(json.errors[0]?.message || "Subgraph error");
+        throw new Error(
+          normalizeSubgraphErrorMessage(
+            json.errors[0]?.message || "Subgraph error",
+            "Subgraph error"
+          )
+        );
       }
       subgraphCache.set(cacheKey, { ts: now, data: json.data });
       return json.data;
     } catch (err) {
       const msg = (err?.message || "").toLowerCase();
-      const transient =
-        msg.includes("fetch") ||
-        msg.includes("network") ||
-        msg.includes("timeout") ||
-        msg.includes("rate");
+      const transient = isTransientSubgraphMessage(msg);
       const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
       if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
         attemptedProxy = true;
@@ -118,7 +158,12 @@ async function postSubgraph(query, variables = {}) {
     }
   }
 
-  throw lastError || new Error("Subgraph unavailable");
+  throw new Error(
+    normalizeSubgraphErrorMessage(
+      lastError?.message || "",
+      "Subgraph unavailable"
+    )
+  );
 }
 
 async function postSubgraphV3(query, variables = {}) {
@@ -163,8 +208,18 @@ async function postSubgraphV3(query, variables = {}) {
           res.status === 429 ||
           text.toLowerCase().includes("rate") ||
           text.toLowerCase().includes("limit");
-        lastError = new Error(rateLimited ? "Subgraph rate-limited. Please retry shortly." : `Subgraph HTTP ${res.status}`);
-        if (attempt < SUBGRAPH_MAX_RETRIES && (res.status >= 500 || rateLimited)) {
+        const indexerUnavailable = isIndexerUnavailableMessage(text);
+        lastError = new Error(
+          rateLimited
+            ? "Subgraph rate-limited. Please retry shortly."
+            : indexerUnavailable
+              ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
+              : `Subgraph HTTP ${res.status}`
+        );
+        if (
+          attempt < SUBGRAPH_MAX_RETRIES &&
+          (res.status >= 500 || rateLimited || indexerUnavailable)
+        ) {
           await sleep(250 * (attempt + 1));
           continue;
         }
@@ -173,17 +228,18 @@ async function postSubgraphV3(query, variables = {}) {
 
       const json = await res.json();
       if (json.errors?.length) {
-        throw new Error(json.errors[0]?.message || "Subgraph error");
+        throw new Error(
+          normalizeSubgraphErrorMessage(
+            json.errors[0]?.message || "Subgraph error",
+            "Subgraph error"
+          )
+        );
       }
       subgraphCacheV3.set(cacheKey, { ts: now, data: json.data });
       return json.data;
     } catch (err) {
       const msg = (err?.message || "").toLowerCase();
-      const transient =
-        msg.includes("fetch") ||
-        msg.includes("network") ||
-        msg.includes("timeout") ||
-        msg.includes("rate");
+      const transient = isTransientSubgraphMessage(msg);
       const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
       if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
         attemptedProxy = true;
@@ -200,7 +256,12 @@ async function postSubgraphV3(query, variables = {}) {
     }
   }
 
-  throw lastError || new Error("Subgraph unavailable");
+  throw new Error(
+    normalizeSubgraphErrorMessage(
+      lastError?.message || "",
+      "Subgraph unavailable"
+    )
+  );
 }
 
 // Fetch Uniswap V2 pair data (tvl, 24h volume) by token addresses
