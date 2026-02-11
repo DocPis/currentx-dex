@@ -138,7 +138,7 @@ const AccordionItem = ({ title, children }) => (
 
 export default function PointsPage({ address, onConnect }) {
   const [copied, setCopied] = useState("");
-  const leaderboardQuery = useLeaderboard(SEASON_ID, 0);
+  const leaderboardQuery = useLeaderboard(SEASON_ID, 0, SHOW_LEADERBOARD);
   const { data: userStats, isLoading, error } = useUserPoints(address);
 
   const seasonHeadline = "SEASON 1 — Feb 12, 2026 → Mar 12, 2026 (28 days)";

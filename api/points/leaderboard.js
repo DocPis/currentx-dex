@@ -63,9 +63,13 @@ export default async function handler(req, res) {
       addresses.push({ address, score });
     }
 
-    const pipeline = kv.pipeline();
-    addresses.forEach(({ address }) => pipeline.hgetall(keys.user(address)));
-    const userRows = await pipeline.exec();
+    const userRows = addresses.length
+      ? await (() => {
+          const pipeline = kv.pipeline();
+          addresses.forEach(({ address }) => pipeline.hgetall(keys.user(address)));
+          return pipeline.exec();
+        })()
+      : [];
 
     addresses.forEach(({ address, score }, idx) => {
       const row = userRows?.[idx] || {};

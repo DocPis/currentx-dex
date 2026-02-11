@@ -481,9 +481,10 @@ export const useUserPoints = (address) => {
   });
 };
 
-export const useLeaderboard = (seasonId, page = 0) => {
+export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
   const query = useQuery({
     queryKey: getLeaderboardQueryKey(seasonId, page),
+    enabled: Boolean(enabled),
     queryFn: async () => {
       const params = new URLSearchParams();
       if (seasonId) params.set("seasonId", seasonId);
