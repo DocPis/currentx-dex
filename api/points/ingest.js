@@ -21,6 +21,14 @@ const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
   "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
 const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
+const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
+  "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
+];
+const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
+  "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
+];
 
 const parseTime = (value) => {
   if (!value) return null;
@@ -40,6 +48,47 @@ const parseRpcUrls = (value) => {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+};
+
+const parseSubgraphUrls = (...values) =>
+  values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .flatMap((value) => String(value || "").split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+const dedupeUrls = (urls = []) => {
+  const seen = new Set();
+  const out = [];
+  urls.forEach((url) => {
+    const normalized = String(url || "").trim();
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  });
+  return out;
+};
+
+const isFallbackSubgraphProvider = (url = "") => {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname.includes("thegraph.com") || hostname.includes("goldsky.com");
+  } catch {
+    return false;
+  }
+};
+
+const prioritizeSubgraphUrls = (urls = []) => {
+  const primary = [];
+  const fallback = [];
+  urls.forEach((url) => {
+    if (isFallbackSubgraphProvider(url)) {
+      fallback.push(url);
+      return;
+    }
+    primary.push(url);
+  });
+  return [...primary, ...fallback];
 };
 
 const pickEnvValue = (...values) => {
@@ -260,24 +309,49 @@ const getSeasonConfig = () => {
   };
 };
 
-const getSubgraphConfig = () => ({
-  v2Url:
-    process.env.UNIV2_SUBGRAPH_URL ||
-    process.env.VITE_UNIV2_SUBGRAPH ||
-    "",
-  v2Key:
-    process.env.UNIV2_SUBGRAPH_API_KEY ||
-    process.env.VITE_UNIV2_SUBGRAPH_API_KEY ||
-    "",
-  v3Url:
-    process.env.UNIV3_SUBGRAPH_URL ||
-    process.env.VITE_UNIV3_SUBGRAPH ||
-    "",
-  v3Key:
-    process.env.UNIV3_SUBGRAPH_API_KEY ||
-    process.env.VITE_UNIV3_SUBGRAPH_API_KEY ||
-    "",
-});
+const getSubgraphConfig = () => {
+  const v2Primary = parseSubgraphUrls(
+    process.env.POINTS_UNIV2_SUBGRAPH_URL,
+    process.env.UNIV2_SUBGRAPH_URL,
+    process.env.VITE_UNIV2_SUBGRAPH
+  );
+  const v2Fallback = parseSubgraphUrls(
+    process.env.POINTS_UNIV2_SUBGRAPH_FALLBACKS,
+    process.env.UNIV2_SUBGRAPH_FALLBACKS,
+    process.env.VITE_UNIV2_SUBGRAPH_FALLBACKS,
+    DEFAULT_V2_FALLBACK_SUBGRAPHS.join(",")
+  );
+  const v2Urls = prioritizeSubgraphUrls(dedupeUrls([...v2Primary, ...v2Fallback]));
+
+  const v3Primary = parseSubgraphUrls(
+    process.env.POINTS_UNIV3_SUBGRAPH_URL,
+    process.env.UNIV3_SUBGRAPH_URL,
+    process.env.VITE_UNIV3_SUBGRAPH
+  );
+  const v3Fallback = parseSubgraphUrls(
+    process.env.POINTS_UNIV3_SUBGRAPH_FALLBACKS,
+    process.env.UNIV3_SUBGRAPH_FALLBACKS,
+    process.env.VITE_UNIV3_SUBGRAPH_FALLBACKS,
+    DEFAULT_V3_FALLBACK_SUBGRAPHS.join(",")
+  );
+  const v3Urls = prioritizeSubgraphUrls(dedupeUrls([...v3Primary, ...v3Fallback]));
+
+  return {
+    // First URL is preferred; subsequent URLs are runtime fallback endpoints.
+    v2Url: v2Urls.join(","),
+    v2Key:
+      process.env.POINTS_UNIV2_SUBGRAPH_API_KEY ||
+      process.env.UNIV2_SUBGRAPH_API_KEY ||
+      process.env.VITE_UNIV2_SUBGRAPH_API_KEY ||
+      "",
+    v3Url: v3Urls.join(","),
+    v3Key:
+      process.env.POINTS_UNIV3_SUBGRAPH_API_KEY ||
+      process.env.UNIV3_SUBGRAPH_API_KEY ||
+      process.env.VITE_UNIV3_SUBGRAPH_API_KEY ||
+      "",
+  };
+};
 
 const getAddressConfig = () => {
   const normalize = (v) => (v ? String(v).toLowerCase() : "");
@@ -303,19 +377,31 @@ const buildHeaders = (apiKey) => {
 };
 
 const postGraph = async (url, apiKey, query, variables) => {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: buildHeaders(apiKey),
-    body: JSON.stringify({ query, variables }),
-  });
-  if (!res.ok) {
-    throw new Error(`Subgraph HTTP ${res.status}`);
+  const urls = prioritizeSubgraphUrls(dedupeUrls(parseSubgraphUrls(url)));
+  if (!urls.length) {
+    throw new Error("Subgraph URL not configured");
   }
-  const json = await res.json();
-  if (json.errors?.length) {
-    throw new Error(json.errors[0]?.message || "Subgraph error");
+  let lastError = null;
+  for (const candidate of urls) {
+    try {
+      const res = await fetch(candidate, {
+        method: "POST",
+        headers: buildHeaders(apiKey),
+        body: JSON.stringify({ query, variables }),
+      });
+      if (!res.ok) {
+        throw new Error(`Subgraph HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      if (json.errors?.length) {
+        throw new Error(json.errors[0]?.message || "Subgraph error");
+      }
+      return json.data;
+    } catch (err) {
+      lastError = err;
+    }
   }
-  return json.data;
+  throw lastError || new Error("Subgraph unavailable");
 };
 
 function normalizeAddress(addr) {
