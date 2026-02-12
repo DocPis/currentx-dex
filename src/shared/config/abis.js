@@ -2445,3 +2445,366 @@ export const CHAINLINK_AGGREGATOR_ABI = [
   "function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
   "function getRoundData(uint80 _roundId) view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)",
 ];
+
+// CurrentX launchpad ABI (factory + deployment entrypoints)
+export const CURRENTX_ABI = [
+  {
+    inputs: [],
+    name: "MAX_CREATOR_REWARD",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "MAX_VAULT_PERCENTAGE",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "MAX_TICK",
+    outputs: [{ internalType: "int24", name: "", type: "int24" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "TICK_SPACING",
+    outputs: [{ internalType: "int24", name: "", type: "int24" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "POOL_FEE",
+    outputs: [{ internalType: "uint24", name: "", type: "uint24" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "TOKEN_SUPPLY",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "weth",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        components: [
+          {
+            components: [
+              { internalType: "string", name: "name", type: "string" },
+              { internalType: "string", name: "symbol", type: "string" },
+              { internalType: "bytes32", name: "salt", type: "bytes32" },
+              { internalType: "string", name: "image", type: "string" },
+              { internalType: "string", name: "metadata", type: "string" },
+              { internalType: "string", name: "context", type: "string" },
+              { internalType: "uint256", name: "originatingChainId", type: "uint256" },
+            ],
+            internalType: "struct ICurrentX.TokenConfig",
+            name: "tokenConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint8", name: "vaultPercentage", type: "uint8" },
+              { internalType: "uint256", name: "vaultDuration", type: "uint256" },
+            ],
+            internalType: "struct ICurrentX.VaultConfig",
+            name: "vaultConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "address", name: "pairedToken", type: "address" },
+              {
+                internalType: "int24",
+                name: "tickIfToken0IsNewToken",
+                type: "int24",
+              },
+            ],
+            internalType: "struct ICurrentX.PoolConfig",
+            name: "poolConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint24", name: "pairedTokenPoolFee", type: "uint24" },
+              {
+                internalType: "uint256",
+                name: "pairedTokenSwapAmountOutMinimum",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct ICurrentX.InitialBuyConfig",
+            name: "initialBuyConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint256", name: "creatorReward", type: "uint256" },
+              { internalType: "address", name: "creatorAdmin", type: "address" },
+              {
+                internalType: "address",
+                name: "creatorRewardRecipient",
+                type: "address",
+              },
+              { internalType: "address", name: "interfaceAdmin", type: "address" },
+              {
+                internalType: "address",
+                name: "interfaceRewardRecipient",
+                type: "address",
+              },
+            ],
+            internalType: "struct ICurrentX.RewardsConfig",
+            name: "rewardsConfig",
+            type: "tuple",
+          },
+        ],
+        internalType: "struct ICurrentX.DeploymentConfig",
+        name: "deploymentConfig",
+        type: "tuple",
+      },
+    ],
+    name: "deployToken",
+    outputs: [
+      { internalType: "address", name: "tokenAddress", type: "address" },
+      { internalType: "uint256", name: "positionId", type: "uint256" },
+    ],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [
+      {
+        components: [
+          {
+            components: [
+              { internalType: "string", name: "name", type: "string" },
+              { internalType: "string", name: "symbol", type: "string" },
+              { internalType: "bytes32", name: "salt", type: "bytes32" },
+              { internalType: "string", name: "image", type: "string" },
+              { internalType: "string", name: "metadata", type: "string" },
+              { internalType: "string", name: "context", type: "string" },
+              { internalType: "uint256", name: "originatingChainId", type: "uint256" },
+            ],
+            internalType: "struct ICurrentX.TokenConfig",
+            name: "tokenConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint8", name: "vaultPercentage", type: "uint8" },
+              { internalType: "uint256", name: "vaultDuration", type: "uint256" },
+            ],
+            internalType: "struct ICurrentX.VaultConfig",
+            name: "vaultConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "address", name: "pairedToken", type: "address" },
+              {
+                internalType: "int24",
+                name: "tickIfToken0IsNewToken",
+                type: "int24",
+              },
+            ],
+            internalType: "struct ICurrentX.PoolConfig",
+            name: "poolConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint24", name: "pairedTokenPoolFee", type: "uint24" },
+              {
+                internalType: "uint256",
+                name: "pairedTokenSwapAmountOutMinimum",
+                type: "uint256",
+              },
+            ],
+            internalType: "struct ICurrentX.InitialBuyConfig",
+            name: "initialBuyConfig",
+            type: "tuple",
+          },
+          {
+            components: [
+              { internalType: "uint256", name: "creatorReward", type: "uint256" },
+              { internalType: "address", name: "creatorAdmin", type: "address" },
+              {
+                internalType: "address",
+                name: "creatorRewardRecipient",
+                type: "address",
+              },
+              { internalType: "address", name: "interfaceAdmin", type: "address" },
+              {
+                internalType: "address",
+                name: "interfaceRewardRecipient",
+                type: "address",
+              },
+            ],
+            internalType: "struct ICurrentX.RewardsConfig",
+            name: "rewardsConfig",
+            type: "tuple",
+          },
+        ],
+        internalType: "struct ICurrentX.DeploymentConfig",
+        name: "deploymentConfig",
+        type: "tuple",
+      },
+      {
+        internalType: "address",
+        name: "teamRewardRecipient",
+        type: "address",
+      },
+    ],
+    name: "deployTokenWithCustomTeamRewardRecipient",
+    outputs: [
+      { internalType: "address", name: "tokenAddress", type: "address" },
+      { internalType: "uint256", name: "positionId", type: "uint256" },
+    ],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "token", type: "address" }],
+    name: "claimRewards",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "user", type: "address" }],
+    name: "getTokensDeployedByUser",
+    outputs: [
+      {
+        components: [
+          { internalType: "address", name: "token", type: "address" },
+          { internalType: "uint256", name: "positionId", type: "uint256" },
+          { internalType: "address", name: "locker", type: "address" },
+        ],
+        internalType: "struct ICurrentX.DeploymentInfo[]",
+        name: "",
+        type: "tuple[]",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+];
+
+// CurrentX vault ABI (locked allocation management)
+export const CURRENTX_VAULT_ABI = [
+  {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "allocation",
+    outputs: [
+      { internalType: "address", name: "token", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "uint256", name: "endTime", type: "uint256" },
+      { internalType: "address", name: "admin", type: "address" },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "minimumVaultTime",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "token", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "uint256", name: "endTime", type: "uint256" },
+      { internalType: "address", name: "admin", type: "address" },
+    ],
+    name: "deposit",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "address", name: "token", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+      { internalType: "address", name: "to", type: "address" },
+    ],
+    name: "withdraw",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+];
+
+// LP Locker V2 ABI (creator/interface/team fee split + claims)
+export const LP_LOCKER_V2_ABI = [
+  {
+    inputs: [],
+    name: "TEAM_REWARD",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "MAX_CREATOR_REWARD",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "user", type: "address" }],
+    name: "getLpTokenIdsForCreator",
+    outputs: [{ internalType: "uint256[]", name: "", type: "uint256[]" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    name: "tokenRewards",
+    outputs: [
+      { internalType: "uint256", name: "lpTokenId", type: "uint256" },
+      { internalType: "uint256", name: "creatorReward", type: "uint256" },
+      {
+        components: [
+          { internalType: "address", name: "admin", type: "address" },
+          { internalType: "address", name: "recipient", type: "address" },
+        ],
+        internalType: "struct ILpLockerv2.RewardRecipient",
+        name: "creator",
+        type: "tuple",
+      },
+      {
+        components: [
+          { internalType: "address", name: "admin", type: "address" },
+          { internalType: "address", name: "recipient", type: "address" },
+        ],
+        internalType: "struct ILpLockerv2.RewardRecipient",
+        name: "interfacer",
+        type: "tuple",
+      },
+    ],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }],
+    name: "collectRewards",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+];
