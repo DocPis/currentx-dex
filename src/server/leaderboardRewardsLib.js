@@ -11,9 +11,22 @@ const DEFAULTS = {
   totalSupplyCrx: 1_000_000,
   leaderboardRewardsPct: 0.4,
   seasonAllocationsCrx: [120_000, 90_000, 70_000, 50_000, 40_000, 30_000],
+  top100PoolPct: 0.5,
+  top100MinVolumeUsd: 1,
+  top100RequireFinalization: true,
   finalizationWindowHours: 48,
   claimSignatureTtlMs: 10 * 60 * 1000,
 };
+
+const DEFAULT_TOP100_TIERS = Object.freeze([
+  { from: 1, to: 1, pct: 0.08 },
+  { from: 2, to: 2, pct: 0.06 },
+  { from: 3, to: 3, pct: 0.05 },
+  { from: 4, to: 10, pct: 0.21 },
+  { from: 11, to: 25, pct: 0.2 },
+  { from: 26, to: 50, pct: 0.2 },
+  { from: 51, to: 100, pct: 0.2 },
+]);
 
 const parseTime = (value) => {
   if (!value) return null;
@@ -39,6 +52,19 @@ const pickEnvValue = (...values) => {
     if (text) return text;
   }
   return "";
+};
+
+const parseBool = (value, fallback = false) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
+  return fallback;
+};
+
+const toBool = (value) => {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return value === true || value === 1 || normalized === "1" || normalized === "true";
 };
 
 const parseSeasonAllocations = (raw) =>
@@ -104,6 +130,22 @@ export const getLeaderboardRewardsConfig = (seasonIdOverride) => {
     seasonAllocationsCrx,
     process.env.POINTS_SEASON_REWARD_CRX
   );
+  const top100PoolPct = clampNumber(
+    process.env.POINTS_TOP100_POOL_PCT,
+    0,
+    1,
+    DEFAULTS.top100PoolPct
+  );
+  const top100MinVolumeUsd = clampNumber(
+    process.env.POINTS_TOP100_MIN_VOLUME_USD,
+    0,
+    1_000_000_000,
+    DEFAULTS.top100MinVolumeUsd
+  );
+  const top100RequireFinalization = parseBool(
+    process.env.POINTS_TOP100_REQUIRE_FINALIZATION,
+    DEFAULTS.top100RequireFinalization
+  );
 
   return {
     seasonId,
@@ -112,6 +154,10 @@ export const getLeaderboardRewardsConfig = (seasonIdOverride) => {
     leaderboardRewardsTotalCrx,
     seasonAllocationsCrx,
     seasonRewardCrx,
+    top100PoolPct,
+    top100MinVolumeUsd,
+    top100RequireFinalization,
+    top100Tiers: DEFAULT_TOP100_TIERS,
     immediatePct: 1,
     streamDays: 0,
     seasonEndMs,
@@ -199,6 +245,175 @@ export const computeLeaderboardReward = ({
   totalPoints,
   seasonRewardCrx,
 }) => computeProRataReward({ userPoints, totalPoints, seasonRewardCrx });
+
+const isWashFlagged = (row = {}) => {
+  if (!row || typeof row !== "object") return false;
+  const numericFlags = [
+    Number(row.washFlag),
+    Number(row.isWash),
+    Number(row.washFlagged),
+    Number(row.isWashFlagged),
+  ];
+  if (numericFlags.some((value) => Number.isFinite(value) && value > 0)) return true;
+
+  const boolFlags = [
+    row.washFlag,
+    row.isWash,
+    row.washFlagged,
+    row.isWashFlagged,
+    row.wash,
+  ];
+  if (boolFlags.some((value) => toBool(value))) return true;
+
+  const score = Number(row.washScore ?? row.washRiskScore ?? 0);
+  return Number.isFinite(score) && score > 0;
+};
+
+const isTop100Eligible = ({
+  row,
+  minVolumeUsd,
+  finalizationComplete,
+  requireTop100Finalization,
+}) => {
+  if (!row || typeof row !== "object") return false;
+  const volumeUsd = Math.max(0, toNumber(row.volumeUsd, 0));
+  const hasSwap = volumeUsd > 0;
+  const meetsMinVolume = volumeUsd >= Math.max(0, toNumber(minVolumeUsd, 0));
+  if (!hasSwap || !meetsMinVolume) return false;
+  if (isWashFlagged(row)) return false;
+  if (requireTop100Finalization && !finalizationComplete) return false;
+  return true;
+};
+
+const addReward = (map, address, amountCrx) => {
+  if (!address) return;
+  const current = map.get(address) || 0;
+  map.set(address, round6(current + round6(amountCrx)));
+};
+
+export const computeLeaderboardRewardsTable = ({
+  entries = [],
+  userRowsByAddress = new Map(),
+  seasonRewardCrx = 0,
+  config = null,
+  nowMs = Date.now(),
+  requireTop100Finalization = null,
+}) => {
+  const seasonReward = round6(Math.max(0, toNumber(seasonRewardCrx, 0)));
+  const rewardsByAddress = new Map();
+  if (!seasonReward || !Array.isArray(entries) || !entries.length) {
+    return {
+      rewardsByAddress,
+      seasonRewardCrx: seasonReward,
+      top100PoolCrx: 0,
+      baseOthersPoolCrx: 0,
+      top100UnassignedCrx: 0,
+      effectiveOthersPoolCrx: 0,
+      othersPointsTotal: 0,
+    };
+  }
+
+  const normalizedEntries = entries
+    .map((entry, idx) => {
+      const address = normalizeAddress(entry?.address);
+      const points = Math.max(0, toNumber(entry?.points, 0));
+      const rankRaw = toNumber(entry?.rank, idx + 1);
+      const rank = Number.isFinite(rankRaw) && rankRaw > 0 ? Math.floor(rankRaw) : idx + 1;
+      return { address, points, rank };
+    })
+    .filter((entry) => entry.address && entry.points > 0)
+    .sort((a, b) => a.rank - b.rank);
+
+  if (!normalizedEntries.length) {
+    return {
+      rewardsByAddress,
+      seasonRewardCrx: seasonReward,
+      top100PoolCrx: 0,
+      baseOthersPoolCrx: 0,
+      top100UnassignedCrx: 0,
+      effectiveOthersPoolCrx: 0,
+      othersPointsTotal: 0,
+    };
+  }
+
+  const top100PoolPct = clampNumber(
+    config?.top100PoolPct,
+    0,
+    1,
+    DEFAULTS.top100PoolPct
+  );
+  const top100PoolCrx = round6(seasonReward * top100PoolPct);
+  const baseOthersPoolCrx = round6(Math.max(0, seasonReward - top100PoolCrx));
+  const top100MinVolumeUsd = Math.max(
+    0,
+    toNumber(config?.top100MinVolumeUsd, DEFAULTS.top100MinVolumeUsd)
+  );
+  const enforceFinalization =
+    requireTop100Finalization === null || requireTop100Finalization === undefined
+      ? parseBool(config?.top100RequireFinalization, DEFAULTS.top100RequireFinalization)
+      : Boolean(requireTop100Finalization);
+  const claimOpensAt = toNumber(config?.claimOpensAtMs, null);
+  const finalizationComplete = Number.isFinite(claimOpensAt) ? nowMs >= claimOpensAt : false;
+  const top100Tiers = Array.isArray(config?.top100Tiers) && config.top100Tiers.length
+    ? config.top100Tiers
+    : DEFAULT_TOP100_TIERS;
+
+  const byRank = new Map();
+  normalizedEntries.forEach((entry) => {
+    if (!byRank.has(entry.rank)) byRank.set(entry.rank, entry);
+  });
+
+  let top100UnassignedCrx = 0;
+  top100Tiers.forEach((tier) => {
+    const from = Math.max(1, Math.floor(toNumber(tier?.from, 0)));
+    const to = Math.max(from, Math.floor(toNumber(tier?.to, from)));
+    const pct = Math.max(0, toNumber(tier?.pct, 0));
+    const slots = Math.max(1, to - from + 1);
+    const perRankCrx = round6((top100PoolCrx * pct) / slots);
+    for (let rank = from; rank <= to; rank += 1) {
+      const entry = byRank.get(rank);
+      if (!entry) {
+        top100UnassignedCrx = round6(top100UnassignedCrx + perRankCrx);
+        continue;
+      }
+      const row = userRowsByAddress.get(entry.address) || null;
+      const eligible = isTop100Eligible({
+        row,
+        minVolumeUsd: top100MinVolumeUsd,
+        finalizationComplete,
+        requireTop100Finalization: enforceFinalization,
+      });
+      if (!eligible) {
+        top100UnassignedCrx = round6(top100UnassignedCrx + perRankCrx);
+        continue;
+      }
+      addReward(rewardsByAddress, entry.address, perRankCrx);
+    }
+  });
+
+  const effectiveOthersPoolCrx = round6(baseOthersPoolCrx + top100UnassignedCrx);
+  const others = normalizedEntries.filter((entry) => entry.rank > 100 && entry.points > 0);
+  const othersPointsTotal = round6(
+    others.reduce((acc, entry) => acc + Math.max(0, toNumber(entry.points, 0)), 0)
+  );
+  if (effectiveOthersPoolCrx > 0 && othersPointsTotal > 0) {
+    others.forEach((entry) => {
+      const share = entry.points / othersPointsTotal;
+      const reward = round6(effectiveOthersPoolCrx * share);
+      addReward(rewardsByAddress, entry.address, reward);
+    });
+  }
+
+  return {
+    rewardsByAddress,
+    seasonRewardCrx: seasonReward,
+    top100PoolCrx,
+    baseOthersPoolCrx,
+    top100UnassignedCrx,
+    effectiveOthersPoolCrx,
+    othersPointsTotal,
+  };
+};
 
 export const getLeaderboardClaimState = ({
   totalRewardCrx,

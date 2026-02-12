@@ -1,10 +1,11 @@
 import { kv } from "@vercel/kv";
 import {
   buildPointsSummary,
-  computeLeaderboardReward,
+  computeLeaderboardRewardsTable,
   getLeaderboardRewardsConfig,
   normalizeAddress,
   parsePointsSummaryRow,
+  round6,
 } from "../../src/server/leaderboardRewardsLib.js";
 
 const parseTime = (value) => {
@@ -201,29 +202,49 @@ export default async function handler(req, res) {
     const totalPoints = computedTotals
       ? computedTotals.totalPoints
       : toNumber(summary?.totalPoints, 0);
-    const seasonRewardCrx = toNumber(
-      summary?.seasonRewardCrx,
-      rewardsConfig.seasonRewardCrx
+    const summarySeasonRewardCrx = toNumber(summary?.seasonRewardCrx, NaN);
+    const configuredSeasonRewardCrx = toNumber(rewardsConfig?.seasonRewardCrx, 0);
+    const seasonRewardCrx =
+      Number.isFinite(summarySeasonRewardCrx) && summarySeasonRewardCrx > 0
+        ? summarySeasonRewardCrx
+        : configuredSeasonRewardCrx;
+    const rankedEntries = addresses.map(({ address, score }, idx) => {
+      const row = userRows?.[idx] || {};
+      return {
+        address,
+        points: Math.max(0, toNumber(row?.points, score)),
+        rank: idx + 1,
+      };
+    });
+    const userRowsByAddress = new Map(
+      addresses.map(({ address }, idx) => [address, userRows?.[idx] || null])
     );
+    const rewardsTable = computeLeaderboardRewardsTable({
+      entries: rankedEntries,
+      userRowsByAddress,
+      seasonRewardCrx,
+      config: rewardsConfig,
+      nowMs,
+      requireTop100Finalization: false,
+    });
 
     const items = addresses.map(({ address, score }, idx) => {
       const row = userRows?.[idx] || {};
       const points = toNumber(row?.points, score);
       const multiplier = toNumber(row?.multiplier, 1);
       const lpUsd = toNumber(row?.lpUsd, 0);
-      const reward = computeLeaderboardReward({
-        userPoints: points,
-        totalPoints,
-        seasonRewardCrx,
-      });
+      const rewardCrx = toNumber(rewardsTable?.rewardsByAddress?.get(address), 0);
+      const rewardSharePct = seasonRewardCrx > 0
+        ? round6((rewardCrx / seasonRewardCrx) * 100)
+        : 0;
       return {
         address,
         points,
         multiplier,
         lpUsd,
         rank: idx + 1,
-        rewardCrx: reward.rewardCrx,
-        rewardSharePct: reward.sharePct,
+        rewardCrx,
+        rewardSharePct,
       };
     });
 

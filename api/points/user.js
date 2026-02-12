@@ -1,12 +1,13 @@
 import { kv } from "@vercel/kv";
 import {
   buildPointsSummary,
-  computeLeaderboardReward,
+  computeLeaderboardRewardsTable,
   getLeaderboardClaimState,
   getLeaderboardRewardsConfig,
   normalizeAddress,
   parsePointsSummaryRow,
   parseRewardClaimRow,
+  round6,
 } from "../../src/server/leaderboardRewardsLib.js";
 
 const parseTime = (value) => {
@@ -184,25 +185,16 @@ export default async function handler(req, res) {
       return;
     }
 
-    let summary = parsePointsSummaryRow(summaryRow);
-    let leaderboardEntries = null;
-    let filteredTotals = null;
-    let filteredRank = null;
-    if (excludedAddresses.size > 0) {
-      leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
-        rev: true,
-        withScores: true,
-      });
-      filteredTotals = computeTotalsFromEntries(leaderboardEntries, excludedAddresses);
-      if (!excludedFromLeaderboard) {
-        filteredRank = findFilteredRank(
-          leaderboardEntries,
-          normalized,
-          excludedAddresses
-        );
-      }
-    }
+    const leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
+      rev: true,
+      withScores: true,
+    });
+    const filteredTotals = computeTotalsFromEntries(leaderboardEntries, excludedAddresses);
+    const filteredRank = excludedFromLeaderboard
+      ? null
+      : findFilteredRank(leaderboardEntries, normalized, excludedAddresses);
 
+    let summary = parsePointsSummaryRow(summaryRow);
     if (!summary) {
       summary = await buildSummaryFromLeaderboard({
         keys,
@@ -210,27 +202,58 @@ export default async function handler(req, res) {
         rewardsConfig,
         sampleUserRow: userRow,
         nowMs,
-        rows: leaderboardEntries || undefined,
+        rows: leaderboardEntries,
         excludedAddresses,
       });
     }
 
-    const userPoints = excludedFromLeaderboard ? 0 : toNumber(userRow?.points, 0);
-    const walletCount = filteredTotals
-      ? filteredTotals.walletCount
-      : toNumber(summary?.walletCount, 0);
-    const totalPoints = filteredTotals
-      ? filteredTotals.totalPoints
-      : toNumber(summary?.totalPoints, 0);
-    const seasonRewardCrx = toNumber(
-      summary?.seasonRewardCrx,
-      rewardsConfig.seasonRewardCrx
+    const walletCount = filteredTotals.walletCount;
+    const totalPoints = filteredTotals.totalPoints;
+    const summarySeasonRewardCrx = toNumber(summary?.seasonRewardCrx, NaN);
+    const configuredSeasonRewardCrx = toNumber(rewardsConfig?.seasonRewardCrx, 0);
+    const seasonRewardCrx =
+      Number.isFinite(summarySeasonRewardCrx) && summarySeasonRewardCrx > 0
+        ? summarySeasonRewardCrx
+        : configuredSeasonRewardCrx;
+    const rankedEntries = [];
+    for (let i = 0; i < leaderboardEntries.length; i += 2) {
+      const address = normalizeAddress(leaderboardEntries[i]);
+      const points = Number(leaderboardEntries[i + 1] || 0);
+      if (!address || excludedAddresses.has(address)) continue;
+      if (!Number.isFinite(points) || points <= 0) continue;
+      rankedEntries.push({
+        address,
+        points,
+        rank: rankedEntries.length + 1,
+      });
+    }
+    const top100Addresses = rankedEntries.slice(0, 100).map((entry) => entry.address);
+    const top100Rows = top100Addresses.length
+      ? await (() => {
+          const pipeline = kv.pipeline();
+          top100Addresses.forEach((address) => pipeline.hgetall(keys.user(address)));
+          return pipeline.exec();
+        })()
+      : [];
+    const userRowsByAddress = new Map(
+      top100Addresses.map((address, idx) => [address, top100Rows?.[idx] || null])
     );
-    const rewardBreakdown = computeLeaderboardReward({
-      userPoints,
-      totalPoints,
+    const rewardsTable = computeLeaderboardRewardsTable({
+      entries: rankedEntries,
+      userRowsByAddress,
       seasonRewardCrx,
+      config: rewardsConfig,
+      nowMs,
+      requireTop100Finalization: false,
     });
+    const rewardCrx = excludedFromLeaderboard
+      ? 0
+      : toNumber(rewardsTable?.rewardsByAddress?.get(normalized), 0);
+    const sharePct = seasonRewardCrx > 0 ? round6((rewardCrx / seasonRewardCrx) * 100) : 0;
+    const rewardBreakdown = {
+      rewardCrx,
+      sharePct,
+    };
 
     const parsedRewardRow = parseRewardClaimRow(rewardRow);
     const rewardSnapshotCrx =

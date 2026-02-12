@@ -4,7 +4,7 @@ import {
   buildPointsClaimMessage,
   buildPointsSummary,
   computeLeaderboardClaimPayout,
-  computeLeaderboardReward,
+  computeLeaderboardRewardsTable,
   getLeaderboardClaimState,
   getLeaderboardRewardsConfig,
   normalizeAddress,
@@ -199,13 +199,12 @@ export default async function handler(req, res) {
       return;
     }
 
+    const leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
+      rev: true,
+      withScores: true,
+    });
+
     let summary = parsePointsSummaryRow(summaryRow);
-    let leaderboardEntries = null;
-    let filteredTotals = null;
-    if (excludedAddresses.size > 0) {
-      leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, { withScores: true });
-      filteredTotals = computeTotalsFromEntries(leaderboardEntries, excludedAddresses);
-    }
     if (!summary) {
       summary = await buildSummaryFromLeaderboard({
         keys,
@@ -213,21 +212,55 @@ export default async function handler(req, res) {
         config,
         sampleUserRow: userRow,
         nowMs,
-        rows: leaderboardEntries || undefined,
+        rows: leaderboardEntries,
         excludedAddresses,
       });
     }
 
-    const userPoints = toNumber(userRow?.points, 0);
-    const totalPoints = filteredTotals
-      ? filteredTotals.totalPoints
-      : toNumber(summary?.totalPoints, 0);
-    const seasonRewardCrx = toNumber(summary?.seasonRewardCrx, config.seasonRewardCrx);
-    const computedReward = computeLeaderboardReward({
-      userPoints,
-      totalPoints,
+    const summarySeasonRewardCrx = toNumber(summary?.seasonRewardCrx, NaN);
+    const configuredSeasonRewardCrx = toNumber(config?.seasonRewardCrx, 0);
+    const seasonRewardCrx =
+      Number.isFinite(summarySeasonRewardCrx) && summarySeasonRewardCrx > 0
+        ? summarySeasonRewardCrx
+        : configuredSeasonRewardCrx;
+    const rankedEntries = [];
+    for (let i = 0; i < leaderboardEntries.length; i += 2) {
+      const wallet = normalizeAddress(leaderboardEntries[i]);
+      const points = Number(leaderboardEntries[i + 1] || 0);
+      if (!wallet || excludedAddresses.has(wallet)) continue;
+      if (!Number.isFinite(points) || points <= 0) continue;
+      rankedEntries.push({
+        address: wallet,
+        points,
+        rank: rankedEntries.length + 1,
+      });
+    }
+    const top100Addresses = rankedEntries.slice(0, 100).map((entry) => entry.address);
+    const top100Rows = top100Addresses.length
+      ? await (() => {
+          const pipeline = kv.pipeline();
+          top100Addresses.forEach((wallet) => pipeline.hgetall(keys.user(wallet)));
+          return pipeline.exec();
+        })()
+      : [];
+    const userRowsByAddress = new Map(
+      top100Addresses.map((wallet, idx) => [wallet, top100Rows?.[idx] || null])
+    );
+    const rewardsTable = computeLeaderboardRewardsTable({
+      entries: rankedEntries,
+      userRowsByAddress,
       seasonRewardCrx,
+      config,
+      nowMs,
+      requireTop100Finalization: true,
     });
+    const computedRewardCrx = toNumber(rewardsTable?.rewardsByAddress?.get(address), 0);
+    const computedReward = {
+      rewardCrx: computedRewardCrx,
+      sharePct: seasonRewardCrx > 0
+        ? round6((computedRewardCrx / seasonRewardCrx) * 100)
+        : 0,
+    };
 
     const claimRow = parseRewardClaimRow(rewardRow);
     const rewardSnapshotCrx =

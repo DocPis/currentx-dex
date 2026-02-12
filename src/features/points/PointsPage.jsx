@@ -422,8 +422,9 @@ export default function PointsPage({ address, onConnect }) {
                 <div>1 USD traded = 1 point (all pairs).</div>
                 <div>Add Liquidity: CRX/ETH = 2x, CRX/USDM = 3x.</div>
                 <div>
-                  Leaderboard reward formula: season CRX x (user points / total season points).
+                  Leaderboard rewards: 50% to Top 100 by rank tiers, 50% to other eligible wallets pro-rata on points.
                 </div>
+                <div>Top 100 rewards require finalization complete + no wash flags + min activity.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
               </div>
             </div>
