@@ -278,17 +278,19 @@ const fetchChainlinkEthUsdHistory = async ({
   const priceToRow = (tsSec, price) => {
     if (!Number.isFinite(tsSec) || tsSec <= 0) return null;
     if (!Number.isFinite(price) || price <= 0) return null;
+    // Keep the same convention used by subgraph rows:
+    // token0Price = token1 per token0, token1Price = token0 per token1.
     if (poolToken0IsEthLike) {
       return {
         date: tsSec * 1000,
-        token0Price: 1 / price,
-        token1Price: price,
+        token0Price: price,
+        token1Price: 1 / price,
       };
     }
     return {
       date: tsSec * 1000,
-      token0Price: price,
-      token1Price: 1 / price,
+      token0Price: 1 / price,
+      token1Price: price,
     };
   };
 
@@ -3654,7 +3656,7 @@ export default function LiquiditySection({
         const chainlinkEligible =
           stablePair &&
           Boolean(CHAINLINK_ETH_USD_FEED_ADDRESS) &&
-          ((poolToken0IsEthLike && stable1) || (poolToken1IsEthLike && stable0));
+          (poolToken0IsEthLike || poolToken1IsEthLike);
         const {
           key: cachedKey,
           sig: cachedSig,

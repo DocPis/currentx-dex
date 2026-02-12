@@ -3229,8 +3229,10 @@ export async function fetchV3TokenPairHistory(token0Id, token1Id, days = 14) {
     if (!Number.isFinite(ratio) || ratio <= 0) return;
     combined.push({
       date: row0.date,
-      token0Price: ratio,
-      token1Price: 1 / ratio,
+      // Keep the same convention used by pool rows:
+      // token0Price = token1 per token0, token1Price = token0 per token1.
+      token0Price: 1 / ratio,
+      token1Price: ratio,
     });
   });
   return combined.sort((a, b) => a.date - b.date);
