@@ -62,6 +62,15 @@ const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PREFETCH_PAGE_SIZE
     ? pages.length * PREFETCH_PAGE_SIZE
     : undefined;
+const normalizePoolIds = (ids = []) =>
+  Array.from(
+    new Set(
+      (ids || [])
+        .map((id) => String(id || "").toLowerCase())
+        .filter(Boolean)
+    )
+  );
+const buildPoolIdsKey = (ids = []) => ids.slice().sort().join(",");
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -163,18 +172,16 @@ export default function App() {
 
       const v2Data = queryClient.getQueryData(["pools", "v2"]);
       const v3Data = queryClient.getQueryData(["pools", "v3"]);
-      const v2Ids = (v2Data?.pages?.flat() || [])
-        .map((p) => p?.id)
-        .filter(Boolean);
-      const v3Ids = (v3Data?.pages?.flat() || [])
-        .map((p) => p?.id)
-        .filter(Boolean);
+      const v2Ids = normalizePoolIds((v2Data?.pages?.flat() || []).map((p) => p?.id));
+      const v3Ids = normalizePoolIds((v3Data?.pages?.flat() || []).map((p) => p?.id));
+      const v2IdsKey = buildPoolIdsKey(v2Ids);
+      const v3IdsKey = buildPoolIdsKey(v3Ids);
 
       const rollPromises = [];
       if (v2Ids.length) {
         rollPromises.push(
           queryClient.prefetchQuery({
-            queryKey: ["pools", "v2-roll-24h", v2Ids],
+            queryKey: ["pools", "v2-roll-24h", v2IdsKey],
             queryFn: () => subgraph.fetchV2PoolsHourData(v2Ids, 24),
           })
         );
@@ -182,7 +189,7 @@ export default function App() {
       if (v3Ids.length) {
         rollPromises.push(
           queryClient.prefetchQuery({
-            queryKey: ["pools", "v3-roll-24h", v3Ids],
+            queryKey: ["pools", "v3-roll-24h", v3IdsKey],
             queryFn: () => subgraph.fetchV3PoolsHourData(v3Ids, 24),
           })
         );

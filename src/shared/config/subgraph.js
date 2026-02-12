@@ -1904,6 +1904,24 @@ const toNumberSafe = (value) => {
   return Number.isFinite(num) ? num : 0;
 };
 
+const buildCandidateOrder = (candidates = [], preferredIdx = null) => {
+  const indexes = candidates.map((_, idx) => idx);
+  if (
+    !Number.isInteger(preferredIdx) ||
+    preferredIdx < 0 ||
+    preferredIdx >= candidates.length
+  ) {
+    return indexes;
+  }
+  return [preferredIdx, ...indexes.filter((idx) => idx !== preferredIdx)];
+};
+
+const POOL_CHUNK_CONCURRENCY = 3;
+let v2PoolsPageCandidateIdx = null;
+let v3PoolsPageCandidateIdx = null;
+let v2PoolsHourProfile = null;
+let v3PoolsHourProfile = null;
+
 export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
   if (SUBGRAPH_MISSING_KEY) return [];
   const first = Math.max(1, Math.min(Number(limit) || 50, 200));
@@ -1962,10 +1980,17 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
     `,
   ];
 
-  for (const query of candidates) {
+  const candidateOrder = buildCandidateOrder(
+    candidates,
+    v2PoolsPageCandidateIdx
+  );
+
+  for (const idx of candidateOrder) {
+    const query = candidates[idx];
     try {
       const res = await postSubgraph(query, { first, skip: offset });
       const pairs = res?.pairs || [];
+      v2PoolsPageCandidateIdx = idx;
       return pairs.map((pair) => ({
         id: pair?.id || "",
         token0Symbol: pair?.token0?.symbol || "",
@@ -2046,10 +2071,17 @@ export async function fetchV3PoolsPage({ limit = 50, skip = 0 } = {}) {
     `,
   ];
 
-  for (const query of candidates) {
+  const candidateOrder = buildCandidateOrder(
+    candidates,
+    v3PoolsPageCandidateIdx
+  );
+
+  for (const idx of candidateOrder) {
+    const query = candidates[idx];
     try {
       const res = await postSubgraphV3(query, { first, skip: offset });
       const pools = res?.pools || [];
+      v3PoolsPageCandidateIdx = idx;
       return pools.map((pool) => ({
         id: pool?.id || "",
         token0Symbol: pool?.token0?.symbol || "",
@@ -2214,6 +2246,58 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
     });
   };
 
+  const isOrderByMissing = (message = "") =>
+    message.includes("PairHourData_orderBy") ||
+    message.includes("PairHourData_orderBy!") ||
+    message.includes("pairHourData_orderBy") ||
+    message.includes("pairHourDatas_orderBy") ||
+    message.includes("is not a valid PairHourData_orderBy");
+
+  const runRemainingChunks = async (field, orderBy, select, useSince) => {
+    if (chunks.length <= 1) return;
+    await runWithConcurrency(
+      chunks.slice(1),
+      POOL_CHUNK_CONCURRENCY,
+      async (chunk) => {
+        try {
+          await runChunk(chunk, field, orderBy, select, useSince);
+        } catch {
+          // ignore chunk failures to keep partial data
+        }
+      }
+    );
+  };
+
+  if (chunks.length && v2PoolsHourProfile) {
+    try {
+      await runChunk(
+        chunks[0],
+        v2PoolsHourProfile.field,
+        v2PoolsHourProfile.orderBy,
+        v2PoolsHourProfile.select,
+        v2PoolsHourProfile.useSince
+      );
+      await runRemainingChunks(
+        v2PoolsHourProfile.field,
+        v2PoolsHourProfile.orderBy,
+        v2PoolsHourProfile.select,
+        v2PoolsHourProfile.useSince
+      );
+      return out;
+    } catch (err) {
+      const message = err?.message || "";
+      if (
+        isSchemaFieldMissing(message) ||
+        isOrderByMissing(message) ||
+        isFilterUnsupported(message)
+      ) {
+        v2PoolsHourProfile = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   let resolvedSelect = null;
   let resolvedField = null;
   let resolvedOrderBy = null;
@@ -2240,13 +2324,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
             break;
           } catch (err) {
             const message = err?.message || "";
-            const orderByMissing =
-              message.includes("PairHourData_orderBy") ||
-              message.includes("PairHourData_orderBy!") ||
-              message.includes("pairHourData_orderBy") ||
-              message.includes("pairHourDatas_orderBy") ||
-              message.includes("is not a valid PairHourData_orderBy");
-            if (isSchemaFieldMissing(message) || orderByMissing) {
+            if (isSchemaFieldMissing(message) || isOrderByMissing(message)) {
               continue;
             }
             throw err;
@@ -2259,14 +2337,17 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
   }
 
   if (resolvedSelect && resolvedField && resolvedOrderBy) {
-    await Promise.all(
-      chunks.slice(1).map(async (chunk) => {
-        try {
-          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect, resolvedUseSince);
-        } catch {
-          // ignore chunk failures to keep partial data
-        }
-      })
+    v2PoolsHourProfile = {
+      field: resolvedField,
+      orderBy: resolvedOrderBy,
+      select: resolvedSelect,
+      useSince: resolvedUseSince,
+    };
+    await runRemainingChunks(
+      resolvedField,
+      resolvedOrderBy,
+      resolvedSelect,
+      resolvedUseSince
     );
   }
 
@@ -2386,6 +2467,58 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
     });
   };
 
+  const isOrderByMissing = (message = "") =>
+    message.includes("PoolHourData_orderBy") ||
+    message.includes("PoolHourData_orderBy!") ||
+    message.includes("poolHourData_orderBy") ||
+    message.includes("poolHourDatas_orderBy") ||
+    message.includes("is not a valid PoolHourData_orderBy");
+
+  const runRemainingChunks = async (field, orderBy, select, useSince) => {
+    if (chunks.length <= 1) return;
+    await runWithConcurrency(
+      chunks.slice(1),
+      POOL_CHUNK_CONCURRENCY,
+      async (chunk) => {
+        try {
+          await runChunk(chunk, field, orderBy, select, useSince);
+        } catch {
+          // ignore chunk failures to keep partial data
+        }
+      }
+    );
+  };
+
+  if (chunks.length && v3PoolsHourProfile) {
+    try {
+      await runChunk(
+        chunks[0],
+        v3PoolsHourProfile.field,
+        v3PoolsHourProfile.orderBy,
+        v3PoolsHourProfile.select,
+        v3PoolsHourProfile.useSince
+      );
+      await runRemainingChunks(
+        v3PoolsHourProfile.field,
+        v3PoolsHourProfile.orderBy,
+        v3PoolsHourProfile.select,
+        v3PoolsHourProfile.useSince
+      );
+      return out;
+    } catch (err) {
+      const message = err?.message || "";
+      if (
+        isSchemaFieldMissing(message) ||
+        isOrderByMissing(message) ||
+        isFilterUnsupported(message)
+      ) {
+        v3PoolsHourProfile = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
   let resolvedSelect = null;
   let resolvedField = null;
   let resolvedOrderBy = null;
@@ -2412,13 +2545,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
             break;
           } catch (err) {
             const message = err?.message || "";
-            const orderByMissing =
-              message.includes("PoolHourData_orderBy") ||
-              message.includes("PoolHourData_orderBy!") ||
-              message.includes("poolHourData_orderBy") ||
-              message.includes("poolHourDatas_orderBy") ||
-              message.includes("is not a valid PoolHourData_orderBy");
-            if (isSchemaFieldMissing(message) || orderByMissing) {
+            if (isSchemaFieldMissing(message) || isOrderByMissing(message)) {
               continue;
             }
             throw err;
@@ -2431,14 +2558,17 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
   }
 
   if (resolvedSelect && resolvedField && resolvedOrderBy) {
-    await Promise.all(
-      chunks.slice(1).map(async (chunk) => {
-        try {
-          await runChunk(chunk, resolvedField, resolvedOrderBy, resolvedSelect, resolvedUseSince);
-        } catch {
-          // ignore chunk failures to keep partial data
-        }
-      })
+    v3PoolsHourProfile = {
+      field: resolvedField,
+      orderBy: resolvedOrderBy,
+      select: resolvedSelect,
+      useSince: resolvedUseSince,
+    };
+    await runRemainingChunks(
+      resolvedField,
+      resolvedOrderBy,
+      resolvedSelect,
+      resolvedUseSince
     );
   }
 

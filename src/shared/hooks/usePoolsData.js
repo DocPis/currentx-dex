@@ -11,7 +11,7 @@ import {
 const PAGE_SIZE = 50;
 const REFRESH_MS = 5 * 60 * 1000;
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const POOLS_CACHE_KEY = "cx_pools_cache_v1";
+const POOLS_CACHE_KEY = "cx_pools_cache_v2";
 
 const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined;
@@ -47,6 +47,29 @@ const writeCache = (key, payload) => {
 const buildPageParams = (pages = []) =>
   pages.map((_, idx) => idx * PAGE_SIZE);
 
+const normalizePoolIds = (ids = []) =>
+  Array.from(
+    new Set(
+      (ids || [])
+        .map((id) => String(id || "").toLowerCase())
+        .filter(Boolean)
+    )
+  );
+
+const buildIdsKey = (ids = []) => ids.slice().sort().join(",");
+
+const pickRollingEntries = (rollingMap = {}, ids = []) => {
+  if (!rollingMap || typeof rollingMap !== "object") return {};
+  if (!ids.length) return {};
+  const out = {};
+  ids.forEach((id) => {
+    if (!id) return;
+    const key = String(id).toLowerCase();
+    if (rollingMap[key]) out[key] = rollingMap[key];
+  });
+  return out;
+};
+
 export function usePoolsData() {
   const cachedPools = useMemo(() => readCache(POOLS_CACHE_KEY), []);
   const poolsCacheRef = useRef(cachedPools);
@@ -67,6 +90,7 @@ export function usePoolsData() {
     staleTime: 60 * 1000,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
   });
 
   const v2Query = useInfiniteQuery({
@@ -85,6 +109,7 @@ export function usePoolsData() {
     staleTime: 60 * 1000,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
   });
 
   const v2Pools = useMemo(() => {
@@ -97,47 +122,77 @@ export function usePoolsData() {
   const v2PoolCount = v2Pools.length;
   const v3PoolCount = v3Pools.length;
 
-  const v2Ids = useMemo(
-    () => v2Pools.map((p) => p.id).filter(Boolean),
-    [v2Pools]
+  const v2Ids = useMemo(() => normalizePoolIds(v2Pools.map((p) => p.id)), [v2Pools]);
+  const v3Ids = useMemo(() => normalizePoolIds(v3Pools.map((p) => p.id)), [v3Pools]);
+  const v2IdsKey = useMemo(() => buildIdsKey(v2Ids), [v2Ids]);
+  const v3IdsKey = useMemo(() => buildIdsKey(v3Ids), [v3Ids]);
+  const cachedV2Rolling = useMemo(
+    () => pickRollingEntries(cachedPools?.v2RollingData, v2Ids),
+    [cachedPools, v2Ids]
   );
-  const v3Ids = useMemo(
-    () => v3Pools.map((p) => p.id).filter(Boolean),
-    [v3Pools]
+  const cachedV3Rolling = useMemo(
+    () => pickRollingEntries(cachedPools?.v3RollingData, v3Ids),
+    [cachedPools, v3Ids]
+  );
+  const hasCachedV2Rolling = useMemo(
+    () => Object.keys(cachedV2Rolling).length > 0,
+    [cachedV2Rolling]
+  );
+  const hasCachedV3Rolling = useMemo(
+    () => Object.keys(cachedV3Rolling).length > 0,
+    [cachedV3Rolling]
   );
 
   const v2RollingQuery = useQuery({
-    queryKey: ["pools", "v2-roll-24h", v2Ids],
+    queryKey: ["pools", "v2-roll-24h", v2IdsKey],
     queryFn: () => fetchV2PoolsHourData(v2Ids, 24),
     enabled: v2Ids.length > 0,
-    refetchOnMount: "always",
-    staleTime: 0,
+    initialData: hasCachedV2Rolling ? cachedV2Rolling : undefined,
+    initialDataUpdatedAt: hasCachedV2Rolling ? cachedPools?.ts : undefined,
+    refetchOnMount: false,
+    staleTime: REFRESH_MS,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
   });
 
   const v3RollingQuery = useQuery({
-    queryKey: ["pools", "v3-roll-24h", v3Ids],
+    queryKey: ["pools", "v3-roll-24h", v3IdsKey],
     queryFn: () => fetchV3PoolsHourData(v3Ids, 24),
     enabled: v3Ids.length > 0,
-    refetchOnMount: "always",
-    staleTime: 0,
+    initialData: hasCachedV3Rolling ? cachedV3Rolling : undefined,
+    initialDataUpdatedAt: hasCachedV3Rolling ? cachedPools?.ts : undefined,
+    refetchOnMount: false,
+    staleTime: REFRESH_MS,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
     const v2Pages = v2Query.data?.pages;
     const v3Pages = v3Query.data?.pages;
-    if (!v2Pages && !v3Pages) return;
+    const v2RollingData = v2RollingQuery.data || {};
+    const v3RollingData = v3RollingQuery.data || {};
+    if (!v2Pages && !v3Pages && !Object.keys(v2RollingData).length && !Object.keys(v3RollingData).length) {
+      return;
+    }
     const next = {
       ts: Date.now(),
       v2Pages: v2Pages ?? poolsCacheRef.current?.v2Pages ?? [],
       v3Pages: v3Pages ?? poolsCacheRef.current?.v3Pages ?? [],
+      v2RollingData: {
+        ...(poolsCacheRef.current?.v2RollingData || {}),
+        ...v2RollingData,
+      },
+      v3RollingData: {
+        ...(poolsCacheRef.current?.v3RollingData || {}),
+        ...v3RollingData,
+      },
     };
     poolsCacheRef.current = next;
     writeCache(POOLS_CACHE_KEY, next);
-  }, [v2Query.data, v3Query.data]);
+  }, [v2Query.data, v3Query.data, v2RollingQuery.data, v3RollingQuery.data]);
 
   const refetchAll = useCallback(async () => {
     await Promise.all([
