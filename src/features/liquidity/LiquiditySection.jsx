@@ -776,6 +776,13 @@ const isFlatHistory = (rows, minPoints = 3) => {
   return (max - min) / min < 0.001;
 };
 
+const hasPriceHistory = (rows, minPoints = 2) => {
+  const values = (rows || [])
+    .map((row) => pickHistoryPrice(row))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return values.length >= minPoints;
+};
+
 const formatUsdPrice = (v) => {
   const num = Number(v);
   if (!Number.isFinite(num) || num <= 0) return "--";
@@ -3739,10 +3746,13 @@ export default function LiquiditySection({
         const stable1 = isStableSymbol(v3Token1Meta?.symbol || v3Token1);
         const stablePair = stable0 || stable1;
         const flatPrice = isFlatHistory(historyRows);
+        const missingPriceData = !hasPriceHistory(historyRows, 2);
         const insufficientHistory =
           historyRows.length < Math.min(v3RangeDays * 0.5, 30);
         const hasPoolTokens = Boolean(v3PoolInfo.token0 && v3PoolInfo.token1);
-        const fallbackNeeded = stablePair && (flatPrice || insufficientHistory) && hasPoolTokens;
+        const fallbackNeeded =
+          hasPoolTokens &&
+          (missingPriceData || (stablePair && (flatPrice || insufficientHistory)));
         const poolToken0IsEthLike = isEthLikeAddress(v3PoolInfo.token0);
         const poolToken1IsEthLike = isEthLikeAddress(v3PoolInfo.token1);
         const chainlinkEligible =
