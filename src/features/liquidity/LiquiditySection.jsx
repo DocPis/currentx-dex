@@ -3103,8 +3103,12 @@ export default function LiquiditySection({
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
   const v3HideChartControls = v3Token0Open || v3Token1Open;
+  const v3AprReady =
+    v3EstimatedApr !== null &&
+    v3EstimatedApr !== undefined &&
+    Number.isFinite(v3EstimatedApr);
   const v3PoolDataLoading = Boolean(
-    isV3View && (v3PoolLoading || v3PoolTvlLoading)
+    isV3View && (v3PoolLoading || (v3PoolTvlLoading && !v3AprReady))
   );
   const v3RangeTransition =
     v3DraggingHandle
@@ -3652,6 +3656,44 @@ export default function LiquiditySection({
 
   useEffect(() => {
     let cancelled = false;
+    const refreshV3PoolStats = async () => {
+      if (
+        !isV3View ||
+        !hasV3Liquidity ||
+        !v3PoolInfo.address ||
+        v3TvlRefreshTick <= 0
+      ) {
+        return;
+      }
+      try {
+        const [snapshot, hourStats] = await Promise.all([
+          fetchV3PoolSnapshot(v3PoolInfo.address),
+          fetchV3PoolHourStats(v3PoolInfo.address, 24).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const nextSnapshot =
+          snapshot && Number.isFinite(Number(snapshot.tvlUsd))
+            ? Number(snapshot.tvlUsd)
+            : null;
+        setV3PoolTvlSnapshot(nextSnapshot);
+        setV3PoolHourStats(hourStats || null);
+      } catch {
+        // ignore background refresh failures
+      }
+    };
+    refreshV3PoolStats();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    isV3View,
+    hasV3Liquidity,
+    v3PoolInfo.address,
+    v3TvlRefreshTick,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
     const loadV3PoolTvl = async () => {
       if (!isV3View || !hasV3Liquidity || !v3PoolInfo.address) {
         if (!cancelled) {
@@ -3668,20 +3710,30 @@ export default function LiquiditySection({
       setV3PoolTvlLoading(true);
       setV3PoolTvlError("");
       try {
-        const [history, snapshot, hourStats] = await Promise.all([
-          fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays),
+        const historyPromise = fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays);
+        const [snapshot, hourStats] = await Promise.all([
           fetchV3PoolSnapshot(v3PoolInfo.address),
           fetchV3PoolHourStats(v3PoolInfo.address, 24).catch(() => null),
         ]);
         if (cancelled) return;
-        const historyRows = Array.isArray(history) ? history : [];
-        setV3PoolTvlHistory(historyRows);
         const nextSnapshot =
           snapshot && Number.isFinite(Number(snapshot.tvlUsd))
             ? Number(snapshot.tvlUsd)
             : null;
         setV3PoolTvlSnapshot(nextSnapshot);
         setV3PoolHourStats(hourStats || null);
+
+        let historyRows = [];
+        try {
+          const history = await historyPromise;
+          if (cancelled) return;
+          historyRows = Array.isArray(history) ? history : [];
+          setV3PoolTvlHistory(historyRows);
+        } catch (historyErr) {
+          if (cancelled) return;
+          setV3PoolTvlHistory([]);
+          setV3PoolTvlError(historyErr?.message || "Failed to load TVL history.");
+        }
 
         const stable0 = isStableSymbol(v3Token0Meta?.symbol || v3Token0);
         const stable1 = isStableSymbol(v3Token1Meta?.symbol || v3Token1);
@@ -3789,7 +3841,6 @@ export default function LiquiditySection({
     v3Token0,
     v3Token1,
     v3TokenPriceCacheRef,
-    v3TvlRefreshTick,
     v3RefreshTick,
   ]);
 
