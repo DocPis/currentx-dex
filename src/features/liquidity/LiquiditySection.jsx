@@ -1349,7 +1349,6 @@ export default function LiquiditySection({
 
     // Include user-added custom tokens.
     Object.entries(customTokens).forEach(([sym, meta]) => {
-      if (isLiquiditySymbolBlocked(sym) || isLiquidityTokenBlocked(meta)) return;
       out[sym] = meta;
     });
 
@@ -6057,10 +6056,6 @@ export default function LiquiditySection({
           name = (nameRaw || tokenKey || "Custom Token").toString();
           const decimalsNum = Number(decimalsRaw);
           decimals = Number.isFinite(decimalsNum) ? decimalsNum : 18;
-        }
-        if (isLiquidityTokenBlocked({ symbol: tokenKey, address: addr })) {
-          setCustomTokenAddError("Token not supported in liquidity yet.");
-          return false;
         }
         const alreadySymbol = tokenRegistry[tokenKey];
         if (alreadySymbol) {

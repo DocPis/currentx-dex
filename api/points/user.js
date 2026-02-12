@@ -106,6 +106,7 @@ const getKeys = (seasonId, address) => {
     summary: `${base}:summary`,
     updatedAt: `${base}:updatedAt`,
     user: address ? `${base}:user:${address}` : null,
+    userByAddress: (wallet) => `${base}:user:${normalizeAddress(wallet)}`,
     rewardUser: address ? `${base}:reward:user:${address}` : null,
   };
 };
@@ -231,7 +232,9 @@ export default async function handler(req, res) {
     const top100Rows = top100Addresses.length
       ? await (() => {
           const pipeline = kv.pipeline();
-          top100Addresses.forEach((address) => pipeline.hgetall(keys.user(address)));
+          top100Addresses.forEach((address) =>
+            pipeline.hgetall(keys.userByAddress(address))
+          );
           return pipeline.exec();
         })()
       : [];
