@@ -18,9 +18,11 @@ const SUBGRAPH_PROXY =
       DEFAULT_SUBGRAPH_PROXY
   ).trim();
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
+  "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
+  "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
 ];
 
@@ -59,12 +61,38 @@ const dedupeUrls = (urls = []) => {
 const endpointRequiresApiKey = (url = "") =>
   url.includes("thegraph.com") || url.includes("gateway");
 
+const isFallbackProviderUrl = (url = "") => {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return hostname.includes("thegraph.com") || hostname.includes("goldsky.com");
+  } catch {
+    return false;
+  }
+};
+
+const prioritizeSubgraphUrls = (urls = []) => {
+  const primary = [];
+  const fallback = [];
+  urls.forEach((url) => {
+    if (isFallbackProviderUrl(url)) {
+      fallback.push(url);
+      return;
+    }
+    primary.push(url);
+  });
+  return [...primary, ...fallback];
+};
+
 const buildSubgraphEndpoints = (primaryUrl, primaryApiKey, fallbackUrls = []) => {
-  const urls = dedupeUrls([primaryUrl, ...fallbackUrls]);
+  const normalizedPrimary = String(primaryUrl || "").trim();
+  const urls = prioritizeSubgraphUrls(dedupeUrls([normalizedPrimary, ...fallbackUrls]));
   return urls.map((url) => ({
     url,
-    // Apply key only to primary endpoint (The Graph); fallback endpoints are public.
-    apiKey: url === primaryUrl ? String(primaryApiKey || "").trim() : "",
+    // Keep key for the explicit primary, and for providers that require auth (The Graph gateway).
+    apiKey:
+      url === normalizedPrimary || endpointRequiresApiKey(url)
+        ? String(primaryApiKey || "").trim()
+        : "",
   }));
 };
 
