@@ -28,7 +28,6 @@ import {
 import {
   computePoints,
   getBoostPairMultiplier,
-  isBoostPair,
 } from "../lib/points";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -143,9 +142,7 @@ const fetchBoostPositions = async (address) => {
     liquidity: pos?.liquidity ?? 0n,
   }));
 
-  const active = positions.filter(
-    (pos) => (pos?.liquidity ?? 0n) > 0n && isBoostPair(pos.token0, pos.token1)
-  );
+  const active = positions.filter((pos) => (pos?.liquidity ?? 0n) > 0n);
 
   if (!active.length) {
     return {
@@ -492,10 +489,13 @@ export const useUserPoints = (address) => {
         };
       }
 
-      const hasBoostLp = lpData.positions.length > 0;
+      const hasBoostLp =
+        Number(lpData.lpUsdCrxEth || 0) > 0 ||
+        Number(lpData.lpUsdCrxUsdm || 0) > 0;
 
       const pointsBreakdown = computePoints({
         volumeUsd: volumeV2 + volumeV3,
+        lpUsdTotal: lpData.lpUsd,
         lpUsdCrxEth: lpData.lpUsdCrxEth,
         lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonHasStarted,

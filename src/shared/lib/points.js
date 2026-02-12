@@ -44,6 +44,7 @@ export const getBoostPairMultiplier = (token0, token1) => {
 
 export const computePoints = ({
   volumeUsd,
+  lpUsdTotal = null,
   lpUsdCrxEth = 0,
   lpUsdCrxUsdm = 0,
   boostEnabled = true,
@@ -52,7 +53,11 @@ export const computePoints = ({
   const lpEth = Math.max(0, toNumberSafe(lpUsdCrxEth) ?? 0);
   const lpUsdm = Math.max(0, toNumberSafe(lpUsdCrxUsdm) ?? 0);
   const lpPoints = boostEnabled !== false ? lpEth * 2 + lpUsdm * 3 : 0;
-  const activeLpUsd = lpEth + lpUsdm;
+  const normalizedTotalLpUsd = toNumberSafe(lpUsdTotal);
+  const totalLpUsd =
+    normalizedTotalLpUsd !== null
+      ? Math.max(0, normalizedTotalLpUsd)
+      : lpEth + lpUsdm;
   const effectiveMultiplier =
     boostEnabled !== false
       ? lpUsdm > 0
@@ -69,10 +74,9 @@ export const computePoints = ({
     boostedVolumeCap: 0,
     boostedVolumeUsd: 0,
     lpPoints,
-    lpUsd: activeLpUsd,
+    lpUsd: totalLpUsd,
     lpUsdCrxEth: lpEth,
     lpUsdCrxUsdm: lpUsdm,
     effectiveMultiplier,
   };
 };
-

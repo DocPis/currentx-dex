@@ -165,6 +165,7 @@ export default async function handler(req, res) {
 
       const points = computePoints({
         volumeUsd,
+        lpUsdTotal: lpData.lpUsd,
         lpUsdCrxEth: lpData.lpUsdCrxEth,
         lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonBoostActive,

@@ -164,7 +164,7 @@ const UNIV3_POOL_ABI = [
 const toTopicAddress = (addr) =>
   `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 
-const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
+const fetchPositionsOnchain = async ({ wallet, startBlock }) => {
   const { rpcUrl, factory, positionManager } = getOnchainConfig();
   if (!rpcUrl || !factory || !positionManager) return null;
   const provider = getRpcProvider(rpcUrl);
@@ -203,7 +203,7 @@ const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
   const factoryContract = new Contract(factory, UNIV3_FACTORY_ABI, provider);
   const uniquePools = new Map();
   normalized.forEach((pos) => {
-    if (!isBoostPair(pos.token0, pos.token1, addr)) return;
+    if (pos.liquidity <= 0n || !pos.token0 || !pos.token1) return;
     const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
     if (!uniquePools.has(key)) uniquePools.set(key, pos);
   });
@@ -625,6 +625,7 @@ const computeTradeBasePoints = (effectiveVolumeUsd, policy) => {
 
 const computePoints = ({
   volumeUsd,
+  lpUsdTotal = null,
   lpUsdCrxEth = 0,
   lpUsdCrxUsdm = 0,
   boostEnabled = true,
@@ -637,7 +638,11 @@ const computePoints = ({
   const lpEth = Math.max(0, toNumberSafe(lpUsdCrxEth) ?? 0);
   const lpUsdm = Math.max(0, toNumberSafe(lpUsdCrxUsdm) ?? 0);
   const lpPoints = boostEnabled !== false ? lpEth * 2 + lpUsdm * 3 : 0;
-  const activeLpUsd = lpEth + lpUsdm;
+  const normalizedTotalLpUsd = toNumberSafe(lpUsdTotal);
+  const totalLpUsd =
+    normalizedTotalLpUsd !== null
+      ? Math.max(0, normalizedTotalLpUsd)
+      : lpEth + lpUsdm;
   const multiplier =
     boostEnabled !== false
       ? lpUsdm > 0
@@ -653,7 +658,7 @@ const computePoints = ({
     boostedVolumeUsd: 0,
     boostedVolumeCap: 0,
     lpPoints,
-    lpUsd: activeLpUsd,
+    lpUsd: totalLpUsd,
     lpUsdCrxEth: lpEth,
     lpUsdCrxUsdm: lpUsdm,
     effectiveMultiplier: multiplier,
@@ -989,7 +994,7 @@ const computeLpData = async ({
           decimals1,
         };
       })
-      .filter((pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr));
+      .filter((pos) => pos.liquidity > 0n);
 
   const hasCreatedAtData = (rows) =>
     rows.some((pos) => Number.isFinite(pos?.createdAt) && pos.createdAt > 0);
@@ -1016,7 +1021,6 @@ const computeLpData = async ({
   if (needOnchain) {
     const onchain = await fetchPositionsOnchain({
       wallet,
-      addr,
       startBlock,
     }).catch(() => null);
     const onchainActive = normalizeActive(onchain?.positions || []);
@@ -1026,6 +1030,35 @@ const computeLpData = async ({
   }
 
   if (!active.length) return emptyData();
+
+  const mergedPriceMap = { ...(priceMap || {}) };
+  if (addr?.usdm) mergedPriceMap[addr.usdm] = 1;
+  const missingTokenIds = Array.from(
+    new Set(
+      active
+        .flatMap((pos) => [pos.token0, pos.token1])
+        .map((token) => normalizeAddress(token))
+        .filter(Boolean)
+        .filter((token) => !Number.isFinite(mergedPriceMap[token]))
+    )
+  );
+  if (missingTokenIds.length && url) {
+    try {
+      const fetched = await fetchTokenPrices({
+        url,
+        apiKey,
+        tokenIds: missingTokenIds,
+      });
+      Object.entries(fetched || {}).forEach(([token, value]) => {
+        const normalized = normalizeAddress(token);
+        const numeric = Number(value);
+        if (!normalized || !Number.isFinite(numeric)) return;
+        mergedPriceMap[normalized] = numeric;
+      });
+    } catch {
+      // ignore token pricing fallback errors
+    }
+  }
 
   let lpUsd = 0;
   let lpUsdCrxEth = 0;
@@ -1060,8 +1093,8 @@ const computeLpData = async ({
       return;
     }
 
-    const price0 = priceMap[pos.token0];
-    const price1 = priceMap[pos.token1];
+    const price0 = mergedPriceMap[pos.token0];
+    const price1 = mergedPriceMap[pos.token1];
     if (!Number.isFinite(price0) || !Number.isFinite(price1)) {
       missingPrice = true;
       return;
@@ -1075,8 +1108,8 @@ const computeLpData = async ({
       return;
     }
 
-    lpUsd += positionUsd;
     const pairMultiplier = getBoostPairMultiplier(pos.token0, pos.token1, addr);
+    lpUsd += positionUsd;
     if (pairMultiplier >= 3) lpUsdCrxUsdm += positionUsd;
     else if (pairMultiplier >= 2) lpUsdCrxEth += positionUsd;
     if (pairMultiplier > highestPoolMultiplier) {
@@ -1087,9 +1120,10 @@ const computeLpData = async ({
   const safeLpUsd = missingPrice && lpUsd === 0 ? 0 : lpUsd;
   const safeLpUsdCrxEth = missingPrice && lpUsdCrxEth === 0 ? 0 : lpUsdCrxEth;
   const safeLpUsdCrxUsdm = missingPrice && lpUsdCrxUsdm === 0 ? 0 : lpUsdCrxUsdm;
+  const hasBoostLp = safeLpUsdCrxEth > 0 || safeLpUsdCrxUsdm > 0;
 
   return {
-    hasBoostLp: safeLpUsd > 0,
+    hasBoostLp,
     lpUsd: safeLpUsd,
     lpUsdCrxEth: safeLpUsdCrxEth,
     lpUsdCrxUsdm: safeLpUsdCrxUsdm,
@@ -1231,6 +1265,7 @@ export default async function handler(req, res) {
 
       const points = computePoints({
         volumeUsd: currentVolume,
+        lpUsdTotal: lpData.lpUsd,
         lpUsdCrxEth: lpData.lpUsdCrxEth,
         lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
         boostEnabled: seasonBoostActive,
