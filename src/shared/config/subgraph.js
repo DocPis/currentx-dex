@@ -1921,6 +1921,9 @@ let v2PoolsPageCandidateIdx = null;
 let v3PoolsPageCandidateIdx = null;
 let v2PoolsHourProfile = null;
 let v3PoolsHourProfile = null;
+let v2PoolsDayField = null;
+let v3PoolsDayField = null;
+let v3PoolsDaySelect = null;
 
 export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
   if (SUBGRAPH_MISSING_KEY) return [];
@@ -2617,11 +2620,29 @@ export async function fetchV2PoolsDayData(ids = []) {
   };
 
   let resolvedField = null;
-  if (chunks.length) {
-    for (const field of candidates) {
+  if (chunks.length && v2PoolsDayField) {
+    try {
+      await runChunk(chunks[0], v2PoolsDayField);
+      resolvedField = v2PoolsDayField;
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        v2PoolsDayField = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (chunks.length && !resolvedField) {
+    const order =
+      v2PoolsDayField && candidates.includes(v2PoolsDayField)
+        ? [v2PoolsDayField, ...candidates.filter((field) => field !== v2PoolsDayField)]
+        : candidates;
+    for (const field of order) {
       try {
         await runChunk(chunks[0], field);
         resolvedField = field;
+        v2PoolsDayField = field;
         break;
       } catch (err) {
         const message = err?.message || "";
@@ -2634,14 +2655,16 @@ export async function fetchV2PoolsDayData(ids = []) {
   }
   if (!resolvedField) return out;
 
-  await Promise.all(
-    chunks.slice(1).map(async (chunk) => {
+  await runWithConcurrency(
+    chunks.slice(1),
+    POOL_CHUNK_CONCURRENCY,
+    async (chunk) => {
       try {
         await runChunk(chunk, resolvedField);
       } catch {
         // ignore chunk failures to keep partial data
       }
-    })
+    }
   );
 
   return out;
@@ -2723,14 +2746,40 @@ export async function fetchV3PoolsDayData(ids = []) {
 
   let resolvedSelect = null;
   let resolvedField = null;
-  if (chunks.length) {
+  if (chunks.length && v3PoolsDayField && v3PoolsDaySelect) {
+    try {
+      await runChunk(chunks[0], v3PoolsDayField, v3PoolsDaySelect);
+      resolvedField = v3PoolsDayField;
+      resolvedSelect = v3PoolsDaySelect;
+    } catch (err) {
+      const message = err?.message || "";
+      if (isSchemaFieldMissing(message)) {
+        v3PoolsDayField = null;
+        v3PoolsDaySelect = null;
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (chunks.length && (!resolvedSelect || !resolvedField)) {
     let matched = false;
-    for (const select of selectVariants) {
-      for (const field of candidates) {
+    const selectOrder =
+      v3PoolsDaySelect && selectVariants.includes(v3PoolsDaySelect)
+        ? [v3PoolsDaySelect, ...selectVariants.filter((select) => select !== v3PoolsDaySelect)]
+        : selectVariants;
+    const fieldOrder =
+      v3PoolsDayField && candidates.includes(v3PoolsDayField)
+        ? [v3PoolsDayField, ...candidates.filter((field) => field !== v3PoolsDayField)]
+        : candidates;
+    for (const select of selectOrder) {
+      for (const field of fieldOrder) {
         try {
           await runChunk(chunks[0], field, select);
           resolvedSelect = select;
           resolvedField = field;
+          v3PoolsDaySelect = select;
+          v3PoolsDayField = field;
           matched = true;
           break;
         } catch (err) {
@@ -2746,36 +2795,17 @@ export async function fetchV3PoolsDayData(ids = []) {
   }
 
   if (resolvedSelect && resolvedField) {
-    await Promise.all(
-      chunks.slice(1).map(async (chunk) => {
+    await runWithConcurrency(
+      chunks.slice(1),
+      POOL_CHUNK_CONCURRENCY,
+      async (chunk) => {
         try {
           await runChunk(chunk, resolvedField, resolvedSelect);
         } catch {
           // ignore chunk failures to keep partial data
         }
-      })
-    );
-  }
-
-  const missing = list.filter((id) => !out[id]);
-  if (missing.length) {
-    await runWithConcurrency(missing, 6, async (id) => {
-      try {
-        const res = await fetchV3PoolHourStats(id, 24);
-        if (!res) return null;
-        out[id] = {
-          volumeUsd: toNumberSafe(res.volumeUsd),
-          tvlUsd: toNumberSafe(res.tvlUsd),
-          feesUsd:
-            res.feesUsd !== null && res.feesUsd !== undefined
-              ? toNumberSafe(res.feesUsd)
-              : null,
-        };
-      } catch {
-        // ignore single-pool failures
       }
-      return null;
-    });
+    );
   }
 
   return out;

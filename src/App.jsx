@@ -147,56 +147,72 @@ export default function App() {
   const prefetchPoolsData = useCallback(async () => {
     try {
       const subgraph = await import("./shared/config/subgraph");
-      await Promise.all([
-        queryClient.prefetchInfiniteQuery({
-          queryKey: ["pools", "v2"],
-          queryFn: ({ pageParam = 0 }) =>
-            subgraph.fetchV2PoolsPage({
-              limit: PREFETCH_PAGE_SIZE,
-              skip: pageParam,
-            }),
-          initialPageParam: 0,
-          getNextPageParam,
-        }),
-        queryClient.prefetchInfiniteQuery({
-          queryKey: ["pools", "v3"],
-          queryFn: ({ pageParam = 0 }) =>
-            subgraph.fetchV3PoolsPage({
-              limit: PREFETCH_PAGE_SIZE,
-              skip: pageParam,
-            }),
-          initialPageParam: 0,
-          getNextPageParam,
-        }),
-      ]);
+      const prefetchV3 = queryClient.prefetchInfiniteQuery({
+        queryKey: ["pools", "v3"],
+        queryFn: ({ pageParam = 0 }) =>
+          subgraph.fetchV3PoolsPage({
+            limit: PREFETCH_PAGE_SIZE,
+            skip: pageParam,
+          }),
+        initialPageParam: 0,
+        getNextPageParam,
+      });
+      const prefetchV2 = queryClient.prefetchInfiniteQuery({
+        queryKey: ["pools", "v2"],
+        queryFn: ({ pageParam = 0 }) =>
+          subgraph.fetchV2PoolsPage({
+            limit: PREFETCH_PAGE_SIZE,
+            skip: pageParam,
+          }),
+        initialPageParam: 0,
+        getNextPageParam,
+      });
 
-      const v2Data = queryClient.getQueryData(["pools", "v2"]);
+      await prefetchV3;
+
       const v3Data = queryClient.getQueryData(["pools", "v3"]);
-      const v2Ids = normalizePoolIds((v2Data?.pages?.flat() || []).map((p) => p?.id));
       const v3Ids = normalizePoolIds((v3Data?.pages?.flat() || []).map((p) => p?.id));
-      const v2IdsKey = buildPoolIdsKey(v2Ids);
-      const v3IdsKey = buildPoolIdsKey(v3Ids);
-
-      const rollPromises = [];
-      if (v2Ids.length) {
-        rollPromises.push(
-          queryClient.prefetchQuery({
-            queryKey: ["pools", "v2-roll-24h", v2IdsKey],
-            queryFn: () => subgraph.fetchV2PoolsHourData(v2Ids, 24),
-          })
-        );
-      }
       if (v3Ids.length) {
-        rollPromises.push(
-          queryClient.prefetchQuery({
-            queryKey: ["pools", "v3-roll-24h", v3IdsKey],
-            queryFn: () => subgraph.fetchV3PoolsHourData(v3Ids, 24),
-          })
-        );
+        const v3IdsKey = buildPoolIdsKey(v3Ids);
+        await queryClient.prefetchQuery({
+          queryKey: ["pools", "v3-roll-24h", v3IdsKey],
+          queryFn: async () => {
+            const dayData = await subgraph.fetchV3PoolsDayData(v3Ids);
+            const missingIds = v3Ids.filter((id) => !dayData?.[id]);
+            if (!missingIds.length) return dayData || {};
+            const hourData = await subgraph.fetchV3PoolsHourData(missingIds, 24);
+            return {
+              ...(dayData || {}),
+              ...(hourData || {}),
+            };
+          },
+        });
       }
-      if (rollPromises.length) {
-        await Promise.all(rollPromises);
-      }
+
+      void (async () => {
+        try {
+          await prefetchV2;
+          const v2Data = queryClient.getQueryData(["pools", "v2"]);
+          const v2Ids = normalizePoolIds((v2Data?.pages?.flat() || []).map((p) => p?.id));
+          if (!v2Ids.length) return;
+          const v2IdsKey = buildPoolIdsKey(v2Ids);
+          await queryClient.prefetchQuery({
+            queryKey: ["pools", "v2-roll-24h", v2IdsKey],
+            queryFn: async () => {
+              const dayData = await subgraph.fetchV2PoolsDayData(v2Ids);
+              const missingIds = v2Ids.filter((id) => !dayData?.[id]);
+              if (!missingIds.length) return dayData || {};
+              const hourData = await subgraph.fetchV2PoolsHourData(missingIds, 24);
+              return {
+                ...(dayData || {}),
+                ...(hourData || {}),
+              };
+            },
+          });
+        } catch {
+          // ignore background prefetch failures
+        }
+      })();
     } catch {
       // ignore prefetch failures
     }

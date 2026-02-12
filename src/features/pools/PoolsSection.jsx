@@ -3,7 +3,6 @@ import React, { useMemo, useState } from "react";
 import { DEFAULT_TOKEN_LOGO, TOKENS } from "../../shared/config/tokens";
 import megaLogo from "../../tokens/megaeth.png";
 import { usePoolsData } from "../../shared/hooks/usePoolsData";
-import { useDashboardData } from "../../shared/hooks/useDashboardData";
 
 const SORT_KEYS = {
   LIQUIDITY: "liquidity",
@@ -116,26 +115,6 @@ const poolMatchesSearch = (pool, term) => {
 
 export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const { data: dashboardData, isFetchedAfterMount: dashboardFresh } = useDashboardData();
-  const protocolStats = dashboardData?.stats || null;
-  const tvlHistory = dashboardData?.tvlHistory || [];
-  const volumeHistory = dashboardData?.volumeHistory || [];
-  const protocolTvl = dashboardFresh
-    ? tvlHistory?.[0]?.tvlUsd || protocolStats?.totalLiquidityUsd || null
-    : null;
-  const latestDay = volumeHistory?.[0] || null;
-  const dayVolume = latestDay?.volumeUsd ?? null;
-  const hasCumulativeVolume =
-    typeof latestDay?.cumulativeVolumeUsd === "number" &&
-    latestDay.cumulativeVolumeUsd > 0 &&
-    typeof protocolStats?.totalVolumeUsd === "number";
-  const todayVolume = hasCumulativeVolume
-    ? Math.max(0, protocolStats.totalVolumeUsd - latestDay.cumulativeVolumeUsd)
-    : null;
-  const protocolVolumeUtc = dayVolume ?? todayVolume;
-  const protocolFeesRaw = latestDay?.feesUsd;
-  const protocolFeesUtc =
-    Number.isFinite(protocolFeesRaw) ? protocolFeesRaw : latestDay ? 0 : null;
   const {
     v2Pools,
     v3Pools,
@@ -151,7 +130,10 @@ export default function PoolsSection({ onSelectPool }) {
     v3HasNextPage,
     fetchNextV2,
     fetchNextV3,
-  } = usePoolsData();
+  } = usePoolsData({
+    deferV2UntilV3Ready: true,
+    v2StartDelayMs: 1200,
+  });
   const [sortKey, setSortKey] = useState(SORT_KEYS.LIQUIDITY);
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
@@ -234,6 +216,47 @@ export default function PoolsSection({ onSelectPool }) {
     });
     return list;
   }, [v2Pools, v3Pools, v2RollingData, v3RollingData]);
+
+  const protocolAggregates = useMemo(() => {
+    if (!combinedPools.length) {
+      return {
+        tvl: null,
+        volume24h: null,
+        fees24h: null,
+      };
+    }
+    let tvl = 0;
+    let volume24h = 0;
+    let fees24h = 0;
+    let hasTvl = false;
+    let hasVolume = false;
+    let hasFees = false;
+
+    combinedPools.forEach((pool) => {
+      if (Number.isFinite(pool?.liquidityUsd) && pool.liquidityUsd >= 0) {
+        tvl += pool.liquidityUsd;
+        hasTvl = true;
+      }
+      if (Number.isFinite(pool?.volume24hUsd) && pool.volume24hUsd >= 0) {
+        volume24h += pool.volume24hUsd;
+        hasVolume = true;
+      }
+      if (Number.isFinite(pool?.fees24hUsd) && pool.fees24hUsd >= 0) {
+        fees24h += pool.fees24hUsd;
+        hasFees = true;
+      }
+    });
+
+    return {
+      tvl: hasTvl ? tvl : null,
+      volume24h: hasVolume ? volume24h : null,
+      fees24h: hasFees ? fees24h : null,
+    };
+  }, [combinedPools]);
+
+  const protocolTvl = protocolAggregates.tvl;
+  const protocolVolumeUtc = protocolAggregates.volume24h;
+  const protocolFeesUtc = protocolAggregates.fees24h;
 
   const filteredPools = useMemo(() => {
     let list = combinedPools;

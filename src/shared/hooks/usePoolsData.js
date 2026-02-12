@@ -1,16 +1,18 @@
 // src/shared/hooks/usePoolsData.js
-import { useCallback, useMemo, useRef, useEffect } from "react";
+import { useCallback, useMemo, useRef, useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import {
   fetchV2PoolsPage,
   fetchV3PoolsPage,
+  fetchV2PoolsDayData,
+  fetchV3PoolsDayData,
   fetchV2PoolsHourData,
   fetchV3PoolsHourData,
 } from "../config/subgraph";
 
 const PAGE_SIZE = 50;
 const REFRESH_MS = 5 * 60 * 1000;
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
 const POOLS_CACHE_KEY = "cx_pools_cache_v2";
 
 const getNextPageParam = (lastPage, pages) =>
@@ -70,9 +72,20 @@ const pickRollingEntries = (rollingMap = {}, ids = []) => {
   return out;
 };
 
-export function usePoolsData() {
+const mergeRollingData = (primary = {}, fallback = {}) => ({
+  ...(primary || {}),
+  ...(fallback || {}),
+});
+
+export function usePoolsData(options = {}) {
+  const deferV2UntilV3Ready = Boolean(options?.deferV2UntilV3Ready);
+  const v2StartDelayMs = Math.max(0, Number(options?.v2StartDelayMs) || 1200);
   const cachedPools = useMemo(() => readCache(POOLS_CACHE_KEY), []);
   const poolsCacheRef = useRef(cachedPools);
+  const hasCachedV2Pages = Boolean(cachedPools?.v2Pages?.length);
+  const [v2Enabled, setV2Enabled] = useState(
+    () => !deferV2UntilV3Ready || hasCachedV2Pages
+  );
 
   const v3Query = useInfiniteQuery({
     queryKey: ["pools", "v3"],
@@ -93,6 +106,24 @@ export function usePoolsData() {
     refetchOnWindowFocus: false,
   });
 
+  useEffect(() => {
+    if (!deferV2UntilV3Ready || v2Enabled) return undefined;
+    const hasV3Page = Boolean(v3Query.data?.pages?.[0]?.length);
+    const v3Settled = v3Query.isFetched || v3Query.isError;
+    const delay = hasV3Page || v3Settled ? 0 : v2StartDelayMs;
+    const timer = window.setTimeout(() => {
+      setV2Enabled(true);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [
+    deferV2UntilV3Ready,
+    v2Enabled,
+    v2StartDelayMs,
+    v3Query.data,
+    v3Query.isFetched,
+    v3Query.isError,
+  ]);
+
   const v2Query = useInfiniteQuery({
     queryKey: ["pools", "v2"],
     initialPageParam: 0,
@@ -106,6 +137,7 @@ export function usePoolsData() {
         }
       : undefined,
     initialDataUpdatedAt: cachedPools?.ts,
+    enabled: v2Enabled,
     staleTime: 60 * 1000,
     refetchInterval: REFRESH_MS,
     refetchIntervalInBackground: true,
@@ -143,10 +175,28 @@ export function usePoolsData() {
     [cachedV3Rolling]
   );
 
+  const fetchV2Rolling24h = useCallback(async () => {
+    if (!v2Ids.length) return {};
+    const dayData = await fetchV2PoolsDayData(v2Ids);
+    const missingIds = v2Ids.filter((id) => !dayData[id]);
+    if (!missingIds.length) return dayData;
+    const hourData = await fetchV2PoolsHourData(missingIds, 24);
+    return mergeRollingData(dayData, hourData);
+  }, [v2Ids]);
+
+  const fetchV3Rolling24h = useCallback(async () => {
+    if (!v3Ids.length) return {};
+    const dayData = await fetchV3PoolsDayData(v3Ids);
+    const missingIds = v3Ids.filter((id) => !dayData[id]);
+    if (!missingIds.length) return dayData;
+    const hourData = await fetchV3PoolsHourData(missingIds, 24);
+    return mergeRollingData(dayData, hourData);
+  }, [v3Ids]);
+
   const v2RollingQuery = useQuery({
     queryKey: ["pools", "v2-roll-24h", v2IdsKey],
-    queryFn: () => fetchV2PoolsHourData(v2Ids, 24),
-    enabled: v2Ids.length > 0,
+    queryFn: fetchV2Rolling24h,
+    enabled: v2Enabled && v2Ids.length > 0,
     initialData: hasCachedV2Rolling ? cachedV2Rolling : undefined,
     initialDataUpdatedAt: hasCachedV2Rolling ? cachedPools?.ts : undefined,
     refetchOnMount: false,
@@ -158,7 +208,7 @@ export function usePoolsData() {
 
   const v3RollingQuery = useQuery({
     queryKey: ["pools", "v3-roll-24h", v3IdsKey],
-    queryFn: () => fetchV3PoolsHourData(v3Ids, 24),
+    queryFn: fetchV3Rolling24h,
     enabled: v3Ids.length > 0,
     initialData: hasCachedV3Rolling ? cachedV3Rolling : undefined,
     initialDataUpdatedAt: hasCachedV3Rolling ? cachedPools?.ts : undefined,
@@ -195,13 +245,12 @@ export function usePoolsData() {
   }, [v2Query.data, v3Query.data, v2RollingQuery.data, v3RollingQuery.data]);
 
   const refetchAll = useCallback(async () => {
-    await Promise.all([
-      v3Query.refetch(),
-      v2Query.refetch(),
-      v3RollingQuery.refetch(),
-      v2RollingQuery.refetch(),
-    ]);
-  }, [v2Query, v3Query, v2RollingQuery, v3RollingQuery]);
+    const tasks = [v3Query.refetch(), v3RollingQuery.refetch()];
+    if (v2Enabled) {
+      tasks.push(v2Query.refetch(), v2RollingQuery.refetch());
+    }
+    await Promise.all(tasks);
+  }, [v2Enabled, v2Query, v3Query, v2RollingQuery, v3RollingQuery]);
 
   return {
     v2Pools,
