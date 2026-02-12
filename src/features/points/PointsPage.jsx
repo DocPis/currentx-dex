@@ -185,8 +185,23 @@ export default function PointsPage({ address, onConnect }) {
   const leaderboardSummary = leaderboardQuery.summary || null;
   const leaderboardUpdatedAt = leaderboardQuery.updatedAt;
   const summarySeasonRewardCrx = Number(leaderboardSummary?.seasonRewardCrx || 0);
+  const summaryTop100PoolCrx = Number(leaderboardSummary?.top100PoolCrx || 0);
+  const summaryVisibleRewardsCrx = Number(leaderboardSummary?.visibleRewardsCrx || 0);
   const summaryTotalPoints = Number(leaderboardSummary?.totalPoints || 0);
   const summaryWalletCount = Number(leaderboardSummary?.walletCount || 0);
+  const leaderboardErrorText = (() => {
+    const raw = String(leaderboardQuery.error?.message || "").trim();
+    if (!raw) return "Unable to load leaderboard.";
+    const lower = raw.toLowerCase();
+    if (
+      lower.includes("proxy error") ||
+      lower.includes("econnrefused") ||
+      lower.includes("127.0.0.1:3000")
+    ) {
+      return "Leaderboard API non raggiungibile in locale (proxy verso 127.0.0.1:3000). Avvia il backend API o imposta VITE_API_PROXY_TARGET.";
+    }
+    return raw;
+  })();
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
   const effectiveMultiplier = Number(userStats?.multiplier || 1);
@@ -688,7 +703,9 @@ export default function PointsPage({ address, onConnect }) {
               <div className="text-lg font-semibold">Leaderboard</div>
               <div className="text-xs text-slate-400 mt-1">
                 {summarySeasonRewardCrx > 0
-                  ? `Season pool ${formatCrx(summarySeasonRewardCrx)} | Total points ${formatCompactNumber(summaryTotalPoints)} | Wallets ${formatCompactNumber(summaryWalletCount)}`
+                  ? summaryTop100PoolCrx > 0
+                    ? `Top100 shown ${formatCrx(summaryVisibleRewardsCrx)} / pool ${formatCrx(summaryTop100PoolCrx)} | Season pool ${formatCrx(summarySeasonRewardCrx)} | Total points ${formatCompactNumber(summaryTotalPoints)} | Wallets ${formatCompactNumber(summaryWalletCount)}`
+                    : `Season pool ${formatCrx(summarySeasonRewardCrx)} | Total points ${formatCompactNumber(summaryTotalPoints)} | Wallets ${formatCompactNumber(summaryWalletCount)}`
                   : "Top 100 wallets by season points."}
                 {leaderboardUpdatedAt
                   ? ` | Updated ${formatDateTime(leaderboardUpdatedAt)}`
@@ -697,13 +714,16 @@ export default function PointsPage({ address, onConnect }) {
             </div>
             <Pill tone="amber">Top 100</Pill>
           </div>
-          {!leaderboardQuery.available ? (
-            <div className="text-sm text-slate-400">
-              Top wallets leaderboard is coming soon. We will surface the top 100 once the
-              season indexer is live.
-            </div>
-          ) : leaderboardQuery.isLoading ? (
+          {leaderboardQuery.isLoading ? (
             <div className="text-sm text-slate-400">Loading leaderboard...</div>
+          ) : leaderboardQuery.error ? (
+            <div className="text-sm text-rose-300">
+              {leaderboardErrorText}
+            </div>
+          ) : !leaderboardQuery.available ? (
+            <div className="text-sm text-slate-400">
+              No leaderboard rows available yet for this season.
+            </div>
           ) : (
             <div className="max-h-[520px] overflow-y-auto overflow-x-auto pr-1 points-scrollbar">
               <table className="w-full text-sm">

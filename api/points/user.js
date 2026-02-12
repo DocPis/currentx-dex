@@ -10,11 +10,8 @@ import {
   round6,
 } from "../../src/server/leaderboardRewardsLib.js";
 
-const parseTime = (value) => {
-  if (!value) return null;
-  const parsed = Date.parse(String(value));
-  return Number.isFinite(parsed) ? parsed : null;
-};
+const SCAN_BATCH_SIZE = 1000;
+const MAX_SCAN_ROUNDS = 2000;
 
 const pickEnvValue = (...values) => {
   for (const value of values) {
@@ -82,19 +79,10 @@ const getSeasonConfig = () => {
     process.env.POINTS_SEASON_ID,
     process.env.VITE_POINTS_SEASON_ID
   );
-  const startMs =
-    parseTime(process.env.POINTS_SEASON_START) ||
-    parseTime(process.env.VITE_POINTS_SEASON_START);
-  const endMs =
-    parseTime(process.env.POINTS_SEASON_END) ||
-    parseTime(process.env.VITE_POINTS_SEASON_END);
   const missing = [];
   if (!seasonId) missing.push("POINTS_SEASON_ID");
-  if (!Number.isFinite(startMs)) missing.push("POINTS_SEASON_START");
   return {
     seasonId,
-    startMs,
-    endMs: Number.isFinite(endMs) ? endMs : null,
     missing,
   };
 };
@@ -114,6 +102,93 @@ const getKeys = (seasonId, address) => {
 const toNumber = (value, fallback = 0) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+};
+
+const normalizeScanResult = (result) => {
+  if (Array.isArray(result)) {
+    const [cursor, keys] = result;
+    return {
+      cursor: String(cursor ?? "0"),
+      keys: Array.isArray(keys) ? keys : [],
+    };
+  }
+  if (result && typeof result === "object") {
+    const cursor = result.cursor ?? result.nextCursor ?? result[0] ?? "0";
+    const keys = result.keys ?? result.result ?? result[1] ?? [];
+    return {
+      cursor: String(cursor ?? "0"),
+      keys: Array.isArray(keys) ? keys : [],
+    };
+  }
+  return { cursor: "0", keys: [] };
+};
+
+const scanKeysByPattern = async (pattern) => {
+  if (typeof kv.scan !== "function") {
+    if (typeof kv.keys === "function") {
+      const raw = await kv.keys(pattern);
+      return Array.isArray(raw) ? raw : [];
+    }
+    return [];
+  }
+
+  let cursor = "0";
+  const seen = new Set();
+  const keys = [];
+  for (let i = 0; i < MAX_SCAN_ROUNDS; i += 1) {
+    const raw = await kv.scan(cursor, {
+      match: pattern,
+      count: SCAN_BATCH_SIZE,
+    });
+    const parsed = normalizeScanResult(raw);
+    (parsed.keys || []).forEach((key) => {
+      if (typeof key !== "string" || seen.has(key)) return;
+      seen.add(key);
+      keys.push(key);
+    });
+    if (parsed.cursor === "0" || parsed.cursor === cursor) break;
+    cursor = parsed.cursor;
+  }
+  return keys;
+};
+
+const extractSeasonIdFromUpdatedAtKey = (key) => {
+  const match = String(key || "").match(/^points:([^:]+):updatedAt$/);
+  return match ? String(match[1] || "").trim() : "";
+};
+
+const extractSeasonIdFromLeaderboardKey = (key) => {
+  const match = String(key || "").match(/^points:([^:]+):leaderboard$/);
+  return match ? String(match[1] || "").trim() : "";
+};
+
+const discoverSeasonIdFromKv = async () => {
+  const updatedAtKeys = await scanKeysByPattern("points:*:updatedAt");
+  const seasonIds = Array.from(
+    new Set(updatedAtKeys.map((key) => extractSeasonIdFromUpdatedAtKey(key)).filter(Boolean))
+  );
+
+  if (seasonIds.length) {
+    const pipeline = kv.pipeline();
+    seasonIds.forEach((id) => pipeline.get(`points:${id}:updatedAt`));
+    const values = await pipeline.exec();
+    let bestSeason = "";
+    let bestUpdatedAt = -1;
+    for (let i = 0; i < seasonIds.length; i += 1) {
+      const updatedAt = Number(values?.[i] ?? 0);
+      if (!Number.isFinite(updatedAt) || updatedAt <= bestUpdatedAt) continue;
+      bestUpdatedAt = updatedAt;
+      bestSeason = seasonIds[i];
+    }
+    return bestSeason || seasonIds[0];
+  }
+
+  const leaderboardKeys = await scanKeysByPattern("points:*:leaderboard");
+  const fallback = leaderboardKeys
+    .map((key) => extractSeasonIdFromLeaderboardKey(key))
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a));
+  return fallback[0] || "";
 };
 
 const buildSummaryFromLeaderboard = async ({
@@ -149,9 +224,16 @@ export default async function handler(req, res) {
   }
 
   const { seasonId: seasonParam, address } = req.query || {};
-  const { seasonId, missing: missingSeasonEnv } = getSeasonConfig();
-  const targetSeason = seasonParam || seasonId;
-  if (!targetSeason || missingSeasonEnv?.length) {
+  const { seasonId: configuredSeasonId, missing: missingSeasonEnv } = getSeasonConfig();
+  let targetSeason = seasonParam || configuredSeasonId;
+  if (!targetSeason) {
+    try {
+      targetSeason = await discoverSeasonIdFromKv();
+    } catch {
+      targetSeason = "";
+    }
+  }
+  if (!targetSeason) {
     res.status(503).json({
       error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
     });

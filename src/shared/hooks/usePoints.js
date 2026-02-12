@@ -555,19 +555,64 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     enabled: Boolean(enabled),
     queryFn: async () => {
       const activeSeasonId = seasonId || SEASON_ID;
-      const params = new URLSearchParams();
-      if (activeSeasonId) params.set("seasonId", activeSeasonId);
-      if (page) params.set("page", String(page));
-      const res = await fetch(`/api/points/leaderboard?${params.toString()}`);
-      if (!res.ok) {
-        throw new Error("Leaderboard unavailable");
-      }
-      const data = await res.json();
-      return {
-        items: Array.isArray(data?.leaderboard) ? data.leaderboard : [],
-        updatedAt: data?.updatedAt || null,
-        summary: data?.summary || null,
+      const fetchLeaderboardPayload = async (seasonOverride) => {
+        const params = new URLSearchParams();
+        if (seasonOverride) params.set("seasonId", seasonOverride);
+        if (page) params.set("page", String(page));
+        const suffix = params.toString();
+        const res = await fetch(`/api/points/leaderboard${suffix ? `?${suffix}` : ""}`);
+        const raw = await res.text().catch(() => "");
+        let payload = {};
+        try {
+          payload = raw ? JSON.parse(raw) : {};
+        } catch {
+          payload = {};
+        }
+        if (!res.ok) {
+          const detailRaw = String(payload?.error || raw || "").trim();
+          const detail = detailRaw.replace(/\s+/g, " ").slice(0, 220);
+          throw new Error(
+            detail
+              ? `Leaderboard API ${res.status}: ${detail}`
+              : `Leaderboard API ${res.status}`
+          );
+        }
+        return {
+          seasonId: payload?.seasonId || seasonOverride || "",
+          items: Array.isArray(payload?.leaderboard) ? payload.leaderboard : [],
+          updatedAt: payload?.updatedAt || null,
+          summary: payload?.summary || null,
+        };
       };
+
+      let payload = null;
+      let primaryError = null;
+      try {
+        payload = await fetchLeaderboardPayload(activeSeasonId);
+      } catch (err) {
+        primaryError = err;
+      }
+
+      if (!payload && activeSeasonId) {
+        payload = await fetchLeaderboardPayload("");
+      }
+      if (!payload) {
+        throw primaryError || new Error("Leaderboard unavailable");
+      }
+
+      const hasLikelySeasonMismatch =
+        Boolean(activeSeasonId) &&
+        !payload.items.length &&
+        !payload.updatedAt &&
+        Number(payload?.summary?.walletCount || 0) <= 0;
+      if (hasLikelySeasonMismatch) {
+        const fallbackPayload = await fetchLeaderboardPayload("");
+        if (fallbackPayload.items.length > 0) {
+          payload = fallbackPayload;
+        }
+      }
+
+      return payload;
     },
     staleTime: 60 * 1000,
     retry: 1,
