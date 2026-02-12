@@ -72,6 +72,7 @@ const IPFS_GATEWAYS = [
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const TICK_BASE = 1.0001;
 const CHART_PADDING = 0.12;
+const V3_MIN_HANDLE_GAP_PCT = 15;
 const V3_TVL_HISTORY_DAYS = 14;
 const getV3RangeDays = (timeframe) => {
   switch (timeframe) {
@@ -249,6 +250,12 @@ const formatPrice = (value) => {
 };
 
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
+const getV3HandleMinGap = (chart) => {
+  const min = Number(chart?.min);
+  const max = Number(chart?.max);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return 0;
+  return ((max - min) * V3_MIN_HANDLE_GAP_PCT) / 100;
+};
 const getTickSpacingFromFee = (fee) => V3_TICK_SPACING[Number(fee)] || null;
 const isAddressLike = (value) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
 const sortAddressPair = (a, b) => {
@@ -2053,18 +2060,74 @@ export default function LiquiditySection({
     ]
   );
 
-  const applyV3RangePreset = useCallback(
-    (pct) => {
-      if (!v3ReferencePrice) return;
-      const lower = v3ReferencePrice * (1 - pct);
-      const upper = v3ReferencePrice * (1 + pct);
-      setV3RangeMode("custom");
-      setV3RangeLower(lower.toFixed(6));
-      setV3RangeUpper(upper.toFixed(6));
-      setV3RangeInitialized(true);
-    },
-    [v3ReferencePrice]
-  );
+  const applyV3DefaultRange = useCallback(() => {
+    if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice) || v3ReferencePrice <= 0) {
+      return;
+    }
+
+    let min = v3ReferencePrice * (1 - CHART_PADDING);
+    let max = v3ReferencePrice * (1 + CHART_PADDING);
+
+    const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
+    const cutoff =
+      v3RangeTimeframe === "All" ? null : Date.now() - v3RangeDays * 86400000;
+    let historyMin = null;
+    let historyMax = null;
+
+    for (const row of history) {
+      const date = Number(row?.date || 0);
+      if (!Number.isFinite(date) || date <= 0) continue;
+      if (cutoff && date < cutoff) continue;
+      const token0Price = toOptionalNumber(row?.token0Price);
+      const token1Price = toOptionalNumber(row?.token1Price);
+      let price = v3PoolIsReversed ? token0Price : token1Price;
+      if (!Number.isFinite(price) || price <= 0) {
+        const alt = v3PoolIsReversed ? token1Price : token0Price;
+        if (Number.isFinite(alt) && alt > 0) {
+          price = 1 / alt;
+        }
+      }
+      if (!Number.isFinite(price) || price <= 0) continue;
+      historyMin = historyMin === null ? price : Math.min(historyMin, price);
+      historyMax = historyMax === null ? price : Math.max(historyMax, price);
+    }
+
+    const shouldExpand =
+      historyMin !== null &&
+      historyMax !== null &&
+      (historyMin < min || historyMax > max);
+    if (shouldExpand) {
+      min = Math.min(min, historyMin);
+      max = Math.max(max, historyMax);
+      const span = max - min;
+      const pad = span * (CHART_PADDING * 0.5);
+      min -= pad;
+      max += pad;
+    }
+
+    const chartHalfSpan = Math.max(
+      v3ReferencePrice - min,
+      max - v3ReferencePrice,
+      v3ReferencePrice * CHART_PADDING
+    );
+    const rangeHalfSpan = chartHalfSpan * 0.5;
+
+    let lower = v3ReferencePrice - rangeHalfSpan;
+    let upper = v3ReferencePrice + rangeHalfSpan;
+    if (lower <= 0) lower = v3ReferencePrice * 0.000001;
+    if (upper <= lower) upper = lower * 1.001;
+
+    setV3RangeMode("custom");
+    setV3RangeLower(lower.toFixed(6));
+    setV3RangeUpper(upper.toFixed(6));
+    setV3RangeInitialized(true);
+  }, [
+    v3ReferencePrice,
+    v3PoolTvlHistory,
+    v3RangeTimeframe,
+    v3RangeDays,
+    v3PoolIsReversed,
+  ]);
   const applyV3RangeAsymmetric = useCallback(
     (lowerPct, upperPct) => {
       if (!v3ReferencePrice) return;
@@ -2119,14 +2182,15 @@ export default function LiquiditySection({
   useEffect(() => {
     if (!isV3View || v3RangeInitialized) return;
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return;
-    const span = v3ReferencePrice * 0.15;
-    const lower = v3ReferencePrice - span;
-    const upper = v3ReferencePrice + span;
-    setV3RangeMode("custom");
-    setV3RangeLower(lower.toFixed(6));
-    setV3RangeUpper(upper.toFixed(6));
-    setV3RangeInitialized(true);
-  }, [isV3View, v3ReferencePrice, v3RangeInitialized]);
+    if (v3PoolTvlLoading) return;
+    applyV3DefaultRange();
+  }, [
+    isV3View,
+    v3ReferencePrice,
+    v3RangeInitialized,
+    v3PoolTvlLoading,
+    applyV3DefaultRange,
+  ]);
 
   const v3Chart = useMemo(() => {
     if (!v3ReferencePrice && !v3HasCustomRange) return null;
@@ -3940,18 +4004,26 @@ export default function LiquiditySection({
       if (!Number.isFinite(pct)) return;
       const nextPrice = chart.min + ((chart.max - chart.min) * pct) / 100;
       if (!Number.isFinite(nextPrice) || nextPrice <= 0) return;
+      const minGap = getV3HandleMinGap(chart);
       let bounded = nextPrice;
       if (v3DraggingHandle === "lower") {
+        const maxGapAllowed = Number.isFinite(v3RangeUpperRef.current)
+          ? v3RangeUpperRef.current - minGap
+          : bounded;
         const maxAllowed = v3RangeUpperRef.current
           ? v3RangeUpperRef.current * 0.999
           : bounded;
-        bounded = Math.min(bounded, maxAllowed);
+        bounded = Math.min(bounded, maxAllowed, maxGapAllowed);
       } else {
+        const minGapAllowed = Number.isFinite(v3RangeLowerRef.current)
+          ? v3RangeLowerRef.current + minGap
+          : bounded;
         const minAllowed = v3RangeLowerRef.current
           ? v3RangeLowerRef.current * 1.001
           : bounded;
-        bounded = Math.max(bounded, minAllowed);
+        bounded = Math.max(bounded, minAllowed, minGapAllowed);
       }
+      if (!Number.isFinite(bounded) || bounded <= 0) return;
       v3DragTargetRef.current = bounded;
       v3DragDirtyRef.current = true;
       if (!v3DragRafRef.current) {
@@ -7434,7 +7506,7 @@ export default function LiquiditySection({
                         onClick={() => {
                           setV3RangeMode("custom");
                           if (!v3HasCustomRange && v3ReferencePrice) {
-                            applyV3RangePreset(0.1);
+                            applyV3DefaultRange();
                           }
                         }}
                         className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
@@ -7727,16 +7799,35 @@ export default function LiquiditySection({
                                 const distUpper = Math.abs(pct - v3Chart.rangeEnd);
                                 setV3RangeMode("custom");
                                 setV3StrategyId("custom");
+                                const minGap = getV3HandleMinGap(v3Chart);
                                 if (distLower <= distUpper) {
+                                  const maxGapAllowed = v3RangeUpperNum
+                                    ? v3RangeUpperNum - minGap
+                                    : nextPrice;
                                   const maxAllowed = v3RangeUpperNum
                                     ? v3RangeUpperNum * 0.999
                                     : nextPrice;
-                                  setV3RangeLower(Math.min(nextPrice, maxAllowed).toFixed(6));
+                                  const bounded = Math.min(
+                                    nextPrice,
+                                    maxAllowed,
+                                    maxGapAllowed
+                                  );
+                                  if (!Number.isFinite(bounded) || bounded <= 0) return;
+                                  setV3RangeLower(bounded.toFixed(6));
                                 } else {
+                                  const minGapAllowed = v3RangeLowerNum
+                                    ? v3RangeLowerNum + minGap
+                                    : nextPrice;
                                   const minAllowed = v3RangeLowerNum
                                     ? v3RangeLowerNum * 1.001
                                     : nextPrice;
-                                  setV3RangeUpper(Math.max(nextPrice, minAllowed).toFixed(6));
+                                  const bounded = Math.max(
+                                    nextPrice,
+                                    minAllowed,
+                                    minGapAllowed
+                                  );
+                                  if (!Number.isFinite(bounded) || bounded <= 0) return;
+                                  setV3RangeUpper(bounded.toFixed(6));
                                 }
                               }}
                             >
