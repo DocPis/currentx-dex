@@ -37,6 +37,44 @@ const toNumber = (value, fallback = 0) => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+const parseAddressList = (...values) =>
+  values
+    .flatMap((value) => String(value || "").split(/[\s,;]+/))
+    .map((value) => String(value || "").trim())
+    .map((value) => value.replace(/^['"()[\]]+|['"()[\]]+$/g, ""))
+    .map((value) => {
+      const match = value.match(/0x[a-fA-F0-9]{40}/);
+      return match ? match[0] : value;
+    })
+    .map((value) => normalizeAddress(value))
+    .filter((value) => /^0x[a-f0-9]{40}$/.test(value))
+    .filter(Boolean);
+
+const getExcludedAddresses = () =>
+  new Set(
+    parseAddressList(
+      process.env.POINTS_LEADERBOARD_EXCLUDED_ADDRESSES,
+      process.env.POINTS_LEADERBOARD_EXCLUDED_ADDRESS,
+      process.env.POINTS_EXCLUDED_ADDRESSES,
+      process.env.POINTS_EXCLUDED_ADDRESS,
+      process.env.VITE_POINTS_EXCLUDED_ADDRESSES
+    )
+  );
+
+const computeTotalsFromEntries = (entries, excludedAddresses = new Set()) => {
+  let walletCount = 0;
+  let totalPoints = 0;
+  for (let i = 0; i < entries.length; i += 2) {
+    const address = normalizeAddress(entries[i]);
+    const score = Number(entries[i + 1] || 0);
+    if (!address || excludedAddresses.has(address)) continue;
+    if (!Number.isFinite(score) || score <= 0) continue;
+    walletCount += 1;
+    totalPoints += score;
+  }
+  return { walletCount, totalPoints };
+};
+
 const getKeys = (seasonId, address) => {
   const base = `points:${seasonId}`;
   const wallet = normalizeAddress(address);
@@ -54,16 +92,11 @@ const buildSummaryFromLeaderboard = async ({
   config,
   sampleUserRow,
   nowMs,
+  rows,
+  excludedAddresses,
 }) => {
-  const rows = await kv.zrange(keys.leaderboard, 0, -1, { withScores: true });
-  let walletCount = 0;
-  let totalPoints = 0;
-  for (let i = 0; i < rows.length; i += 2) {
-    const score = Number(rows[i + 1] || 0);
-    if (!Number.isFinite(score) || score <= 0) continue;
-    walletCount += 1;
-    totalPoints += score;
-  }
+  const entries = rows || (await kv.zrange(keys.leaderboard, 0, -1, { withScores: true }));
+  const { walletCount, totalPoints } = computeTotalsFromEntries(entries, excludedAddresses);
   const summary = buildPointsSummary({
     seasonId,
     walletCount,
@@ -94,6 +127,11 @@ export default async function handler(req, res) {
 
   if (!address) {
     res.status(400).json({ error: "Missing address" });
+    return;
+  }
+  const excludedAddresses = getExcludedAddresses();
+  if (excludedAddresses.has(address)) {
+    res.status(403).json({ error: "Address excluded from leaderboard" });
     return;
   }
   if (!signature) {
@@ -162,6 +200,12 @@ export default async function handler(req, res) {
     }
 
     let summary = parsePointsSummaryRow(summaryRow);
+    let leaderboardEntries = null;
+    let filteredTotals = null;
+    if (excludedAddresses.size > 0) {
+      leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, { withScores: true });
+      filteredTotals = computeTotalsFromEntries(leaderboardEntries, excludedAddresses);
+    }
     if (!summary) {
       summary = await buildSummaryFromLeaderboard({
         keys,
@@ -169,11 +213,15 @@ export default async function handler(req, res) {
         config,
         sampleUserRow: userRow,
         nowMs,
+        rows: leaderboardEntries || undefined,
+        excludedAddresses,
       });
     }
 
     const userPoints = toNumber(userRow?.points, 0);
-    const totalPoints = toNumber(summary?.totalPoints, 0);
+    const totalPoints = filteredTotals
+      ? filteredTotals.totalPoints
+      : toNumber(summary?.totalPoints, 0);
     const seasonRewardCrx = toNumber(summary?.seasonRewardCrx, config.seasonRewardCrx);
     const computedReward = computeLeaderboardReward({
       userPoints,
