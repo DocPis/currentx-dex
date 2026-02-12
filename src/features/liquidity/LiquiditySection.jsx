@@ -164,6 +164,43 @@ const formatTokenBalance = (v) => {
   });
 };
 
+const normalizeCustomTokenLogo = (logo) => {
+  const raw = String(logo || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const crxLogo = String(TOKENS?.CRX?.logo || "")
+    .trim()
+    .toLowerCase();
+  // Legacy custom-token fallback used CRX logo; treat it as "no logo".
+  if ((crxLogo && lower === crxLogo) || lower.includes("currentx")) return null;
+  return raw;
+};
+
+const TokenLogo = ({
+  token,
+  symbol,
+  className = "h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain",
+  placeholderClassName =
+    "h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center",
+}) => {
+  const [imgFailed, setImgFailed] = useState(false);
+  const logo = imgFailed ? null : token?.logo || null;
+  const label = symbol || token?.symbol || "token";
+
+  if (!logo) {
+    return <div className={placeholderClassName}>?</div>;
+  }
+
+  return (
+    <img
+      src={logo}
+      alt={`${label} logo`}
+      className={className}
+      onError={() => setImgFailed(true)}
+    />
+  );
+};
+
 const safeNumber = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -1349,7 +1386,10 @@ export default function LiquiditySection({
 
     // Include user-added custom tokens.
     Object.entries(customTokens).forEach(([sym, meta]) => {
-      out[sym] = meta;
+      out[sym] = {
+        ...meta,
+        logo: normalizeCustomTokenLogo(meta?.logo),
+      };
     });
 
     return out;
@@ -3188,7 +3228,7 @@ export default function LiquiditySection({
             name: nameRaw || symbol,
             address: addr,
             decimals: Number(decimalsRaw) || 18,
-            logo: TOKENS.CRX.logo,
+            logo: null,
           };
         };
 
@@ -6069,7 +6109,7 @@ export default function LiquiditySection({
             name: name || tokenKey || "Custom Token",
             address: addr,
             decimals: Number.isFinite(decimals) ? decimals : 18,
-            logo: TOKENS.CRX.logo,
+            logo: normalizeCustomTokenLogo(metaOverride?.logo) || null,
           },
         };
         setCustomTokens(next);
@@ -6629,13 +6669,12 @@ export default function LiquiditySection({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="rounded-2xl bg-slate-900/80 border border-slate-800 px-4 py-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  {baseSelected?.logo && (
-                    <img
-                      src={baseSelected.logo}
-                      alt={`${baseSelected.symbol} logo`}
-                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                    />
-                  )}
+                  <TokenLogo
+                    token={baseSelected}
+                    symbol={baseSelected?.symbol || tokenSelection.baseSymbol}
+                    className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                    placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
+                  />
                   <div className="flex flex-col">
                     <span className="text-xs text-slate-500">Token you want to deposit</span>
                     <span className="text-sm font-semibold text-slate-100">
@@ -6673,15 +6712,12 @@ export default function LiquiditySection({
                   className="w-full rounded-2xl bg-slate-900/80 border border-slate-800 text-slate-100 px-4 py-3 flex items-center justify-between shadow-lg shadow-black/40"
                 >
                   <div className="flex items-center gap-3">
-                    {pairSelected?.logo ? (
-                      <img
-                        src={pairSelected.logo}
-                        alt={`${pairSelected.symbol} logo`}
-                        className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                      />
-                    ) : (
-                      <div className="h-10 w-10 rounded-full bg-slate-900 border border-slate-800" />
-                    )}
+                    <TokenLogo
+                      token={pairSelected}
+                      symbol={pairSelected?.symbol || "?"}
+                      className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
+                    />
                     <div className="flex flex-col text-left">
                       <span className="text-xs text-slate-400">Token you want to pair with</span>
                       <span className="text-sm font-semibold">
@@ -6719,10 +6755,11 @@ export default function LiquiditySection({
                         }}
                         className="w-full px-4 py-3 flex items-center gap-3 text-sm text-slate-100 hover:bg-slate-800/70"
                       >
-                        <img
-                          src={opt.logo}
-                          alt={`${opt.symbol} logo`}
+                        <TokenLogo
+                          token={opt}
+                          symbol={opt.symbol}
                           className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                          placeholderClassName="h-8 w-8 rounded-full bg-slate-800 border border-slate-700 text-xs font-semibold text-white flex items-center justify-center"
                         />
                         <div className="flex flex-col items-start">
                           <span className="font-semibold">{opt.symbol}</span>
@@ -6744,11 +6781,12 @@ export default function LiquiditySection({
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                     <div className="flex items-center gap-3">
                       {[tokenRegistry[p.token0Symbol], tokenRegistry[p.token1Symbol]].map((t, idx) => (
-                        <img
+                        <TokenLogo
                           key={idx}
-                          src={t?.logo}
-                          alt={`${t?.symbol} logo`}
+                          token={t}
+                          symbol={idx === 0 ? p.token0Symbol : p.token1Symbol}
                           className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                          placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
                         />
                       ))}
                     <div className="flex flex-col">
@@ -10040,16 +10078,17 @@ export default function LiquiditySection({
                           className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
                         >
                           <div className="flex items-center gap-3">
-                            <div className="flex -space-x-2">
-                              {[token0, token1].map((t, idx) => (
-                                <img
-                                  key={idx}
-                                  src={t?.logo}
-                                  alt={`${t?.symbol || "token"} logo`}
-                                  className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                />
-                              ))}
-                            </div>
+                              <div className="flex -space-x-2">
+                                {[token0, token1].map((t, idx) => (
+                                  <TokenLogo
+                                    key={idx}
+                                    token={t}
+                                    symbol={idx === 0 ? pos.token0Symbol : pos.token1Symbol}
+                                    className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                    placeholderClassName="h-9 w-9 rounded-full bg-slate-800 border border-slate-700 text-xs font-semibold text-white flex items-center justify-center"
+                                  />
+                                ))}
+                              </div>
                             <div>
                               <div className="text-sm font-semibold text-slate-100">
                                 {pos.token0Symbol} / {pos.token1Symbol}
@@ -10308,10 +10347,11 @@ export default function LiquiditySection({
                   className="w-full grid grid-cols-12 items-center px-5 py-3 hover:bg-slate-900/40 transition text-left"
                 >
                   <div className="col-span-12 md:col-span-5 flex items-center gap-3">
-                    <img
-                      src={t.logo}
-                      alt={`${t.symbol} logo`}
+                    <TokenLogo
+                      token={t}
+                      symbol={t.symbol}
                       className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                      placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
                     />
                     <div className="flex flex-col">
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">

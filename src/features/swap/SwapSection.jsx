@@ -177,18 +177,19 @@ const TokenLogo = ({
   placeholderClassName =
     "h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center",
 }) => {
+  const [imgFailed, setImgFailed] = useState(false);
   const displaySym = displaySymbol(token, fallbackSymbol);
   const primaryLogo = token?.logo || null;
   const fallbackLogo =
     (fallbackSymbol && TOKENS[fallbackSymbol]?.logo) ||
     (token?.symbol && TOKENS[token.symbol]?.logo) ||
     null;
-  const imgSrc = primaryLogo || fallbackLogo || null;
+  const imgSrc = imgFailed ? null : primaryLogo || fallbackLogo || null;
 
   if (!imgSrc) {
     return (
       <div className={placeholderClassName}>
-        {(displaySym || "?").slice(0, 3)}
+        ?
       </div>
     );
   }
@@ -204,11 +205,22 @@ const TokenLogo = ({
           target.setAttribute("data-fallback", "1");
           target.src = fallbackLogo;
         } else {
-          target.removeAttribute("src");
+          setImgFailed(true);
         }
       }}
     />
   );
+};
+const normalizeCustomTokenLogo = (logo) => {
+  const raw = String(logo || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const crxLogo = String(TOKENS?.CRX?.logo || "")
+    .trim()
+    .toLowerCase();
+  // Legacy custom-token fallback used CRX logo; treat it as "no logo".
+  if ((crxLogo && lower === crxLogo) || lower.includes("currentx")) return null;
+  return raw;
 };
 const paddedTopicAddress = (addr) =>
   `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
@@ -587,6 +599,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     Object.entries(customTokens || {}).forEach(([sym, meta]) => {
       if (!meta) return;
       const base = out[sym];
+      const customLogo = normalizeCustomTokenLogo(meta.logo);
       out[sym] = {
         ...base,
         ...meta,
@@ -594,7 +607,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         decimals: meta.decimals ?? base?.decimals,
         name: meta.name || base?.name,
         displaySymbol: meta.displaySymbol || base?.displaySymbol,
-        logo: meta.logo || base?.logo || null,
+        logo: customLogo || base?.logo || null,
       };
     });
     return out;
@@ -745,7 +758,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             name: name || tokenKey || "Custom Token",
             address: addr,
             decimals: Number.isFinite(decimals) ? decimals : 18,
-            logo: TOKENS.CRX.logo,
+            logo: normalizeCustomTokenLogo(metaOverride?.logo) || null,
           },
         };
         setCustomTokens(next);
