@@ -334,12 +334,27 @@ export const useUserPoints = (address) => {
       };
 
       try {
-        const params = new URLSearchParams();
-        params.set("address", normalized);
-        if (SEASON_ID) params.set("seasonId", SEASON_ID);
-        const res = await fetch(`/api/points/user?${params.toString()}`);
-        if (res.ok) {
-          const payload = await res.json();
+        const fetchBackendPayload = async (seasonId) => {
+          const params = new URLSearchParams();
+          params.set("address", normalized);
+          if (seasonId) params.set("seasonId", seasonId);
+          const res = await fetch(`/api/points/user?${params.toString()}`, {
+            cache: "no-store",
+          });
+          if (!res.ok) return null;
+          return res.json();
+        };
+
+        let payload = await fetchBackendPayload(SEASON_ID);
+        if (payload?.exists === false && SEASON_ID) {
+          // Season mismatch safety: retry without forcing seasonId.
+          const fallbackPayload = await fetchBackendPayload("");
+          if (fallbackPayload?.exists) {
+            payload = fallbackPayload;
+          }
+        }
+
+        if (payload) {
           const user = payload?.user || {};
           const seasonReward = user?.seasonReward || {};
           const volumeUsd = toNumber(user.volumeUsd) ?? 0;

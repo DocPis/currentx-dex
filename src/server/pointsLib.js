@@ -21,11 +21,9 @@ const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
-  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
-  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
 ];
 
 const parseTime = (value) => {
@@ -70,7 +68,7 @@ const dedupeUrls = (urls = []) => {
 const isFallbackSubgraphProvider = (url = "") => {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
-    return hostname.includes("thegraph.com") || hostname.includes("goldsky.com");
+    return hostname.includes("thegraph.com");
   } catch {
     return false;
   }

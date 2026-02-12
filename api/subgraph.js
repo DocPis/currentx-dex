@@ -1,6 +1,5 @@
 const ALLOWED_HOST_SUFFIXES = [
   ".thegraph.com",
-  ".goldsky.com",
 ];
 
 const MAX_BODY_BYTES = 200_000;

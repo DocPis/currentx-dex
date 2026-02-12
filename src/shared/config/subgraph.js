@@ -19,11 +19,9 @@ const SUBGRAPH_PROXY =
   ).trim();
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
-  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
-  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
 ];
 
 // Fallback to global env when missing (align behavior across networks).
@@ -64,7 +62,7 @@ const endpointRequiresApiKey = (url = "") =>
 const isFallbackProviderUrl = (url = "") => {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
-    return hostname.includes("thegraph.com") || hostname.includes("goldsky.com");
+    return hostname.includes("thegraph.com");
   } catch {
     return false;
   }
@@ -189,14 +187,7 @@ const buildSubgraphHeaders = (endpoint, useProxy) => {
   return headers;
 };
 
-const shouldPreferProxyForEndpoint = (url = "") => {
-  if (!SUBGRAPH_PROXY) return false;
-  try {
-    return new URL(url).hostname.endsWith(".goldsky.com");
-  } catch {
-    return false;
-  }
-};
+const shouldPreferProxyForEndpoint = () => false;
 
 async function postSubgraphWithFallback({
   query,
