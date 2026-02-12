@@ -216,14 +216,34 @@ export default async function handler(req, res) {
         rank: idx + 1,
       };
     });
+    // UI preview rewards should remain visible even if some user hashes are stale/missing.
+    // Fallback row keeps volume eligibility aligned with visible points score.
     const userRowsByAddress = new Map(
-      addresses.map(({ address }, idx) => [address, userRows?.[idx] || null])
+      addresses.map(({ address, score }, idx) => {
+        const row = userRows?.[idx] || null;
+        if (row && Object.keys(row).length) {
+          return [address, row];
+        }
+        return [
+          address,
+          {
+            points: score,
+            volumeUsd: score,
+            washFlag: 0,
+          },
+        ];
+      })
     );
+    const leaderboardPreviewConfig = {
+      ...rewardsConfig,
+      top100MinVolumeUsd: 0,
+      top100RequireFinalization: false,
+    };
     const rewardsTable = computeLeaderboardRewardsTable({
       entries: rankedEntries,
       userRowsByAddress,
       seasonRewardCrx,
-      config: rewardsConfig,
+      config: leaderboardPreviewConfig,
       nowMs,
       requireTop100Finalization: false,
     });
