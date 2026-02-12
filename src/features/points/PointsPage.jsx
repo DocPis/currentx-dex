@@ -69,6 +69,7 @@ const formatDate = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return "--";
   return new Date(num).toLocaleDateString(undefined, {
+    timeZone: "UTC",
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -169,13 +170,12 @@ export default function PointsPage({ address, onConnect }) {
   const whitelistQuery = useWhitelistRewards(address);
 
   const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
-  const seasonStartValue = userStats?.seasonStart ?? SEASON_START_MS;
   const seasonEndValue = userStats?.seasonEnd ?? SEASON_END_MS;
   const seasonIsOngoing =
     typeof userStats?.seasonOngoing === "boolean"
       ? userStats.seasonOngoing
       : SEASON_ONGOING;
-  const seasonStartLabel = formatDate(seasonStartValue);
+  const seasonStartLabel = "12 Feb 2026";
   const seasonEndLabel = seasonIsOngoing
     ? "ONGOING"
     : formatDate(seasonEndValue);
