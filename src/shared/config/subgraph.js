@@ -1917,13 +1917,91 @@ const buildCandidateOrder = (candidates = [], preferredIdx = null) => {
 };
 
 const POOL_CHUNK_CONCURRENCY = 3;
-let v2PoolsPageCandidateIdx = null;
-let v3PoolsPageCandidateIdx = null;
-let v2PoolsHourProfile = null;
-let v3PoolsHourProfile = null;
-let v2PoolsDayField = null;
-let v3PoolsDayField = null;
-let v3PoolsDaySelect = null;
+const SUBGRAPH_SCHEMA_PROFILE_KEY = "cx_subgraph_schema_profile_v1";
+const SUBGRAPH_SCHEMA_PROFILE_SIGNATURE = JSON.stringify({
+  v2: SUBGRAPH_ENDPOINTS.map((endpoint) => endpoint?.url || "").filter(Boolean),
+  v3: SUBGRAPH_V3_ENDPOINTS.map((endpoint) => endpoint?.url || "").filter(Boolean),
+});
+
+const canUseSubgraphStorage = () =>
+  typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+
+const readSubgraphSchemaProfile = () => {
+  if (!canUseSubgraphStorage()) return {};
+  try {
+    const raw = window.localStorage.getItem(SUBGRAPH_SCHEMA_PROFILE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    if (parsed.signature !== SUBGRAPH_SCHEMA_PROFILE_SIGNATURE) return {};
+    const values = parsed.values;
+    if (!values || typeof values !== "object") return {};
+    return values;
+  } catch {
+    return {};
+  }
+};
+
+const writeSubgraphSchemaProfile = (values) => {
+  if (!canUseSubgraphStorage()) return;
+  try {
+    window.localStorage.setItem(
+      SUBGRAPH_SCHEMA_PROFILE_KEY,
+      JSON.stringify({
+        signature: SUBGRAPH_SCHEMA_PROFILE_SIGNATURE,
+        ts: Date.now(),
+        values,
+      })
+    );
+  } catch {
+    // ignore localStorage failures
+  }
+};
+
+const toProfileIndex = (value) =>
+  Number.isInteger(value) && value >= 0 ? value : null;
+
+const toProfileText = (value) =>
+  typeof value === "string" && value.trim() ? value : null;
+
+const toHourProfile = (value) => {
+  if (!value || typeof value !== "object") return null;
+  const field = toProfileText(value.field);
+  const orderBy = toProfileText(value.orderBy);
+  const select = toProfileText(value.select);
+  if (!field || !orderBy || !select) return null;
+  return {
+    field,
+    orderBy,
+    select,
+    useSince: value.useSince !== false,
+  };
+};
+
+const storedSubgraphSchemaProfile = readSubgraphSchemaProfile();
+let v2PoolsPageCandidateIdx = toProfileIndex(
+  storedSubgraphSchemaProfile.v2PoolsPageCandidateIdx
+);
+let v3PoolsPageCandidateIdx = toProfileIndex(
+  storedSubgraphSchemaProfile.v3PoolsPageCandidateIdx
+);
+let v2PoolsHourProfile = toHourProfile(storedSubgraphSchemaProfile.v2PoolsHourProfile);
+let v3PoolsHourProfile = toHourProfile(storedSubgraphSchemaProfile.v3PoolsHourProfile);
+let v2PoolsDayField = toProfileText(storedSubgraphSchemaProfile.v2PoolsDayField);
+let v3PoolsDayField = toProfileText(storedSubgraphSchemaProfile.v3PoolsDayField);
+let v3PoolsDaySelect = toProfileText(storedSubgraphSchemaProfile.v3PoolsDaySelect);
+
+const persistSubgraphSchemaProfile = () => {
+  writeSubgraphSchemaProfile({
+    v2PoolsPageCandidateIdx,
+    v3PoolsPageCandidateIdx,
+    v2PoolsHourProfile,
+    v3PoolsHourProfile,
+    v2PoolsDayField,
+    v3PoolsDayField,
+    v3PoolsDaySelect,
+  });
+};
 
 export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
   if (SUBGRAPH_MISSING_KEY) return [];
@@ -1993,7 +2071,10 @@ export async function fetchV2PoolsPage({ limit = 50, skip = 0 } = {}) {
     try {
       const res = await postSubgraph(query, { first, skip: offset });
       const pairs = res?.pairs || [];
-      v2PoolsPageCandidateIdx = idx;
+      if (v2PoolsPageCandidateIdx !== idx) {
+        v2PoolsPageCandidateIdx = idx;
+        persistSubgraphSchemaProfile();
+      }
       return pairs.map((pair) => ({
         id: pair?.id || "",
         token0Symbol: pair?.token0?.symbol || "",
@@ -2084,7 +2165,10 @@ export async function fetchV3PoolsPage({ limit = 50, skip = 0 } = {}) {
     try {
       const res = await postSubgraphV3(query, { first, skip: offset });
       const pools = res?.pools || [];
-      v3PoolsPageCandidateIdx = idx;
+      if (v3PoolsPageCandidateIdx !== idx) {
+        v3PoolsPageCandidateIdx = idx;
+        persistSubgraphSchemaProfile();
+      }
       return pools.map((pool) => ({
         id: pool?.id || "",
         token0Symbol: pool?.token0?.symbol || "",
@@ -2294,7 +2378,10 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
         isOrderByMissing(message) ||
         isFilterUnsupported(message)
       ) {
-        v2PoolsHourProfile = null;
+        if (v2PoolsHourProfile !== null) {
+          v2PoolsHourProfile = null;
+          persistSubgraphSchemaProfile();
+        }
       } else {
         throw err;
       }
@@ -2340,12 +2427,20 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
   }
 
   if (resolvedSelect && resolvedField && resolvedOrderBy) {
-    v2PoolsHourProfile = {
+    const nextProfile = {
       field: resolvedField,
       orderBy: resolvedOrderBy,
       select: resolvedSelect,
       useSince: resolvedUseSince,
     };
+    const changed =
+      !v2PoolsHourProfile ||
+      v2PoolsHourProfile.field !== nextProfile.field ||
+      v2PoolsHourProfile.orderBy !== nextProfile.orderBy ||
+      v2PoolsHourProfile.select !== nextProfile.select ||
+      v2PoolsHourProfile.useSince !== nextProfile.useSince;
+    v2PoolsHourProfile = nextProfile;
+    if (changed) persistSubgraphSchemaProfile();
     await runRemainingChunks(
       resolvedField,
       resolvedOrderBy,
@@ -2515,7 +2610,10 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
         isOrderByMissing(message) ||
         isFilterUnsupported(message)
       ) {
-        v3PoolsHourProfile = null;
+        if (v3PoolsHourProfile !== null) {
+          v3PoolsHourProfile = null;
+          persistSubgraphSchemaProfile();
+        }
       } else {
         throw err;
       }
@@ -2561,12 +2659,20 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
   }
 
   if (resolvedSelect && resolvedField && resolvedOrderBy) {
-    v3PoolsHourProfile = {
+    const nextProfile = {
       field: resolvedField,
       orderBy: resolvedOrderBy,
       select: resolvedSelect,
       useSince: resolvedUseSince,
     };
+    const changed =
+      !v3PoolsHourProfile ||
+      v3PoolsHourProfile.field !== nextProfile.field ||
+      v3PoolsHourProfile.orderBy !== nextProfile.orderBy ||
+      v3PoolsHourProfile.select !== nextProfile.select ||
+      v3PoolsHourProfile.useSince !== nextProfile.useSince;
+    v3PoolsHourProfile = nextProfile;
+    if (changed) persistSubgraphSchemaProfile();
     await runRemainingChunks(
       resolvedField,
       resolvedOrderBy,
@@ -2627,7 +2733,10 @@ export async function fetchV2PoolsDayData(ids = []) {
     } catch (err) {
       const message = err?.message || "";
       if (isSchemaFieldMissing(message)) {
-        v2PoolsDayField = null;
+        if (v2PoolsDayField !== null) {
+          v2PoolsDayField = null;
+          persistSubgraphSchemaProfile();
+        }
       } else {
         throw err;
       }
@@ -2642,7 +2751,10 @@ export async function fetchV2PoolsDayData(ids = []) {
       try {
         await runChunk(chunks[0], field);
         resolvedField = field;
-        v2PoolsDayField = field;
+        if (v2PoolsDayField !== field) {
+          v2PoolsDayField = field;
+          persistSubgraphSchemaProfile();
+        }
         break;
       } catch (err) {
         const message = err?.message || "";
@@ -2754,8 +2866,11 @@ export async function fetchV3PoolsDayData(ids = []) {
     } catch (err) {
       const message = err?.message || "";
       if (isSchemaFieldMissing(message)) {
-        v3PoolsDayField = null;
-        v3PoolsDaySelect = null;
+        if (v3PoolsDayField !== null || v3PoolsDaySelect !== null) {
+          v3PoolsDayField = null;
+          v3PoolsDaySelect = null;
+          persistSubgraphSchemaProfile();
+        }
       } else {
         throw err;
       }
@@ -2778,8 +2893,11 @@ export async function fetchV3PoolsDayData(ids = []) {
           await runChunk(chunks[0], field, select);
           resolvedSelect = select;
           resolvedField = field;
-          v3PoolsDaySelect = select;
-          v3PoolsDayField = field;
+          if (v3PoolsDaySelect !== select || v3PoolsDayField !== field) {
+            v3PoolsDaySelect = select;
+            v3PoolsDayField = field;
+            persistSubgraphSchemaProfile();
+          }
           matched = true;
           break;
         } catch (err) {

@@ -77,6 +77,20 @@ const mergeRollingData = (primary = {}, fallback = {}) => ({
   ...(fallback || {}),
 });
 
+const hasOwn = (obj, key) =>
+  Object.prototype.hasOwnProperty.call(obj || {}, key);
+
+const isFreshTimestamp = (value, maxAgeMs) => {
+  const ts = Number(value);
+  if (!Number.isFinite(ts) || ts <= 0) return false;
+  return Date.now() - ts < maxAgeMs;
+};
+
+const getFreshRollingSeed = (cacheValue, key, ids, maxAgeMs) => {
+  if (!cacheValue || !isFreshTimestamp(cacheValue.ts, maxAgeMs)) return {};
+  return pickRollingEntries(cacheValue[key], ids);
+};
+
 export function usePoolsData(options = {}) {
   const deferV2UntilV3Ready = Boolean(options?.deferV2UntilV3Ready);
   const v2StartDelayMs = Math.max(0, Number(options?.v2StartDelayMs) || 1200);
@@ -177,20 +191,36 @@ export function usePoolsData(options = {}) {
 
   const fetchV2Rolling24h = useCallback(async () => {
     if (!v2Ids.length) return {};
-    const dayData = await fetchV2PoolsDayData(v2Ids);
-    const missingIds = v2Ids.filter((id) => !dayData[id]);
-    if (!missingIds.length) return dayData;
+    const seed = getFreshRollingSeed(
+      poolsCacheRef.current,
+      "v2RollingData",
+      v2Ids,
+      REFRESH_MS
+    );
+    const idsToFetch = v2Ids.filter((id) => !hasOwn(seed, id));
+    if (!idsToFetch.length) return seed;
+    const dayData = await fetchV2PoolsDayData(idsToFetch);
+    const missingIds = idsToFetch.filter((id) => !dayData[id]);
+    if (!missingIds.length) return mergeRollingData(seed, dayData);
     const hourData = await fetchV2PoolsHourData(missingIds, 24);
-    return mergeRollingData(dayData, hourData);
+    return mergeRollingData(seed, mergeRollingData(dayData, hourData));
   }, [v2Ids]);
 
   const fetchV3Rolling24h = useCallback(async () => {
     if (!v3Ids.length) return {};
-    const dayData = await fetchV3PoolsDayData(v3Ids);
-    const missingIds = v3Ids.filter((id) => !dayData[id]);
-    if (!missingIds.length) return dayData;
+    const seed = getFreshRollingSeed(
+      poolsCacheRef.current,
+      "v3RollingData",
+      v3Ids,
+      REFRESH_MS
+    );
+    const idsToFetch = v3Ids.filter((id) => !hasOwn(seed, id));
+    if (!idsToFetch.length) return seed;
+    const dayData = await fetchV3PoolsDayData(idsToFetch);
+    const missingIds = idsToFetch.filter((id) => !dayData[id]);
+    if (!missingIds.length) return mergeRollingData(seed, dayData);
     const hourData = await fetchV3PoolsHourData(missingIds, 24);
-    return mergeRollingData(dayData, hourData);
+    return mergeRollingData(seed, mergeRollingData(dayData, hourData));
   }, [v3Ids]);
 
   const v2RollingQuery = useQuery({
