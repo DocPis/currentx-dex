@@ -19,6 +19,7 @@ import {
   setRegisteredCustomTokens,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
+  DEFAULT_TOKEN_LOGO,
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
@@ -184,7 +185,7 @@ const TokenLogo = ({
     (fallbackSymbol && TOKENS[fallbackSymbol]?.logo) ||
     (token?.symbol && TOKENS[token.symbol]?.logo) ||
     null;
-  const imgSrc = imgFailed ? null : primaryLogo || fallbackLogo || null;
+  const imgSrc = imgFailed ? null : primaryLogo || fallbackLogo || DEFAULT_TOKEN_LOGO;
 
   if (!imgSrc) {
     return (
@@ -607,7 +608,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         decimals: meta.decimals ?? base?.decimals,
         name: meta.name || base?.name,
         displaySymbol: meta.displaySymbol || base?.displaySymbol,
-        logo: customLogo || base?.logo || null,
+        logo: customLogo || base?.logo || DEFAULT_TOKEN_LOGO,
       };
     });
     return out;
@@ -758,7 +759,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             name: name || tokenKey || "Custom Token",
             address: addr,
             decimals: Number.isFinite(decimals) ? decimals : 18,
-            logo: normalizeCustomTokenLogo(metaOverride?.logo) || null,
+            logo: normalizeCustomTokenLogo(metaOverride?.logo) || DEFAULT_TOKEN_LOGO,
           },
         };
         setCustomTokens(next);

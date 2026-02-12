@@ -15,6 +15,7 @@ import {
   setRegisteredCustomTokens,
   EXPLORER_BASE_URL,
   NETWORK_NAME,
+  DEFAULT_TOKEN_LOGO,
   CHAINLINK_ETH_USD_FEED_ADDRESS,
   CHAINLINK_RPC_URL,
   BTCB_ADDRESS,
@@ -184,7 +185,7 @@ const TokenLogo = ({
     "h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center",
 }) => {
   const [imgFailed, setImgFailed] = useState(false);
-  const logo = imgFailed ? null : token?.logo || null;
+  const logo = imgFailed ? null : token?.logo || DEFAULT_TOKEN_LOGO;
   const label = symbol || token?.symbol || "token";
 
   if (!logo) {
@@ -1388,7 +1389,7 @@ export default function LiquiditySection({
     Object.entries(customTokens).forEach(([sym, meta]) => {
       out[sym] = {
         ...meta,
-        logo: normalizeCustomTokenLogo(meta?.logo),
+        logo: normalizeCustomTokenLogo(meta?.logo) || DEFAULT_TOKEN_LOGO,
       };
     });
 
@@ -3228,7 +3229,7 @@ export default function LiquiditySection({
             name: nameRaw || symbol,
             address: addr,
             decimals: Number(decimalsRaw) || 18,
-            logo: null,
+            logo: DEFAULT_TOKEN_LOGO,
           };
         };
 
@@ -6109,7 +6110,7 @@ export default function LiquiditySection({
             name: name || tokenKey || "Custom Token",
             address: addr,
             decimals: Number.isFinite(decimals) ? decimals : 18,
-            logo: normalizeCustomTokenLogo(metaOverride?.logo) || null,
+            logo: normalizeCustomTokenLogo(metaOverride?.logo) || DEFAULT_TOKEN_LOGO,
           },
         };
         setCustomTokens(next);

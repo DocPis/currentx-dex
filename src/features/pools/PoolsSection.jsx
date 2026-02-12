@@ -1,6 +1,6 @@
 // src/features/pools/PoolsSection.jsx
 import React, { useMemo, useState } from "react";
-import { TOKENS } from "../../shared/config/tokens";
+import { DEFAULT_TOKEN_LOGO, TOKENS } from "../../shared/config/tokens";
 import megaLogo from "../../tokens/megaeth.png";
 import { usePoolsData } from "../../shared/hooks/usePoolsData";
 import { useDashboardData } from "../../shared/hooks/useDashboardData";
@@ -486,19 +486,17 @@ export default function PoolsSection({ onSelectPool }) {
                             key={idx}
                             className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[10px] font-semibold text-slate-200"
                           >
-                            {t?.logo ? (
-                              <img
-                                src={t.logo}
-                                alt={`${t.symbol} logo`}
-                                className="h-full w-full object-contain"
-                              />
-                            ) : (
-                              <span>
-                                {(idx === 0 ? pool.token0Symbol : pool.token1Symbol || "?")
-                                  .toString()
-                                  .slice(0, 3)}
-                              </span>
-                            )}
+                            <img
+                              src={t?.logo || DEFAULT_TOKEN_LOGO}
+                              alt={`${idx === 0 ? pool.token0Symbol : pool.token1Symbol || "token"} logo`}
+                              className="h-full w-full object-contain"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                if (target.getAttribute("data-fallback") === "1") return;
+                                target.setAttribute("data-fallback", "1");
+                                target.src = DEFAULT_TOKEN_LOGO;
+                              }}
+                            />
                           </div>
                         ))}
                       </div>

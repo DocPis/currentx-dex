@@ -15,6 +15,7 @@ import xbtcLogo from "../../tokens/xbtc.png";
 import btcbLogo from "../../tokens/btcb.svg";
 import wusdLogo from "../../tokens/wusd.png";
 import wusdcLogo from "../../tokens/wusdc.png";
+import defaultTokenLogo from "../../tokens/token-placeholder megaeth.svg";
 // placeholder for xBTC logo; wire later
 // import xbtcLogo from "../../tokens/xbtc.png";
 import {
@@ -208,3 +209,4 @@ const buildTokens = () => {
 
 // Token registry used across swaps/liquidity; filtered per-network by presence of an address.
 export const TOKENS = buildTokens();
+export const DEFAULT_TOKEN_LOGO = defaultTokenLogo;

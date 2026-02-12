@@ -1,7 +1,7 @@
 // src/features/dashboard/Dashboard.jsx
 import React, { useMemo, useRef, useState } from "react";
 import { useDashboardData } from "../../shared/hooks/useDashboardData";
-import { TOKENS } from "../../shared/config/tokens";
+import { DEFAULT_TOKEN_LOGO, TOKENS } from "../../shared/config/tokens";
 
 function formatNumber(num) {
   if (num === null || num === undefined) return "--";
@@ -532,15 +532,17 @@ export default function Dashboard() {
                             key={idx}
                             className="h-7 w-7 rounded-full border border-slate-800 bg-slate-900 flex items-center justify-center overflow-hidden text-[9px] font-semibold text-slate-200"
                           >
-                            {t?.logo ? (
-                              <img
-                                src={t.logo}
-                                alt={`${t.symbol} logo`}
-                                className="h-full w-full object-contain"
-                              />
-                            ) : (
-                              <span>{(idx === 0 ? symbol0 : symbol1).slice(0, 3)}</span>
-                            )}
+                            <img
+                              src={t?.logo || DEFAULT_TOKEN_LOGO}
+                              alt={`${idx === 0 ? symbol0 : symbol1} logo`}
+                              className="h-full w-full object-contain"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                if (target.getAttribute("data-fallback") === "1") return;
+                                target.setAttribute("data-fallback", "1");
+                                target.src = DEFAULT_TOKEN_LOGO;
+                              }}
+                            />
                           </div>
                         ))}
                       </div>
