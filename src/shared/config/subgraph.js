@@ -2828,6 +2828,164 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
         (Number.isFinite(row.token0Price) && row.token0Price > 0) ||
         (Number.isFinite(row.token1Price) && row.token1Price > 0)
     );
+  const pickPrice = (row) => {
+    const p0 = toOptionalPositive(row?.token0Price);
+    if (p0) return p0;
+    const p1 = toOptionalPositive(row?.token1Price);
+    if (p1) return p1;
+    return null;
+  };
+  const needsTokenFallback = (rows = []) => {
+    if (!rows.length) return true;
+    const prices = rows
+      .map((row) => pickPrice(row))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const missingPriceData = prices.length < 2;
+    const insufficientHistory = rows.length < Math.min(count * 0.5, 30);
+    let flatPrice = false;
+    if (prices.length >= 3) {
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      if (Number.isFinite(min) && Number.isFinite(max) && min > 0) {
+        flatPrice = (max - min) / min < 0.001;
+      }
+    }
+    return missingPriceData || flatPrice || insufficientHistory;
+  };
+  const mergeMissingPricesByDay = (baseRows = [], priceRows = []) => {
+    if (!baseRows.length || !priceRows.length) return baseRows;
+    const byDay = new Map();
+    priceRows.forEach((row) => {
+      const dayId = Math.floor(Number(row?.date || 0) / 86400000);
+      if (!Number.isFinite(dayId)) return;
+      const existing = byDay.get(dayId);
+      if (!existing || Number(row?.date || 0) > Number(existing?.date || 0)) {
+        byDay.set(dayId, row);
+      }
+    });
+    return baseRows.map((row) => {
+      const dayId = Math.floor(Number(row?.date || 0) / 86400000);
+      const priceRow = byDay.get(dayId);
+      if (!priceRow) return row;
+      const token0Price =
+        toOptionalPositive(row?.token0Price) ??
+        toOptionalPositive(priceRow?.token0Price) ??
+        null;
+      const token1Price =
+        toOptionalPositive(row?.token1Price) ??
+        toOptionalPositive(priceRow?.token1Price) ??
+        (token0Price ? 1 / token0Price : null);
+      return {
+        ...row,
+        token0Price,
+        token1Price,
+      };
+    });
+  };
+  const appendPriceOnlyRows = (baseRows = [], priceRows = []) => {
+    if (!priceRows.length) return baseRows;
+    const daySet = new Set(
+      baseRows.map((row) => Math.floor(Number(row?.date || 0) / 86400000))
+    );
+    const extras = priceRows
+      .filter((row) => {
+        const dayId = Math.floor(Number(row?.date || 0) / 86400000);
+        return Number.isFinite(dayId) && !daySet.has(dayId);
+      })
+      .map((row) => ({
+        date: Number(row?.date || 0),
+        tvlUsd: null,
+        volumeUsd: null,
+        feesUsd: null,
+        token0Price: toOptionalPositive(row?.token0Price),
+        token1Price:
+          toOptionalPositive(row?.token1Price) ??
+          (toOptionalPositive(row?.token0Price)
+            ? 1 / toOptionalPositive(row?.token0Price)
+            : null),
+      }))
+      .filter((row) => Number.isFinite(row.date) && row.date > 0);
+    return baseRows.concat(extras).sort((a, b) => a.date - b.date);
+  };
+  const toPriceOnlyRows = (rows = []) =>
+    rows
+      .map((row) => {
+        const token0Price = toOptionalPositive(row?.token0Price);
+        const token1Price =
+          toOptionalPositive(row?.token1Price) ??
+          (token0Price ? 1 / token0Price : null);
+        return {
+          date: Number(row?.date || 0),
+          tvlUsd: null,
+          volumeUsd: null,
+          feesUsd: null,
+          token0Price,
+          token1Price,
+        };
+      })
+      .filter((row) => Number.isFinite(row.date) && row.date > 0);
+  const resolvePoolTokens = async () => {
+    const variants = [
+      `
+        query V3PoolTokens {
+          pools(where: { id: "${id}" }) {
+            token0 { id }
+            token1 { id }
+          }
+        }
+      `,
+      `
+        query V3PoolTokens {
+          pool(id: "${id}") {
+            token0 { id }
+            token1 { id }
+          }
+        }
+      `,
+      `
+        query V3PoolTokens {
+          pools(where: { id: "${id}" }) {
+            token0
+            token1
+          }
+        }
+      `,
+      `
+        query V3PoolTokens {
+          pool(id: "${id}") {
+            token0
+            token1
+          }
+        }
+      `,
+    ];
+    const pickTokens = (row) => {
+      const token0 =
+        typeof row?.token0 === "string" ? row.token0 : row?.token0?.id;
+      const token1 =
+        typeof row?.token1 === "string" ? row.token1 : row?.token1?.id;
+      const id0 = String(token0 || "").toLowerCase();
+      const id1 = String(token1 || "").toLowerCase();
+      if (!id0 || !id1 || id0 === id1) return null;
+      return { token0: id0, token1: id1 };
+    };
+
+    for (const query of variants) {
+      try {
+        const res = await postSubgraphV3(query);
+        const row = res?.pool || res?.pools?.[0];
+        const tokens = pickTokens(row);
+        if (tokens) return tokens;
+      } catch (err) {
+        const message = err?.message || "";
+        if (isSchemaFieldMissing(message)) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    return null;
+  };
   const normalizeRows = (rows, dateGetter) =>
     rows
       .map((row) => {
@@ -2913,6 +3071,7 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
   ];
 
   let dayRows = null;
+  let dayMatched = false;
   for (const variant of variants) {
     for (const field of candidates) {
       const query = `
@@ -2932,11 +3091,15 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
         const res = await postSubgraphV3(query);
         const rows = res?.poolDayDatas || [];
         const mapped = normalizeRows(rows, (row) => Number(row.date || 0) * 1000);
-        if (!dayRows && mapped.length) {
+        if (!mapped.length) {
+          continue;
+        }
+        if (!dayRows || hasPrice(mapped)) {
           dayRows = mapped;
         }
         if (hasPrice(mapped)) {
-          return mapped;
+          dayMatched = true;
+          break;
         }
       } catch (err) {
         const message = err?.message || "";
@@ -2946,6 +3109,7 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
         throw err;
       }
     }
+    if (dayMatched) break;
   }
 
   const hourVariants = [
@@ -3019,57 +3183,100 @@ export async function fetchV3PoolHistory(poolId, days = 14) {
     return out;
   };
 
-  for (const variant of hourVariants) {
-    for (const field of candidates) {
-      let skip = 0;
-      let rows = [];
-      while (rows.length < hourTarget) {
-        const first = Math.min(1000, hourTarget - rows.length);
-        const query = `
-          query V3PoolHourHistory {
-            poolHourDatas(
-              first: ${first}
-              skip: ${skip}
-              orderBy: ${variant.name}
-              orderDirection: desc
-              where: { ${field}: "${id}" }
-            ) {
-              ${variant.select}
+  let hourRows = null;
+  if (!dayRows || needsTokenFallback(dayRows)) {
+    let hourMatched = false;
+    for (const variant of hourVariants) {
+      for (const field of candidates) {
+        let skip = 0;
+        let rows = [];
+        while (rows.length < hourTarget) {
+          const first = Math.min(1000, hourTarget - rows.length);
+          const query = `
+            query V3PoolHourHistory {
+              poolHourDatas(
+                first: ${first}
+                skip: ${skip}
+                orderBy: ${variant.name}
+                orderDirection: desc
+                where: { ${field}: "${id}" }
+              ) {
+                ${variant.select}
+              }
             }
+          `;
+          try {
+            const res = await postSubgraphV3(query);
+            const chunk = res?.poolHourDatas || [];
+            if (!chunk.length) break;
+            rows = rows.concat(chunk);
+            if (chunk.length < first) break;
+            skip += chunk.length;
+            if (skip >= 12000) break;
+          } catch (err) {
+            const message = err?.message || "";
+            const orderByMissing =
+              message.includes("PoolHourData_orderBy") ||
+              message.includes("PoolHourData_orderBy!") ||
+              message.includes("is not a valid PoolHourData_orderBy");
+            if (isSchemaFieldMissing(message) || orderByMissing) {
+              rows = [];
+              break;
+            }
+            throw err;
           }
-        `;
-        try {
-          const res = await postSubgraphV3(query);
-          const chunk = res?.poolHourDatas || [];
-          if (!chunk.length) break;
-          rows = rows.concat(chunk);
-          if (chunk.length < first) break;
-          skip += chunk.length;
-          if (skip >= 12000) break;
-        } catch (err) {
-          const message = err?.message || "";
-          const orderByMissing =
-            message.includes("PoolHourData_orderBy") ||
-            message.includes("PoolHourData_orderBy!") ||
-            message.includes("is not a valid PoolHourData_orderBy");
-          if (isSchemaFieldMissing(message) || orderByMissing) {
-            rows = [];
-            break;
-          }
-          throw err;
+        }
+        if (!rows.length) {
+          continue;
+        }
+        const mapped = downsampleDaily(normalizeRows(rows, variant.dateGetter), count);
+        if (!mapped.length) continue;
+        if (!hourRows || hasPrice(mapped)) {
+          hourRows = mapped;
+        }
+        if (hasPrice(mapped)) {
+          hourMatched = true;
+          break;
         }
       }
-      if (!rows.length) {
-        continue;
-      }
-      const mapped = normalizeRows(rows, variant.dateGetter);
-      if (hasPrice(mapped)) {
-        return downsampleDaily(mapped, count);
-      }
+      if (hourMatched) break;
     }
   }
 
-  return dayRows || [];
+  let resolvedRows = dayRows || [];
+  if (resolvedRows.length && hourRows?.length) {
+    resolvedRows = mergeMissingPricesByDay(resolvedRows, hourRows);
+  } else if (!resolvedRows.length && hourRows?.length) {
+    resolvedRows = hourRows;
+  }
+
+  if (!needsTokenFallback(resolvedRows)) {
+    return resolvedRows;
+  }
+
+  const poolTokens = await resolvePoolTokens();
+  if (!poolTokens) {
+    return resolvedRows;
+  }
+
+  const tokenHistory = await fetchV3TokenPairHistory(
+    poolTokens.token0,
+    poolTokens.token1,
+    count
+  );
+  if (!tokenHistory.length) {
+    return resolvedRows;
+  }
+
+  if (!resolvedRows.length) {
+    return toPriceOnlyRows(tokenHistory);
+  }
+
+  let merged = mergeMissingPricesByDay(resolvedRows, tokenHistory);
+  if (needsTokenFallback(merged)) {
+    merged = appendPriceOnlyRows(merged, tokenHistory);
+  }
+  return merged;
 }
 
 // Fetch recent pool hour data for a V3 pool and aggregate the last N hours.

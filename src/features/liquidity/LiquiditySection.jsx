@@ -1,7 +1,7 @@
 // src/features/liquidity/LiquiditySection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Contract, Interface, JsonRpcProvider, formatUnits, parseUnits } from "ethers";
+import { Contract, Interface, formatUnits, parseUnits } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -16,8 +16,6 @@ import {
   EXPLORER_BASE_URL,
   NETWORK_NAME,
   DEFAULT_TOKEN_LOGO,
-  CHAINLINK_ETH_USD_FEED_ADDRESS,
-  CHAINLINK_RPC_URL,
   BTCB_ADDRESS,
   SUSDE_ADDRESS,
   EZETH_ADDRESS,
@@ -35,7 +33,6 @@ import {
   UNIV3_FACTORY_ABI,
   UNIV3_POOL_ABI,
   UNIV3_POSITION_MANAGER_ABI,
-  CHAINLINK_AGGREGATOR_ABI,
 } from "../../shared/config/abis";
 import {
   fetchV2PairData,
@@ -44,7 +41,6 @@ import {
   fetchV3PoolHistory,
   fetchV3PoolHourStats,
   fetchV3PoolSnapshot,
-  fetchV3TokenPairHistory,
 } from "../../shared/config/subgraph";
 import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 import { isBoostPair } from "../../shared/lib/points";
@@ -255,193 +251,11 @@ const formatPrice = (value) => {
 const clampPercent = (value) => Math.min(100, Math.max(0, value));
 const getTickSpacingFromFee = (fee) => V3_TICK_SPACING[Number(fee)] || null;
 const isAddressLike = (value) => /^0x[a-fA-F0-9]{40}$/.test(value || "");
-const isEthLikeAddress = (addr) =>
-  Boolean(
-    WETH_ADDRESS &&
-      addr &&
-      addr.toLowerCase &&
-      addr.toLowerCase() === WETH_ADDRESS.toLowerCase()
-  );
 const sortAddressPair = (a, b) => {
   const left = (a || "").toLowerCase();
   const right = (b || "").toLowerCase();
   if (!left || !right) return [a, b];
   return left < right ? [a, b] : [b, a];
-};
-const getChainlinkProvider = () =>
-  CHAINLINK_RPC_URL ? new JsonRpcProvider(CHAINLINK_RPC_URL) : getReadOnlyProvider(false, true);
-const CHAINLINK_BATCH_SIZE = 80;
-const CHAINLINK_MAX_BATCHES = 16;
-const CHAINLINK_SAMPLE_ROUNDS = 6;
-const buildHistorySignature = (rows) => {
-  if (!Array.isArray(rows) || rows.length === 0) return "0";
-  const first = rows[0] || {};
-  const last = rows[rows.length - 1] || {};
-  const pick = (row) =>
-    [
-      row?.date ?? 0,
-      row?.token0Price ?? row?.token1Price ?? row?.priceUsd ?? row?.tvlUsd ?? 0,
-    ].join(":");
-  return `${rows.length}|${pick(first)}|${pick(last)}`;
-};
-
-const fetchChainlinkEthUsdHistory = async ({
-  feed,
-  days,
-  provider,
-  poolToken0IsEthLike,
-}) => {
-  if (!feed || !days || !provider) return [];
-  const aggregator = new Contract(feed, CHAINLINK_AGGREGATOR_ABI, provider);
-  let decimals = 8;
-  try {
-    decimals = Number(await aggregator.decimals());
-  } catch {
-    // keep default
-  }
-  let latest;
-  try {
-    latest = await aggregator.latestRoundData();
-  } catch {
-    return [];
-  }
-  const latestRoundId = latest?.roundId ?? null;
-  const latestUpdatedAt = Number(latest?.updatedAt || 0);
-  const latestAnswer = latest?.answer;
-  if (!latestRoundId || !latestUpdatedAt || !latestAnswer) return [];
-
-  const latestPrice = safeNumber(formatUnits(latestAnswer, decimals));
-  if (!latestPrice || latestPrice <= 0) return [];
-
-  const priceToRow = (tsSec, price) => {
-    if (!Number.isFinite(tsSec) || tsSec <= 0) return null;
-    if (!Number.isFinite(price) || price <= 0) return null;
-    // Keep the same convention used by subgraph rows:
-    // token0Price = token1 per token0, token1Price = token0 per token1.
-    if (poolToken0IsEthLike) {
-      return {
-        date: tsSec * 1000,
-        token0Price: price,
-        token1Price: 1 / price,
-      };
-    }
-    return {
-      date: tsSec * 1000,
-      token0Price: 1 / price,
-      token1Price: price,
-    };
-  };
-
-  const roundInterface = new Interface(CHAINLINK_AGGREGATOR_ABI);
-  const batchFetch = async (roundIds) => {
-    if (!roundIds.length) return [];
-    const useMulticall = await hasMulticall(provider).catch(() => false);
-    if (useMulticall) {
-      const target = aggregator.target || aggregator.address;
-      const calls = roundIds.map((id) => ({
-        target,
-        callData: roundInterface.encodeFunctionData("getRoundData", [id]),
-      }));
-      const res = await multicall(calls, provider);
-      return res.map((item) => {
-        if (!item.success) return null;
-        try {
-          const decoded = roundInterface.decodeFunctionResult(
-            "getRoundData",
-            item.returnData
-          );
-          return {
-            roundId: decoded[0],
-            answer: decoded[1],
-            updatedAt: decoded[3],
-          };
-        } catch {
-          return null;
-        }
-      });
-    }
-    const out = new Array(roundIds.length);
-    await Promise.all(
-      roundIds.map(async (id, idx) => {
-        try {
-          const data = await aggregator.getRoundData(id);
-          out[idx] = data;
-        } catch {
-          out[idx] = null;
-        }
-      })
-    );
-    return out;
-  };
-
-  const sampleIds = [];
-  let sampleRound = BigInt(latestRoundId);
-  for (let i = 0; i < CHAINLINK_SAMPLE_ROUNDS; i += 1) {
-    if (sampleRound <= 1n) break;
-    sampleRound -= 1n;
-    sampleIds.push(sampleRound);
-  }
-  const sampleData = await batchFetch(sampleIds);
-  const sampleTimes = [latestUpdatedAt]
-    .concat(
-      sampleData
-        .map((row) => Number(row?.updatedAt || 0))
-        .filter((ts) => Number.isFinite(ts) && ts > 0)
-    )
-    .sort((a, b) => b - a);
-  let avgInterval = 3600;
-  if (sampleTimes.length >= 2) {
-    const diffs = [];
-    for (let i = 0; i < sampleTimes.length - 1; i += 1) {
-      const delta = sampleTimes[i] - sampleTimes[i + 1];
-      if (Number.isFinite(delta) && delta > 0) diffs.push(delta);
-    }
-    if (diffs.length) {
-      avgInterval = diffs.reduce((a, b) => a + b, 0) / diffs.length;
-    }
-  }
-  const roundsPerDay = Math.max(1, Math.round(86400 / avgInterval));
-  const step = Math.max(1, Math.round(roundsPerDay));
-  const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
-
-  const pointsByDay = new Map();
-  const latestRow = priceToRow(latestUpdatedAt, latestPrice);
-  if (latestRow) {
-    pointsByDay.set(Math.floor(latestUpdatedAt / 86400), latestRow);
-  }
-
-  let cursor = BigInt(latestRoundId) - BigInt(step);
-  for (let batch = 0; batch < CHAINLINK_MAX_BATCHES && cursor > 0n; batch += 1) {
-    const ids = [];
-    for (let i = 0; i < CHAINLINK_BATCH_SIZE && cursor > 0n; i += 1) {
-      ids.push(cursor);
-      cursor -= BigInt(step);
-    }
-    const rows = await batchFetch(ids);
-    let oldestTs = null;
-    rows.forEach((row) => {
-      if (!row) return;
-      const updatedAt = Number(row.updatedAt || 0);
-      if (!Number.isFinite(updatedAt) || updatedAt <= 0) return;
-      const answer = row.answer;
-      const price = safeNumber(formatUnits(answer, decimals));
-      const point = priceToRow(updatedAt, price);
-      if (point) {
-        const dayId = Math.floor(updatedAt / 86400);
-        if (!pointsByDay.has(dayId)) {
-          pointsByDay.set(dayId, point);
-        }
-      }
-      oldestTs = oldestTs === null ? updatedAt : Math.min(oldestTs, updatedAt);
-    });
-    if (oldestTs && oldestTs < cutoff && pointsByDay.size >= days) {
-      break;
-    }
-  }
-
-  return Array.from(pointsByDay.values())
-    .filter((row) => Number.isFinite(row.date))
-    .sort((a, b) => a.date - b.date);
 };
 
 const normalizeIpfsUri = (uri, gateway = IPFS_GATEWAYS[0]) => {
@@ -755,32 +569,6 @@ const runWithConcurrency = async (items, limit, worker) => {
   });
   await Promise.all(runners);
   return results;
-};
-
-const pickHistoryPrice = (row) => {
-  const p0 = toOptionalNumber(row?.token0Price);
-  const p1 = toOptionalNumber(row?.token1Price);
-  if (p0 && p0 > 0) return p0;
-  if (p1 && p1 > 0) return p1;
-  return null;
-};
-
-const isFlatHistory = (rows, minPoints = 3) => {
-  const values = (rows || [])
-    .map((row) => pickHistoryPrice(row))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  if (values.length < minPoints) return true;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0) return true;
-  return (max - min) / min < 0.001;
-};
-
-const hasPriceHistory = (rows, minPoints = 2) => {
-  const values = (rows || [])
-    .map((row) => pickHistoryPrice(row))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  return values.length >= minPoints;
 };
 
 const formatUsdPrice = (v) => {
@@ -1253,14 +1041,6 @@ export default function LiquiditySection({
   const [v3PoolError, setV3PoolError] = useState("");
   const [v3PoolMetrics, setV3PoolMetrics] = useState({});
   const [v3PoolTvlHistory, setV3PoolTvlHistory] = useState([]);
-  const [v3TokenPriceHistory, setV3TokenPriceHistory] = useState([]);
-  const [v3TokenPriceKey, setV3TokenPriceKey] = useState("");
-  const v3TokenPriceCacheRef = useRef({
-    key: "",
-    sig: "0",
-    len: 0,
-    history: [],
-  });
   const [v3CachedPrice, setV3CachedPrice] = useState(null);
   const [v3PoolTvlSnapshot, setV3PoolTvlSnapshot] = useState(null);
   const [v3PoolTvlLoading, setV3PoolTvlLoading] = useState(false);
@@ -1550,8 +1330,6 @@ export default function LiquiditySection({
     setV3PoolTvlSnapshot(null);
     setV3PoolTvlError("");
     setV3PoolHourStats(null);
-    setV3TokenPriceHistory([]);
-    setV3TokenPriceKey("");
     setV3PoolBalances({ token0: null, token1: null });
   }, [isV3View, v3Token0, v3Token1, v3FeeTier]);
 
@@ -1601,14 +1379,6 @@ export default function LiquiditySection({
     }
   }, [isV3View, v3PriceCacheKey]);
 
-  useEffect(() => {
-    v3TokenPriceCacheRef.current = {
-      key: v3TokenPriceKey,
-      sig: buildHistorySignature(v3TokenPriceHistory),
-      len: Array.isArray(v3TokenPriceHistory) ? v3TokenPriceHistory.length : 0,
-      history: Array.isArray(v3TokenPriceHistory) ? v3TokenPriceHistory : [],
-    };
-  }, [v3TokenPriceKey, v3TokenPriceHistory, v3TokenPriceCacheRef]);
   const v3Token0PriceUsd = v3SelectedToken0Address
     ? tokenPrices[(v3SelectedToken0Address || "").toLowerCase()]
     : null;
@@ -1918,11 +1688,7 @@ export default function LiquiditySection({
     return Number.isFinite(derived) && derived > 0 ? derived : null;
   }, [v3Token0PriceUsd, v3Token1PriceUsd, v3Token0Meta, v3Token1Meta, v3Token0, v3Token1]);
   const v3SubgraphCurrentPrice = useMemo(() => {
-    const history = v3TokenPriceHistory.length
-      ? v3TokenPriceHistory
-      : Array.isArray(v3PoolTvlHistory)
-      ? v3PoolTvlHistory
-      : [];
+    const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
     if (!history.length) return null;
     const latest = history[history.length - 1];
     const token0Price = toOptionalNumber(latest?.token0Price);
@@ -1935,7 +1701,7 @@ export default function LiquiditySection({
       }
     }
     return Number.isFinite(price) && price > 0 ? price : null;
-  }, [v3PoolTvlHistory, v3TokenPriceHistory, v3PoolIsReversed]);
+  }, [v3PoolTvlHistory, v3PoolIsReversed]);
   const v3SuggestedStartPrice = useMemo(() => {
     if (v3DerivedPrice && Number.isFinite(v3DerivedPrice) && v3DerivedPrice > 0) {
       return v3DerivedPrice;
@@ -2381,11 +2147,7 @@ export default function LiquiditySection({
       max = v3ReferencePrice * (1 + CHART_PADDING);
     }
 
-    const history = v3TokenPriceHistory.length
-      ? v3TokenPriceHistory
-      : Array.isArray(v3PoolTvlHistory)
-      ? v3PoolTvlHistory
-      : [];
+    const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
     const cutoff =
       v3RangeTimeframe === "All" ? null : Date.now() - v3RangeDays * 86400000;
     let historyMin = null;
@@ -2453,7 +2215,6 @@ export default function LiquiditySection({
     v3RangeUpperNum,
     v3PoolIsReversed,
     v3PoolTvlHistory,
-    v3TokenPriceHistory,
     v3RangeDays,
     v3RangeTimeframe,
     v3ChartMode,
@@ -2517,17 +2278,7 @@ export default function LiquiditySection({
     const cutoff = Date.now() - v3RangeDays * 86400000;
     return v3PoolSeriesRaw.filter((row) => row.date >= cutoff);
   }, [v3PoolSeriesRaw, v3RangeDays, v3RangeTimeframe]);
-  const v3TokenPriceSeries = useMemo(() => {
-    if (!v3TokenPriceHistory.length) return [];
-    if (v3RangeTimeframe === "All") return v3TokenPriceHistory;
-    const cutoff = Date.now() - v3RangeDays * 86400000;
-    return v3TokenPriceHistory.filter((row) => row.date >= cutoff);
-  }, [v3TokenPriceHistory, v3RangeDays, v3RangeTimeframe]);
-
-  const v3PriceSeriesSource = useMemo(
-    () => (v3TokenPriceSeries.length ? v3TokenPriceSeries : v3PoolSeries),
-    [v3TokenPriceSeries, v3PoolSeries]
-  );
+  const v3PriceSeriesSource = v3PoolSeries;
 
   const v3TvlChart = useMemo(() => {
     const base = v3PoolSeries
@@ -3708,8 +3459,6 @@ export default function LiquiditySection({
           setV3PoolTvlSnapshot(null);
           setV3PoolTvlError("");
           setV3PoolTvlLoading(false);
-          setV3TokenPriceHistory([]);
-          setV3TokenPriceKey("");
           setV3PoolHourStats(null);
         }
         return;
@@ -3741,94 +3490,11 @@ export default function LiquiditySection({
           setV3PoolTvlHistory([]);
           setV3PoolTvlError(historyErr?.message || "Failed to load TVL history.");
         }
-
-        const stable0 = isStableSymbol(v3Token0Meta?.symbol || v3Token0);
-        const stable1 = isStableSymbol(v3Token1Meta?.symbol || v3Token1);
-        const stablePair = stable0 || stable1;
-        const flatPrice = isFlatHistory(historyRows);
-        const missingPriceData = !hasPriceHistory(historyRows, 2);
-        const insufficientHistory =
-          historyRows.length < Math.min(v3RangeDays * 0.5, 30);
-        const hasPoolTokens = Boolean(v3PoolInfo.token0 && v3PoolInfo.token1);
-        const fallbackNeeded =
-          hasPoolTokens &&
-          (missingPriceData || (stablePair && (flatPrice || insufficientHistory)));
-        const poolToken0IsEthLike = isEthLikeAddress(v3PoolInfo.token0);
-        const poolToken1IsEthLike = isEthLikeAddress(v3PoolInfo.token1);
-        const chainlinkEligible =
-          stablePair &&
-          Boolean(CHAINLINK_ETH_USD_FEED_ADDRESS) &&
-          (poolToken0IsEthLike || poolToken1IsEthLike);
-        const {
-          key: cachedKey,
-          sig: cachedSig,
-          len: cachedLen,
-          history: cachedHistory,
-        } = v3TokenPriceCacheRef.current;
-
-        let nextHistory = [];
-        let nextKey = "";
-
-        if (chainlinkEligible) {
-          const chainlinkKey = `chainlink-${CHAINLINK_ETH_USD_FEED_ADDRESS}-${v3RangeDays}-${
-            poolToken0IsEthLike ? "0" : "1"
-          }`;
-          if (cachedKey === chainlinkKey && cachedHistory.length) {
-            nextHistory = cachedHistory;
-            nextKey = chainlinkKey;
-          } else {
-            const provider = getChainlinkProvider();
-            const chainlinkHistory = await fetchChainlinkEthUsdHistory({
-              feed: CHAINLINK_ETH_USD_FEED_ADDRESS,
-              days: v3RangeDays,
-              provider,
-              poolToken0IsEthLike,
-            });
-            if (chainlinkHistory.length) {
-              nextHistory = chainlinkHistory;
-              nextKey = chainlinkKey;
-            }
-          }
-        }
-
-        if (!nextKey && fallbackNeeded) {
-          const tokenKey = `${v3PoolInfo.token0}-${v3PoolInfo.token1}-${v3RangeDays}`;
-          let tokenHistory = [];
-          if (cachedKey === tokenKey && cachedHistory.length) {
-            tokenHistory = cachedHistory;
-          } else {
-            tokenHistory = await fetchV3TokenPairHistory(
-              v3PoolInfo.token0,
-              v3PoolInfo.token1,
-              v3RangeDays
-            );
-          }
-          if (tokenHistory.length) {
-            nextHistory = tokenHistory;
-            nextKey = tokenKey;
-          }
-        }
-
-        if (!cancelled) {
-          const nextSig = buildHistorySignature(nextHistory);
-          if (nextKey) {
-            const shouldUpdate = nextKey !== cachedKey || cachedSig !== nextSig;
-            if (shouldUpdate) {
-              setV3TokenPriceHistory(Array.isArray(nextHistory) ? nextHistory : []);
-              setV3TokenPriceKey(nextKey);
-            }
-          } else if (cachedKey || cachedLen) {
-            setV3TokenPriceHistory([]);
-            setV3TokenPriceKey("");
-          }
-        }
       } catch (err) {
         if (!cancelled) {
           setV3PoolTvlHistory([]);
           setV3PoolTvlSnapshot(null);
           setV3PoolTvlError(err?.message || "Failed to load TVL data.");
-          setV3TokenPriceHistory([]);
-          setV3TokenPriceKey("");
           setV3PoolHourStats(null);
         }
       } finally {
@@ -3846,11 +3512,6 @@ export default function LiquiditySection({
     v3PoolInfo.token0,
     v3PoolInfo.token1,
     v3RangeDays,
-    v3Token0Meta,
-    v3Token1Meta,
-    v3Token0,
-    v3Token1,
-    v3TokenPriceCacheRef,
     v3RefreshTick,
   ]);
 

@@ -734,16 +734,6 @@ const isWethLike = (token, addr) => {
   return ETH_ALIAS_ADDRESSES.has(normalized);
 };
 
-const isBoostPair = (token0, token1, addr) => {
-  const a = normalizeAddress(token0);
-  const b = normalizeAddress(token1);
-  if (!a || !b) return false;
-  const hasCrx = a === addr.crx || b === addr.crx;
-  const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
-  const hasUsdm = a === addr.usdm || b === addr.usdm;
-  return hasCrx && (hasWeth || hasUsdm);
-};
-
 const getBoostPairMultiplier = (token0, token1, addr) => {
   const a = normalizeAddress(token0);
   const b = normalizeAddress(token1);
