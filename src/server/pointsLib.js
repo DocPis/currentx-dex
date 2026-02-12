@@ -11,6 +11,12 @@ const POINTS_DEFAULT_FEE_BPS = 30;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const DEFAULT_UNIV3_FACTORY_ADDRESS = "0x09cf8a0b9e8c89bff6d1acbe1467e8e335bdd03e";
+const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
+  "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
+const DEFAULT_V3_STAKER_ADDRESS = "0xc6a9db70b5618dfbca05fa7db11bec48782d5590";
+const DEFAULT_V3_STAKER_DEPLOY_BLOCK = 7873058;
+const STAKER_LOG_CHUNK_SIZE = 5000;
 const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
 
@@ -52,6 +58,8 @@ const getRpcUrl = () => {
     process.env.VITE_RPC_FALLBACK,
     process.env.VITE_RPC_TATUM,
     process.env.VITE_RPC_THIRDWEB,
+    "https://mainnet.megaeth.com/rpc",
+    "https://rpc-megaeth-mainnet.globalstake.io",
   ];
   for (const candidate of candidates) {
     const parsed = parseRpcUrls(candidate);
@@ -67,15 +75,29 @@ const getOnchainConfig = () => {
     factory: normalize(
       pickEnvValue(
         process.env.POINTS_UNIV3_FACTORY_ADDRESS,
-        process.env.VITE_UNIV3_FACTORY_ADDRESS
+        process.env.VITE_UNIV3_FACTORY_ADDRESS,
+        DEFAULT_UNIV3_FACTORY_ADDRESS
       )
     ),
     positionManager: normalize(
       pickEnvValue(
         process.env.POINTS_UNIV3_POSITION_MANAGER_ADDRESS,
-        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS
+        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS,
+        DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS
       )
     ),
+    staker: normalize(
+      pickEnvValue(
+        process.env.POINTS_V3_STAKER_ADDRESS,
+        process.env.POINTS_UNIV3_STAKER_ADDRESS,
+        process.env.VITE_V3_STAKER_ADDRESS,
+        DEFAULT_V3_STAKER_ADDRESS
+      )
+    ),
+    stakerDeployBlock:
+      parseBlock(process.env.POINTS_V3_STAKER_DEPLOY_BLOCK) ||
+      parseBlock(process.env.VITE_V3_STAKER_DEPLOY_BLOCK) ||
+      DEFAULT_V3_STAKER_DEPLOY_BLOCK,
   };
 };
 
@@ -103,28 +125,123 @@ const UNIV3_POOL_ABI = [
 const toTopicAddress = (addr) =>
   `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 
+const parseAddressTopic = (topic) => {
+  if (!topic) return "";
+  const value = String(topic).toLowerCase().replace(/^0x/, "");
+  if (value.length < 40) return "";
+  return `0x${value.slice(-40)}`;
+};
+
+const fetchLogsInChunks = async ({
+  provider,
+  address,
+  topics,
+  fromBlock,
+  toBlock,
+  chunkSize = STAKER_LOG_CHUNK_SIZE,
+}) => {
+  if (!provider || !address || !Array.isArray(topics)) return [];
+  if (!Number.isFinite(fromBlock) || !Number.isFinite(toBlock)) return [];
+  const out = [];
+  let start = Math.max(0, Math.floor(fromBlock));
+  const end = Math.max(0, Math.floor(toBlock));
+  while (start <= end) {
+    const chunkEnd = Math.min(end, start + Math.max(1, chunkSize) - 1);
+    const logs = await provider.getLogs({
+      address,
+      topics,
+      fromBlock: start,
+      toBlock: chunkEnd,
+    });
+    if (logs?.length) out.push(...logs);
+    if (chunkEnd >= end) break;
+    start = chunkEnd + 1;
+  }
+  return out;
+};
+
+const fetchStakerPositionIdsForOwner = async ({
+  provider,
+  staker,
+  owner,
+  fromBlock,
+}) => {
+  if (!provider || !staker || !owner) return [];
+  const topic = id("DepositTransferred(uint256,address,address)");
+  const ownerTopic = toTopicAddress(owner);
+  const latest = await provider.getBlockNumber();
+  const from = Number.isFinite(fromBlock) && fromBlock > 0 ? Math.floor(fromBlock) : 0;
+  if (from > latest) return [];
+
+  const [logsOld, logsNew] = await Promise.all([
+    fetchLogsInChunks({
+      provider,
+      address: staker,
+      topics: [topic, null, ownerTopic],
+      fromBlock: from,
+      toBlock: latest,
+    }),
+    fetchLogsInChunks({
+      provider,
+      address: staker,
+      topics: [topic, null, null, ownerTopic],
+      fromBlock: from,
+      toBlock: latest,
+    }),
+  ]);
+
+  const logs = [...logsOld, ...logsNew].sort((a, b) => {
+    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+    return (a.logIndex || 0) - (b.logIndex || 0);
+  });
+
+  const ownerByToken = new Map();
+  logs.forEach((log) => {
+    const tokenTopic = log?.topics?.[1];
+    const newOwnerTopic = log?.topics?.[3];
+    if (!tokenTopic || !newOwnerTopic) return;
+    try {
+      const tokenId = BigInt(tokenTopic).toString();
+      ownerByToken.set(tokenId, normalizeAddress(parseAddressTopic(newOwnerTopic)));
+    } catch {
+      // ignore malformed log topics
+    }
+  });
+
+  const normalizedOwner = normalizeAddress(owner);
+  const tokenIds = [];
+  ownerByToken.forEach((currentOwner, tokenId) => {
+    if (currentOwner !== normalizedOwner) return;
+    try {
+      tokenIds.push(BigInt(tokenId));
+    } catch {
+      // ignore malformed token ids
+    }
+  });
+
+  tokenIds.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return tokenIds;
+};
+
 const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
-  const { rpcUrl, factory, positionManager } = getOnchainConfig();
+  const { rpcUrl, factory, positionManager, staker, stakerDeployBlock } = getOnchainConfig();
   if (!rpcUrl || !factory || !positionManager) return null;
   const provider = getRpcProvider(rpcUrl);
   if (!provider) return null;
   const manager = new Contract(positionManager, POSITION_MANAGER_ABI, provider);
   const balanceRaw = await manager.balanceOf(wallet);
   const count = Math.min(Number(balanceRaw || 0), MAX_ONCHAIN_POSITIONS);
-  if (!count) {
-    return { positions: [], lpAgeSeconds: null };
-  }
-
-  const ids = await Promise.all(
-    Array.from({ length: count }, (_, idx) => manager.tokenOfOwnerByIndex(wallet, idx))
-  );
-  const positionsRaw = await Promise.all(ids.map((id) => manager.positions(id)));
-  const normalized = positionsRaw.map((pos, idx) => {
+  const walletIds = count
+    ? await Promise.all(
+        Array.from({ length: count }, (_, idx) => manager.tokenOfOwnerByIndex(wallet, idx))
+      )
+    : [];
+  const mapPosition = (pos, tokenId) => {
     const token0 = normalizeAddress(pos?.token0 || "");
     const token1 = normalizeAddress(pos?.token1 || "");
     return {
       __normalized: true,
-      tokenId: ids[idx],
+      tokenId,
       token0,
       token1,
       tickLower: Number(pos?.tickLower ?? 0),
@@ -137,7 +254,46 @@ const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
       decimals0: 18,
       decimals1: 18,
     };
-  });
+  };
+
+  const walletPositions = walletIds.length
+    ? await Promise.all(walletIds.map((tokenId) => manager.positions(tokenId)))
+    : [];
+  let normalized = walletPositions.map((pos, idx) => mapPosition(pos, walletIds[idx]));
+
+  const hasWalletBoost = normalized.some(
+    (pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr)
+  );
+
+  if ((!normalized.length || !hasWalletBoost) && staker) {
+    const stakerTokenIds = await fetchStakerPositionIdsForOwner({
+      provider,
+      staker,
+      owner: wallet,
+      fromBlock: stakerDeployBlock,
+    }).catch(() => []);
+
+    if (stakerTokenIds.length) {
+      const seen = new Set(walletIds.map((tokenId) => BigInt(tokenId).toString()));
+      const remainingSlots = Math.max(0, MAX_ONCHAIN_POSITIONS - seen.size);
+      const extraTokenIds = stakerTokenIds
+        .filter((tokenId) => !seen.has(tokenId.toString()))
+        .slice(0, remainingSlots);
+
+      if (extraTokenIds.length) {
+        const extraPositions = await Promise.all(
+          extraTokenIds.map((tokenId) => manager.positions(tokenId))
+        );
+        normalized = normalized.concat(
+          extraPositions.map((pos, idx) => mapPosition(pos, extraTokenIds[idx]))
+        );
+      }
+    }
+  }
+
+  if (!normalized.length) {
+    return { positions: [], lpAgeSeconds: null };
+  }
 
   const factoryContract = new Contract(factory, UNIV3_FACTORY_ABI, provider);
   const uniquePools = new Map();
@@ -178,7 +334,7 @@ const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
   const lpAgeSeconds = await fetchLpAgeSecondsOnchain({
     provider,
     wallet,
-    tokenIds: ids,
+    tokenIds: normalized.map((pos) => pos.tokenId).filter(Boolean),
     positionManager,
     startBlock,
   });

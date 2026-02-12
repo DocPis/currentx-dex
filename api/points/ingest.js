@@ -16,6 +16,9 @@ const POINTS_DEFAULT_FEE_BPS = 30;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const DEFAULT_UNIV3_FACTORY_ADDRESS = "0x09cf8a0b9e8c89bff6d1acbe1467e8e335bdd03e";
+const DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS =
+  "0xa02e90a5f5ef73c434f5a7e6a77e6508f009cb9d";
 const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
 
@@ -57,6 +60,8 @@ const getRpcUrl = () => {
     process.env.VITE_RPC_FALLBACK,
     process.env.VITE_RPC_TATUM,
     process.env.VITE_RPC_THIRDWEB,
+    "https://mainnet.megaeth.com/rpc",
+    "https://rpc-megaeth-mainnet.globalstake.io",
   ];
   for (const candidate of candidates) {
     const parsed = parseRpcUrls(candidate);
@@ -72,13 +77,15 @@ const getOnchainConfig = () => {
     factory: normalize(
       pickEnvValue(
         process.env.POINTS_UNIV3_FACTORY_ADDRESS,
-        process.env.VITE_UNIV3_FACTORY_ADDRESS
+        process.env.VITE_UNIV3_FACTORY_ADDRESS,
+        DEFAULT_UNIV3_FACTORY_ADDRESS
       )
     ),
     positionManager: normalize(
       pickEnvValue(
         process.env.POINTS_UNIV3_POSITION_MANAGER_ADDRESS,
-        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS
+        process.env.VITE_UNIV3_POSITION_MANAGER_ADDRESS,
+        DEFAULT_UNIV3_POSITION_MANAGER_ADDRESS
       )
     ),
   };
