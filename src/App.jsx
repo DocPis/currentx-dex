@@ -351,7 +351,6 @@ export default function App() {
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
             { id: "pools", label: "Pools" },
-            { id: "launchpad", label: "Launchpad" },
             { id: "points", label: "Points" },
             { id: "farms", label: "Farms" },
             { id: "megavault", label: "MegaVault" },
