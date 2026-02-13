@@ -24,6 +24,7 @@ npm run dev -- --host --port 4173
 
 ## Launchpad PNG -> IPFS upload
 - Frontend uploads PNG to `/api/ipfs/upload` and stores `ipfs://...` in Launchpad image field.
+- PNG max size: `1 MB` (frontend + backend aligned).
 - Required server env (Vercel / API runtime):
   - `PINATA_JWT` (required)
   - API key scope: `Files -> Write` (`org:files:write`)
