@@ -8,6 +8,7 @@ import {
   MEGAETH_CHAIN_ID_HEX,
   NETWORK_NAME,
   TOKENS,
+  UNIV3_POSITION_MANAGER_ADDRESS,
   WETH_ADDRESS,
   getProvider,
   getReadOnlyProvider,
@@ -17,6 +18,7 @@ import {
   CURRENTX_VAULT_ABI,
   ERC20_ABI,
   LP_LOCKER_V2_ABI,
+  UNIV3_POSITION_MANAGER_ABI,
 } from "../../shared/config/abis";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
@@ -250,6 +252,20 @@ const formatDate = (unix) => {
   return d.toLocaleString();
 };
 
+const formatRemainingFromUnix = (unix) => {
+  const end = Number(unix || 0);
+  if (!Number.isFinite(end) || end <= 0) return "--";
+  const now = Math.floor(Date.now() / 1000);
+  const diff = end - now;
+  if (diff <= 0) return "Unlocked";
+  const days = Math.floor(diff / DAY);
+  const hours = Math.floor((diff % DAY) / 3600);
+  const minutes = Math.floor((diff % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
 const errMsg = (error, fallback) => {
   const raw = error?.shortMessage || error?.reason || error?.message || "";
   const lower = String(raw).toLowerCase();
@@ -283,6 +299,12 @@ const formatEthPerTokenPrecise = (value) => {
   if (!Number.isFinite(value) || value <= 0) return "--";
   if (value < 0.000000000000000001) return "0.000000000000000001";
   return trimTrailingZeros(value.toFixed(18));
+};
+
+const formatFeeTierPercent = (value) => {
+  const fee = Number(value ?? NaN);
+  if (!Number.isFinite(fee) || fee <= 0) return "--";
+  return `${trimTrailingZeros((fee / 10000).toFixed(4))}%`;
 };
 
 const buildTokenMap = () => {
@@ -583,8 +605,6 @@ const defaultVaultForm = () => ({
   depositAmount: "",
   depositUnlockAt: "",
   depositAdmin: "",
-  withdrawAmount: "",
-  withdrawTo: "",
 });
 
 export default function LaunchpadSection({ address, onConnect }) {
@@ -612,10 +632,14 @@ export default function LaunchpadSection({ address, onConnect }) {
   const [deployments, setDeployments] = useState([]);
   const [deploymentsLoading, setDeploymentsLoading] = useState(false);
   const [deploymentsError, setDeploymentsError] = useState("");
-  const [claimAction, setClaimAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [vaultForm, setVaultForm] = useState(defaultVaultForm);
-  const [vaultInfo, setVaultInfo] = useState({ loading: false, error: "", allocation: null, minimumVaultTime: null });
+  const [vaultLocks, setVaultLocks] = useState({
+    loading: false,
+    error: "",
+    items: [],
+    minimumVaultTime: 0n,
+  });
   const [vaultTokenMeta, setVaultTokenMeta] = useState(null);
   const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
@@ -636,7 +660,6 @@ export default function LaunchpadSection({ address, onConnect }) {
     vault: false,
     buy: false,
   });
-  const [rewardExtensionEnabled, setRewardExtensionEnabled] = useState(false);
   const [rewardAddressEditing, setRewardAddressEditing] = useState(false);
   const [imageMode, setImageMode] = useState("upload");
   const [deployAttempted, setDeployAttempted] = useState(false);
@@ -669,8 +692,10 @@ export default function LaunchpadSection({ address, onConnect }) {
     if (known) {
       const meta = {
         address: tokenAddress,
+        name: known.name || known.displaySymbol || known.symbol || "Token",
         symbol: known.displaySymbol || known.symbol || "TOKEN",
         decimals: Number(known.decimals || 18),
+        logo: String(known.logo || ""),
       };
       tokenMetaCache.current[lower] = meta;
       return meta;
@@ -678,11 +703,25 @@ export default function LaunchpadSection({ address, onConnect }) {
 
     const provider = providerOverride || getReadOnlyProvider(false, true);
     const erc20 = new Contract(tokenAddress, ERC20_ABI, provider);
-    const [symbol, decimals] = await Promise.all([
+    const imageReader = new Contract(
+      tokenAddress,
+      [{ inputs: [], name: "image", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" }],
+      provider
+    );
+    const [name, symbol, decimals, imageRaw] = await Promise.all([
+      erc20.name().catch(() => "Token"),
       erc20.symbol().catch(() => "TOKEN"),
       erc20.decimals().catch(() => 18),
+      imageReader.image().catch(() => ""),
     ]);
-    const meta = { address: tokenAddress, symbol: String(symbol || "TOKEN"), decimals: Number(decimals || 18) };
+    const image = String(imageRaw || "").trim();
+    const meta = {
+      address: tokenAddress,
+      name: String(name || "Token"),
+      symbol: String(symbol || "TOKEN"),
+      decimals: Number(decimals || 18),
+      logo: image ? toImagePreviewSrc(image) : "",
+    };
     tokenMetaCache.current[lower] = meta;
     return meta;
   }, []);
@@ -731,52 +770,108 @@ export default function LaunchpadSection({ address, onConnect }) {
       const provider = getReadOnlyProvider(false, true);
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, provider);
       const list = await currentx.getTokensDeployedByUser(address);
-      setDeployments(
-        (list || []).map((item) => ({
-          token: item.token,
-          positionId: String(item.positionId || ""),
-          locker: item.locker,
-        }))
+      const rows = await Promise.all(
+        (list || []).map(async (item) => {
+          const tokenAddress = String(item.token || "");
+          const base = {
+            token: tokenAddress,
+            positionId: String(item.positionId || ""),
+            name: "Token",
+            symbol: "TOKEN",
+            logo: "",
+          };
+          if (!isAddress(tokenAddress)) return base;
+          try {
+            const meta = await resolveTokenMeta(tokenAddress, provider);
+            return {
+              ...base,
+              name: String(meta?.name || "Token"),
+              symbol: String(meta?.symbol || "TOKEN"),
+              logo: String(meta?.logo || ""),
+            };
+          } catch {
+            return base;
+          }
+        })
       );
+      setDeployments(rows);
     } catch (error) {
       setDeployments([]);
       setDeploymentsError(errMsg(error, "Unable to load deployed tokens."));
     } finally {
       setDeploymentsLoading(false);
     }
-  }, [address, contracts.currentx]);
+  }, [address, contracts.currentx, resolveTokenMeta]);
 
-  const refreshVault = useCallback(async () => {
-    if (!isAddress(contracts.vault) || !isAddress(vaultForm.token)) {
-      setVaultInfo((prev) => ({ ...prev, allocation: null, error: "" }));
-      setVaultTokenMeta(null);
+  const refreshVaultLocks = useCallback(async () => {
+    if (!isAddress(contracts.vault)) {
+      setVaultLocks({ loading: false, error: "Set a valid vault address.", items: [], minimumVaultTime: 0n });
       return;
     }
     try {
-      setVaultInfo((prev) => ({ ...prev, loading: true, error: "" }));
+      setVaultLocks((prev) => ({ ...prev, loading: true, error: "" }));
       const provider = getReadOnlyProvider(false, true);
       const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
-      const [allocation, minimumVaultTime, meta] = await Promise.all([
-        vault.allocation(vaultForm.token),
-        vault.minimumVaultTime(),
-        resolveTokenMeta(vaultForm.token, provider),
-      ]);
-      setVaultTokenMeta(meta);
-      setVaultInfo({
-        loading: false,
-        error: "",
-        allocation: {
-          token: allocation.token,
-          amount: allocation.amount,
-          endTime: allocation.endTime,
-          admin: allocation.admin,
-        },
-        minimumVaultTime,
+      const minimumVaultTime = await vault.minimumVaultTime().catch(() => 0n);
+
+      const tokenMap = new Map();
+      (deployments || []).forEach((item) => {
+        const token = String(item?.token || "");
+        if (isAddress(token)) tokenMap.set(token.toLowerCase(), token);
       });
+      const manualToken = String(vaultForm.token || "").trim();
+      if (isAddress(manualToken)) tokenMap.set(manualToken.toLowerCase(), manualToken);
+      const tokenList = Array.from(tokenMap.values());
+
+      if (!tokenList.length) {
+        setVaultLocks({ loading: false, error: "", items: [], minimumVaultTime });
+        return;
+      }
+
+      const now = Math.floor(Date.now() / 1000);
+      const walletLower = String(address || "").toLowerCase();
+      const lockRows = await Promise.all(
+        tokenList.map(async (tokenAddress) => {
+          try {
+            const [allocation, meta] = await Promise.all([
+              vault.allocation(tokenAddress),
+              resolveTokenMeta(tokenAddress, provider),
+            ]);
+            const amount = BigInt(allocation?.amount ?? 0n);
+            const endTime = Number(allocation?.endTime ?? 0n);
+            const admin = String(allocation?.admin || "");
+            const isOwnedByWallet =
+              walletLower && admin ? admin.toLowerCase() === walletLower : true;
+            const isActive = amount > 0n && endTime > now;
+            if (!isOwnedByWallet || !isActive) return null;
+            return {
+              token: tokenAddress,
+              amount,
+              endTime,
+              admin,
+              name: String(meta?.name || "Token"),
+              symbol: String(meta?.symbol || "TOKEN"),
+              decimals: Number(meta?.decimals || 18),
+              logo: String(meta?.logo || ""),
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const items = lockRows
+        .filter(Boolean)
+        .sort((a, b) => Number(a.endTime || 0) - Number(b.endTime || 0));
+      setVaultLocks({ loading: false, error: "", items, minimumVaultTime });
     } catch (error) {
-      setVaultInfo((prev) => ({ ...prev, loading: false, error: errMsg(error, "Unable to load vault info.") }));
+      setVaultLocks((prev) => ({
+        ...prev,
+        loading: false,
+        error: errMsg(error, "Unable to load active vault locks."),
+      }));
     }
-  }, [contracts.vault, resolveTokenMeta, vaultForm.token]);
+  }, [address, contracts.vault, deployments, resolveTokenMeta, vaultForm.token]);
 
   const refreshLocker = useCallback(async () => {
     if (!address || !isAddress(contracts.locker)) {
@@ -816,22 +911,58 @@ export default function LaunchpadSection({ address, onConnect }) {
     try {
       const provider = getReadOnlyProvider(false, true);
       const lockerContract = new Contract(contracts.locker, LP_LOCKER_V2_ABI, provider);
-      const info = await lockerContract.tokenRewards(BigInt(locker.selectedId));
+      const [info, positionManagerFromLocker] = await Promise.all([
+        lockerContract.tokenRewards(BigInt(locker.selectedId)),
+        lockerContract.positionManager().catch(() => ""),
+      ]);
+
+      const fallbackManager = String(UNIV3_POSITION_MANAGER_ADDRESS || "").trim();
+      const positionManagerAddress = isAddress(positionManagerFromLocker)
+        ? positionManagerFromLocker
+        : isAddress(fallbackManager)
+          ? fallbackManager
+          : "";
+
+      let token0 = "";
+      let token1 = "";
+      let fee = "";
+      if (positionManagerAddress) {
+        try {
+          const positionManager = new Contract(
+            positionManagerAddress,
+            UNIV3_POSITION_MANAGER_ABI,
+            provider
+          );
+          const position = await positionManager.positions(BigInt(locker.selectedId));
+          token0 = String(position?.token0 || "");
+          token1 = String(position?.token1 || "");
+          fee = String(position?.fee || "");
+        } catch {
+          // ignore pair fetch errors and keep reward info available
+        }
+      }
+
+      const [token0Meta, token1Meta] = await Promise.all([
+        isAddress(token0) ? resolveTokenMeta(token0, provider).catch(() => null) : null,
+        isAddress(token1) ? resolveTokenMeta(token1, provider).catch(() => null) : null,
+      ]);
+
       setLocker((prev) => ({
         ...prev,
         tokenReward: {
           lpTokenId: String(info.lpTokenId || ""),
           creatorReward: info.creatorReward,
-          creatorAdmin: info.creator?.admin || "",
-          creatorRecipient: info.creator?.recipient || "",
-          interfaceAdmin: info.interfacer?.admin || "",
-          interfaceRecipient: info.interfacer?.recipient || "",
+          token0,
+          token1,
+          fee,
+          token0Meta,
+          token1Meta,
         },
       }));
     } catch (error) {
       setLocker((prev) => ({ ...prev, error: errMsg(error, "Unable to load selected reward info."), tokenReward: null }));
     }
-  }, [contracts.locker, locker.selectedId]);
+  }, [contracts.locker, locker.selectedId, resolveTokenMeta]);
 
   useEffect(() => {
     if (!address) return;
@@ -845,7 +976,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       interfaceRewardRecipient: prev.interfaceRewardRecipient || protocolRewardRecipient,
       teamRewardRecipient: prev.teamRewardRecipient || protocolRewardRecipient,
     }));
-    setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address, withdrawTo: prev.withdrawTo || address }));
+    setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address }));
   }, [address]);
 
   useEffect(() => {
@@ -857,8 +988,8 @@ export default function LaunchpadSection({ address, onConnect }) {
   }, [refreshDeployments]);
 
   useEffect(() => {
-    refreshVault();
-  }, [refreshVault]);
+    refreshVaultLocks();
+  }, [refreshVaultLocks]);
 
   useEffect(() => {
     refreshLocker();
@@ -867,6 +998,25 @@ export default function LaunchpadSection({ address, onConnect }) {
   useEffect(() => {
     refreshLockerReward();
   }, [refreshLockerReward]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = String(vaultForm.token || "").trim();
+    if (!isAddress(token)) {
+      setVaultTokenMeta(null);
+      return () => {};
+    }
+    resolveTokenMeta(token)
+      .then((meta) => {
+        if (!cancelled) setVaultTokenMeta(meta || null);
+      })
+      .catch(() => {
+        if (!cancelled) setVaultTokenMeta(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resolveTokenMeta, vaultForm.token]);
 
   useEffect(() => {
     if (protocol.weth && !isAddress(deployForm.pairedToken)) {
@@ -1453,24 +1603,6 @@ export default function LaunchpadSection({ address, onConnect }) {
     }
   };
 
-  const handleClaimRewards = async (tokenAddress) => {
-    if (!address) {
-      if (typeof onConnect === "function") onConnect();
-      return;
-    }
-    try {
-      setClaimAction({ loadingKey: tokenAddress.toLowerCase(), error: "", hash: "", message: "Claiming rewards..." });
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
-      const tx = await currentx.claimRewards(tokenAddress);
-      const receipt = await tx.wait();
-      setClaimAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Rewards claimed." });
-    } catch (error) {
-      setClaimAction({ loadingKey: "", error: errMsg(error, "Claim failed."), hash: "", message: "" });
-    }
-  };
-
   const handleVaultApprove = async () => {
     if (!address) {
       if (typeof onConnect === "function") onConnect();
@@ -1507,7 +1639,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       const unlockTime = Math.floor(unlockMs / 1000);
       const now = Math.floor(Date.now() / 1000);
       if (unlockTime <= now) throw new Error("Unlock date must be in the future.");
-      const minTime = Number(vaultInfo.minimumVaultTime || 0n);
+      const minTime = Number(vaultLocks.minimumVaultTime || 0n);
       if (minTime > 0 && unlockTime - now < minTime) {
         throw new Error(`Unlock date must be at least ${minTime} seconds from now.`);
       }
@@ -1518,33 +1650,9 @@ export default function LaunchpadSection({ address, onConnect }) {
       const tx = await vault.deposit(vaultForm.token, amount, unlockTime, admin);
       const receipt = await tx.wait();
       setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Deposit completed." });
-      await refreshVault();
+      await refreshVaultLocks();
     } catch (error) {
       setVaultAction({ loadingKey: "", error: errMsg(error, "Deposit failed."), hash: "", message: "" });
-    }
-  };
-
-  const handleVaultWithdraw = async () => {
-    if (!address) {
-      if (typeof onConnect === "function") onConnect();
-      return;
-    }
-    try {
-      setVaultAction({ loadingKey: "withdraw", error: "", hash: "", message: "Withdrawing..." });
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const meta = await resolveTokenMeta(vaultForm.token, provider);
-      const amount = parseTokenAmount(vaultForm.withdrawAmount, meta.decimals, "Withdraw amount");
-      const to = vaultForm.withdrawTo || address;
-      if (!isAddress(to)) throw new Error("Withdraw recipient is invalid.");
-
-      const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
-      const tx = await vault.withdraw(vaultForm.token, amount, to);
-      const receipt = await tx.wait();
-      setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Withdraw completed." });
-      await refreshVault();
-    } catch (error) {
-      setVaultAction({ loadingKey: "", error: errMsg(error, "Withdraw failed."), hash: "", message: "" });
     }
   };
 
@@ -1573,9 +1681,9 @@ export default function LaunchpadSection({ address, onConnect }) {
 
   const launchpadViews = [
     { id: "create", label: "Create Token", hint: "Deploy a new token" },
-    { id: "deployments", label: "My Tokens", hint: "Claim rewards and manage deployed tokens" },
-    { id: "vault", label: "Vault", hint: "Approve, deposit, withdraw" },
-    { id: "locker", label: "Locker", hint: "Read rewards and collect fees" },
+    { id: "deployments", label: "My Tokens", hint: "View your deployed tokens" },
+    { id: "vault", label: "Vault", hint: "Active locks + deposit" },
+    { id: "locker", label: "Locker", hint: "LP pair + collect fees" },
   ];
 
   const missingBasicFields = getMissingBasicFields(deployForm);
@@ -1651,7 +1759,6 @@ export default function LaunchpadSection({ address, onConnect }) {
     deployForm.useCustomTeamRewardRecipient,
     rewardAddressesCustomized,
   ]);
-  const rewardsEnabled = rewardExtensionEnabled || rewardsCustomized;
   const rewardTypeLabel = useMemo(
     () =>
       REWARD_TYPE_OPTIONS.find((option) => option.value === String(deployForm.creatorRewardType || "paired"))?.label ||
@@ -1714,19 +1821,9 @@ export default function LaunchpadSection({ address, onConnect }) {
   const metadataStatusSummary = metadataConfigured
     ? `${metadataLinkCount} link${metadataLinkCount === 1 ? "" : "s"}`
     : "";
-  const rewardsStatusLabel = !rewardsEnabled
-    ? "Disabled"
-    : rewardsCustomized
-      ? "Configured"
-      : openSections.rewards
-        ? "Not configured"
-        : "Empty";
-  const rewardsStatusTone = !rewardsEnabled ? "neutral" : rewardsCustomized ? "good" : "warn";
-  const rewardStatusSummary = !rewardsEnabled
-    ? "Disabled"
-    : rewardsCustomized
-      ? `${allocatedRewardsLabel}% ${rewardTypeLabel}`
-      : "Enabled";
+  const rewardsStatusLabel = rewardsCustomized ? "Configured" : "Enabled";
+  const rewardsStatusTone = rewardsCustomized ? "good" : "neutral";
+  const rewardStatusSummary = `${allocatedRewardsLabel}% ${rewardTypeLabel}`;
   const vaultStatusLabel = vaultEnabled ? "Configured" : "Disabled";
   const vaultStatusSummary = vaultEnabled
     ? `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${deployForm.vestingDays || "0"}d vest`
@@ -1779,33 +1876,6 @@ export default function LaunchpadSection({ address, onConnect }) {
       target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, []);
-  const handleToggleRewardsExtension = useCallback(
-    (enabled) => {
-      setRewardExtensionEnabled(enabled);
-      if (enabled) {
-        setOpenSections((prev) => ({ ...prev, rewards: true }));
-        setRewardAddressEditing(true);
-        setDeployForm((prev) => ({
-          ...prev,
-          creatorAdmin: prev.creatorAdmin || address || "",
-          creatorRewardRecipient: prev.creatorRewardRecipient || address || "",
-        }));
-        return;
-      }
-      setRewardAddressEditing(false);
-      setOpenSections((prev) => ({ ...prev, rewards: false }));
-      setDeployForm((prev) => ({
-        ...prev,
-        creatorAdmin: address || "",
-        creatorRewardRecipient: address || "",
-        creatorReward: "80",
-        creatorRewardType: "paired",
-        useCustomTeamRewardRecipient: false,
-        teamRewardRecipient: autoProtocolRecipient || "",
-      }));
-    },
-    [address, autoProtocolRecipient]
-  );
   const handleToggleVaultExtension = useCallback((enabled) => {
     setOpenSections((prev) => ({ ...prev, vault: enabled }));
     setDeployForm((prev) => {
@@ -1832,9 +1902,6 @@ export default function LaunchpadSection({ address, onConnect }) {
       };
     });
   }, []);
-  useEffect(() => {
-    if (rewardsCustomized) setRewardExtensionEnabled(true);
-  }, [rewardsCustomized]);
   const createSummaryCard = (
     <div className="space-y-3 rounded-2xl border border-slate-700/60 bg-slate-950/65 p-4">
       <div className="flex items-center gap-3">
@@ -1897,11 +1964,9 @@ export default function LaunchpadSection({ address, onConnect }) {
         <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-slate-300/80">Reward Recipients</span>
-            <span className={rewardsEnabled ? "text-emerald-200" : "text-slate-300/75"}>
-              {rewardsEnabled ? "On" : "Off"}
-            </span>
+            <span className="text-emerald-200">On</span>
           </div>
-          {rewardsEnabled ? <div className="text-[11px] text-slate-300/75">{rewardsSummaryLine}</div> : null}
+          <div className="text-[11px] text-slate-300/75">{rewardsSummaryLine}</div>
         </div>
       </div>
 
@@ -1985,7 +2050,7 @@ export default function LaunchpadSection({ address, onConnect }) {
               onClick={() => {
                 refreshProtocol();
                 refreshDeployments();
-                refreshVault();
+                refreshVaultLocks();
                 refreshLocker();
               }}
               className={SOFT_BUTTON_CLASS}
@@ -2353,17 +2418,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                 statusLabel={rewardsStatusLabel}
                 statusSummary={rewardStatusSummary}
                 statusTone={rewardsStatusTone}
-                headerAction={<SectionEnableToggle enabled={rewardsEnabled} onToggle={handleToggleRewardsExtension} />}
               >
                 <div className="text-xs text-slate-300/75">
                   What this does: configures how creator-side rewards are split and distributed.
                 </div>
-                {!rewardsEnabled ? (
-                  <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
-                    Disabled.
-                  </div>
-                ) : (
-                  <div className="space-y-3">
+                <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Creator addresses</div>
                       <button
@@ -2450,8 +2509,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                         {PROTOCOL_REWARD_CONFIG_ERROR}
                       </div>
                     ) : null}
-                  </div>
-                )}
+                </div>
               </CollapsibleSection>
             </div>
 
@@ -2669,7 +2727,6 @@ export default function LaunchpadSection({ address, onConnect }) {
                     setImageMode("upload");
                     setDeployAttempted(false);
                     setHighlightedField("");
-                    setRewardExtensionEnabled(false);
                     setRewardAddressEditing(false);
                     setOpenSections({ metadata: false, rewards: false, vault: false, buy: false });
                     setDeployForm((prev) => ({
@@ -2730,8 +2787,8 @@ export default function LaunchpadSection({ address, onConnect }) {
         <div className={`${PANEL_CLASS} ${activeView === "deployments" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="font-display text-lg font-semibold">My Deployments</div>
-              <div className="text-xs text-slate-300/70">`getTokensDeployedByUser` + `claimRewards`</div>
+              <div className="font-display text-lg font-semibold">My Tokens</div>
+              <div className="text-xs text-slate-300/70">Logo, name, symbol, and address.</div>
             </div>
             <button
               type="button"
@@ -2755,19 +2812,26 @@ export default function LaunchpadSection({ address, onConnect }) {
           <div className="mt-3 space-y-2">
             {deployments.map((item) => (
               <div key={`${item.token}-${item.positionId}`} className={`${TONED_PANEL_CLASS} p-3`}>
-                <div className="text-xs text-slate-400/75">Token</div>
-                <div className="font-mono text-sm break-all">{item.token}</div>
-                <div className="mt-1 text-xs text-slate-300">Position ID: {item.positionId || "--"}</div>
-                <div className="text-xs text-slate-300">Locker: {item.locker || "--"}</div>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                    {item.logo ? (
+                      <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-xs font-semibold text-slate-200">
+                        {String(item.symbol || "T")
+                          .slice(0, 2)
+                          .toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-slate-100">{item.name || "Token"}</div>
+                    <div className="text-xs text-slate-300/80">{item.symbol || "TOKEN"}</div>
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-slate-400/75">Address</div>
+                <div className="font-mono text-sm break-all text-slate-100">{item.token}</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={claimAction.loadingKey === item.token.toLowerCase()}
-                    onClick={() => handleClaimRewards(item.token)}
-                    className={CYAN_BUTTON_CLASS}
-                  >
-                    {claimAction.loadingKey === item.token.toLowerCase() ? "Claiming..." : "Claim rewards"}
-                  </button>
                   <button
                     type="button"
                     onClick={() => setVaultForm((prev) => ({ ...prev, token: item.token }))}
@@ -2779,7 +2843,6 @@ export default function LaunchpadSection({ address, onConnect }) {
               </div>
             ))}
           </div>
-          <ActionInfo state={claimAction} />
         </div>
       </div>
 
@@ -2788,127 +2851,158 @@ export default function LaunchpadSection({ address, onConnect }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="font-display text-lg font-semibold">CurrentxVault</div>
-              <div className="text-xs text-slate-300/70">`allocation`, `deposit`, `withdraw`</div>
+              <div className="text-xs text-slate-300/70">Active locks and new vault deposits.</div>
             </div>
             <button
               type="button"
-              onClick={refreshVault}
+              onClick={refreshVaultLocks}
               className={SOFT_BUTTON_CLASS}
             >
               Reload
             </button>
           </div>
 
-          <div className="mt-3 space-y-3">
-            <AddressField
-              label="Token"
-              value={vaultForm.token}
-              onChange={(value) => setVaultForm((prev) => ({ ...prev, token: value }))}
-              required
-            />
-            <div className="text-xs text-slate-300/75">
-              Token meta: {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
-            </div>
-            {vaultInfo.error ? (
-              <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{vaultInfo.error}</div>
+          <div className="mt-3 space-y-4">
+            {vaultLocks.error ? (
+              <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                {vaultLocks.error}
+              </div>
             ) : null}
 
-            <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
-              <div>
-                Allocation amount: {vaultInfo.allocation ? `${formatAmount(vaultInfo.allocation.amount, vaultTokenMeta?.decimals || 18, 6)} ${vaultTokenMeta?.symbol || ""}` : "--"}
+            <div className={`${TONED_PANEL_CLASS} p-3`}>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Active locks</div>
+                  <div className="text-[11px] text-slate-400/80">Locks that are still active for this wallet.</div>
+                </div>
+                <div className="text-right text-[11px] text-slate-400/80">
+                  <div>Minimum lock</div>
+                  <div className="font-semibold text-slate-100">
+                    {Number(vaultLocks.minimumVaultTime || 0n) > 0
+                      ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
+                      : "--"}
+                  </div>
+                </div>
               </div>
-              <div>Unlock time: {vaultInfo.allocation ? formatDate(vaultInfo.allocation.endTime) : "--"}</div>
-              <div>Admin: {vaultInfo.allocation?.admin ? shorten(vaultInfo.allocation.admin) : "--"}</div>
-              <div>Minimum vault time: {vaultInfo.minimumVaultTime ? `${vaultInfo.minimumVaultTime}s` : "--"}</div>
+
+              {vaultLocks.loading ? <div className="mt-3 text-sm text-slate-300/75">Loading active locks...</div> : null}
+              {!vaultLocks.loading && !address ? (
+                <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load active locks.</div>
+              ) : null}
+              {!vaultLocks.loading && address && vaultLocks.items.length === 0 ? (
+                <div className="mt-3 text-sm text-slate-300/75">No active locks found.</div>
+              ) : null}
+
+              {!vaultLocks.loading && vaultLocks.items.length > 0 ? (
+                <div className="mt-3 space-y-2">
+                  {vaultLocks.items.map((item) => (
+                    <div key={`vault-lock-${item.token}`} className="rounded-xl border border-slate-700/55 bg-slate-900/35 p-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                          {item.logo ? (
+                            <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
+                          ) : (
+                            <span className="text-xs font-semibold text-slate-200">
+                              {String(item.symbol || "T")
+                                .slice(0, 2)
+                                .toUpperCase()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-slate-100">{item.name || "Token"}</div>
+                          <div className="text-xs text-slate-300/80">{item.symbol || "TOKEN"}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-2 text-xs text-slate-400/75">Address</div>
+                      <div className="font-mono text-sm break-all text-slate-100">{item.token}</div>
+
+                      <div className="mt-2 grid gap-1 text-xs text-slate-200">
+                        <div>
+                          Locked amount: {formatAmount(item.amount, item.decimals || 18, 6)} {item.symbol || ""}
+                        </div>
+                        <div>Unlock date: {formatDate(item.endTime)}</div>
+                        <div>Status: unlocks in {formatRemainingFromUnix(item.endTime)}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
-            <details className={`${TONED_PANEL_CLASS} p-3`}>
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
-                1) Approve token
-              </summary>
-              <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
-                <input
-                  value={vaultForm.approveAmount}
-                  onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
-                  placeholder="Approve amount"
-                  className={INPUT_CLASS}
-                />
-                <button
-                  type="button"
-                  onClick={handleVaultApprove}
-                  disabled={vaultAction.loadingKey === "approve"}
-                  className={CYAN_BUTTON_CLASS}
-                >
-                  {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
-                </button>
-              </div>
-            </details>
+            <div className={`${TONED_PANEL_CLASS} p-3`}>
+              <div className="text-sm font-semibold text-slate-100">Deposit token into vault</div>
+              <div className="mt-1 text-xs text-slate-300/75">Lock a token amount until a future unlock date.</div>
 
-            <details className={`${TONED_PANEL_CLASS} p-3`}>
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
-                2) Deposit allocation
-              </summary>
-              <div className="mt-3 grid gap-2 md:grid-cols-2">
-                <input
-                  value={vaultForm.depositAmount}
-                  onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
-                  placeholder="Deposit amount"
-                  className={INPUT_CLASS}
-                />
-                <input
-                  type="datetime-local"
-                  value={vaultForm.depositUnlockAt}
-                  onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
-                  className={INPUT_CLASS}
-                />
+              <div className="mt-3 space-y-3">
                 <AddressField
-                  label="Deposit admin"
-                  value={vaultForm.depositAdmin}
-                  onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
+                  label="Token"
+                  value={vaultForm.token}
+                  onChange={(value) => setVaultForm((prev) => ({ ...prev, token: value }))}
                   required
                 />
-              </div>
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleVaultDeposit}
-                  disabled={vaultAction.loadingKey === "deposit"}
-                  className={PRIMARY_BUTTON_CLASS}
-                >
-                  {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit"}
-                </button>
-              </div>
-            </details>
+                <div className="text-xs text-slate-300/75">
+                  Token meta: {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
+                </div>
 
-            <details className={`${TONED_PANEL_CLASS} p-3`}>
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
-                3) Withdraw allocation
-              </summary>
-              <div className="mt-3 grid gap-2 md:grid-cols-2">
-                <input
-                  value={vaultForm.withdrawAmount}
-                  onChange={(e) => setVaultForm((prev) => ({ ...prev, withdrawAmount: e.target.value }))}
-                  placeholder="Withdraw amount"
-                  className={INPUT_CLASS}
-                />
-                <AddressField
-                  label="Withdraw recipient"
-                  value={vaultForm.withdrawTo}
-                  onChange={(value) => setVaultForm((prev) => ({ ...prev, withdrawTo: value }))}
-                  required
-                />
+                <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+                  <input
+                    value={vaultForm.approveAmount}
+                    onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
+                    placeholder="Amount to approve"
+                    className={INPUT_CLASS}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleVaultApprove}
+                    disabled={vaultAction.loadingKey === "approve"}
+                    className={CYAN_BUTTON_CLASS}
+                  >
+                    {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
+                  </button>
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-2">
+                  <input
+                    value={vaultForm.depositAmount}
+                    onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
+                    placeholder="Amount to lock"
+                    className={INPUT_CLASS}
+                  />
+                  <input
+                    type="datetime-local"
+                    value={vaultForm.depositUnlockAt}
+                    onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
+                    className={INPUT_CLASS}
+                  />
+                  <AddressField
+                    label="Admin wallet"
+                    value={vaultForm.depositAdmin}
+                    onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
+                    required
+                  />
+                </div>
+
+                <div className="text-[11px] text-slate-400/80">
+                  Minimum lock:{" "}
+                  {Number(vaultLocks.minimumVaultTime || 0n) > 0
+                    ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
+                    : "--"}
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleVaultDeposit}
+                    disabled={vaultAction.loadingKey === "deposit"}
+                    className={PRIMARY_BUTTON_CLASS}
+                  >
+                    {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit into vault"}
+                  </button>
+                </div>
               </div>
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={handleVaultWithdraw}
-                  disabled={vaultAction.loadingKey === "withdraw"}
-                  className={AMBER_BUTTON_CLASS}
-                >
-                  {vaultAction.loadingKey === "withdraw" ? "Withdrawing..." : "Withdraw"}
-                </button>
-              </div>
-            </details>
+            </div>
           </div>
           <ActionInfo state={vaultAction} />
         </div>
@@ -2917,7 +3011,7 @@ export default function LaunchpadSection({ address, onConnect }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="font-display text-lg font-semibold">LpLockerv2</div>
-              <div className="text-xs text-slate-300/70">`getLpTokenIdsForCreator`, `tokenRewards`, `collectRewards`</div>
+              <div className="text-xs text-slate-300/70">LP pair for selected NFT ID + collect fees.</div>
             </div>
             <button
               type="button"
@@ -2931,11 +3025,6 @@ export default function LaunchpadSection({ address, onConnect }) {
           {locker.error ? (
             <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
           ) : null}
-
-          <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
-            <div className={`${TONED_PANEL_CLASS} px-3 py-2`}>TEAM_REWARD: {locker.teamReward ? String(locker.teamReward) : "--"}</div>
-            <div className={`${TONED_PANEL_CLASS} px-3 py-2`}>MAX_CREATOR_REWARD: {locker.maxCreatorReward ? String(locker.maxCreatorReward) : "--"}</div>
-          </div>
 
           <div className="mt-3 space-y-3">
             <select
@@ -2952,11 +3041,67 @@ export default function LaunchpadSection({ address, onConnect }) {
             </select>
 
             <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
-              <div>Creator reward: {locker.tokenReward ? String(locker.tokenReward.creatorReward) : "--"}</div>
-              <div>Creator admin: {locker.tokenReward?.creatorAdmin || "--"}</div>
-              <div>Creator recipient: {locker.tokenReward?.creatorRecipient || "--"}</div>
-              <div>Interface admin: {locker.tokenReward?.interfaceAdmin || "--"}</div>
-              <div>Interface recipient: {locker.tokenReward?.interfaceRecipient || "--"}</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-300/80">NFT ID</span>
+                <span className="font-mono text-slate-100">{locker.selectedId || "--"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-300/80">Creator reward</span>
+                <span className="font-semibold text-slate-100">
+                  {locker.tokenReward ? String(locker.tokenReward.creatorReward) : "--"}
+                </span>
+              </div>
+              <div className="pt-1 text-slate-300/80">LP pair</div>
+              {locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? (
+                <div className="flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-2">
+                  <div className="inline-flex items-center gap-1.5">
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                      {locker.tokenReward?.token0Meta?.logo ? (
+                        <img
+                          src={locker.tokenReward.token0Meta.logo}
+                          alt={`${locker.tokenReward?.token0Meta?.symbol || "TOKEN0"} logo`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-semibold text-slate-200">
+                          {String(locker.tokenReward?.token0Meta?.symbol || "T0")
+                            .slice(0, 2)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-semibold text-slate-100">
+                      {locker.tokenReward?.token0Meta?.symbol || "TOKEN0"}
+                    </span>
+                  </div>
+                  <span className="text-slate-400/80">/</span>
+                  <div className="inline-flex items-center gap-1.5">
+                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                      {locker.tokenReward?.token1Meta?.logo ? (
+                        <img
+                          src={locker.tokenReward.token1Meta.logo}
+                          alt={`${locker.tokenReward?.token1Meta?.symbol || "TOKEN1"} logo`}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-semibold text-slate-200">
+                          {String(locker.tokenReward?.token1Meta?.symbol || "T1")
+                            .slice(0, 2)
+                            .toUpperCase()}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs font-semibold text-slate-100">
+                      {locker.tokenReward?.token1Meta?.symbol || "TOKEN1"}
+                    </span>
+                  </div>
+                  <span className="ml-auto rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[11px] text-slate-200">
+                    {locker.tokenReward?.fee ? `Fee ${formatFeeTierPercent(locker.tokenReward.fee)}` : "Fee --"}
+                  </span>
+                </div>
+              ) : (
+                <div className="text-xs text-slate-300/75">Pair details unavailable for this NFT ID.</div>
+              )}
             </div>
 
             <div className="flex justify-end">
