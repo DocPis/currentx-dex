@@ -7,7 +7,9 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        inter: ["Inter", "sans-serif"],
+        display: ["Sora", "sans-serif"],
+        body: ["Space Grotesk", "sans-serif"],
+        mono: ["IBM Plex Mono", "monospace"],
       },
     },
   },

@@ -309,14 +309,18 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-50 flex flex-col relative">
+    <div className="relative flex min-h-screen flex-col overflow-x-clip bg-transparent text-slate-50">
       <SeasonBanner onClick={() => handleTabClick("points")} />
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute -left-28 top-20 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
+        <div className="absolute right-[-8rem] top-[18rem] h-[22rem] w-[22rem] rounded-full bg-sky-500/15 blur-3xl" />
+      </div>
       {connectError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
-          <div className="bg-slate-900/95 border border-rose-500/40 text-rose-100 px-4 py-3 rounded-2xl shadow-2xl shadow-rose-900/40 flex items-start gap-3 min-w-[260px]">
+          <div className="flex min-w-[260px] items-start gap-3 rounded-2xl border border-rose-500/45 bg-slate-950/90 px-4 py-3 text-rose-100 shadow-2xl shadow-rose-900/40 backdrop-blur">
             <div className="h-2 w-2 mt-1.5 rounded-full bg-rose-400 shadow-[0_0_12px_rgba(248,113,113,0.7)]" />
             <div className="text-sm">
-              <div className="font-semibold text-rose-100">Connection rejected</div>
+              <div className="font-display font-semibold text-rose-100">Connection rejected</div>
               <div className="text-rose-200/80 text-xs">{connectError}</div>
             </div>
             <button
@@ -340,13 +344,14 @@ export default function App() {
       />
 
       {/* Tabs */}
-      <div className="px-4 sm:px-6 pt-6">
-        <div className="flex flex-wrap justify-center gap-3 text-xs sm:text-sm">
+      <div className="cx-fade-up px-4 pt-6 sm:px-6">
+        <div className="mx-auto flex w-full max-w-6xl flex-wrap justify-center gap-2 rounded-3xl border border-slate-700/40 bg-slate-900/45 p-2 text-xs shadow-[0_24px_60px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:text-sm">
           {[
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
             { id: "pools", label: "Pools" },
+            { id: "launchpad", label: "Launchpad" },
             { id: "points", label: "Points" },
             { id: "farms", label: "Farms" },
             { id: "megavault", label: "MegaVault" },
@@ -362,13 +367,13 @@ export default function App() {
                 preloadSection(item.id);
                 prefetchTabData(item.id);
               }}
-              className={`px-4 py-2 rounded-xl border transition shadow-sm ${
+              className={`cx-tab-button rounded-2xl border px-4 py-2.5 font-display text-[11px] tracking-wide transition sm:text-xs ${
                 tab === item.id
-                  ? "border-sky-500/60 bg-slate-900 text-white shadow-sky-500/20"
-                  : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
+                  ? "cx-tab-button-active border-sky-400/80 bg-gradient-to-r from-sky-500/20 via-cyan-400/20 to-emerald-400/15 text-sky-50 shadow-[0_10px_30px_rgba(56,189,248,0.22)]"
+                  : "border-slate-700/60 bg-slate-900/65 text-slate-300 hover:border-slate-500 hover:text-slate-100"
               } ${
                 item.id === "points"
-                  ? "relative border-cyan-400/50 text-cyan-100 shadow-[0_0_18px_rgba(15,245,255,0.35)] hover:shadow-[0_0_24px_rgba(15,245,255,0.45)]"
+                  ? "relative border-cyan-400/60 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:shadow-[0_0_26px_rgba(34,211,238,0.38)]"
                   : ""
               }`}
             >
@@ -381,7 +386,7 @@ export default function App() {
       <main className="flex-1">
         <Suspense
           fallback={
-            <div className="px-6 py-12 text-center text-sm text-slate-400">
+            <div className="px-6 py-12 text-center text-sm text-slate-300/80">
               Loading section...
             </div>
           }

@@ -228,18 +228,31 @@ const buildTokenMap = () => {
 };
 
 const KNOWN_TOKENS = buildTokenMap();
+const PANEL_CLASS =
+  "rounded-[1.75rem] border border-slate-700/45 bg-slate-950/60 p-5 shadow-[0_22px_50px_rgba(2,6,23,0.55)] backdrop-blur-xl";
+const INPUT_CLASS =
+  "w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/20";
+const SOFT_BUTTON_CLASS =
+  "rounded-full border border-slate-600/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50";
+const PRIMARY_BUTTON_CLASS =
+  "rounded-xl border border-emerald-300/60 bg-gradient-to-r from-emerald-400/25 to-cyan-400/20 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.2)] transition hover:brightness-110 disabled:opacity-60";
+const CYAN_BUTTON_CLASS =
+  "rounded-xl border border-cyan-300/55 bg-gradient-to-r from-sky-500/20 to-cyan-400/18 px-3 py-2 text-xs font-semibold text-cyan-100 shadow-[0_10px_22px_rgba(56,189,248,0.18)] transition hover:brightness-110 disabled:opacity-60";
+const AMBER_BUTTON_CLASS =
+  "rounded-xl border border-amber-300/55 bg-gradient-to-r from-amber-400/20 to-orange-400/15 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[0_10px_22px_rgba(251,191,36,0.14)] transition hover:brightness-110 disabled:opacity-60";
+const TONED_PANEL_CLASS = "rounded-xl border border-slate-700/60 bg-slate-900/45";
 
 function ActionInfo({ state }) {
   if (!state?.error && !state?.hash && !state?.message) return null;
   return (
     <div className="mt-2 space-y-2 text-xs">
       {state.error ? (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-100">
+        <div className="rounded-xl border border-amber-400/50 bg-amber-500/15 px-3 py-2 text-amber-100">
           {state.error}
         </div>
       ) : null}
       {state.message ? (
-        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-sky-100">
+        <div className="rounded-xl border border-sky-400/45 bg-sky-500/15 px-3 py-2 text-sky-100">
           {state.message}
         </div>
       ) : null}
@@ -248,7 +261,7 @@ function ActionInfo({ state }) {
           href={`${EXPLORER_BASE_URL}/tx/${state.hash}`}
           target="_blank"
           rel="noreferrer"
-          className="text-sky-300 underline hover:text-sky-200"
+          className="inline-flex items-center gap-1 font-semibold text-cyan-200 underline underline-offset-4 hover:text-cyan-100"
         >
           View transaction on {EXPLORER_LABEL}
         </a>
@@ -261,13 +274,13 @@ function AddressField({ label, value, onChange, required = false }) {
   const invalid = required ? !isAddress(value) : value && !isAddress(value);
   return (
     <div className="space-y-1">
-      <label className="text-xs text-slate-400">{label}</label>
+      <label className="text-xs font-medium tracking-wide text-slate-300/85">{label}</label>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value.trim())}
         placeholder="0x..."
-        className={`w-full rounded-xl border px-3 py-2 text-sm bg-slate-900 text-slate-100 ${
-          invalid ? "border-rose-500/50" : "border-slate-800"
+        className={`${INPUT_CLASS} ${
+          invalid ? "border-rose-500/70 text-rose-100" : ""
         }`}
       />
     </div>
@@ -276,7 +289,7 @@ function AddressField({ label, value, onChange, required = false }) {
 
 function InfoDot() {
   return (
-    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-600 text-[10px] text-slate-400">
+    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-cyan-300/35 text-[10px] font-semibold text-cyan-200/80">
       i
     </span>
   );
@@ -289,7 +302,7 @@ function ChevronIcon({ open }) {
       fill="none"
       stroke="currentColor"
       strokeWidth="2"
-      className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+      className={`h-4 w-4 text-slate-300/80 transition-transform ${open ? "rotate-180" : ""}`}
       aria-hidden="true"
     >
       <path d="M5 8l5 5 5-5" />
@@ -308,10 +321,10 @@ function SelectorPills({ value, onChange, options, columns = 3 }) {
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+            className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
               active
-                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
-                : "border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500"
+                ? "border-emerald-300/65 bg-gradient-to-r from-emerald-400/20 to-cyan-400/15 text-emerald-100 shadow-[0_10px_22px_rgba(16,185,129,0.2)]"
+                : "border-slate-700/70 bg-slate-900/65 text-slate-200 hover:border-slate-500 hover:text-slate-50"
             }`}
           >
             {option.label}
@@ -324,8 +337,12 @@ function SelectorPills({ value, onChange, options, columns = 3 }) {
 
 function CollapsibleSection({ title, open, onToggle, children }) {
   return (
-    <div className="border-t border-slate-800 pt-4">
-      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-3">
+    <div className="border-t border-slate-700/55 pt-4">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 rounded-xl px-1 py-1.5 transition hover:bg-slate-900/35"
+      >
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-100">
           {title}
           <InfoDot />
@@ -1241,100 +1258,106 @@ export default function LaunchpadSection({ address, onConnect }) {
   }, []);
 
   return (
-    <section className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-semibold text-white">Launchpad</h2>
-          <p className="text-sm text-slate-400">
-            Deploy token + V3 setup through CurrentX, then manage CurrentxVault and LpLockerv2 with optional extensions.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              refreshProtocol();
-              refreshDeployments();
-              refreshVault();
-              refreshLocker();
-            }}
-            className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200"
-          >
-            Refresh all
-          </button>
-          {!address ? (
+    <section className="w-full px-4 py-8 text-slate-100 sm:px-6 lg:px-10">
+      <div className="cx-fade-up mb-6 rounded-[2rem] border border-slate-700/45 bg-slate-950/55 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.58)] backdrop-blur-xl">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="mb-2 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
+              Token Studio
+            </div>
+            <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">Launchpad</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-300/80">
+              Deploy token + V3 setup through CurrentX, then manage CurrentxVault and LpLockerv2 with optional extensions.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onConnect}
-              className="rounded-full border border-sky-500/50 bg-sky-500/10 px-3 py-1.5 text-xs text-sky-100"
+              onClick={() => {
+                refreshProtocol();
+                refreshDeployments();
+                refreshVault();
+                refreshLocker();
+              }}
+              className={SOFT_BUTTON_CLASS}
             >
-              Connect wallet
+              Refresh all
             </button>
-          ) : (
-            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-100">
-              {shorten(address)}
-            </span>
-          )}
+            {!address ? (
+              <button
+                type="button"
+                onClick={onConnect}
+                className="rounded-full border border-sky-300/65 bg-gradient-to-r from-sky-500/90 to-cyan-400/90 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(56,189,248,0.35)] transition hover:brightness-110"
+              >
+                Connect wallet
+              </button>
+            ) : (
+              <span className="rounded-full border border-emerald-300/50 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-100">
+                {shorten(address)}
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {launchpadViews.map((view) => (
+        {launchpadViews.map((view, index) => (
           <button
             key={view.id}
             type="button"
             onClick={() => setActiveView(view.id)}
-            className={`rounded-2xl border px-4 py-3 text-left transition ${
+            className={`cx-fade-up cx-tab-button rounded-2xl border px-4 py-3 text-left transition ${
               activeView === view.id
-                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
-                : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-700"
+                ? "cx-tab-button-active border-cyan-300/60 bg-gradient-to-br from-sky-500/20 via-cyan-400/18 to-emerald-400/14 text-cyan-50 shadow-[0_12px_28px_rgba(56,189,248,0.22)]"
+                : "border-slate-700/60 bg-slate-950/45 text-slate-200 hover:border-slate-500 hover:bg-slate-900/60"
             }`}
+            style={{ animationDelay: `${80 + index * 55}ms` }}
           >
-            <div className="text-sm font-semibold">{view.label}</div>
-            <div className="mt-1 text-xs text-slate-400">{view.hint}</div>
+            <div className="font-display text-sm font-semibold">{view.label}</div>
+            <div className="mt-1 text-xs text-slate-300/70">{view.hint}</div>
           </button>
         ))}
       </div>
 
       <div className={`mt-6 ${activeView === "create" || activeView === "deployments" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
-        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "create" ? "" : "hidden"}`}>
+        <div className={`${PANEL_CLASS} ${activeView === "create" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-semibold">Create Token</div>
-              <div className="text-xs text-slate-400">Simple launch flow with optional extensions.</div>
+              <div className="font-display text-lg font-semibold">Create Token</div>
+              <div className="text-xs text-slate-300/70">Simple launch flow with optional extensions.</div>
             </div>
-            {protocol.loading ? <span className="text-xs text-slate-400">Preparing...</span> : null}
+            {protocol.loading ? <span className="text-xs text-slate-300/75">Preparing...</span> : null}
           </div>
           {protocol.error ? (
-            <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{protocol.error}</div>
+            <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{protocol.error}</div>
           ) : null}
 
           <form className="mt-4 space-y-3" onSubmit={handleDeploy}>
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">Basic Token Info</div>
-              <div className="text-xs text-slate-400">Required fields: Name, Symbol, Image.</div>
-              <div className="text-xs text-slate-400">Pool starts from the standard 10 ETH setup.</div>
+            <div className={`${TONED_PANEL_CLASS} space-y-3 p-3`}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Basic Token Info</div>
+              <div className="text-xs text-slate-300/70">Required fields: Name, Symbol, Image.</div>
+              <div className="text-xs text-slate-300/70">Pool starts from the standard 10 ETH setup.</div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1">
-                  <label className="text-xs text-slate-400">Name *</label>
+                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Name *</label>
                   <input
                     value={deployForm.name}
                     onChange={(e) => setDeployForm((prev) => ({ ...prev, name: e.target.value }))}
                     placeholder="Enter token name"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                    className={INPUT_CLASS}
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs text-slate-400">Symbol *</label>
+                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Symbol *</label>
                   <input
                     value={deployForm.symbol}
                     onChange={(e) => setDeployForm((prev) => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
                     placeholder="Enter token symbol"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                    className={INPUT_CLASS}
                   />
                 </div>
                 <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs text-slate-400">Image URL or PNG Upload *</label>
+                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Image URL or PNG Upload *</label>
                   <input
                     value={deployForm.image}
                     onChange={(e) => {
@@ -1343,11 +1366,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                       setDeployForm((prev) => ({ ...prev, image: e.target.value }));
                     }}
                     placeholder="Paste image URL, ipfs:// URI, or upload PNG"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                    className={INPUT_CLASS}
                   />
                   <div className="flex flex-wrap items-center gap-2 pt-1">
                     <label
-                      className={`inline-flex cursor-pointer items-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-500 ${
+                      className={`inline-flex cursor-pointer items-center rounded-lg border border-cyan-300/45 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/10 ${
                         imageUploading ? "pointer-events-none opacity-60" : ""
                       }`}
                     >
@@ -1360,34 +1383,34 @@ export default function LaunchpadSection({ address, onConnect }) {
                         className="sr-only"
                       />
                     </label>
-                    <span className="text-[11px] text-slate-500">Max 256 KB. Stored on IPFS.</span>
+                    <span className="text-[11px] text-slate-400/80">Max 256 KB. Stored on IPFS.</span>
                   </div>
                   {imageUploadError ? (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                       {imageUploadError}
                     </div>
                   ) : null}
                   {imageUploadCid ? (
-                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                    <div className="rounded-xl border border-emerald-400/45 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-100">
                       Uploaded to IPFS: <span className="font-mono">{shorten(imageUploadCid)}</span>
                     </div>
                   ) : null}
                   {imageIsLegacyDataUri ? (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 space-y-2">
+                    <div className="space-y-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                       <div>Legacy image format detected (`data:image...`). Convert it to IPFS before deploy.</div>
                       <button
                         type="button"
                         onClick={migrateLegacyImageToIpfs}
                         disabled={imageUploading}
-                        className="rounded-lg border border-amber-400/50 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-100 disabled:opacity-60"
+                        className={AMBER_BUTTON_CLASS}
                       >
                         {imageUploading ? "Converting..." : "Convert to IPFS now"}
                       </button>
                     </div>
                   ) : null}
                   {deployForm.image ? (
-                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
-                      <div className="mb-1 text-[11px] text-slate-500">Image preview</div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/60 p-2">
+                      <div className="mb-1 text-[11px] text-slate-400/80">Image preview</div>
                       <img
                         src={toImagePreviewSrc(deployForm.image)}
                         alt="Token preview"
@@ -1410,31 +1433,31 @@ export default function LaunchpadSection({ address, onConnect }) {
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, description: e.target.value }))}
                   placeholder="Description"
                   rows={3}
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm md:col-span-2"
+                  className={`${INPUT_CLASS} md:col-span-2`}
                 />
                 <input
                   value={deployForm.telegram}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, telegram: e.target.value }))}
                   placeholder="Telegram link"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <input
                   value={deployForm.website}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, website: e.target.value }))}
                   placeholder="Website link"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <input
                   value={deployForm.x}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, x: e.target.value }))}
                   placeholder="X (Twitter) link"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <input
                   value={deployForm.farcaster}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, farcaster: e.target.value }))}
                   placeholder="Farcaster link"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
               </div>
             </CollapsibleSection>
@@ -1456,7 +1479,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                   onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
                 />
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-400">Reward Token</div>
+                  <div className="text-xs text-slate-300/80">Reward Token</div>
                   <SelectorPills
                     value={deployForm.creatorRewardType}
                     onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
@@ -1464,13 +1487,13 @@ export default function LaunchpadSection({ address, onConnect }) {
                   />
                 </div>
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-400">Reward Percentage</div>
+                  <div className="text-xs text-slate-300/80">Reward Percentage</div>
                   <div className="relative">
                     <input
                       value={deployForm.creatorReward}
                       onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
                       placeholder={maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "80"}
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                      className={`${INPUT_CLASS} pr-8`}
                     />
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
                   </div>
@@ -1484,19 +1507,19 @@ export default function LaunchpadSection({ address, onConnect }) {
                       creatorRewardRecipient: prev.creatorRewardRecipient || address || "",
                     }))
                   }
-                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-500"
+                  className="w-full rounded-xl border border-cyan-300/50 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/15"
                 >
                   Add Reward Recipient
                 </button>
-                <div className="text-sm font-semibold text-emerald-300">
+                <div className="text-sm font-semibold text-emerald-200">
                   Allocated Rewards: {allocatedRewardsLabel}/{allocatedRewardsTotalLabel}%
                 </div>
-                <div className="text-xs text-slate-400">
+                <div className="text-xs text-slate-300/75">
                   Interface reward is managed automatically by protocol recipient:{" "}
                   <span className="font-mono text-slate-300">{autoProtocolRecipient ? shorten(autoProtocolRecipient) : "--"}</span>
                 </div>
                 {PROTOCOL_REWARD_CONFIG_ERROR ? (
-                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                     {PROTOCOL_REWARD_CONFIG_ERROR}
                   </div>
                 ) : null}
@@ -1509,13 +1532,13 @@ export default function LaunchpadSection({ address, onConnect }) {
               onToggle={() => toggleSection("vault")}
             >
               <div className="space-y-1">
-                <div className="text-xs text-slate-400">Vault Percentage</div>
+                <div className="text-xs text-slate-300/80">Vault Percentage</div>
                 <div className="relative">
                   <input
                     value={deployForm.vaultPercentage}
                     onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultPercentage: e.target.value }))}
                     placeholder="15"
-                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                    className={`${INPUT_CLASS} pr-8`}
                   />
                   <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
                 </div>
@@ -1527,22 +1550,22 @@ export default function LaunchpadSection({ address, onConnect }) {
               />
 
               <div className="space-y-1">
-                <div className="text-xs text-slate-400">Vault Recipient Address</div>
+                <div className="text-xs text-slate-300/80">Vault Recipient Address</div>
                 <input
                   value={address || ""}
                   readOnly
                   placeholder="Connect wallet"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300"
+                  className={`${INPUT_CLASS} text-slate-300`}
                 />
               </div>
 
               <div className="space-y-1">
-                <div className="text-xs text-slate-400">Lockup Period</div>
+                <div className="text-xs text-slate-300/80">Lockup Period</div>
                 <input
                   value={deployForm.lockupDays}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, lockupDays: e.target.value }))}
                   placeholder="30"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
               </div>
               <SelectorPills
@@ -1553,12 +1576,12 @@ export default function LaunchpadSection({ address, onConnect }) {
               />
 
               <div className="space-y-1">
-                <div className="text-xs text-slate-400">Vesting Period</div>
+                <div className="text-xs text-slate-300/80">Vesting Period</div>
                 <input
                   value={deployForm.vestingDays}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, vestingDays: e.target.value }))}
                   placeholder="30"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
               </div>
               <SelectorPills
@@ -1568,7 +1591,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                 options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
               />
 
-              <div className="text-xs text-slate-400">Lockup has a minimum of 7 days. Vesting must be &gt;= lockup.</div>
+              <div className="text-xs text-slate-300/75">Lockup has a minimum of 7 days. Vesting must be &gt;= lockup.</div>
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -1578,13 +1601,13 @@ export default function LaunchpadSection({ address, onConnect }) {
             >
               <div className="space-y-3">
                 <div className="space-y-1">
-                  <div className="text-xs text-slate-400">ETH Amount for Creator Buy</div>
+                  <div className="text-xs text-slate-300/80">ETH Amount for Creator Buy</div>
                   <div className="relative">
                     <input
                       value={deployForm.txValueEth}
                       onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
                       placeholder="0.5"
-                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-14 text-sm"
+                      className={`${INPUT_CLASS} pr-14`}
                     />
                     <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-300">
                       ETH
@@ -1602,7 +1625,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                   options={CREATOR_BUY_ETH_PRESETS.map((value) => ({ value, label: `${value} ETH` }))}
                 />
 
-                <div className="border-t border-slate-800 pt-3 space-y-3">
+                <div className="space-y-3 border-t border-slate-700/55 pt-3">
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-sm font-semibold text-slate-100">Token Recipient</div>
                     <label className="inline-flex items-center gap-2 text-sm text-slate-300">
@@ -1612,7 +1635,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                         onChange={(e) =>
                           setDeployForm((prev) => ({ ...prev, useCustomCreatorBuyRecipient: e.target.checked }))
                         }
-                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-300/40"
                       />
                       <span>Use custom recipient</span>
                     </label>
@@ -1627,13 +1650,13 @@ export default function LaunchpadSection({ address, onConnect }) {
                         required
                       />
                       {Number.parseFloat(String(deployForm.txValueEth || "0")) > 0 ? (
-                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                        <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                           Custom recipient for Creator Buy is not supported by deployToken when ETH amount is greater than 0.
                         </div>
                       ) : null}
                     </div>
                   ) : (
-                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300">
                       Tokens will be sent to your wallet:{" "}
                       <span className="font-mono text-slate-100">{address ? shorten(address) : "Connect wallet"}</span>
                     </div>
@@ -1643,7 +1666,7 @@ export default function LaunchpadSection({ address, onConnect }) {
             </CollapsibleSection>
 
             <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-slate-400">
+              <div className="text-xs text-slate-300/75">
                 {imageUploading
                   ? "Uploading image to IPFS..."
                   : missingBasicFields.length
@@ -1672,14 +1695,14 @@ export default function LaunchpadSection({ address, onConnect }) {
                       "",
                   }));
                 }}
-                className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs"
+                className="rounded-xl border border-slate-600/70 bg-slate-900/75 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50"
               >
                 Reset
               </button>
               <button
                 type="submit"
                 disabled={deployAction.loading || imageUploading || missingBasicFields.length > 0}
-                className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
+                className={PRIMARY_BUTTON_CLASS}
               >
                 {deployAction.loading ? "Deploying..." : "Deploy token"}
               </button>
@@ -1687,7 +1710,7 @@ export default function LaunchpadSection({ address, onConnect }) {
           </form>
 
           {deployResult ? (
-            <div className="mt-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+            <div className="mt-2 rounded-xl border border-emerald-400/45 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-100">
               <div>Token: {deployResult.tokenAddress || "--"}</div>
               <div>Position ID: {deployResult.positionId || "--"}</div>
             </div>
@@ -1695,35 +1718,35 @@ export default function LaunchpadSection({ address, onConnect }) {
           <ActionInfo state={deployAction} />
         </div>
 
-        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "deployments" ? "" : "hidden"}`}>
+        <div className={`${PANEL_CLASS} ${activeView === "deployments" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-semibold">My Deployments</div>
-              <div className="text-xs text-slate-400">`getTokensDeployedByUser` + `claimRewards`</div>
+              <div className="font-display text-lg font-semibold">My Deployments</div>
+              <div className="text-xs text-slate-300/70">`getTokensDeployedByUser` + `claimRewards`</div>
             </div>
             <button
               type="button"
               onClick={refreshDeployments}
-              className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs"
+              className={SOFT_BUTTON_CLASS}
             >
               Reload
             </button>
           </div>
 
           {deploymentsError ? (
-            <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{deploymentsError}</div>
+            <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{deploymentsError}</div>
           ) : null}
 
-          {deploymentsLoading ? <div className="mt-3 text-sm text-slate-400">Loading...</div> : null}
+          {deploymentsLoading ? <div className="mt-3 text-sm text-slate-300/75">Loading...</div> : null}
           {!deploymentsLoading && address && deployments.length === 0 ? (
-            <div className="mt-3 text-sm text-slate-400">No deployments found for this wallet.</div>
+            <div className="mt-3 text-sm text-slate-300/75">No deployments found for this wallet.</div>
           ) : null}
-          {!address ? <div className="mt-3 text-sm text-slate-400">Connect wallet to load deployments.</div> : null}
+          {!address ? <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load deployments.</div> : null}
 
           <div className="mt-3 space-y-2">
             {deployments.map((item) => (
-              <div key={`${item.token}-${item.positionId}`} className="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
-                <div className="text-xs text-slate-500">Token</div>
+              <div key={`${item.token}-${item.positionId}`} className={`${TONED_PANEL_CLASS} p-3`}>
+                <div className="text-xs text-slate-400/75">Token</div>
                 <div className="font-mono text-sm break-all">{item.token}</div>
                 <div className="mt-1 text-xs text-slate-300">Position ID: {item.positionId || "--"}</div>
                 <div className="text-xs text-slate-300">Locker: {item.locker || "--"}</div>
@@ -1732,14 +1755,14 @@ export default function LaunchpadSection({ address, onConnect }) {
                     type="button"
                     disabled={claimAction.loadingKey === item.token.toLowerCase()}
                     onClick={() => handleClaimRewards(item.token)}
-                    className="rounded-full border border-sky-500/50 bg-sky-500/10 px-3 py-1 text-xs text-sky-100 disabled:opacity-60"
+                    className={CYAN_BUTTON_CLASS}
                   >
                     {claimAction.loadingKey === item.token.toLowerCase() ? "Claiming..." : "Claim rewards"}
                   </button>
                   <button
                     type="button"
                     onClick={() => setVaultForm((prev) => ({ ...prev, token: item.token }))}
-                    className="rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-xs"
+                    className={SOFT_BUTTON_CLASS}
                   >
                     Use in vault
                   </button>
@@ -1752,16 +1775,16 @@ export default function LaunchpadSection({ address, onConnect }) {
       </div>
 
       <div className={`mt-6 ${activeView === "vault" || activeView === "locker" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
-        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "vault" ? "" : "hidden"}`}>
+        <div className={`${PANEL_CLASS} ${activeView === "vault" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-semibold">CurrentxVault</div>
-              <div className="text-xs text-slate-400">`allocation`, `deposit`, `withdraw`</div>
+              <div className="font-display text-lg font-semibold">CurrentxVault</div>
+              <div className="text-xs text-slate-300/70">`allocation`, `deposit`, `withdraw`</div>
             </div>
             <button
               type="button"
               onClick={refreshVault}
-              className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs"
+              className={SOFT_BUTTON_CLASS}
             >
               Reload
             </button>
@@ -1774,14 +1797,14 @@ export default function LaunchpadSection({ address, onConnect }) {
               onChange={(value) => setVaultForm((prev) => ({ ...prev, token: value }))}
               required
             />
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-slate-300/75">
               Token meta: {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
             </div>
             {vaultInfo.error ? (
-              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{vaultInfo.error}</div>
+              <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{vaultInfo.error}</div>
             ) : null}
 
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 space-y-1">
+            <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
               <div>
                 Allocation amount: {vaultInfo.allocation ? `${formatAmount(vaultInfo.allocation.amount, vaultTokenMeta?.decimals || 18, 6)} ${vaultTokenMeta?.symbol || ""}` : "--"}
               </div>
@@ -1790,8 +1813,8 @@ export default function LaunchpadSection({ address, onConnect }) {
               <div>Minimum vault time: {vaultInfo.minimumVaultTime ? `${vaultInfo.minimumVaultTime}s` : "--"}</div>
             </div>
 
-            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+            <details className={`${TONED_PANEL_CLASS} p-3`}>
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
                 1) Approve token
               </summary>
               <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
@@ -1799,21 +1822,21 @@ export default function LaunchpadSection({ address, onConnect }) {
                   value={vaultForm.approveAmount}
                   onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
                   placeholder="Approve amount"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <button
                   type="button"
                   onClick={handleVaultApprove}
                   disabled={vaultAction.loadingKey === "approve"}
-                  className="rounded-xl border border-sky-500/50 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 disabled:opacity-60"
+                  className={CYAN_BUTTON_CLASS}
                 >
                   {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
                 </button>
               </div>
             </details>
 
-            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+            <details className={`${TONED_PANEL_CLASS} p-3`}>
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
                 2) Deposit allocation
               </summary>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -1821,13 +1844,13 @@ export default function LaunchpadSection({ address, onConnect }) {
                   value={vaultForm.depositAmount}
                   onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
                   placeholder="Deposit amount"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <input
                   type="datetime-local"
                   value={vaultForm.depositUnlockAt}
                   onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <AddressField
                   label="Deposit admin"
@@ -1841,15 +1864,15 @@ export default function LaunchpadSection({ address, onConnect }) {
                   type="button"
                   onClick={handleVaultDeposit}
                   disabled={vaultAction.loadingKey === "deposit"}
-                  className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
+                  className={PRIMARY_BUTTON_CLASS}
                 >
                   {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit"}
                 </button>
               </div>
             </details>
 
-            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
-              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+            <details className={`${TONED_PANEL_CLASS} p-3`}>
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-200/85">
                 3) Withdraw allocation
               </summary>
               <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -1857,7 +1880,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                   value={vaultForm.withdrawAmount}
                   onChange={(e) => setVaultForm((prev) => ({ ...prev, withdrawAmount: e.target.value }))}
                   placeholder="Withdraw amount"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  className={INPUT_CLASS}
                 />
                 <AddressField
                   label="Withdraw recipient"
@@ -1871,7 +1894,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                   type="button"
                   onClick={handleVaultWithdraw}
                   disabled={vaultAction.loadingKey === "withdraw"}
-                  className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 disabled:opacity-60"
+                  className={AMBER_BUTTON_CLASS}
                 >
                   {vaultAction.loadingKey === "withdraw" ? "Withdrawing..." : "Withdraw"}
                 </button>
@@ -1881,35 +1904,35 @@ export default function LaunchpadSection({ address, onConnect }) {
           <ActionInfo state={vaultAction} />
         </div>
 
-        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "locker" ? "" : "hidden"}`}>
+        <div className={`${PANEL_CLASS} ${activeView === "locker" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-semibold">LpLockerv2</div>
-              <div className="text-xs text-slate-400">`getLpTokenIdsForCreator`, `tokenRewards`, `collectRewards`</div>
+              <div className="font-display text-lg font-semibold">LpLockerv2</div>
+              <div className="text-xs text-slate-300/70">`getLpTokenIdsForCreator`, `tokenRewards`, `collectRewards`</div>
             </div>
             <button
               type="button"
               onClick={refreshLocker}
-              className="rounded-full border border-slate-700 bg-slate-900/70 px-3 py-1 text-xs"
+              className={SOFT_BUTTON_CLASS}
             >
               Reload
             </button>
           </div>
 
           {locker.error ? (
-            <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
+            <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
           ) : null}
 
           <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">TEAM_REWARD: {locker.teamReward ? String(locker.teamReward) : "--"}</div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">MAX_CREATOR_REWARD: {locker.maxCreatorReward ? String(locker.maxCreatorReward) : "--"}</div>
+            <div className={`${TONED_PANEL_CLASS} px-3 py-2`}>TEAM_REWARD: {locker.teamReward ? String(locker.teamReward) : "--"}</div>
+            <div className={`${TONED_PANEL_CLASS} px-3 py-2`}>MAX_CREATOR_REWARD: {locker.maxCreatorReward ? String(locker.maxCreatorReward) : "--"}</div>
           </div>
 
           <div className="mt-3 space-y-3">
             <select
               value={locker.selectedId}
               onChange={(e) => setLocker((prev) => ({ ...prev, selectedId: e.target.value }))}
-              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              className={INPUT_CLASS}
             >
               {!locker.ids.length ? <option value="">No LP token IDs</option> : null}
               {locker.ids.map((tokenId) => (
@@ -1919,7 +1942,7 @@ export default function LaunchpadSection({ address, onConnect }) {
               ))}
             </select>
 
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-xs text-slate-200 space-y-1">
+            <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
               <div>Creator reward: {locker.tokenReward ? String(locker.tokenReward.creatorReward) : "--"}</div>
               <div>Creator admin: {locker.tokenReward?.creatorAdmin || "--"}</div>
               <div>Creator recipient: {locker.tokenReward?.creatorRecipient || "--"}</div>
@@ -1932,7 +1955,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                 type="button"
                 onClick={handleCollectLocker}
                 disabled={lockerAction.loadingKey === "collect" || !locker.selectedId}
-                className="rounded-xl border border-sky-500/50 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 disabled:opacity-60"
+                className={CYAN_BUTTON_CLASS}
               >
                 {lockerAction.loadingKey === "collect" ? "Collecting..." : "Collect rewards"}
               </button>
