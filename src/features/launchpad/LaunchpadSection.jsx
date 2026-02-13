@@ -647,27 +647,51 @@ export default function LaunchpadSection({ address, onConnect }) {
   }, [deployForm.pairedToken, protocol.weth]);
 
   const uploadPngBase64ToIpfs = useCallback(async ({ dataBase64, fileName }) => {
-    const uploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fileName: fileName || "token-image.png",
-        contentType: "image/png",
-        dataBase64,
-      }),
-    });
-    const uploadJson = await uploadRes.json().catch(() => ({}));
-    if (!uploadRes.ok) {
-      throw new Error(uploadJson?.error || "IPFS upload failed.");
+    try {
+      const uploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: fileName || "token-image.png",
+          contentType: "image/png",
+          dataBase64,
+        }),
+      });
+      const rawText = await uploadRes.text().catch(() => "");
+      let uploadJson = {};
+      try {
+        uploadJson = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        uploadJson = {};
+      }
+
+      if (!uploadRes.ok) {
+        if (uploadRes.status === 404) {
+          throw new Error("IPFS upload endpoint not found at /api/ipfs/upload. Deploy backend API changes.");
+        }
+        const detail = String(uploadJson?.error || uploadJson?.message || rawText || "").trim();
+        throw new Error(
+          detail
+            ? `IPFS upload failed (${uploadRes.status}): ${detail.slice(0, 240)}`
+            : `IPFS upload failed (${uploadRes.status}).`
+        );
+      }
+
+      const imageValue = String(uploadJson?.ipfsUri || uploadJson?.gatewayUrl || "").trim();
+      if (!imageValue) {
+        throw new Error("IPFS upload returned an empty image URI.");
+      }
+      return {
+        imageValue,
+        cid: String(uploadJson?.cid || ""),
+      };
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message.toLowerCase().includes("failed to fetch")) {
+        throw new Error("Cannot reach IPFS upload API. If local, run backend API (vercel dev) or deploy latest changes.");
+      }
+      throw error;
     }
-    const imageValue = String(uploadJson?.ipfsUri || uploadJson?.gatewayUrl || "").trim();
-    if (!imageValue) {
-      throw new Error("IPFS upload returned an empty image URI.");
-    }
-    return {
-      imageValue,
-      cid: String(uploadJson?.cid || ""),
-    };
   }, []);
 
   const migrateLegacyImageToIpfs = useCallback(async () => {

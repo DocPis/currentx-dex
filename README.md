@@ -25,8 +25,8 @@ npm run dev -- --host --port 4173
 ## Launchpad PNG -> IPFS upload
 - Frontend uploads PNG to `/api/ipfs/upload` and stores `ipfs://...` in Launchpad image field.
 - Required server env (Vercel / API runtime):
-  - `PINATA_JWT` (recommended), or
-  - `PINATA_API_KEY` + `PINATA_SECRET_API_KEY`
+  - `PINATA_JWT` (required)
+  - API key scope: `Files -> Write` (`org:files:write`)
 - Optional frontend env:
   - `VITE_IPFS_UPLOAD_ENDPOINT` (default: `/api/ipfs/upload`)
   - `VITE_IPFS_GATEWAY` (default: `https://gateway.pinata.cloud/ipfs/`)
