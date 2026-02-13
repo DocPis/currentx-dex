@@ -403,6 +403,7 @@ export default function App() {
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
             { id: "liquidity", label: "Liquidity" },
+            { id: "launchpad", label: "Launchpad" },
             { id: "pools", label: "Pools" },
             { id: "points", label: "Points" },
             { id: "farms", label: "Farms" },
