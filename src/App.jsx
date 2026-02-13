@@ -40,6 +40,59 @@ const PoolsSection = React.lazy(SECTION_LOADERS.pools);
 const Farms = React.lazy(SECTION_LOADERS.farms);
 const MegaVaultSection = React.lazy(SECTION_LOADERS.megavault);
 
+class SectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+    this.handleRetry = this.handleRetry.bind(this);
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    if (typeof this.props.onError === "function") {
+      this.props.onError(error, info);
+    }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  handleRetry() {
+    this.setState({ error: null });
+    if (typeof this.props.onRetry === "function") {
+      this.props.onRetry();
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      const message = String(this.state.error?.message || "Section failed to render.");
+      return (
+        <div className="px-6 py-12">
+          <div className="mx-auto max-w-3xl rounded-2xl border border-amber-500/45 bg-slate-950/75 p-4 text-sm text-amber-100 shadow-[0_16px_40px_rgba(2,6,23,0.55)]">
+            <div className="font-semibold">Section render error</div>
+            <div className="mt-1 text-xs text-amber-200/90 break-words">{message}</div>
+            <button
+              type="button"
+              onClick={this.handleRetry}
+              className="mt-3 rounded-lg border border-amber-300/60 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:border-amber-200/80 hover:bg-amber-500/20"
+            >
+              Retry section
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const normalizePath = (path = "") => {
   const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
   return cleaned || "/";
@@ -383,49 +436,61 @@ export default function App() {
       </div>
 
       <main className="flex-1">
-        <Suspense
-          fallback={
-            <div className="px-6 py-12 text-center text-sm text-slate-300/80">
-              Loading section...
-            </div>
-          }
+        <SectionErrorBoundary
+          resetKey={tab}
+          onError={(error) => {
+            // Keep production UX alive and surface hard render failures in devtools.
+            console.error("Section render failed:", error);
+          }}
+          onRetry={() => {
+            preloadSection(tab);
+            prefetchTabData(tab);
+          }}
         >
-          {tab === "swap" && (
-            <SwapSection
-              balances={balances}
-              address={address}
-              chainId={chainId}
-              onBalancesRefresh={refresh}
-            />
-          )}
-          {tab === "liquidity" && (
-            <LiquiditySection
-              address={address}
-              chainId={chainId}
-              balances={balances}
-              showV3={true}
-              poolSelection={poolSelection}
-              onBalancesRefresh={refresh}
-            />
-          )}
-          {tab === "launchpad" && (
-            <LaunchpadSection
-              address={address}
-              onConnect={handleConnect}
-            />
-          )}
-          {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
-          {tab === "dashboard" && <Dashboard />}
-          {tab === "points" && (
-            <PointsPage address={address} onConnect={handleConnect} />
-          )}
-          {tab === "farms" && (
-            <Farms address={address} onConnect={handleConnect} />
-          )}
-          {tab === "megavault" && (
-            <MegaVaultSection address={address} onConnectWallet={handleConnect} />
-          )}
-        </Suspense>
+          <Suspense
+            fallback={
+              <div className="px-6 py-12 text-center text-sm text-slate-300/80">
+                Loading section...
+              </div>
+            }
+          >
+            {tab === "swap" && (
+              <SwapSection
+                balances={balances}
+                address={address}
+                chainId={chainId}
+                onBalancesRefresh={refresh}
+              />
+            )}
+            {tab === "liquidity" && (
+              <LiquiditySection
+                address={address}
+                chainId={chainId}
+                balances={balances}
+                showV3={true}
+                poolSelection={poolSelection}
+                onBalancesRefresh={refresh}
+              />
+            )}
+            {tab === "launchpad" && (
+              <LaunchpadSection
+                address={address}
+                onConnect={handleConnect}
+              />
+            )}
+            {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
+            {tab === "dashboard" && <Dashboard />}
+            {tab === "points" && (
+              <PointsPage address={address} onConnect={handleConnect} />
+            )}
+            {tab === "farms" && (
+              <Farms address={address} onConnect={handleConnect} />
+            )}
+            {tab === "megavault" && (
+              <MegaVaultSection address={address} onConnectWallet={handleConnect} />
+            )}
+          </Suspense>
+        </SectionErrorBoundary>
       </main>
 
       <Footer />
