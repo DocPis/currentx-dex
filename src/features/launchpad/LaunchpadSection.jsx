@@ -212,7 +212,7 @@ const errMsg = (error, fallback) => {
   if (code === 4001 || code === "ACTION_REJECTED") return "Transaction rejected in wallet.";
   if (lower.includes("insufficient funds")) return "Insufficient ETH for value + gas.";
   if (lower.includes("missing revert data")) {
-    return "Transaction reverted without a reason. Check vault settings, reward config, and selected network.";
+    return "Contract call failed without revert data. Check wallet network, vault minimum duration, reward config, and creator buy settings.";
   }
   if (lower.includes("execution reverted")) return raw || "Transaction reverted by contract.";
   return raw || fallback || "Transaction failed.";
@@ -852,6 +852,11 @@ export default function LaunchpadSection({ address, onConnect }) {
       }
 
       const provider = await getProvider();
+      const signerNetwork = await provider.getNetwork();
+      const signerChainId = Number(signerNetwork?.chainId || 0);
+      if (defaultChainId > 0 && signerChainId !== defaultChainId) {
+        throw new Error(`Wrong network in wallet. Switch to ${NETWORK_NAME} (chain ${defaultChainId}).`);
+      }
       const signer = await provider.getSigner();
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
 
@@ -931,6 +936,16 @@ export default function LaunchpadSection({ address, onConnect }) {
       const initialBuyMinOutRaw = parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out");
       const initialBuyMinOutFinal = txValue > 0n && initialBuyMinOutRaw === "0" ? "1" : initialBuyMinOutRaw;
       const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
+      if (vaultPercentageNum > 0 && isAddress(contracts.vault)) {
+        const vaultContract = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
+        const minimumVaultTime = await vaultContract.minimumVaultTime().catch(() => null);
+        if (minimumVaultTime != null && minimumVaultTime > 0n && vaultDurationSeconds < minimumVaultTime) {
+          const minimumDays = Math.ceil(Number(minimumVaultTime) / DAY);
+          throw new Error(
+            `Vesting period is below vault minimum (${minimumDays} days). Increase vesting before deploy.`
+          );
+        }
+      }
 
       const metadataPayload = {};
       if (description) metadataPayload.description = description;
@@ -1021,16 +1036,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       };
 
       const overrides = txValue > 0n ? { value: txValue } : {};
-      if (deployForm.useCustomTeamRewardRecipient) {
-        await currentx.deployTokenWithCustomTeamRewardRecipient.staticCall(
-          deploymentConfig,
-          teamRewardRecipient,
-          overrides
-        );
-      } else {
-        await currentx.deployToken.staticCall(deploymentConfig, overrides);
-      }
-      setDeployAction({ loading: true, error: "", hash: "", message: "Simulation passed. Sending transaction..." });
+      setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
       const tx = deployForm.useCustomTeamRewardRecipient
         ? await currentx.deployTokenWithCustomTeamRewardRecipient(
             deploymentConfig,
