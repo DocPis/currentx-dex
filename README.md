@@ -21,5 +21,14 @@ npm run dev -- --host --port 4173
 
 ## Network preset
 - Mainnet (MegaETH) only. Configure via `.env.local` as needed.
+
+## Launchpad PNG -> IPFS upload
+- Frontend uploads PNG to `/api/ipfs/upload` and stores `ipfs://...` in Launchpad image field.
+- Required server env (Vercel / API runtime):
+  - `PINATA_JWT` (recommended), or
+  - `PINATA_API_KEY` + `PINATA_SECRET_API_KEY`
+- Optional frontend env:
+  - `VITE_IPFS_UPLOAD_ENDPOINT` (default: `/api/ipfs/upload`)
+  - `VITE_IPFS_GATEWAY` (default: `https://gateway.pinata.cloud/ipfs/`)
 \nDeploy trigger: 2026-02-10 22:32:54
 \nDeploy trigger: 2026-02-10 22:38:44
