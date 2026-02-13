@@ -35,20 +35,19 @@ const parseUint = (value, field, fallback = "0") => {
   return raw;
 };
 
-const parseSignedInt24 = (value, field) => {
-  const raw = String(value ?? "").trim();
-  if (!/^-?\d+$/u.test(raw)) throw new Error(`${field} must be an integer.`);
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < -8388608 || n > 8388607) {
-    throw new Error(`${field} is out of int24 bounds.`);
-  }
-  return n;
-};
-
 const parseEthAmount = (value) => {
   const raw = String(value ?? "0").trim() || "0";
   if (!/^\d+(\.\d+)?$/u.test(raw)) throw new Error("Invalid ETH value.");
   return parseEther(raw);
+};
+
+const parsePositiveDecimal = (value, field) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) throw new Error(`${field} is required.`);
+  if (!/^\d+(\.\d+)?$/u.test(raw)) throw new Error(`${field} must be a number.`);
+  const out = Number(raw);
+  if (!Number.isFinite(out) || out <= 0) throw new Error(`${field} must be greater than 0.`);
+  return out;
 };
 
 const parseTokenAmount = (value, decimals, label) => {
@@ -57,6 +56,51 @@ const parseTokenAmount = (value, decimals, label) => {
   if (!/^\d+(\.\d+)?$/u.test(raw)) throw new Error(`${label} is invalid.`);
   return parseUnits(raw, decimals);
 };
+
+const parseOptionalHttpUrl = (value, label) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("invalid protocol");
+    }
+    return parsed.toString();
+  } catch {
+    throw new Error(`${label} must be a valid http(s) URL.`);
+  }
+};
+
+const clampInt24 = (value) => Math.max(-8388608, Math.min(8388607, value));
+
+const computeTickFromMarketCapEth = ({ marketCapEth, tokenSupplyRaw, tickSpacing = 0 }) => {
+  const marketCap = parsePositiveDecimal(marketCapEth, "Starting market cap in ETH");
+  const tokenSupply = Number(formatUnits(tokenSupplyRaw ?? 0n, 18));
+  if (!Number.isFinite(tokenSupply) || tokenSupply <= 0) {
+    throw new Error("TOKEN_SUPPLY is unavailable. Set a manual starting tick.");
+  }
+  const priceEthPerToken = marketCap / tokenSupply;
+  if (!Number.isFinite(priceEthPerToken) || priceEthPerToken <= 0) {
+    throw new Error("Unable to derive starting tick from market cap.");
+  }
+  let tick = Math.floor(Math.log(priceEthPerToken) / Math.log(1.0001));
+  if (!Number.isFinite(tick)) {
+    throw new Error("Unable to derive starting tick from market cap.");
+  }
+  if (tickSpacing > 0) {
+    tick = Math.floor(tick / tickSpacing) * tickSpacing;
+  }
+  return clampInt24(tick);
+};
+
+const REWARD_TYPES = ["both", "currentx", "paired"];
+const REWARD_TYPE_OPTIONS = [
+  { value: "paired", label: "WETH" },
+  { value: "currentx", label: "CurrentX" },
+  { value: "both", label: "Both" },
+];
+const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
+const VAULT_DAY_PRESETS = ["7", "30", "90", "180"];
 
 const toBytes32Salt = (value, walletAddress) => {
   const raw = String(value ?? "").trim();
@@ -89,6 +133,9 @@ const errMsg = (error, fallback) => {
     error?.code ?? error?.info?.error?.code ?? error?.error?.code ?? error?.data?.code ?? null;
   if (code === 4001 || code === "ACTION_REJECTED") return "Transaction rejected in wallet.";
   if (lower.includes("insufficient funds")) return "Insufficient ETH for value + gas.";
+  if (lower.includes("missing revert data")) {
+    return "Transaction reverted without a reason. Check vault settings, reward config, and selected network.";
+  }
   if (lower.includes("execution reverted")) return raw || "Transaction reverted by contract.";
   return raw || fallback || "Transaction failed.";
 };
@@ -149,23 +196,93 @@ function AddressField({ label, value, onChange, required = false }) {
   );
 }
 
+function InfoDot() {
+  return (
+    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-600 text-[10px] text-slate-400">
+      i
+    </span>
+  );
+}
+
+function ChevronIcon({ open }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      className={`h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`}
+      aria-hidden="true"
+    >
+      <path d="M5 8l5 5 5-5" />
+    </svg>
+  );
+}
+
+function SelectorPills({ value, onChange, options, columns = 3 }) {
+  const gridCols = columns === 2 ? "sm:grid-cols-2" : columns === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3";
+  return (
+    <div className={`grid grid-cols-1 gap-2 ${gridCols}`}>
+      {options.map((option) => {
+        const active = value === option.value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+              active
+                ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200"
+                : "border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-500"
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CollapsibleSection({ title, open, onToggle, children }) {
+  return (
+    <div className="border-t border-slate-800 pt-4">
+      <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-100">
+          {title}
+          <InfoDot />
+        </span>
+        <ChevronIcon open={open} />
+      </button>
+      {open ? <div className="mt-4 space-y-3">{children}</div> : null}
+    </div>
+  );
+}
+
 const defaultDeployForm = () => ({
   name: "",
   symbol: "",
+  description: "",
+  telegram: "",
+  website: "",
+  x: "",
+  farcaster: "",
   salt: "",
   image: "",
   metadata: "",
   context: "",
   originatingChainId: String(defaultChainId),
   pairedToken: WETH_ADDRESS || "",
-  tickIfToken0IsNewToken: "0",
   vaultPercentage: "0",
-  vaultDurationDays: "30",
-  pairedTokenPoolFee: "3000",
+  lockupDays: "30",
+  vestingDays: "30",
   pairedTokenSwapAmountOutMinimum: "0",
   creatorReward: "0",
+  creatorRewardType: "paired",
   creatorAdmin: "",
   creatorRewardRecipient: "",
+  interfaceRewardRaw: "0",
+  interfaceRewardType: "paired",
   interfaceAdmin: "",
   interfaceRewardRecipient: "",
   txValueEth: "0",
@@ -184,7 +301,7 @@ const defaultVaultForm = () => ({
 });
 
 export default function LaunchpadSection({ address, onConnect }) {
-  const [contracts, setContracts] = useState({
+  const [contracts] = useState({
     currentx: CURRENTX_ADDRESS || "",
     vault: CURRENTX_VAULT_ADDRESS || "",
     locker: LP_LOCKER_V2_ADDRESS || "",
@@ -222,6 +339,15 @@ export default function LaunchpadSection({ address, onConnect }) {
     tokenReward: null,
   });
   const [lockerAction, setLockerAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
+  const [activeView, setActiveView] = useState("create");
+  const [openSections, setOpenSections] = useState({
+    metadata: false,
+    rewards: false,
+    vault: false,
+    buy: false,
+    advanced: false,
+  });
+  const [rewardEditor, setRewardEditor] = useState("creator");
 
   const tokenMetaCache = useRef({});
 
@@ -435,10 +561,7 @@ export default function LaunchpadSection({ address, onConnect }) {
     if (protocol.weth && !isAddress(deployForm.pairedToken)) {
       setDeployForm((prev) => ({ ...prev, pairedToken: protocol.weth }));
     }
-    if (protocol.poolFee && (!deployForm.pairedTokenPoolFee || deployForm.pairedTokenPoolFee === "3000")) {
-      setDeployForm((prev) => ({ ...prev, pairedTokenPoolFee: String(protocol.poolFee) }));
-    }
-  }, [deployForm.pairedToken, deployForm.pairedTokenPoolFee, protocol.poolFee, protocol.weth]);
+  }, [deployForm.pairedToken, protocol.weth]);
 
   const handleDeploy = async (event) => {
     event.preventDefault();
@@ -457,64 +580,208 @@ export default function LaunchpadSection({ address, onConnect }) {
 
       const name = String(deployForm.name || "").trim();
       const symbol = String(deployForm.symbol || "").trim();
+      const image = String(deployForm.image || "").trim();
+      const description = String(deployForm.description || "").trim();
+      const telegram = parseOptionalHttpUrl(deployForm.telegram, "Telegram link");
+      const website = parseOptionalHttpUrl(deployForm.website, "Website link");
+      const x = parseOptionalHttpUrl(deployForm.x, "X (Twitter) link");
+      const farcaster = parseOptionalHttpUrl(deployForm.farcaster, "Farcaster link");
+      const creatorRewardType = REWARD_TYPES.includes(deployForm.creatorRewardType)
+        ? deployForm.creatorRewardType
+        : "paired";
+      const interfaceRewardType = REWARD_TYPES.includes(deployForm.interfaceRewardType)
+        ? deployForm.interfaceRewardType
+        : "paired";
+      const pairedToken = isAddress(deployForm.pairedToken)
+        ? deployForm.pairedToken
+        : isAddress(protocol.weth)
+          ? protocol.weth
+          : isAddress(WETH_ADDRESS)
+            ? WETH_ADDRESS
+            : "";
+      const creatorAdmin = isAddress(deployForm.creatorAdmin) ? deployForm.creatorAdmin : address;
+      const creatorRewardRecipient = isAddress(deployForm.creatorRewardRecipient)
+        ? deployForm.creatorRewardRecipient
+        : address;
+      const interfaceAdmin = isAddress(deployForm.interfaceAdmin) ? deployForm.interfaceAdmin : address;
+      const interfaceRewardRecipient = isAddress(deployForm.interfaceRewardRecipient)
+        ? deployForm.interfaceRewardRecipient
+        : address;
+      const teamRewardRecipient = isAddress(deployForm.teamRewardRecipient)
+        ? deployForm.teamRewardRecipient
+        : address;
+      const vaultPercentageRaw = parseUint(deployForm.vaultPercentage, "Vault percentage");
+      const vaultPercentageNum = Number(vaultPercentageRaw);
+      const lockupDays = Number(parseUint(deployForm.lockupDays, "Lockup period (days)"));
+      const vestingDays = Number(parseUint(deployForm.vestingDays, "Vesting period (days)"));
+      if (vaultPercentageNum > 0) {
+        if (lockupDays < 7) throw new Error("Lockup period must be at least 7 days.");
+        if (vestingDays < lockupDays) throw new Error("Vesting period must be >= lockup period.");
+      }
       if (!name) throw new Error("Token name is required.");
       if (!symbol) throw new Error("Token symbol is required.");
-      if (!isAddress(deployForm.pairedToken)) throw new Error("Paired token is invalid.");
-      if (!isAddress(deployForm.creatorAdmin)) throw new Error("Creator admin is invalid.");
-      if (!isAddress(deployForm.creatorRewardRecipient)) throw new Error("Creator reward recipient is invalid.");
-      if (!isAddress(deployForm.interfaceAdmin)) throw new Error("Interface admin is invalid.");
-      if (!isAddress(deployForm.interfaceRewardRecipient)) throw new Error("Interface reward recipient is invalid.");
-      if (deployForm.useCustomTeamRewardRecipient && !isAddress(deployForm.teamRewardRecipient)) {
+      if (!image) throw new Error("Token image is required.");
+      if (!isAddress(pairedToken)) throw new Error("Paired token is invalid.");
+      if (!isAddress(creatorAdmin)) throw new Error("Creator admin is invalid.");
+      if (!isAddress(creatorRewardRecipient)) throw new Error("Creator reward recipient is invalid.");
+      if (!isAddress(interfaceAdmin)) throw new Error("Interface admin is invalid.");
+      if (!isAddress(interfaceRewardRecipient)) throw new Error("Interface reward recipient is invalid.");
+      if (deployForm.useCustomTeamRewardRecipient && !isAddress(teamRewardRecipient)) {
         throw new Error("Team reward recipient is invalid.");
       }
 
-      const tick = parseSignedInt24(deployForm.tickIfToken0IsNewToken, "Starting tick");
-      const spacing = Number(protocol.tickSpacing || 0);
+      const provider = await getProvider();
+      const signer = await provider.getSigner();
+      const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
+
+      let tokenSupply = protocol.tokenSupply;
+      let tickSpacingRaw = protocol.tickSpacing;
+      let maxCreatorReward = protocol.maxCreatorReward;
+      let poolFeeFromProtocol = protocol.poolFee;
+
+      if (!tokenSupply) {
+        try {
+          tokenSupply = await currentx.TOKEN_SUPPLY();
+        } catch {
+          tokenSupply = null;
+        }
+      }
+      if (tickSpacingRaw == null) {
+        try {
+          tickSpacingRaw = await currentx.TICK_SPACING();
+        } catch {
+          tickSpacingRaw = null;
+        }
+      }
+      if (maxCreatorReward == null) {
+        try {
+          maxCreatorReward = await currentx.MAX_CREATOR_REWARD();
+        } catch {
+          maxCreatorReward = null;
+        }
+      }
+      if (poolFeeFromProtocol == null) {
+        try {
+          poolFeeFromProtocol = await currentx.POOL_FEE();
+        } catch {
+          poolFeeFromProtocol = null;
+        }
+      }
+
+      const spacing = Number(tickSpacingRaw || 0);
+      const tick = computeTickFromMarketCapEth({
+        marketCapEth: "10",
+        tokenSupplyRaw: tokenSupply,
+        tickSpacing: spacing,
+      });
       if (spacing > 0 && tick % spacing !== 0) {
         throw new Error(`Starting tick must be a multiple of ${spacing}.`);
       }
+      const creatorRewardInput = parseUint(deployForm.creatorReward, "Creator reward");
+      const creatorRewardRaw =
+        creatorRewardInput === "0" && maxCreatorReward
+          ? String(maxCreatorReward)
+          : creatorRewardInput;
+      const interfaceRewardRaw = parseUint(deployForm.interfaceRewardRaw, "Interface reward");
+      const pairedTokenPoolFee = parseUint(
+        poolFeeFromProtocol != null ? String(poolFeeFromProtocol) : "3000",
+        "Paired token pool fee"
+      );
+      const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
+
+      const metadataPayload = {};
+      if (description) metadataPayload.description = description;
+      const links = {};
+      if (telegram) links.telegram = telegram;
+      if (website) links.website = website;
+      if (x) links.x = x;
+      if (farcaster) links.farcaster = farcaster;
+      if (Object.keys(links).length) metadataPayload.links = links;
+
+      const metadataValue =
+        String(deployForm.metadata || "").trim() ||
+        (Object.keys(metadataPayload).length ? JSON.stringify(metadataPayload) : "");
+      const contextPayload = {
+        uiSchema: "launchpad-v2",
+        feeConfiguration: {
+          preset: "recommended",
+          fixedPoolFee: "",
+        },
+        rewardRecipients: [
+          {
+            role: "creator",
+            admin: creatorAdmin,
+            recipient: creatorRewardRecipient,
+            rewardRaw: creatorRewardRaw,
+            rewardType: creatorRewardType,
+          },
+          {
+            role: "interface",
+            admin: interfaceAdmin,
+            recipient: interfaceRewardRecipient,
+            rewardRaw: interfaceRewardRaw,
+            rewardType: interfaceRewardType,
+          },
+        ],
+        poolConfiguration: {
+          type: "recommended",
+          pairedToken,
+          startingMarketCapEth: "10",
+          tickIfToken0IsNewToken: String(tick),
+        },
+        creatorVault: {
+          vaultPercentage: String(vaultPercentageNum),
+          lockupDays: String(vaultPercentageNum > 0 ? lockupDays : 0),
+          vestingDays: String(vaultPercentageNum > 0 ? vestingDays : 0),
+        },
+        creatorBuy: {
+          ethAmount: String(deployForm.txValueEth || "0"),
+        },
+      };
+      if (deployForm.useCustomTeamRewardRecipient) {
+        contextPayload.teamRewardRecipient = teamRewardRecipient;
+      }
+      const contextValue =
+        String(deployForm.context || "").trim() ||
+        JSON.stringify(contextPayload);
 
       const deploymentConfig = {
         tokenConfig: {
           name,
           symbol,
           salt: toBytes32Salt(deployForm.salt, address),
-          image: String(deployForm.image || "").trim(),
-          metadata: String(deployForm.metadata || "").trim(),
-          context: String(deployForm.context || "").trim(),
+          image,
+          metadata: metadataValue,
+          context: contextValue,
           originatingChainId: BigInt(parseUint(deployForm.originatingChainId, "Originating chain id")),
         },
         vaultConfig: {
-          vaultPercentage: Number(parseUint(deployForm.vaultPercentage, "Vault percentage")),
-          vaultDuration: BigInt(Math.floor(Number(parseUint(deployForm.vaultDurationDays, "Vault days")) * DAY)),
+          vaultPercentage: vaultPercentageNum,
+          vaultDuration: vaultDurationSeconds,
         },
         poolConfig: {
-          pairedToken: deployForm.pairedToken,
+          pairedToken,
           tickIfToken0IsNewToken: tick,
         },
         initialBuyConfig: {
-          pairedTokenPoolFee: Number(parseUint(deployForm.pairedTokenPoolFee, "Paired token pool fee")),
+          pairedTokenPoolFee: Number(pairedTokenPoolFee),
           pairedTokenSwapAmountOutMinimum: BigInt(parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out")),
         },
         rewardsConfig: {
-          creatorReward: BigInt(parseUint(deployForm.creatorReward, "Creator reward")),
-          creatorAdmin: deployForm.creatorAdmin,
-          creatorRewardRecipient: deployForm.creatorRewardRecipient,
-          interfaceAdmin: deployForm.interfaceAdmin,
-          interfaceRewardRecipient: deployForm.interfaceRewardRecipient,
+          creatorReward: BigInt(creatorRewardRaw),
+          creatorAdmin,
+          creatorRewardRecipient,
+          interfaceAdmin,
+          interfaceRewardRecipient,
         },
       };
 
       const txValue = parseEthAmount(deployForm.txValueEth);
       const overrides = txValue > 0n ? { value: txValue } : {};
-
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
       const tx = deployForm.useCustomTeamRewardRecipient
         ? await currentx.deployTokenWithCustomTeamRewardRecipient(
             deploymentConfig,
-            deployForm.teamRewardRecipient,
+            teamRewardRecipient,
             overrides
           )
         : await currentx.deployToken(deploymentConfig, overrides);
@@ -673,10 +940,32 @@ export default function LaunchpadSection({ address, onConnect }) {
     }
   };
 
-  const invalidAddressCount = useMemo(
-    () => [contracts.currentx, contracts.vault, contracts.locker].filter((v) => !isAddress(v)).length,
-    [contracts.currentx, contracts.vault, contracts.locker]
-  );
+  const launchpadViews = [
+    { id: "create", label: "Create Token", hint: "Deploy a new token" },
+    { id: "deployments", label: "My Tokens", hint: "Claim rewards and manage deployed tokens" },
+    { id: "vault", label: "Vault", hint: "Approve, deposit, withdraw" },
+    { id: "locker", label: "Locker", hint: "Read rewards and collect fees" },
+  ];
+
+  const missingBasicFields = useMemo(() => {
+    const missing = [];
+    if (!String(deployForm.name || "").trim()) missing.push("Name");
+    if (!String(deployForm.symbol || "").trim()) missing.push("Symbol");
+    if (!String(deployForm.image || "").trim()) missing.push("Image");
+    return missing;
+  }, [deployForm.image, deployForm.name, deployForm.symbol]);
+  const allocatedRewards = useMemo(() => {
+    const creator = Number.parseFloat(String(deployForm.creatorReward || "0"));
+    const interfacer = Number.parseFloat(String(deployForm.interfaceRewardRaw || "0"));
+    const total = (Number.isFinite(creator) ? creator : 0) + (Number.isFinite(interfacer) ? interfacer : 0);
+    return total;
+  }, [deployForm.creatorReward, deployForm.interfaceRewardRaw]);
+  const allocatedRewardsLabel = Number.isInteger(allocatedRewards)
+    ? String(allocatedRewards)
+    : allocatedRewards.toFixed(2);
+  const toggleSection = useCallback((sectionKey) => {
+    setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
+  }, []);
 
   return (
     <section className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
@@ -716,209 +1005,369 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
       </div>
 
-      <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
-        <div className="text-sm font-semibold text-slate-100">Contract addresses</div>
-        <div className="mt-1 text-xs text-slate-400">
-          {invalidAddressCount > 0 ? `${invalidAddressCount} invalid/missing address(es).` : "All addresses are valid."}
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <AddressField
-            label="CurrentX"
-            value={contracts.currentx}
-            onChange={(value) => setContracts((prev) => ({ ...prev, currentx: value }))}
-            required
-          />
-          <AddressField
-            label="CurrentxVault"
-            value={contracts.vault}
-            onChange={(value) => setContracts((prev) => ({ ...prev, vault: value }))}
-            required
-          />
-          <AddressField
-            label="LpLockerv2"
-            value={contracts.locker}
-            onChange={(value) => setContracts((prev) => ({ ...prev, locker: value }))}
-            required
-          />
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {launchpadViews.map((view) => (
+          <button
+            key={view.id}
+            type="button"
+            onClick={() => setActiveView(view.id)}
+            className={`rounded-2xl border px-4 py-3 text-left transition ${
+              activeView === view.id
+                ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-100"
+                : "border-slate-800 bg-slate-900/70 text-slate-200 hover:border-slate-700"
+            }`}
+          >
+            <div className="text-sm font-semibold">{view.label}</div>
+            <div className="mt-1 text-xs text-slate-400">{view.hint}</div>
+          </button>
+        ))}
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+      <div className={`mt-6 ${activeView === "create" || activeView === "deployments" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "create" ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-lg font-semibold">Deploy Token</div>
-              <div className="text-xs text-slate-400">`deployToken` / `deployTokenWithCustomTeamRewardRecipient`</div>
+              <div className="text-lg font-semibold">Create Token</div>
+              <div className="text-xs text-slate-400">Simple launch flow with optional advanced settings.</div>
             </div>
-            {protocol.loading ? <span className="text-xs text-slate-400">Loading...</span> : null}
-          </div>
-
-          <div className="mt-3 grid gap-2 text-xs md:grid-cols-2">
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">MAX_CREATOR_REWARD: {protocol.maxCreatorReward ? String(protocol.maxCreatorReward) : "--"}</div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">MAX_VAULT_PERCENTAGE: {protocol.maxVaultPercentage ? String(protocol.maxVaultPercentage) : "--"}</div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">TICK_SPACING: {protocol.tickSpacing ? String(protocol.tickSpacing) : "--"}</div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2">POOL_FEE: {protocol.poolFee ? String(protocol.poolFee) : "--"}</div>
-            <div className="rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 md:col-span-2">TOKEN_SUPPLY: {protocol.tokenSupply ? formatAmount(protocol.tokenSupply, 18, 2) : "--"}</div>
+            {protocol.loading ? <span className="text-xs text-slate-400">Preparing...</span> : null}
           </div>
           {protocol.error ? (
             <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{protocol.error}</div>
           ) : null}
 
           <form className="mt-4 space-y-3" onSubmit={handleDeploy}>
-            <div className="grid gap-3 md:grid-cols-2">
-              <input
-                value={deployForm.name}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="Token name"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.symbol}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
-                placeholder="Symbol"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.salt}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, salt: e.target.value }))}
-                placeholder="Salt"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.originatingChainId}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, originatingChainId: e.target.value }))}
-                placeholder="Originating chain id"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.image}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, image: e.target.value }))}
-                placeholder="Image URI"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.metadata}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, metadata: e.target.value }))}
-                placeholder="Metadata URI"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/50 p-3 space-y-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">Basic Token Info</div>
+              <div className="text-xs text-slate-400">Required fields: Name, Symbol, Image.</div>
+              <div className="text-xs text-slate-400">Pool starts from the standard 10 ETH setup.</div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">Name *</label>
+                  <input
+                    value={deployForm.name}
+                    onChange={(e) => setDeployForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Enter token name"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-slate-400">Symbol *</label>
+                  <input
+                    value={deployForm.symbol}
+                    onChange={(e) => setDeployForm((prev) => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
+                    placeholder="Enter token symbol"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-xs text-slate-400">Image URL *</label>
+                  <input
+                    value={deployForm.image}
+                    onChange={(e) => setDeployForm((prev) => ({ ...prev, image: e.target.value }))}
+                    placeholder="Paste image URL"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
             </div>
 
-            <input
-              value={deployForm.context}
-              onChange={(e) => setDeployForm((prev) => ({ ...prev, context: e.target.value }))}
-              placeholder="Context"
-              className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            />
+            <CollapsibleSection
+              title="Token Metadata (optional)"
+              open={openSections.metadata}
+              onToggle={() => toggleSection("metadata")}
+            >
+              <div className="grid gap-3 md:grid-cols-2">
+                <textarea
+                  value={deployForm.description}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Description"
+                  rows={3}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm md:col-span-2"
+                />
+                <input
+                  value={deployForm.telegram}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, telegram: e.target.value }))}
+                  placeholder="Telegram link"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.website}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, website: e.target.value }))}
+                  placeholder="Website link"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.x}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, x: e.target.value }))}
+                  placeholder="X (Twitter) link"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.farcaster}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, farcaster: e.target.value }))}
+                  placeholder="Farcaster link"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+              </div>
+            </CollapsibleSection>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <AddressField
-                label="Paired token"
-                value={deployForm.pairedToken}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, pairedToken: value }))}
-                required
+            <CollapsibleSection
+              title="Reward Recipients (optional)"
+              open={openSections.rewards}
+              onToggle={() => toggleSection("rewards")}
+            >
+              <SelectorPills
+                value={rewardEditor}
+                onChange={setRewardEditor}
+                columns={2}
+                options={[
+                  { value: "creator", label: "Creator" },
+                  { value: "interface", label: "Interface" },
+                ]}
               />
-              <input
-                value={deployForm.tickIfToken0IsNewToken}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, tickIfToken0IsNewToken: e.target.value }))}
-                placeholder="Starting tick"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.vaultPercentage}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultPercentage: e.target.value }))}
-                placeholder="Vault %"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.vaultDurationDays}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultDurationDays: e.target.value }))}
-                placeholder="Vault days"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.pairedTokenPoolFee}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, pairedTokenPoolFee: e.target.value }))}
-                placeholder="Paired pool fee"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.pairedTokenSwapAmountOutMinimum}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, pairedTokenSwapAmountOutMinimum: e.target.value }))}
-                placeholder="Initial buy min out (raw)"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-            </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <input
-                value={deployForm.creatorReward}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
-                placeholder="Creator reward (raw)"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                value={deployForm.txValueEth}
-                onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
-                placeholder="Tx value ETH"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <AddressField
-                label="Creator admin"
-                value={deployForm.creatorAdmin}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
-                required
-              />
-              <AddressField
-                label="Creator reward recipient"
-                value={deployForm.creatorRewardRecipient}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
-                required
-              />
-              <AddressField
-                label="Interface admin"
-                value={deployForm.interfaceAdmin}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceAdmin: value }))}
-                required
-              />
-              <AddressField
-                label="Interface reward recipient"
-                value={deployForm.interfaceRewardRecipient}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceRewardRecipient: value }))}
-                required
-              />
-            </div>
+              {rewardEditor === "creator" ? (
+                <div className="space-y-3">
+                  <AddressField
+                    label="Admin wallet"
+                    value={deployForm.creatorAdmin}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
+                  />
+                  <AddressField
+                    label="Reward wallet"
+                    value={deployForm.creatorRewardRecipient}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
+                  />
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-400">Reward token</div>
+                    <SelectorPills
+                      value={deployForm.creatorRewardType}
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
+                      options={REWARD_TYPE_OPTIONS}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-400">Reward share</div>
+                    <div className="relative">
+                      <input
+                        value={deployForm.creatorReward}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
+                        placeholder="100"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <AddressField
+                    label="Admin wallet"
+                    value={deployForm.interfaceAdmin}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceAdmin: value }))}
+                  />
+                  <AddressField
+                    label="Reward wallet"
+                    value={deployForm.interfaceRewardRecipient}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceRewardRecipient: value }))}
+                  />
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-400">Reward token</div>
+                    <SelectorPills
+                      value={deployForm.interfaceRewardType}
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceRewardType: value }))}
+                      options={REWARD_TYPE_OPTIONS}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs text-slate-400">Reward share</div>
+                    <div className="relative">
+                      <input
+                        value={deployForm.interfaceRewardRaw}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, interfaceRewardRaw: e.target.value }))}
+                        placeholder="0"
+                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
-            <label className="flex items-center gap-2 text-xs text-slate-300">
-              <input
-                type="checkbox"
-                checked={deployForm.useCustomTeamRewardRecipient}
-                onChange={(e) =>
-                  setDeployForm((prev) => ({ ...prev, useCustomTeamRewardRecipient: e.target.checked }))
-                }
-              />
-              Use custom team reward recipient
-            </label>
-            {deployForm.useCustomTeamRewardRecipient ? (
-              <AddressField
-                label="Team reward recipient"
-                value={deployForm.teamRewardRecipient}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, teamRewardRecipient: value }))}
-                required
-              />
-            ) : null}
+              <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-2">
+                <div className="text-xs text-slate-400">Team wallet</div>
+                <SelectorPills
+                  value={deployForm.useCustomTeamRewardRecipient ? "custom" : "default"}
+                  onChange={(value) =>
+                    setDeployForm((prev) => ({ ...prev, useCustomTeamRewardRecipient: value === "custom" }))
+                  }
+                  columns={2}
+                  options={[
+                    { value: "default", label: "Default wallet" },
+                    { value: "custom", label: "Custom wallet" },
+                  ]}
+                />
+                {deployForm.useCustomTeamRewardRecipient ? (
+                  <AddressField
+                    label="Team wallet address"
+                    value={deployForm.teamRewardRecipient}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, teamRewardRecipient: value }))}
+                    required
+                  />
+                ) : null}
+              </div>
 
-            <div className="flex items-center justify-end gap-2">
+              <div className="text-sm font-semibold text-emerald-300">Total rewards allocated: {allocatedRewardsLabel}/100%</div>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Extension: Creator Vault (optional)"
+              open={openSections.vault}
+              onToggle={() => toggleSection("vault")}
+            >
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400">Vault Percentage</div>
+                <div className="relative">
+                  <input
+                    value={deployForm.vaultPercentage}
+                    onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultPercentage: e.target.value }))}
+                    placeholder="15"
+                    className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                  />
+                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                </div>
+              </div>
+              <SelectorPills
+                value={VAULT_PERCENT_PRESETS.includes(String(deployForm.vaultPercentage)) ? String(deployForm.vaultPercentage) : ""}
+                onChange={(value) => setDeployForm((prev) => ({ ...prev, vaultPercentage: value }))}
+                options={VAULT_PERCENT_PRESETS.map((value) => ({ value, label: `${value}%` }))}
+              />
+
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400">Vault Recipient Address</div>
+                <input
+                  value={address || ""}
+                  readOnly
+                  placeholder="Connect wallet"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-300"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400">Lockup Period</div>
+                <input
+                  value={deployForm.lockupDays}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, lockupDays: e.target.value }))}
+                  placeholder="30"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+              </div>
+              <SelectorPills
+                value={VAULT_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""}
+                onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
+                columns={4}
+                options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+              />
+
+              <div className="space-y-1">
+                <div className="text-xs text-slate-400">Vesting Period</div>
+                <input
+                  value={deployForm.vestingDays}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, vestingDays: e.target.value }))}
+                  placeholder="30"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+              </div>
+              <SelectorPills
+                value={VAULT_DAY_PRESETS.includes(String(deployForm.vestingDays)) ? String(deployForm.vestingDays) : ""}
+                onChange={(value) => setDeployForm((prev) => ({ ...prev, vestingDays: value }))}
+                columns={4}
+                options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+              />
+
+              <div className="text-xs text-slate-400">Lockup has a minimum of 7 days. Vesting must be &gt;= lockup.</div>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Extension: Creator Buy (optional)"
+              open={openSections.buy}
+              onToggle={() => toggleSection("buy")}
+            >
+              <div className="grid gap-3 md:grid-cols-2">
+                <input
+                  value={deployForm.txValueEth}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
+                  placeholder="ETH amount for creator buy"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.pairedTokenSwapAmountOutMinimum}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, pairedTokenSwapAmountOutMinimum: e.target.value }))}
+                  placeholder="Initial buy minimum out (raw)"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+              </div>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Advanced (optional)"
+              open={openSections.advanced}
+              onToggle={() => toggleSection("advanced")}
+            >
+              <div className="grid gap-3 md:grid-cols-2">
+                <input
+                  value={deployForm.salt}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, salt: e.target.value }))}
+                  placeholder="Salt"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.originatingChainId}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, originatingChainId: e.target.value }))}
+                  placeholder="Originating chain id"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.metadata}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, metadata: e.target.value }))}
+                  placeholder="Metadata override (URI/JSON)"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  value={deployForm.context}
+                  onChange={(e) => setDeployForm((prev) => ({ ...prev, context: e.target.value }))}
+                  placeholder="Context override (JSON/string)"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+              </div>
+            </CollapsibleSection>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs text-slate-400">
+                {missingBasicFields.length
+                  ? `Missing required fields: ${missingBasicFields.join(", ")}`
+                  : "Ready to deploy"}
+              </div>
               <button
                 type="button"
-                onClick={() => setDeployForm(defaultDeployForm())}
+                onClick={() =>
+                  setDeployForm((prev) => ({
+                    ...defaultDeployForm(),
+                    creatorAdmin: address || prev.creatorAdmin || "",
+                    creatorRewardRecipient: address || prev.creatorRewardRecipient || "",
+                    interfaceAdmin: address || prev.interfaceAdmin || "",
+                    interfaceRewardRecipient: address || prev.interfaceRewardRecipient || "",
+                    teamRewardRecipient: address || prev.teamRewardRecipient || "",
+                  }))
+                }
                 className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs"
               >
                 Reset
               </button>
               <button
                 type="submit"
-                disabled={deployAction.loading}
+                disabled={deployAction.loading || missingBasicFields.length > 0}
                 className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
               >
                 {deployAction.loading ? "Deploying..." : "Deploy token"}
@@ -935,7 +1384,7 @@ export default function LaunchpadSection({ address, onConnect }) {
           <ActionInfo state={deployAction} />
         </div>
 
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "deployments" ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-lg font-semibold">My Deployments</div>
@@ -991,8 +1440,8 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+      <div className={`mt-6 ${activeView === "vault" || activeView === "locker" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "vault" ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-lg font-semibold">CurrentxVault</div>
@@ -1030,84 +1479,98 @@ export default function LaunchpadSection({ address, onConnect }) {
               <div>Minimum vault time: {vaultInfo.minimumVaultTime ? `${vaultInfo.minimumVaultTime}s` : "--"}</div>
             </div>
 
-            <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-              <input
-                value={vaultForm.approveAmount}
-                onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
-                placeholder="Approve amount"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <button
-                type="button"
-                onClick={handleVaultApprove}
-                disabled={vaultAction.loadingKey === "approve"}
-                className="rounded-xl border border-sky-500/50 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 disabled:opacity-60"
-              >
-                {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
-              </button>
-            </div>
+            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+                1) Approve token
+              </summary>
+              <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto]">
+                <input
+                  value={vaultForm.approveAmount}
+                  onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
+                  placeholder="Approve amount"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleVaultApprove}
+                  disabled={vaultAction.loadingKey === "approve"}
+                  className="rounded-xl border border-sky-500/50 bg-sky-500/10 px-3 py-2 text-xs text-sky-100 disabled:opacity-60"
+                >
+                  {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
+                </button>
+              </div>
+            </details>
 
-            <div className="grid gap-2 md:grid-cols-2">
-              <input
-                value={vaultForm.depositAmount}
-                onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
-                placeholder="Deposit amount"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <input
-                type="datetime-local"
-                value={vaultForm.depositUnlockAt}
-                onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <AddressField
-                label="Deposit admin"
-                value={vaultForm.depositAdmin}
-                onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
-                required
-              />
-            </div>
+            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+                2) Deposit allocation
+              </summary>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                <input
+                  value={vaultForm.depositAmount}
+                  onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
+                  placeholder="Deposit amount"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <input
+                  type="datetime-local"
+                  value={vaultForm.depositUnlockAt}
+                  onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <AddressField
+                  label="Deposit admin"
+                  value={vaultForm.depositAdmin}
+                  onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
+                  required
+                />
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleVaultDeposit}
+                  disabled={vaultAction.loadingKey === "deposit"}
+                  className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
+                >
+                  {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit"}
+                </button>
+              </div>
+            </details>
 
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleVaultDeposit}
-                disabled={vaultAction.loadingKey === "deposit"}
-                className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
-              >
-                {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit"}
-              </button>
-            </div>
-
-            <div className="grid gap-2 md:grid-cols-2">
-              <input
-                value={vaultForm.withdrawAmount}
-                onChange={(e) => setVaultForm((prev) => ({ ...prev, withdrawAmount: e.target.value }))}
-                placeholder="Withdraw amount"
-                className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              />
-              <AddressField
-                label="Withdraw recipient"
-                value={vaultForm.withdrawTo}
-                onChange={(value) => setVaultForm((prev) => ({ ...prev, withdrawTo: value }))}
-                required
-              />
-            </div>
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleVaultWithdraw}
-                disabled={vaultAction.loadingKey === "withdraw"}
-                className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 disabled:opacity-60"
-              >
-                {vaultAction.loadingKey === "withdraw" ? "Withdrawing..." : "Withdraw"}
-              </button>
-            </div>
+            <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-3">
+              <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-slate-300">
+                3) Withdraw allocation
+              </summary>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                <input
+                  value={vaultForm.withdrawAmount}
+                  onChange={(e) => setVaultForm((prev) => ({ ...prev, withdrawAmount: e.target.value }))}
+                  placeholder="Withdraw amount"
+                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                />
+                <AddressField
+                  label="Withdraw recipient"
+                  value={vaultForm.withdrawTo}
+                  onChange={(value) => setVaultForm((prev) => ({ ...prev, withdrawTo: value }))}
+                  required
+                />
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleVaultWithdraw}
+                  disabled={vaultAction.loadingKey === "withdraw"}
+                  className="rounded-xl border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 disabled:opacity-60"
+                >
+                  {vaultAction.loadingKey === "withdraw" ? "Withdrawing..." : "Withdraw"}
+                </button>
+              </div>
+            </details>
           </div>
           <ActionInfo state={vaultAction} />
         </div>
 
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className={`rounded-3xl border border-slate-800 bg-slate-900/70 p-5 ${activeView === "locker" ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
               <div className="text-lg font-semibold">LpLockerv2</div>
