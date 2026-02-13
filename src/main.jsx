@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WagmiProvider, createConfig, http } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { defineChain } from "viem";
+import { arbitrum, base, bsc, mainnet, optimism, polygon } from "viem/chains";
 import { WidgetThemeProvider } from "@avon_xyz/widget";
 import App from "./App";
 import { getActiveNetworkConfig } from "./shared/config/networks";
@@ -40,12 +41,40 @@ const megaethChain = defineChain({
     },
   },
 });
+const walletChains = [megaethChain, mainnet, base, arbitrum, optimism, bsc, polygon];
+const transports = Object.fromEntries(
+  walletChains.map((chain) => [
+    chain.id,
+    chain.id === megaethChain.id ? http(rpcUrls[0] || fallbackRpc) : http(),
+  ])
+);
+
+const resolvePreferredInjectedProvider = (windowObj) => {
+  if (windowObj?.__cxActiveInjectedProvider) {
+    return windowObj.__cxActiveInjectedProvider;
+  }
+  if (windowObj?.ethereum?.selectedProvider) {
+    return windowObj.ethereum.selectedProvider;
+  }
+  if (Array.isArray(windowObj?.ethereum?.providers) && windowObj.ethereum.providers.length) {
+    return windowObj.ethereum.providers[0];
+  }
+  return windowObj?.ethereum;
+};
+
 const wagmiConfig = createConfig({
-  chains: [megaethChain],
-  connectors: [injected({ shimDisconnect: true })],
-  transports: {
-    [megaethChain.id]: http(rpcUrls[0] || fallbackRpc),
-  },
+  chains: walletChains,
+  connectors: [
+    injected({
+      shimDisconnect: true,
+      target: {
+        id: "currentxInjected",
+        name: "CurrentX Injected",
+        provider: (windowObj) => resolvePreferredInjectedProvider(windowObj),
+      },
+    }),
+  ],
+  transports,
   ssr: false,
 });
 

@@ -202,6 +202,13 @@ let activeInjectedProvider = null;
 
 export const setActiveInjectedProvider = (provider) => {
   activeInjectedProvider = provider || null;
+  if (typeof window !== "undefined") {
+    if (provider) {
+      window.__cxActiveInjectedProvider = provider;
+    } else {
+      delete window.__cxActiveInjectedProvider;
+    }
+  }
 };
 
 const resolveActiveProvider = (candidates) => {

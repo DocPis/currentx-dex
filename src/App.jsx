@@ -13,6 +13,7 @@ const TAB_ROUTES = {
   dashboard: "/dashboard",
   points: "/points",
   swap: "/swap",
+  bridge: "/bridge",
   liquidity: "/liquidity",
   launchpad: "/launchpad",
   pools: "/pools",
@@ -24,6 +25,7 @@ const SECTION_LOADERS = {
   dashboard: () => import("./features/dashboard/Dashboard"),
   points: () => import("./features/points/PointsPage"),
   swap: () => import("./features/swap/SwapSection"),
+  bridge: () => import("./features/bridge/BridgeSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
   launchpad: () => import("./features/launchpad/LaunchpadSection"),
   pools: () => import("./features/pools/PoolsSection"),
@@ -34,6 +36,7 @@ const SECTION_LOADERS = {
 const Dashboard = React.lazy(SECTION_LOADERS.dashboard);
 const PointsPage = React.lazy(SECTION_LOADERS.points);
 const SwapSection = React.lazy(SECTION_LOADERS.swap);
+const BridgeSection = React.lazy(SECTION_LOADERS.bridge);
 const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
 const LaunchpadSection = React.lazy(SECTION_LOADERS.launchpad);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
@@ -142,6 +145,7 @@ export default function App() {
   const { balances, refresh } = useBalances(address, chainId);
   const preloadedRef = useRef(new Set());
   const prefetchedDataRef = useRef(new Set());
+  const wagmiSyncedAddressRef = useRef(null);
 
   useEffect(() => {
     const handlePop = () => {
@@ -165,6 +169,16 @@ export default function App() {
     const id = setTimeout(() => setConnectError(""), 4000);
     return () => clearTimeout(id);
   }, [connectError]);
+
+  useEffect(() => {
+    if (!address) {
+      wagmiSyncedAddressRef.current = null;
+      return;
+    }
+    if (wagmiSyncedAddressRef.current === address) return;
+    wagmiSyncedAddressRef.current = address;
+    reconnect();
+  }, [address, reconnect]);
 
   const canPrefetchData = useCallback(() => {
     const connection = navigator?.connection;
@@ -407,6 +421,7 @@ export default function App() {
             { id: "points", label: "Points" },
             { id: "farms", label: "Farms" },
             { id: "megavault", label: "MegaVault" },
+            { id: "bridge", label: "Bridge" },
           ].map((item) => (
             <button
               key={item.id}
@@ -461,6 +476,9 @@ export default function App() {
                 chainId={chainId}
                 onBalancesRefresh={refresh}
               />
+            )}
+            {tab === "bridge" && (
+              <BridgeSection address={address} onConnect={handleConnect} />
             )}
             {tab === "liquidity" && (
               <LiquiditySection
