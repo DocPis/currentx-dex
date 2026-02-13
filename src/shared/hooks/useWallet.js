@@ -1,6 +1,6 @@
 // src/shared/hooks/useWallet.js
 import { useEffect, useState } from "react";
-import { BrowserProvider } from "ethers";
+import { BrowserProvider, getAddress } from "ethers";
 import {
   getInjectedEthereum,
   getInjectedProviderByType,
@@ -20,6 +20,15 @@ const normalizeChainId = (value) => {
     return `0x${asNumber.toString(16)}`.toLowerCase();
   }
   return str.toLowerCase();
+};
+
+const normalizeAddress = (value) => {
+  if (!value) return null;
+  try {
+    return getAddress(String(value));
+  } catch {
+    return String(value);
+  }
 };
 
 export function useWallet() {
@@ -50,7 +59,7 @@ export function useWallet() {
       setActiveInjectedProvider(eth);
 
       const handleAccountsChanged = (accounts) => {
-        setAddress(accounts[0] || null);
+        setAddress(normalizeAddress(accounts[0]));
       };
 
       const handleChainChanged = (chainIdHex) => {
@@ -60,7 +69,7 @@ export function useWallet() {
       eth
         .request({ method: "eth_accounts" })
         .then((accounts) => {
-          if (accounts.length) setAddress(accounts[0]);
+          if (accounts.length) setAddress(normalizeAddress(accounts[0]));
         })
         .catch(() => {});
 
@@ -233,7 +242,7 @@ export function useWallet() {
         "No account returned. Please unlock the selected wallet and approve the connection."
       );
     }
-    const primaryAccount = accounts[0] || null;
+    const primaryAccount = normalizeAddress(accounts[0]);
     setAddress(primaryAccount);
 
     const cid = await provider.send("eth_chainId", []);

@@ -15,6 +15,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@relayprotocol/relay-kit-ui": "^7.1.1",
     "@tanstack/react-query": "^5.90.12",
     "@vercel/analytics": "^1.6.1",
     "@vercel/kv": "^3.0.0",
