@@ -45,7 +45,9 @@ const parseUint = (value, field, fallback = "0") => {
 };
 
 const parseEthAmount = (value) => {
-  const raw = String(value ?? "0").trim() || "0";
+  const raw = String(value ?? "0")
+    .replace(/,/gu, ".")
+    .trim() || "0";
   if (!/^\d+(\.\d+)?$/u.test(raw)) throw new Error("Invalid ETH value.");
   return parseEther(raw);
 };
@@ -185,7 +187,8 @@ const REWARD_TYPE_OPTIONS = [
   { value: "both", label: "Both" },
 ];
 const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
-const VAULT_DAY_PRESETS = ["7", "30", "90", "180"];
+const LOCKUP_DAY_PRESETS = ["7", "30", "90", "180"];
+const VESTING_DAY_PRESETS = ["30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
 const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
 const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
@@ -1787,11 +1790,15 @@ export default function LaunchpadSection({ address, onConnect }) {
     const value = Number.parseFloat(String(deployForm.vaultPercentage || "0"));
     return Number.isFinite(value) && value > 0;
   }, [deployForm.vaultPercentage]);
+  const creatorBuyRawInput = String(deployForm.txValueEth || "")
+    .replace(/,/gu, ".")
+    .trim();
   const creatorBuyAmount = useMemo(() => {
-    const value = Number.parseFloat(String(deployForm.txValueEth || "0"));
+    const value = Number.parseFloat(creatorBuyRawInput || "0");
     return Number.isFinite(value) ? value : 0;
-  }, [deployForm.txValueEth]);
-  const creatorBuyEnabled = creatorBuyAmount > 0;
+  }, [creatorBuyRawInput]);
+  const creatorBuyEnabled = openSections.buy;
+  const creatorBuyConfigured = creatorBuyEnabled && creatorBuyAmount > 0;
   const startingTickPreview = useMemo(() => {
     try {
       return computeTickFromMarketCapEth({
@@ -1828,8 +1835,9 @@ export default function LaunchpadSection({ address, onConnect }) {
   const vaultStatusSummary = vaultEnabled
     ? `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${deployForm.vestingDays || "0"}d vest`
     : "Disabled";
-  const creatorBuyStatusLabel = creatorBuyEnabled ? "Configured" : "Disabled";
+  const creatorBuyStatusLabel = creatorBuyEnabled ? (creatorBuyConfigured ? "Configured" : "Not configured") : "Disabled";
   const creatorBuyStatusSummary = creatorBuyEnabled ? `${creatorBuyAmountLabel} ETH` : "Disabled";
+  const creatorBuyStatusTone = creatorBuyConfigured ? "good" : creatorBuyEnabled ? "warn" : "neutral";
   const rewardsSummaryLine = `${rewardTypeLabel} • ${allocatedRewardsLabel}% • ${rewardRecipientCount} recipient${
     rewardRecipientCount === 1 ? "" : "s"
   }`;
@@ -1891,7 +1899,7 @@ export default function LaunchpadSection({ address, onConnect }) {
   const handleToggleCreatorBuyExtension = useCallback((enabled) => {
     setOpenSections((prev) => ({ ...prev, buy: enabled }));
     setDeployForm((prev) => {
-      const current = Number.parseFloat(String(prev.txValueEth || "0"));
+      const current = Number.parseFloat(String(prev.txValueEth || "").replace(/,/gu, ".").trim() || "0");
       const nextAmount =
         enabled && !(Number.isFinite(current) && current > 0) ? CREATOR_BUY_ETH_PRESETS[0] || "0.1" : prev.txValueEth;
       return {
@@ -2577,10 +2585,12 @@ export default function LaunchpadSection({ address, onConnect }) {
                       />
                     </div>
                     <SelectorPills
-                      value={VAULT_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""}
+                      value={
+                        LOCKUP_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""
+                      }
                       onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
                       columns={4}
-                      options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+                      options={LOCKUP_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
                     />
                     <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
                       Vesting must be &gt;= lockup. Lockup minimum is 7 days.
@@ -2596,10 +2606,12 @@ export default function LaunchpadSection({ address, onConnect }) {
                       />
                     </div>
                     <SelectorPills
-                      value={VAULT_DAY_PRESETS.includes(String(deployForm.vestingDays)) ? String(deployForm.vestingDays) : ""}
+                      value={
+                        VESTING_DAY_PRESETS.includes(String(deployForm.vestingDays)) ? String(deployForm.vestingDays) : ""
+                      }
                       onChange={(value) => setDeployForm((prev) => ({ ...prev, vestingDays: value }))}
-                      columns={4}
-                      options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+                      columns={3}
+                      options={VESTING_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
                     />
                   </>
                 )}
@@ -2613,7 +2625,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                 onToggle={() => toggleSection("buy")}
                 statusLabel={creatorBuyStatusLabel}
                 statusSummary={creatorBuyStatusSummary}
-                statusTone={creatorBuyEnabled ? "good" : "neutral"}
+                statusTone={creatorBuyStatusTone}
                 headerAction={<SectionEnableToggle enabled={creatorBuyEnabled} onToggle={handleToggleCreatorBuyExtension} />}
               >
                 <div className="text-xs text-slate-300/75">
@@ -2630,7 +2642,9 @@ export default function LaunchpadSection({ address, onConnect }) {
                       <div className="relative">
                         <input
                           value={deployForm.txValueEth}
-                          onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
+                          onChange={(e) =>
+                            setDeployForm((prev) => ({ ...prev, txValueEth: String(e.target.value || "").replace(/,/gu, ".") }))
+                          }
                           placeholder="0.5"
                           className={`${INPUT_CLASS} pr-14`}
                         />
@@ -2680,7 +2694,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                             onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
                             required
                           />
-                          {Number.parseFloat(String(deployForm.txValueEth || "0")) > 0 ? (
+                          {creatorBuyAmount > 0 ? (
                             <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
                               Custom recipient for Creator Buy is not supported by deployToken when ETH amount is greater than 0.
                             </div>
