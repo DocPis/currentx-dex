@@ -71,6 +71,43 @@ const parseOptionalHttpUrl = (value, label) => {
   }
 };
 
+const parseTokenImageValue = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!raw) throw new Error("Token image is required.");
+
+  if (/^ipfs:\/\//iu.test(raw)) {
+    const trimmed = raw.replace(/^ipfs:\/\//iu, "");
+    const clean = trimmed.startsWith("ipfs/") ? trimmed.slice(5) : trimmed;
+    if (!clean) throw new Error("Invalid IPFS image URI.");
+    return `ipfs://${clean}`;
+  }
+
+  if (/^data:image\/png;base64,/iu.test(raw)) {
+    if (raw.length > 350_000) {
+      throw new Error("Uploaded PNG is too large. Use a smaller image or a URL.");
+    }
+    return raw;
+  }
+
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("invalid protocol");
+    }
+    return parsed.toString();
+  } catch {
+    throw new Error("Image must be a valid http(s) URL, ipfs:// URI, or an uploaded PNG.");
+  }
+};
+
+const extractPngBase64FromDataUrl = (value) => {
+  const raw = String(value ?? "").trim();
+  if (!/^data:image\/png;base64,/iu.test(raw)) return "";
+  const payload = String(raw.split(",")[1] || "").trim();
+  if (!payload) return "";
+  return payload;
+};
+
 const clampInt24 = (value) => Math.max(-8388608, Math.min(8388607, value));
 
 const computeTickFromMarketCapEth = ({ marketCapEth, tokenSupplyRaw, tickSpacing = 0 }) => {
@@ -104,16 +141,44 @@ const VAULT_DAY_PRESETS = ["7", "30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
 const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
 const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const IPFS_UPLOAD_ENDPOINT = String(ENV.VITE_IPFS_UPLOAD_ENDPOINT || "/api/ipfs/upload").trim();
+const IPFS_IMAGE_GATEWAY = String(ENV.VITE_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/")
+  .trim()
+  .replace(/\/?$/u, "/");
+const RAW_PROTOCOL_REWARD_RECIPIENT = String(
+  ENV.VITE_PROTOCOL_REWARD_RECIPIENT || ENV.VITE_TEAM_REWARD_RECIPIENT || ""
+).trim();
+const RAW_PROTOCOL_REWARD_ADMIN = String(ENV.VITE_PROTOCOL_REWARD_ADMIN || "").trim();
 const DEFAULT_PROTOCOL_REWARD_RECIPIENT = String(
-  ENV.VITE_PROTOCOL_REWARD_RECIPIENT ||
-    ENV.VITE_TEAM_REWARD_RECIPIENT ||
-    PROTOCOL_WALLET_ADDRESS ||
-    CURRENTX_ADDRESS ||
-    ""
+  RAW_PROTOCOL_REWARD_RECIPIENT || PROTOCOL_WALLET_ADDRESS || CURRENTX_ADDRESS || ""
 ).trim();
 const DEFAULT_PROTOCOL_REWARD_ADMIN = String(
-  ENV.VITE_PROTOCOL_REWARD_ADMIN || DEFAULT_PROTOCOL_REWARD_RECIPIENT
+  RAW_PROTOCOL_REWARD_ADMIN || DEFAULT_PROTOCOL_REWARD_RECIPIENT
 ).trim();
+const PROTOCOL_REWARD_CONFIG_ERROR = (() => {
+  if (RAW_PROTOCOL_REWARD_RECIPIENT && !isAddress(RAW_PROTOCOL_REWARD_RECIPIENT)) {
+    return "VITE_PROTOCOL_REWARD_RECIPIENT is set but invalid.";
+  }
+  if (RAW_PROTOCOL_REWARD_ADMIN && !isAddress(RAW_PROTOCOL_REWARD_ADMIN)) {
+    return "VITE_PROTOCOL_REWARD_ADMIN is set but invalid.";
+  }
+  if (!isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)) {
+    return "Protocol reward recipient default is invalid.";
+  }
+  if (!isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN)) {
+    return "Protocol reward admin default is invalid.";
+  }
+  return "";
+})();
+
+const toImagePreviewSrc = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (!/^ipfs:\/\//iu.test(raw)) return raw;
+  const trimmed = raw.replace(/^ipfs:\/\//iu, "");
+  const clean = trimmed.startsWith("ipfs/") ? trimmed.slice(5) : trimmed;
+  return `${IPFS_IMAGE_GATEWAY}${clean}`;
+};
 
 const toBytes32Salt = (value, walletAddress) => {
   const raw = String(value ?? "").trim();
@@ -290,7 +355,7 @@ const defaultDeployForm = () => ({
   lockupDays: "30",
   vestingDays: "30",
   pairedTokenSwapAmountOutMinimum: "0",
-  creatorReward: "0",
+  creatorReward: "80",
   creatorRewardType: "paired",
   creatorAdmin: "",
   creatorRewardRecipient: "",
@@ -334,6 +399,9 @@ export default function LaunchpadSection({ address, onConnect }) {
   const [deployForm, setDeployForm] = useState(defaultDeployForm);
   const [deployAction, setDeployAction] = useState({ loading: false, error: "", hash: "", message: "" });
   const [deployResult, setDeployResult] = useState(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadCid, setImageUploadCid] = useState("");
+  const [imageUploadError, setImageUploadError] = useState("");
   const [deployments, setDeployments] = useState([]);
   const [deploymentsLoading, setDeploymentsLoading] = useState(false);
   const [deploymentsError, setDeploymentsError] = useState("");
@@ -539,14 +607,8 @@ export default function LaunchpadSection({ address, onConnect }) {
 
   useEffect(() => {
     if (!address) return;
-    const protocolRewardRecipient = isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)
-      ? DEFAULT_PROTOCOL_REWARD_RECIPIENT
-      : isAddress(contracts.currentx)
-        ? contracts.currentx
-        : address;
-    const protocolRewardAdmin = isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN)
-      ? DEFAULT_PROTOCOL_REWARD_ADMIN
-      : protocolRewardRecipient;
+    const protocolRewardRecipient = DEFAULT_PROTOCOL_REWARD_RECIPIENT;
+    const protocolRewardAdmin = DEFAULT_PROTOCOL_REWARD_ADMIN;
     setDeployForm((prev) => ({
       ...prev,
       creatorAdmin: prev.creatorAdmin || address,
@@ -556,7 +618,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       teamRewardRecipient: prev.teamRewardRecipient || protocolRewardRecipient,
     }));
     setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address, withdrawTo: prev.withdrawTo || address }));
-  }, [address, contracts.currentx]);
+  }, [address]);
 
   useEffect(() => {
     refreshProtocol();
@@ -584,6 +646,99 @@ export default function LaunchpadSection({ address, onConnect }) {
     }
   }, [deployForm.pairedToken, protocol.weth]);
 
+  const uploadPngBase64ToIpfs = useCallback(async ({ dataBase64, fileName }) => {
+    const uploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fileName: fileName || "token-image.png",
+        contentType: "image/png",
+        dataBase64,
+      }),
+    });
+    const uploadJson = await uploadRes.json().catch(() => ({}));
+    if (!uploadRes.ok) {
+      throw new Error(uploadJson?.error || "IPFS upload failed.");
+    }
+    const imageValue = String(uploadJson?.ipfsUri || uploadJson?.gatewayUrl || "").trim();
+    if (!imageValue) {
+      throw new Error("IPFS upload returned an empty image URI.");
+    }
+    return {
+      imageValue,
+      cid: String(uploadJson?.cid || ""),
+    };
+  }, []);
+
+  const migrateLegacyImageToIpfs = useCallback(async () => {
+    if (imageUploading) return;
+    const dataBase64 = extractPngBase64FromDataUrl(deployForm.image);
+    if (!dataBase64) return;
+    try {
+      setImageUploadError("");
+      setImageUploadCid("");
+      setImageUploading(true);
+      const result = await uploadPngBase64ToIpfs({
+        dataBase64,
+        fileName: `${String(deployForm.symbol || "token").toLowerCase() || "token"}.png`,
+      });
+      setDeployForm((prev) => ({ ...prev, image: result.imageValue }));
+      setImageUploadCid(result.cid);
+    } catch (error) {
+      setImageUploadError(error?.message || "Unable to upload image to IPFS.");
+      throw error;
+    } finally {
+      setImageUploading(false);
+    }
+  }, [deployForm.image, deployForm.symbol, imageUploading, uploadPngBase64ToIpfs]);
+
+  const handleImageFileChange = async (event) => {
+    const file = event?.target?.files?.[0];
+    if (event?.target) event.target.value = "";
+    if (!file) return;
+
+    if (imageUploading) return;
+    setImageUploadError("");
+    setImageUploadCid("");
+    const isPng = file.type === "image/png" || String(file.name || "").toLowerCase().endsWith(".png");
+    if (!isPng) {
+      setImageUploadError("Only PNG files are supported.");
+      return;
+    }
+    if (file.size > 256 * 1024) {
+      setImageUploadError("PNG file is too large. Max size is 256 KB.");
+      return;
+    }
+
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Unable to read PNG file."));
+        reader.readAsDataURL(file);
+      });
+      if (!/^data:image\/png;base64,/iu.test(dataUrl)) {
+        throw new Error("Only PNG files are supported.");
+      }
+      const dataBase64 = String(dataUrl.split(",")[1] || "").trim();
+      if (!dataBase64) {
+        throw new Error("Invalid PNG payload.");
+      }
+
+      setImageUploading(true);
+      const result = await uploadPngBase64ToIpfs({
+        dataBase64,
+        fileName: file.name || "token-image.png",
+      });
+      setDeployForm((prev) => ({ ...prev, image: result.imageValue }));
+      setImageUploadCid(result.cid);
+    } catch (error) {
+      setImageUploadError(error?.message || "Unable to load image.");
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   const handleDeploy = async (event) => {
     event.preventDefault();
     if (!address) {
@@ -598,10 +753,23 @@ export default function LaunchpadSection({ address, onConnect }) {
     try {
       setDeployAction({ loading: true, error: "", hash: "", message: "Submitting deployment..." });
       setDeployResult(null);
+      if (imageUploading) throw new Error("Image upload in progress. Wait for IPFS upload to finish.");
 
       const name = String(deployForm.name || "").trim();
       const symbol = String(deployForm.symbol || "").trim();
-      const image = String(deployForm.image || "").trim();
+      let imageInput = String(deployForm.image || "").trim();
+      const legacyBase64 = extractPngBase64FromDataUrl(imageInput);
+      if (legacyBase64) {
+        setDeployAction({ loading: true, error: "", hash: "", message: "Converting legacy PNG to IPFS..." });
+        const migrated = await uploadPngBase64ToIpfs({
+          dataBase64: legacyBase64,
+          fileName: `${String(symbol || "token").toLowerCase() || "token"}.png`,
+        });
+        imageInput = migrated.imageValue;
+        setDeployForm((prev) => ({ ...prev, image: migrated.imageValue }));
+        setImageUploadCid(migrated.cid);
+      }
+      const image = parseTokenImageValue(imageInput);
       const description = String(deployForm.description || "").trim();
       const telegram = parseOptionalHttpUrl(deployForm.telegram, "Telegram link");
       const website = parseOptionalHttpUrl(deployForm.website, "Website link");
@@ -622,14 +790,8 @@ export default function LaunchpadSection({ address, onConnect }) {
       const creatorRewardRecipient = isAddress(deployForm.creatorRewardRecipient)
         ? deployForm.creatorRewardRecipient
         : address;
-      const protocolRewardRecipient = isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)
-        ? DEFAULT_PROTOCOL_REWARD_RECIPIENT
-        : isAddress(contracts.currentx)
-          ? contracts.currentx
-          : "";
-      const protocolRewardAdmin = isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN)
-        ? DEFAULT_PROTOCOL_REWARD_ADMIN
-        : protocolRewardRecipient;
+      const protocolRewardRecipient = DEFAULT_PROTOCOL_REWARD_RECIPIENT;
+      const protocolRewardAdmin = DEFAULT_PROTOCOL_REWARD_ADMIN;
       const interfaceAdmin = protocolRewardAdmin;
       const interfaceRewardRecipient = protocolRewardRecipient;
       const creatorBuyRecipient = deployForm.useCustomCreatorBuyRecipient
@@ -649,6 +811,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       if (!name) throw new Error("Token name is required.");
       if (!symbol) throw new Error("Token symbol is required.");
       if (!image) throw new Error("Token image is required.");
+      if (PROTOCOL_REWARD_CONFIG_ERROR) throw new Error(PROTOCOL_REWARD_CONFIG_ERROR);
       if (!isAddress(pairedToken)) throw new Error("Paired token is invalid.");
       if (!isAddress(creatorAdmin)) throw new Error("Creator admin is invalid.");
       if (!isAddress(creatorRewardRecipient)) throw new Error("Creator reward recipient is invalid.");
@@ -736,6 +899,11 @@ export default function LaunchpadSection({ address, onConnect }) {
         "Paired token pool fee"
       );
       const txValue = parseEthAmount(deployForm.txValueEth);
+      if (txValue > 0n && deployForm.useCustomCreatorBuyRecipient) {
+        throw new Error(
+          "Custom recipient for Creator Buy is not supported by deployToken. Disable custom recipient or set ETH amount to 0."
+        );
+      }
       const initialBuyMinOutRaw = parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out");
       const initialBuyMinOutFinal = txValue > 0n && initialBuyMinOutRaw === "0" ? "1" : initialBuyMinOutRaw;
       const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
@@ -1030,11 +1198,14 @@ export default function LaunchpadSection({ address, onConnect }) {
     ? String(allocatedRewards)
     : allocatedRewards.toFixed(2);
   const allocatedRewardsTotalLabel = maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "100";
-  const autoProtocolRecipient = useMemo(() => {
-    if (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)) return DEFAULT_PROTOCOL_REWARD_RECIPIENT;
-    if (isAddress(contracts.currentx)) return contracts.currentx;
-    return "";
-  }, [contracts.currentx]);
+  const autoProtocolRecipient = useMemo(
+    () => (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) ? DEFAULT_PROTOCOL_REWARD_RECIPIENT : ""),
+    []
+  );
+  const imageIsLegacyDataUri = useMemo(
+    () => /^data:image\/png;base64,/iu.test(String(deployForm.image || "").trim()),
+    [deployForm.image]
+  );
   const toggleSection = useCallback((sectionKey) => {
     setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
   }, []);
@@ -1133,13 +1304,67 @@ export default function LaunchpadSection({ address, onConnect }) {
                   />
                 </div>
                 <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs text-slate-400">Image URL *</label>
+                  <label className="text-xs text-slate-400">Image URL or PNG Upload *</label>
                   <input
                     value={deployForm.image}
-                    onChange={(e) => setDeployForm((prev) => ({ ...prev, image: e.target.value }))}
-                    placeholder="Paste image URL"
+                    onChange={(e) => {
+                      setImageUploadError("");
+                      setImageUploadCid("");
+                      setDeployForm((prev) => ({ ...prev, image: e.target.value }));
+                    }}
+                    placeholder="Paste image URL, ipfs:// URI, or upload PNG"
                     className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
                   />
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <label
+                      className={`inline-flex cursor-pointer items-center rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-slate-200 hover:border-slate-500 ${
+                        imageUploading ? "pointer-events-none opacity-60" : ""
+                      }`}
+                    >
+                      {imageUploading ? "Uploading PNG..." : "Upload PNG to IPFS"}
+                      <input
+                        type="file"
+                        accept="image/png"
+                        onChange={handleImageFileChange}
+                        disabled={imageUploading}
+                        className="sr-only"
+                      />
+                    </label>
+                    <span className="text-[11px] text-slate-500">Max 256 KB. Stored on IPFS.</span>
+                  </div>
+                  {imageUploadError ? (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                      {imageUploadError}
+                    </div>
+                  ) : null}
+                  {imageUploadCid ? (
+                    <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                      Uploaded to IPFS: <span className="font-mono">{shorten(imageUploadCid)}</span>
+                    </div>
+                  ) : null}
+                  {imageIsLegacyDataUri ? (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100 space-y-2">
+                      <div>Legacy image format detected (`data:image...`). Convert it to IPFS before deploy.</div>
+                      <button
+                        type="button"
+                        onClick={migrateLegacyImageToIpfs}
+                        disabled={imageUploading}
+                        className="rounded-lg border border-amber-400/50 bg-amber-500/10 px-2 py-1 text-[11px] font-semibold text-amber-100 disabled:opacity-60"
+                      >
+                        {imageUploading ? "Converting..." : "Convert to IPFS now"}
+                      </button>
+                    </div>
+                  ) : null}
+                  {deployForm.image ? (
+                    <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-2">
+                      <div className="mb-1 text-[11px] text-slate-500">Image preview</div>
+                      <img
+                        src={toImagePreviewSrc(deployForm.image)}
+                        alt="Token preview"
+                        className="h-16 w-16 rounded-md border border-slate-700 object-cover"
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1240,6 +1465,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                   Interface reward is managed automatically by protocol recipient:{" "}
                   <span className="font-mono text-slate-300">{autoProtocolRecipient ? shorten(autoProtocolRecipient) : "--"}</span>
                 </div>
+                {PROTOCOL_REWARD_CONFIG_ERROR ? (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                    {PROTOCOL_REWARD_CONFIG_ERROR}
+                  </div>
+                ) : null}
               </div>
             </CollapsibleSection>
 
@@ -1359,12 +1589,19 @@ export default function LaunchpadSection({ address, onConnect }) {
                   </div>
 
                   {deployForm.useCustomCreatorBuyRecipient ? (
-                    <AddressField
-                      label="Recipient wallet"
-                      value={deployForm.creatorBuyRecipient}
-                      onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
-                      required
-                    />
+                    <div className="space-y-2">
+                      <AddressField
+                        label="Recipient wallet"
+                        value={deployForm.creatorBuyRecipient}
+                        onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
+                        required
+                      />
+                      {Number.parseFloat(String(deployForm.txValueEth || "0")) > 0 ? (
+                        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                          Custom recipient for Creator Buy is not supported by deployToken when ETH amount is greater than 0.
+                        </div>
+                      ) : null}
+                    </div>
                   ) : (
                     <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
                       Tokens will be sent to your wallet:{" "}
@@ -1377,41 +1614,41 @@ export default function LaunchpadSection({ address, onConnect }) {
 
             <div className="flex items-center justify-between gap-2">
               <div className="text-xs text-slate-400">
-                {missingBasicFields.length
+                {imageUploading
+                  ? "Uploading image to IPFS..."
+                  : missingBasicFields.length
                   ? `Missing required fields: ${missingBasicFields.join(", ")}`
                   : "Ready to deploy"}
               </div>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  setImageUploading(false);
+                  setImageUploadCid("");
+                  setImageUploadError("");
                   setDeployForm((prev) => ({
                     ...defaultDeployForm(),
                     creatorAdmin: address || prev.creatorAdmin || "",
                     creatorRewardRecipient: address || prev.creatorRewardRecipient || "",
                     interfaceAdmin:
-                      (isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN) && DEFAULT_PROTOCOL_REWARD_ADMIN) ||
-                      contracts.currentx ||
-                      prev.interfaceAdmin ||
-                      "",
+                      (isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN) && DEFAULT_PROTOCOL_REWARD_ADMIN) || prev.interfaceAdmin || "",
                     interfaceRewardRecipient:
                       (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
-                      contracts.currentx ||
                       prev.interfaceRewardRecipient ||
                       "",
                     teamRewardRecipient:
                       (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
-                      contracts.currentx ||
                       prev.teamRewardRecipient ||
                       "",
-                  }))
-                }
+                  }));
+                }}
                 className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs"
               >
                 Reset
               </button>
               <button
                 type="submit"
-                disabled={deployAction.loading || missingBasicFields.length > 0}
+                disabled={deployAction.loading || imageUploading || missingBasicFields.length > 0}
                 className="rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100 disabled:opacity-60"
               >
                 {deployAction.loading ? "Deploying..." : "Deploy token"}
