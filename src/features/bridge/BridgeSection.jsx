@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RelayKitProvider, SwapWidget } from "@relayprotocol/relay-kit-ui";
 import { adaptViemWallet, convertViemChainToRelayChain } from "@relayprotocol/relay-sdk";
 import "@relayprotocol/relay-kit-ui/styles.css";
@@ -15,6 +15,7 @@ const RELAY_SUPPORTED_WALLETS = ["evm"];
 const ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
 const RELAY_OFFICIAL_URL = "https://relay.link";
 const DISCORD_SUPPORT_URL = "https://discord.gg/hebSwdXwVv";
+const DOCS_URL = "https://docs.currentx.app/";
 const GENERIC_SWAP_ERROR =
   "Oops! Something went wrong while processing your transaction.";
 const HOW_IT_WORKS_STEPS = [
@@ -422,58 +423,60 @@ export default function BridgeSection({ address, onConnect }) {
     <section className="px-4 py-6 sm:px-6">
       <div className="mx-auto w-full max-w-6xl xl:max-w-7xl 2xl:max-w-[1480px]">
         <div className="mb-4 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:p-6">
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-[11px] uppercase tracking-[0.35em] text-sky-300/90">
               Bridge
             </div>
-            <div className="flex items-center gap-2 text-[10px] text-slate-300/75">
-              <span className="uppercase tracking-[0.18em] text-slate-300/70">
-                Powered by
+            <a
+              href={RELAY_OFFICIAL_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Open Relay official website"
+              className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-sky-300/35 bg-sky-500/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-sky-100 transition hover:border-sky-300/55 hover:bg-sky-400/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+            >
+              <span className="text-slate-200/80">Powered by</span>
+              <span className="font-semibold text-sky-100">Relay</span>
+              <img
+                src={relayLogo}
+                alt="Relay"
+                loading="lazy"
+                className="h-4 w-auto object-contain"
+              />
+              <span aria-hidden="true" className="text-[11px] leading-none text-sky-100/85">
+                {"\u2197"}
               </span>
-              <a
-                href={RELAY_OFFICIAL_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Open Relay official website"
-                className="inline-flex items-center rounded-full px-1 py-0.5 transition hover:bg-slate-800/55"
-              >
-                <img
-                  src={relayLogo}
-                  alt="Relay"
-                  loading="lazy"
-                  className="h-4 w-auto object-contain"
-                />
-              </a>
-            </div>
+            </a>
           </div>
           <h2 className="mt-2 font-display text-3xl font-semibold text-slate-100">
             Cross-chain with Relay
           </h2>
           <p className="mt-2 text-sm text-slate-300/80">
-            Bridge assets to and from MegaETH directly inside CurrentX.
+            Bridge assets across chains inside CurrentX.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] md:items-stretch lg:gap-5 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] xl:gap-6 xl:grid-cols-[minmax(0,34rem)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,38rem)_minmax(0,1fr)]">
+        <div className="grid gap-5 md:grid-cols-[minmax(0,26rem)_minmax(0,1fr)] md:items-stretch lg:gap-6 lg:grid-cols-[minmax(0,30rem)_minmax(0,1fr)] xl:gap-7 xl:grid-cols-[minmax(0,34rem)_minmax(0,1fr)] 2xl:grid-cols-[minmax(0,38rem)_minmax(0,1fr)]">
           <div className="min-w-0 md:self-start">
             <RelayKitProvider options={relayOptions} theme={relayTheme}>
               <style>{relayScopedCss}</style>
-              <div
-                className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-2 shadow-[0_28px_80px_-48px_rgba(2,6,23,0.9)] sm:p-4"
-                style={relayScopedVars}
-              >
-                <SwapWidget
-                  wallet={relayWallet}
-                  supportedWalletVMs={RELAY_SUPPORTED_WALLETS}
-                  popularChainIds={popularChainIds}
-                  toToken={toToken}
-                  setToToken={setToToken}
-                  defaultToAddress={address}
-                  onConnectWallet={onConnect}
-                  onSwapError={handleSwapError}
-                  onSwapSuccess={handleSwapSuccess}
-                  onSwapValidating={handleSwapValidating}
-                />
+              <div className="relative">
+                <div
+                  className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-2 shadow-[0_28px_80px_-48px_rgba(2,6,23,0.9)] sm:p-4"
+                  style={relayScopedVars}
+                >
+                  <SwapWidget
+                    wallet={relayWallet}
+                    supportedWalletVMs={RELAY_SUPPORTED_WALLETS}
+                    popularChainIds={popularChainIds}
+                    toToken={toToken}
+                    setToToken={setToToken}
+                    defaultToAddress={address}
+                    onConnectWallet={onConnect}
+                    onSwapError={handleSwapError}
+                    onSwapSuccess={handleSwapSuccess}
+                    onSwapValidating={handleSwapValidating}
+                  />
+                </div>
               </div>
             </RelayKitProvider>
             {bridgeError ? (
@@ -487,37 +490,46 @@ export default function BridgeSection({ address, onConnect }) {
             ) : null}
           </div>
 
-          <aside className="flex h-full flex-col gap-4 lg:gap-5 xl:gap-6">
-            <section className="flex flex-1 flex-col rounded-3xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:p-6">
+          <aside className="flex h-full flex-col gap-4 md:self-stretch lg:gap-5 xl:gap-6">
+            <section className="flex flex-1 flex-col rounded-3xl border border-slate-800/80 bg-slate-900/60 px-5 py-6 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:px-6 lg:py-7">
               <h3 className="font-display text-xl font-semibold text-slate-100">How it works</h3>
-              <ol className="mt-4 space-y-3">
+              <ol className="mt-4 space-y-4">
                 {HOW_IT_WORKS_STEPS.map((step, index) => (
-                  <li key={step} className="flex items-center gap-3 text-sm text-slate-200/95">
-                    <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-sky-300/30 bg-sky-400/10 text-xs font-semibold text-sky-200">
+                  <li key={step} className="flex items-center gap-3 text-sm leading-relaxed text-slate-200/95">
+                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/25 bg-sky-400/5 text-[11px] font-semibold text-sky-200/80">
                       {index + 1}
                     </span>
                     <span>{step}</span>
                   </li>
                 ))}
               </ol>
-              <p className="mt-auto pt-5 text-xs text-slate-300/80">
-                Start with a small test transfer if it's your first time.
-              </p>
+              <div className="mt-auto flex flex-col gap-1 pt-6 text-xs text-slate-300/80 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <p>Start with a small test transfer if it's your first time.</p>
+                <a
+                  href={DOCS_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] font-medium text-slate-400/80 underline-offset-2 transition hover:text-slate-200 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:shrink-0"
+                >
+                  Learn more in Docs
+                </a>
+              </div>
             </section>
 
-            <section className="rounded-3xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:p-6">
+            <section className="rounded-3xl border border-slate-800/80 bg-slate-900/60 px-5 pt-6 pb-8 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:px-6 lg:pt-7 lg:pb-9">
               <h3 className="font-display text-lg font-semibold text-slate-100">Support</h3>
+              <p className="mt-3 text-xs text-slate-300/80">
+                Share your wallet address and transaction hash.
+              </p>
               <a
                 href={DISCORD_SUPPORT_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-sky-400/50 bg-sky-500/85 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
+                className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-sky-400/40 bg-sky-500/70 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-sky-500/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:w-auto sm:self-start sm:px-4"
               >
-                Open Discord support
+                <span>Open Discord support</span>
               </a>
-              <p className="mt-3 text-xs text-slate-300/80">
-                Share your wallet address and transaction hash.
-              </p>
+              <p className="mt-2 text-[11px] text-slate-400/80">#need-help</p>
             </section>
           </aside>
         </div>
@@ -525,3 +537,4 @@ export default function BridgeSection({ address, onConnect }) {
     </section>
   );
 }
+
