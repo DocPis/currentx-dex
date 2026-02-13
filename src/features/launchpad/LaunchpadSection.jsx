@@ -1459,7 +1459,6 @@ export default function LaunchpadSection({ address, onConnect }) {
         );
       }
       const initialBuyMinOutRaw = parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out");
-      const initialBuyMinOutFinal = txValue > 0n && initialBuyMinOutRaw === "0" ? "1" : initialBuyMinOutRaw;
       const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
       if (vaultPercentageNum > 0 && isAddress(contracts.vault)) {
         const vaultContract = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
@@ -1549,7 +1548,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         },
         initialBuyConfig: {
           pairedTokenPoolFee: Number(pairedTokenPoolFee),
-          pairedTokenSwapAmountOutMinimum: BigInt(initialBuyMinOutFinal),
+          pairedTokenSwapAmountOutMinimum: BigInt(initialBuyMinOutRaw),
         },
         rewardsConfig: {
           creatorReward: BigInt(creatorRewardRaw),
