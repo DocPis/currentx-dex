@@ -34,6 +34,9 @@ export const WUSDC_ADDRESS = active.addresses.WUSDC_ADDRESS;
 export const MASTER_CHEF_ADDRESS = active.addresses.MASTER_CHEF_ADDRESS;
 export const CRX_WETH_LP_ADDRESS = active.addresses.CRX_WETH_LP_ADDRESS;
 export const V3_STAKER_ADDRESS = active.addresses.V3_STAKER_ADDRESS;
+export const CURRENTX_ADDRESS = active.addresses.CURRENTX_ADDRESS;
+export const CURRENTX_VAULT_ADDRESS = active.addresses.CURRENTX_VAULT_ADDRESS;
+export const LP_LOCKER_V2_ADDRESS = active.addresses.LP_LOCKER_V2_ADDRESS;
 
 // Infra: high-precision timestamp oracle (microsecond)
 export const HIGH_PRECISION_TIMESTAMP_ORACLE_ADDRESS =

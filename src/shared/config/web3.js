@@ -1,8 +1,11 @@
 // src/config/web3.js
 import { BrowserProvider, Contract, JsonRpcProvider } from "ethers";
 import {
+  CURRENTX_ABI,
+  CURRENTX_VAULT_ABI,
   ERC20_ABI,
   HIGH_PRECISION_TIMESTAMP_ORACLE_ABI,
+  LP_LOCKER_V2_ABI,
   MASTER_CHEF_ABI,
   PERMIT2_ABI,
   UNIV2_FACTORY_ABI,
@@ -129,8 +132,11 @@ export { getRegisteredCustomTokens, setRegisteredCustomTokens } from "./customTo
 
 // Re-export ABIs for convenience across the app
 export {
+  CURRENTX_ABI,
+  CURRENTX_VAULT_ABI,
   ERC20_ABI,
   HIGH_PRECISION_TIMESTAMP_ORACLE_ABI,
+  LP_LOCKER_V2_ABI,
   MASTER_CHEF_ABI,
   PERMIT2_ABI,
   UNIV2_FACTORY_ABI,

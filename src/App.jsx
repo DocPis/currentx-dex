@@ -14,6 +14,7 @@ const TAB_ROUTES = {
   points: "/points",
   swap: "/swap",
   liquidity: "/liquidity",
+  launchpad: "/launchpad",
   pools: "/pools",
   farms: "/farms",
   megavault: "/megavault",
@@ -24,6 +25,7 @@ const SECTION_LOADERS = {
   points: () => import("./features/points/PointsPage"),
   swap: () => import("./features/swap/SwapSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
+  launchpad: () => import("./features/launchpad/LaunchpadSection"),
   pools: () => import("./features/pools/PoolsSection"),
   farms: () => import("./features/farms/Farms"),
   megavault: () => import("./features/megavault/MegaVaultSection"),
@@ -33,6 +35,7 @@ const Dashboard = React.lazy(SECTION_LOADERS.dashboard);
 const PointsPage = React.lazy(SECTION_LOADERS.points);
 const SwapSection = React.lazy(SECTION_LOADERS.swap);
 const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
+const LaunchpadSection = React.lazy(SECTION_LOADERS.launchpad);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
 const Farms = React.lazy(SECTION_LOADERS.farms);
 const MegaVaultSection = React.lazy(SECTION_LOADERS.megavault);
@@ -399,6 +402,12 @@ export default function App() {
               showV3={true}
               poolSelection={poolSelection}
               onBalancesRefresh={refresh}
+            />
+          )}
+          {tab === "launchpad" && (
+            <LaunchpadSection
+              address={address}
+              onConnect={handleConnect}
             />
           )}
           {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
