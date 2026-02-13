@@ -96,11 +96,24 @@ const computeTickFromMarketCapEth = ({ marketCapEth, tokenSupplyRaw, tickSpacing
 const REWARD_TYPES = ["both", "currentx", "paired"];
 const REWARD_TYPE_OPTIONS = [
   { value: "paired", label: "WETH" },
-  { value: "currentx", label: "CurrentX" },
+  { value: "currentx", label: "your token" },
   { value: "both", label: "Both" },
 ];
 const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
 const VAULT_DAY_PRESETS = ["7", "30", "90", "180"];
+const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
+const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
+const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const DEFAULT_PROTOCOL_REWARD_RECIPIENT = String(
+  ENV.VITE_PROTOCOL_REWARD_RECIPIENT ||
+    ENV.VITE_TEAM_REWARD_RECIPIENT ||
+    PROTOCOL_WALLET_ADDRESS ||
+    CURRENTX_ADDRESS ||
+    ""
+).trim();
+const DEFAULT_PROTOCOL_REWARD_ADMIN = String(
+  ENV.VITE_PROTOCOL_REWARD_ADMIN || DEFAULT_PROTOCOL_REWARD_RECIPIENT
+).trim();
 
 const toBytes32Salt = (value, walletAddress) => {
   const raw = String(value ?? "").trim();
@@ -286,6 +299,8 @@ const defaultDeployForm = () => ({
   interfaceAdmin: "",
   interfaceRewardRecipient: "",
   txValueEth: "0",
+  useCustomCreatorBuyRecipient: false,
+  creatorBuyRecipient: "",
   useCustomTeamRewardRecipient: false,
   teamRewardRecipient: "",
 });
@@ -345,9 +360,7 @@ export default function LaunchpadSection({ address, onConnect }) {
     rewards: false,
     vault: false,
     buy: false,
-    advanced: false,
   });
-  const [rewardEditor, setRewardEditor] = useState("creator");
 
   const tokenMetaCache = useRef({});
 
@@ -526,16 +539,24 @@ export default function LaunchpadSection({ address, onConnect }) {
 
   useEffect(() => {
     if (!address) return;
+    const protocolRewardRecipient = isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)
+      ? DEFAULT_PROTOCOL_REWARD_RECIPIENT
+      : isAddress(contracts.currentx)
+        ? contracts.currentx
+        : address;
+    const protocolRewardAdmin = isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN)
+      ? DEFAULT_PROTOCOL_REWARD_ADMIN
+      : protocolRewardRecipient;
     setDeployForm((prev) => ({
       ...prev,
       creatorAdmin: prev.creatorAdmin || address,
       creatorRewardRecipient: prev.creatorRewardRecipient || address,
-      interfaceAdmin: prev.interfaceAdmin || address,
-      interfaceRewardRecipient: prev.interfaceRewardRecipient || address,
-      teamRewardRecipient: prev.teamRewardRecipient || address,
+      interfaceAdmin: prev.interfaceAdmin || protocolRewardAdmin,
+      interfaceRewardRecipient: prev.interfaceRewardRecipient || protocolRewardRecipient,
+      teamRewardRecipient: prev.teamRewardRecipient || protocolRewardRecipient,
     }));
     setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address, withdrawTo: prev.withdrawTo || address }));
-  }, [address]);
+  }, [address, contracts.currentx]);
 
   useEffect(() => {
     refreshProtocol();
@@ -589,9 +610,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       const creatorRewardType = REWARD_TYPES.includes(deployForm.creatorRewardType)
         ? deployForm.creatorRewardType
         : "paired";
-      const interfaceRewardType = REWARD_TYPES.includes(deployForm.interfaceRewardType)
-        ? deployForm.interfaceRewardType
-        : "paired";
+      const interfaceRewardType = "paired";
       const pairedToken = isAddress(deployForm.pairedToken)
         ? deployForm.pairedToken
         : isAddress(protocol.weth)
@@ -603,13 +622,22 @@ export default function LaunchpadSection({ address, onConnect }) {
       const creatorRewardRecipient = isAddress(deployForm.creatorRewardRecipient)
         ? deployForm.creatorRewardRecipient
         : address;
-      const interfaceAdmin = isAddress(deployForm.interfaceAdmin) ? deployForm.interfaceAdmin : address;
-      const interfaceRewardRecipient = isAddress(deployForm.interfaceRewardRecipient)
-        ? deployForm.interfaceRewardRecipient
+      const protocolRewardRecipient = isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)
+        ? DEFAULT_PROTOCOL_REWARD_RECIPIENT
+        : isAddress(contracts.currentx)
+          ? contracts.currentx
+          : "";
+      const protocolRewardAdmin = isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN)
+        ? DEFAULT_PROTOCOL_REWARD_ADMIN
+        : protocolRewardRecipient;
+      const interfaceAdmin = protocolRewardAdmin;
+      const interfaceRewardRecipient = protocolRewardRecipient;
+      const creatorBuyRecipient = deployForm.useCustomCreatorBuyRecipient
+        ? String(deployForm.creatorBuyRecipient || "").trim()
         : address;
       const teamRewardRecipient = isAddress(deployForm.teamRewardRecipient)
         ? deployForm.teamRewardRecipient
-        : address;
+        : protocolRewardRecipient;
       const vaultPercentageRaw = parseUint(deployForm.vaultPercentage, "Vault percentage");
       const vaultPercentageNum = Number(vaultPercentageRaw);
       const lockupDays = Number(parseUint(deployForm.lockupDays, "Lockup period (days)"));
@@ -624,8 +652,14 @@ export default function LaunchpadSection({ address, onConnect }) {
       if (!isAddress(pairedToken)) throw new Error("Paired token is invalid.");
       if (!isAddress(creatorAdmin)) throw new Error("Creator admin is invalid.");
       if (!isAddress(creatorRewardRecipient)) throw new Error("Creator reward recipient is invalid.");
+      if (!isAddress(protocolRewardRecipient)) {
+        throw new Error("Protocol reward recipient is invalid. Configure VITE_PROTOCOL_REWARD_RECIPIENT.");
+      }
       if (!isAddress(interfaceAdmin)) throw new Error("Interface admin is invalid.");
       if (!isAddress(interfaceRewardRecipient)) throw new Error("Interface reward recipient is invalid.");
+      if (deployForm.useCustomCreatorBuyRecipient && !isAddress(creatorBuyRecipient)) {
+        throw new Error("Creator buy recipient is invalid.");
+      }
       if (deployForm.useCustomTeamRewardRecipient && !isAddress(teamRewardRecipient)) {
         throw new Error("Team reward recipient is invalid.");
       }
@@ -637,6 +671,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       let tokenSupply = protocol.tokenSupply;
       let tickSpacingRaw = protocol.tickSpacing;
       let maxCreatorReward = protocol.maxCreatorReward;
+      let maxVaultPercentage = protocol.maxVaultPercentage;
       let poolFeeFromProtocol = protocol.poolFee;
 
       if (!tokenSupply) {
@@ -658,6 +693,13 @@ export default function LaunchpadSection({ address, onConnect }) {
           maxCreatorReward = await currentx.MAX_CREATOR_REWARD();
         } catch {
           maxCreatorReward = null;
+        }
+      }
+      if (maxVaultPercentage == null) {
+        try {
+          maxVaultPercentage = await currentx.MAX_VAULT_PERCENTAGE();
+        } catch {
+          maxVaultPercentage = null;
         }
       }
       if (poolFeeFromProtocol == null) {
@@ -682,11 +724,20 @@ export default function LaunchpadSection({ address, onConnect }) {
         creatorRewardInput === "0" && maxCreatorReward
           ? String(maxCreatorReward)
           : creatorRewardInput;
-      const interfaceRewardRaw = parseUint(deployForm.interfaceRewardRaw, "Interface reward");
+      const interfaceRewardRaw = "0";
+      if (maxCreatorReward != null && BigInt(creatorRewardRaw) > BigInt(maxCreatorReward)) {
+        throw new Error(`Creator reward exceeds MAX_CREATOR_REWARD (${String(maxCreatorReward)}).`);
+      }
+      if (maxVaultPercentage != null && BigInt(vaultPercentageRaw) > BigInt(maxVaultPercentage)) {
+        throw new Error(`Vault percentage exceeds MAX_VAULT_PERCENTAGE (${String(maxVaultPercentage)}).`);
+      }
       const pairedTokenPoolFee = parseUint(
         poolFeeFromProtocol != null ? String(poolFeeFromProtocol) : "3000",
         "Paired token pool fee"
       );
+      const txValue = parseEthAmount(deployForm.txValueEth);
+      const initialBuyMinOutRaw = parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out");
+      const initialBuyMinOutFinal = txValue > 0n && initialBuyMinOutRaw === "0" ? "1" : initialBuyMinOutRaw;
       const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
 
       const metadataPayload = {};
@@ -736,6 +787,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         },
         creatorBuy: {
           ethAmount: String(deployForm.txValueEth || "0"),
+          recipient: creatorBuyRecipient,
         },
       };
       if (deployForm.useCustomTeamRewardRecipient) {
@@ -765,7 +817,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         },
         initialBuyConfig: {
           pairedTokenPoolFee: Number(pairedTokenPoolFee),
-          pairedTokenSwapAmountOutMinimum: BigInt(parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out")),
+          pairedTokenSwapAmountOutMinimum: BigInt(initialBuyMinOutFinal),
         },
         rewardsConfig: {
           creatorReward: BigInt(creatorRewardRaw),
@@ -776,8 +828,17 @@ export default function LaunchpadSection({ address, onConnect }) {
         },
       };
 
-      const txValue = parseEthAmount(deployForm.txValueEth);
       const overrides = txValue > 0n ? { value: txValue } : {};
+      if (deployForm.useCustomTeamRewardRecipient) {
+        await currentx.deployTokenWithCustomTeamRewardRecipient.staticCall(
+          deploymentConfig,
+          teamRewardRecipient,
+          overrides
+        );
+      } else {
+        await currentx.deployToken.staticCall(deploymentConfig, overrides);
+      }
+      setDeployAction({ loading: true, error: "", hash: "", message: "Simulation passed. Sending transaction..." });
       const tx = deployForm.useCustomTeamRewardRecipient
         ? await currentx.deployTokenWithCustomTeamRewardRecipient(
             deploymentConfig,
@@ -954,15 +1015,26 @@ export default function LaunchpadSection({ address, onConnect }) {
     if (!String(deployForm.image || "").trim()) missing.push("Image");
     return missing;
   }, [deployForm.image, deployForm.name, deployForm.symbol]);
+  const maxCreatorRewardUi = useMemo(() => {
+    if (protocol.maxCreatorReward == null) return null;
+    const value = Number(protocol.maxCreatorReward);
+    return Number.isFinite(value) ? value : null;
+  }, [protocol.maxCreatorReward]);
   const allocatedRewards = useMemo(() => {
     const creator = Number.parseFloat(String(deployForm.creatorReward || "0"));
-    const interfacer = Number.parseFloat(String(deployForm.interfaceRewardRaw || "0"));
-    const total = (Number.isFinite(creator) ? creator : 0) + (Number.isFinite(interfacer) ? interfacer : 0);
-    return total;
-  }, [deployForm.creatorReward, deployForm.interfaceRewardRaw]);
+    if (!Number.isFinite(creator)) return 0;
+    if (creator === 0 && maxCreatorRewardUi != null) return maxCreatorRewardUi;
+    return creator;
+  }, [deployForm.creatorReward, maxCreatorRewardUi]);
   const allocatedRewardsLabel = Number.isInteger(allocatedRewards)
     ? String(allocatedRewards)
     : allocatedRewards.toFixed(2);
+  const allocatedRewardsTotalLabel = maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "100";
+  const autoProtocolRecipient = useMemo(() => {
+    if (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT)) return DEFAULT_PROTOCOL_REWARD_RECIPIENT;
+    if (isAddress(contracts.currentx)) return contracts.currentx;
+    return "";
+  }, [contracts.currentx]);
   const toggleSection = useCallback((sectionKey) => {
     setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
   }, []);
@@ -973,7 +1045,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         <div>
           <h2 className="text-2xl font-semibold text-white">Launchpad</h2>
           <p className="text-sm text-slate-400">
-            Deploy token + V3 setup through CurrentX, then manage CurrentxVault and LpLockerv2.
+            Deploy token + V3 setup through CurrentX, then manage CurrentxVault and LpLockerv2 with optional extensions.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -1028,7 +1100,7 @@ export default function LaunchpadSection({ address, onConnect }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="text-lg font-semibold">Create Token</div>
-              <div className="text-xs text-slate-400">Simple launch flow with optional advanced settings.</div>
+              <div className="text-xs text-slate-400">Simple launch flow with optional extensions.</div>
             </div>
             {protocol.loading ? <span className="text-xs text-slate-400">Preparing...</span> : null}
           </div>
@@ -1117,108 +1189,58 @@ export default function LaunchpadSection({ address, onConnect }) {
               open={openSections.rewards}
               onToggle={() => toggleSection("rewards")}
             >
-              <SelectorPills
-                value={rewardEditor}
-                onChange={setRewardEditor}
-                columns={2}
-                options={[
-                  { value: "creator", label: "Creator" },
-                  { value: "interface", label: "Interface" },
-                ]}
-              />
-
-              {rewardEditor === "creator" ? (
-                <div className="space-y-3">
-                  <AddressField
-                    label="Admin wallet"
-                    value={deployForm.creatorAdmin}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
-                  />
-                  <AddressField
-                    label="Reward wallet"
-                    value={deployForm.creatorRewardRecipient}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
-                  />
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-400">Reward token</div>
-                    <SelectorPills
-                      value={deployForm.creatorRewardType}
-                      onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
-                      options={REWARD_TYPE_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-400">Reward share</div>
-                    <div className="relative">
-                      <input
-                        value={deployForm.creatorReward}
-                        onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
-                        placeholder="100"
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <AddressField
-                    label="Admin wallet"
-                    value={deployForm.interfaceAdmin}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceAdmin: value }))}
-                  />
-                  <AddressField
-                    label="Reward wallet"
-                    value={deployForm.interfaceRewardRecipient}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceRewardRecipient: value }))}
-                  />
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-400">Reward token</div>
-                    <SelectorPills
-                      value={deployForm.interfaceRewardType}
-                      onChange={(value) => setDeployForm((prev) => ({ ...prev, interfaceRewardType: value }))}
-                      options={REWARD_TYPE_OPTIONS}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-400">Reward share</div>
-                    <div className="relative">
-                      <input
-                        value={deployForm.interfaceRewardRaw}
-                        onChange={(e) => setDeployForm((prev) => ({ ...prev, interfaceRewardRaw: e.target.value }))}
-                        placeholder="0"
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 space-y-2">
-                <div className="text-xs text-slate-400">Team wallet</div>
-                <SelectorPills
-                  value={deployForm.useCustomTeamRewardRecipient ? "custom" : "default"}
-                  onChange={(value) =>
-                    setDeployForm((prev) => ({ ...prev, useCustomTeamRewardRecipient: value === "custom" }))
-                  }
-                  columns={2}
-                  options={[
-                    { value: "default", label: "Default wallet" },
-                    { value: "custom", label: "Custom wallet" },
-                  ]}
+              <div className="space-y-3">
+                <AddressField
+                  label="Admin Address"
+                  value={deployForm.creatorAdmin}
+                  onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
                 />
-                {deployForm.useCustomTeamRewardRecipient ? (
-                  <AddressField
-                    label="Team wallet address"
-                    value={deployForm.teamRewardRecipient}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, teamRewardRecipient: value }))}
-                    required
+                <AddressField
+                  label="Reward Recipient Address"
+                  value={deployForm.creatorRewardRecipient}
+                  onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
+                />
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-400">Reward Token</div>
+                  <SelectorPills
+                    value={deployForm.creatorRewardType}
+                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
+                    options={REWARD_TYPE_OPTIONS}
                   />
-                ) : null}
+                </div>
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-400">Reward Percentage</div>
+                  <div className="relative">
+                    <input
+                      value={deployForm.creatorReward}
+                      onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
+                      placeholder={maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "80"}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-8 text-sm"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDeployForm((prev) => ({
+                      ...prev,
+                      creatorAdmin: prev.creatorAdmin || address || "",
+                      creatorRewardRecipient: prev.creatorRewardRecipient || address || "",
+                    }))
+                  }
+                  className="w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-100 hover:border-slate-500"
+                >
+                  Add Reward Recipient
+                </button>
+                <div className="text-sm font-semibold text-emerald-300">
+                  Allocated Rewards: {allocatedRewardsLabel}/{allocatedRewardsTotalLabel}%
+                </div>
+                <div className="text-xs text-slate-400">
+                  Interface reward is managed automatically by protocol recipient:{" "}
+                  <span className="font-mono text-slate-300">{autoProtocolRecipient ? shorten(autoProtocolRecipient) : "--"}</span>
+                </div>
               </div>
-
-              <div className="text-sm font-semibold text-emerald-300">Total rewards allocated: {allocatedRewardsLabel}/100%</div>
             </CollapsibleSection>
 
             <CollapsibleSection
@@ -1294,52 +1316,62 @@ export default function LaunchpadSection({ address, onConnect }) {
               open={openSections.buy}
               onToggle={() => toggleSection("buy")}
             >
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  value={deployForm.txValueEth}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
-                  placeholder="ETH amount for creator buy"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-                />
-                <input
-                  value={deployForm.pairedTokenSwapAmountOutMinimum}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, pairedTokenSwapAmountOutMinimum: e.target.value }))}
-                  placeholder="Initial buy minimum out (raw)"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-                />
-              </div>
-            </CollapsibleSection>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <div className="text-xs text-slate-400">ETH Amount for Creator Buy</div>
+                  <div className="relative">
+                    <input
+                      value={deployForm.txValueEth}
+                      onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
+                      placeholder="0.5"
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 pr-14 text-sm"
+                    />
+                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-300">
+                      ETH
+                    </span>
+                  </div>
+                </div>
 
-            <CollapsibleSection
-              title="Advanced (optional)"
-              open={openSections.advanced}
-              onToggle={() => toggleSection("advanced")}
-            >
-              <div className="grid gap-3 md:grid-cols-2">
-                <input
-                  value={deployForm.salt}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, salt: e.target.value }))}
-                  placeholder="Salt"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                <SelectorPills
+                  value={
+                    CREATOR_BUY_ETH_PRESETS.includes(String(deployForm.txValueEth))
+                      ? String(deployForm.txValueEth)
+                      : ""
+                  }
+                  onChange={(value) => setDeployForm((prev) => ({ ...prev, txValueEth: value }))}
+                  options={CREATOR_BUY_ETH_PRESETS.map((value) => ({ value, label: `${value} ETH` }))}
                 />
-                <input
-                  value={deployForm.originatingChainId}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, originatingChainId: e.target.value }))}
-                  placeholder="Originating chain id"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-                />
-                <input
-                  value={deployForm.metadata}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, metadata: e.target.value }))}
-                  placeholder="Metadata override (URI/JSON)"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-                />
-                <input
-                  value={deployForm.context}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, context: e.target.value }))}
-                  placeholder="Context override (JSON/string)"
-                  className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-                />
+
+                <div className="border-t border-slate-800 pt-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-slate-100">Token Recipient</div>
+                    <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={deployForm.useCustomCreatorBuyRecipient}
+                        onChange={(e) =>
+                          setDeployForm((prev) => ({ ...prev, useCustomCreatorBuyRecipient: e.target.checked }))
+                        }
+                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-emerald-500 focus:ring-emerald-500/40"
+                      />
+                      <span>Use custom recipient</span>
+                    </label>
+                  </div>
+
+                  {deployForm.useCustomCreatorBuyRecipient ? (
+                    <AddressField
+                      label="Recipient wallet"
+                      value={deployForm.creatorBuyRecipient}
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
+                      required
+                    />
+                  ) : (
+                    <div className="rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
+                      Tokens will be sent to your wallet:{" "}
+                      <span className="font-mono text-slate-100">{address ? shorten(address) : "Connect wallet"}</span>
+                    </div>
+                  )}
+                </div>
               </div>
             </CollapsibleSection>
 
@@ -1356,9 +1388,21 @@ export default function LaunchpadSection({ address, onConnect }) {
                     ...defaultDeployForm(),
                     creatorAdmin: address || prev.creatorAdmin || "",
                     creatorRewardRecipient: address || prev.creatorRewardRecipient || "",
-                    interfaceAdmin: address || prev.interfaceAdmin || "",
-                    interfaceRewardRecipient: address || prev.interfaceRewardRecipient || "",
-                    teamRewardRecipient: address || prev.teamRewardRecipient || "",
+                    interfaceAdmin:
+                      (isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN) && DEFAULT_PROTOCOL_REWARD_ADMIN) ||
+                      contracts.currentx ||
+                      prev.interfaceAdmin ||
+                      "",
+                    interfaceRewardRecipient:
+                      (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
+                      contracts.currentx ||
+                      prev.interfaceRewardRecipient ||
+                      "",
+                    teamRewardRecipient:
+                      (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
+                      contracts.currentx ||
+                      prev.teamRewardRecipient ||
+                      "",
                   }))
                 }
                 className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs"
