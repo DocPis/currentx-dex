@@ -21,6 +21,13 @@ import {
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const DAY = 86400;
+const FIXED_STARTING_MARKET_CAP_ETH = "10";
+const MAX_IMAGE_UPLOAD_BYTES = 1024 * 1024;
+const MAX_IMAGE_UPLOAD_LABEL = "1 MB";
+const launchpadUiMemory = {
+  summaryAdvanced: false,
+  formAdvanced: false,
+};
 const defaultChainId = (() => {
   const parsed = Number.parseInt(String(MEGAETH_CHAIN_ID_HEX || "0x10e6"), 16);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 4326;
@@ -48,6 +55,14 @@ const parsePositiveDecimal = (value, field) => {
   const out = Number(raw);
   if (!Number.isFinite(out) || out <= 0) throw new Error(`${field} must be greater than 0.`);
   return out;
+};
+
+const getMissingBasicFields = (form) => {
+  const missing = [];
+  if (!String(form?.name || "").trim()) missing.push("Name");
+  if (!String(form?.symbol || "").trim()) missing.push("Symbol");
+  if (!String(form?.image || "").trim()) missing.push("Image");
+  return missing;
 };
 
 const parseTokenAmount = (value, decimals, label) => {
@@ -83,8 +98,11 @@ const parseTokenImageValue = (value) => {
   }
 
   if (/^data:image\/png;base64,/iu.test(raw)) {
-    if (raw.length > 350_000) {
-      throw new Error("Uploaded PNG is too large. Use a smaller image or a URL.");
+    const payload = String(raw.split(",")[1] || "").trim();
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    const byteLength = payload ? Math.floor((payload.length * 3) / 4) - padding : 0;
+    if (byteLength > MAX_IMAGE_UPLOAD_BYTES) {
+      throw new Error(`Uploaded PNG is too large. Max size is ${MAX_IMAGE_UPLOAD_LABEL}.`);
     }
     return raw;
   }
@@ -106,6 +124,34 @@ const extractPngBase64FromDataUrl = (value) => {
   const payload = String(raw.split(",")[1] || "").trim();
   if (!payload) return "";
   return payload;
+};
+
+const base64ToBytes = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return new Uint8Array();
+  if (typeof atob !== "function") {
+    throw new Error("Browser base64 decoder is unavailable.");
+  }
+  const binary = atob(raw);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    out[i] = binary.charCodeAt(i);
+  }
+  return out;
+};
+
+const bytesToBase64 = (bytes) => {
+  if (!(bytes instanceof Uint8Array) || !bytes.length) return "";
+  if (typeof btoa !== "function") {
+    throw new Error("Browser base64 encoder is unavailable.");
+  }
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 };
 
 const clampInt24 = (value) => Math.max(-8388608, Math.min(8388607, value));
@@ -218,6 +264,27 @@ const errMsg = (error, fallback) => {
   return raw || fallback || "Transaction failed.";
 };
 
+const trimTrailingZeros = (value) =>
+  String(value || "")
+    .replace(/(\.\d*?[1-9])0+$/u, "$1")
+    .replace(/\.0+$/u, "");
+
+const formatEthPerToken = (value) => {
+  if (!Number.isFinite(value) || value <= 0) return "--";
+  if (value < 0.000000000001) return "~ < 0.000000000001 ETH/token";
+  const out = value.toLocaleString(undefined, {
+    useGrouping: false,
+    maximumFractionDigits: 12,
+  });
+  return `~ ${out} ETH/token`;
+};
+
+const formatEthPerTokenPrecise = (value) => {
+  if (!Number.isFinite(value) || value <= 0) return "--";
+  if (value < 0.000000000000000001) return "0.000000000000000001";
+  return trimTrailingZeros(value.toFixed(18));
+};
+
 const buildTokenMap = () => {
   const out = {};
   Object.values(TOKENS || {}).forEach((token) => {
@@ -310,6 +377,105 @@ function ChevronIcon({ open }) {
   );
 }
 
+function LockIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M6 9V7a4 4 0 118 0v2" />
+      <rect x="4.5" y="9" width="11" height="8" rx="2" />
+    </svg>
+  );
+}
+
+function CopyIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect x="7" y="7" width="9" height="10" rx="2" />
+      <path d="M5 13H4a2 2 0 01-2-2V4a2 2 0 012-2h7a2 2 0 012 2v1" />
+    </svg>
+  );
+}
+
+function SectionEnableToggle({ enabled, onToggle }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={enabled}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle(!enabled);
+      }}
+      className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
+        enabled
+          ? "border-emerald-300/55 bg-emerald-500/15 text-emerald-100"
+          : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-500 hover:text-slate-100"
+      }`}
+      title={enabled ? "Extension enabled" : "Extension disabled"}
+    >
+      <span>Enable</span>
+      <span
+        className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+          enabled ? "bg-emerald-500/20 text-emerald-100" : "bg-slate-800/80 text-slate-300"
+        }`}
+      >
+        {enabled ? "ON" : "OFF"}
+      </span>
+    </button>
+  );
+}
+
+function AddressPreviewRow({ label, value, copyKey, copiedKey, onCopy }) {
+  const normalized = String(value || "").trim();
+  const valid = isAddress(normalized);
+  const canView = Boolean(valid && EXPLORER_BASE_URL);
+  const display = valid ? shorten(normalized) : normalized || "--";
+
+  return (
+    <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] uppercase tracking-wide text-slate-400/85">{label}</span>
+        <span className="inline-flex items-center gap-1">
+          {valid ? (
+            <button
+              type="button"
+              title={copiedKey === copyKey ? "Copied" : "Copy address"}
+              onClick={() => onCopy(copyKey, normalized)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-300/80 transition hover:bg-slate-800/70 hover:text-slate-100"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+              <span className="sr-only">Copy address</span>
+            </button>
+          ) : null}
+          {canView ? (
+            <a
+              href={`${EXPLORER_BASE_URL}/address/${normalized}`}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-md border border-slate-600/70 px-2 py-0.5 text-[11px] font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100"
+            >
+              View
+            </a>
+          ) : null}
+        </span>
+      </div>
+      <div className={`mt-1 font-mono text-sm ${valid ? "text-slate-100" : "text-slate-300/75"}`}>{display}</div>
+    </div>
+  );
+}
+
 function SelectorPills({ value, onChange, options, columns = 3 }) {
   const gridCols = columns === 2 ? "sm:grid-cols-2" : columns === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3";
   return (
@@ -335,7 +501,22 @@ function SelectorPills({ value, onChange, options, columns = 3 }) {
   );
 }
 
-function CollapsibleSection({ title, open, onToggle, children }) {
+function CollapsibleSection({
+  title,
+  open,
+  onToggle,
+  statusLabel = "",
+  statusSummary = "",
+  statusTone = "neutral",
+  headerAction = null,
+  children,
+}) {
+  const statusToneClass =
+    statusTone === "good"
+      ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-100"
+      : statusTone === "warn"
+        ? "border-amber-400/50 bg-amber-500/15 text-amber-100"
+        : "border-slate-600/70 bg-slate-900/70 text-slate-300";
   return (
     <div className="border-t border-slate-700/55 pt-4">
       <button
@@ -347,7 +528,16 @@ function CollapsibleSection({ title, open, onToggle, children }) {
           {title}
           <InfoDot />
         </span>
-        <ChevronIcon open={open} />
+        <span className="inline-flex items-center gap-2">
+          {headerAction ? <span onClick={(event) => event.stopPropagation()}>{headerAction}</span> : null}
+          {statusSummary ? <span className="text-xs text-slate-300/75">{statusSummary}</span> : null}
+          {statusLabel ? (
+            <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusToneClass}`}>
+              {statusLabel}
+            </span>
+          ) : null}
+          <ChevronIcon open={open} />
+        </span>
       </button>
       {open ? <div className="mt-4 space-y-3">{children}</div> : null}
     </div>
@@ -446,8 +636,29 @@ export default function LaunchpadSection({ address, onConnect }) {
     vault: false,
     buy: false,
   });
+  const [rewardExtensionEnabled, setRewardExtensionEnabled] = useState(false);
+  const [rewardAddressEditing, setRewardAddressEditing] = useState(false);
+  const [imageMode, setImageMode] = useState("upload");
+  const [deployAttempted, setDeployAttempted] = useState(false);
+  const [highlightedField, setHighlightedField] = useState("");
+  const [cidCopied, setCidCopied] = useState(false);
+  const [copiedSummaryKey, setCopiedSummaryKey] = useState("");
+  const [summaryAdvancedOpen, setSummaryAdvancedOpen] = useState(() => launchpadUiMemory.summaryAdvanced);
+  const [formAdvancedOpen, setFormAdvancedOpen] = useState(() => launchpadUiMemory.formAdvanced);
 
   const tokenMetaCache = useRef({});
+  const basicSectionRef = useRef(null);
+  const metadataSectionRef = useRef(null);
+  const rewardsSectionRef = useRef(null);
+  const vaultSectionRef = useRef(null);
+  const creatorBuySectionRef = useRef(null);
+  const nameInputRef = useRef(null);
+  const symbolInputRef = useRef(null);
+  const imageInputRef = useRef(null);
+  const imageSectionRef = useRef(null);
+  const highlightTimerRef = useRef(null);
+  const cidCopiedTimerRef = useRef(null);
+  const summaryCopyTimerRef = useRef(null);
 
   const resolveTokenMeta = useCallback(async (tokenAddress, providerOverride) => {
     if (!isAddress(tokenAddress)) return null;
@@ -663,44 +874,110 @@ export default function LaunchpadSection({ address, onConnect }) {
     }
   }, [deployForm.pairedToken, protocol.weth]);
 
-  const uploadPngBase64ToIpfs = useCallback(async ({ dataBase64, fileName }) => {
+  const uploadPngToIpfs = useCallback(async ({ dataBase64, fileName, fileBytes }) => {
     try {
-      const uploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: fileName || "token-image.png",
-          contentType: "image/png",
-          dataBase64,
-        }),
-      });
-      const rawText = await uploadRes.text().catch(() => "");
-      let uploadJson = {};
-      try {
-        uploadJson = rawText ? JSON.parse(rawText) : {};
-      } catch {
-        uploadJson = {};
+      const hasRawFile = fileBytes instanceof Uint8Array && fileBytes.length > 0;
+      const parseUploadResponse = async (uploadRes) => {
+        const rawText = await uploadRes.text().catch(() => "");
+        let uploadJson = {};
+        try {
+          uploadJson = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          uploadJson = {};
+        }
+        const detailParts = [
+          uploadJson?.error,
+          uploadJson?.message,
+          uploadJson?.hint,
+          uploadJson?.upstream ? `upstream: ${uploadJson.upstream}` : "",
+          Object.keys(uploadJson).length ? "" : rawText,
+        ]
+          .map((item) => String(item || "").trim())
+          .filter(Boolean);
+        const detail = Array.from(new Set(detailParts)).join(" | ");
+        if (!uploadRes.ok) {
+          return {
+            ok: false,
+            status: uploadRes.status,
+            detail,
+          };
+        }
+        const imageValue = String(uploadJson?.ipfsUri || uploadJson?.gatewayUrl || "").trim();
+        if (!imageValue) {
+          throw new Error("IPFS upload returned an empty image URI.");
+        }
+        return {
+          ok: true,
+          status: uploadRes.status,
+          detail,
+          imageValue,
+          cid: String(uploadJson?.cid || ""),
+        };
+      };
+
+      const sendJsonUpload = async (base64Payload) =>
+        fetch(IPFS_UPLOAD_ENDPOINT, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: fileName || "token-image.png",
+            contentType: "image/png",
+            dataBase64: base64Payload,
+          }),
+        });
+
+      let parsedResult = null;
+      let rawFailureResult = null;
+
+      if (hasRawFile) {
+        const rawUploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "image/png",
+            "X-File-Name": String(fileName || "token-image.png"),
+          },
+          body: fileBytes,
+        });
+        parsedResult = await parseUploadResponse(rawUploadRes);
+
+        if (!parsedResult.ok) {
+          rawFailureResult = parsedResult;
+          const shouldFallbackToJson =
+            parsedResult.status === 400 || parsedResult.status === 415 || parsedResult.status >= 500;
+          if (shouldFallbackToJson) {
+            const base64Payload = bytesToBase64(fileBytes);
+            const jsonUploadRes = await sendJsonUpload(base64Payload);
+            parsedResult = await parseUploadResponse(jsonUploadRes);
+            if (!parsedResult.ok && rawFailureResult?.detail) {
+              const mergedDetail = [rawFailureResult.detail, parsedResult.detail]
+                .map((item) => String(item || "").trim())
+                .filter(Boolean)
+                .join(" | fallback: ");
+              if (mergedDetail) {
+                parsedResult = { ...parsedResult, detail: `raw: ${mergedDetail}` };
+              }
+            }
+          }
+        }
+      } else {
+        const jsonUploadRes = await sendJsonUpload(String(dataBase64 || ""));
+        parsedResult = await parseUploadResponse(jsonUploadRes);
       }
 
-      if (!uploadRes.ok) {
-        if (uploadRes.status === 404) {
+      if (!parsedResult?.ok) {
+        if (parsedResult?.status === 404) {
           throw new Error("IPFS upload endpoint not found at /api/ipfs/upload. Deploy backend API changes.");
         }
-        const detail = String(uploadJson?.error || uploadJson?.message || rawText || "").trim();
         throw new Error(
-          detail
-            ? `IPFS upload failed (${uploadRes.status}): ${detail.slice(0, 240)}`
-            : `IPFS upload failed (${uploadRes.status}).`
+          parsedResult?.detail
+            ? `IPFS upload failed (${parsedResult.status}): ${parsedResult.detail.slice(0, 320)}`
+            : `IPFS upload failed (${parsedResult?.status || "unknown"}).`
         );
       }
 
-      const imageValue = String(uploadJson?.ipfsUri || uploadJson?.gatewayUrl || "").trim();
-      if (!imageValue) {
-        throw new Error("IPFS upload returned an empty image URI.");
-      }
       return {
-        imageValue,
-        cid: String(uploadJson?.cid || ""),
+        imageValue: parsedResult.imageValue,
+        cid: parsedResult.cid,
       };
     } catch (error) {
       const message = String(error?.message || "");
@@ -719,8 +996,9 @@ export default function LaunchpadSection({ address, onConnect }) {
       setImageUploadError("");
       setImageUploadCid("");
       setImageUploading(true);
-      const result = await uploadPngBase64ToIpfs({
-        dataBase64,
+      const fileBytes = base64ToBytes(dataBase64);
+      const result = await uploadPngToIpfs({
+        fileBytes,
         fileName: `${String(deployForm.symbol || "token").toLowerCase() || "token"}.png`,
       });
       setDeployForm((prev) => ({ ...prev, image: result.imageValue }));
@@ -731,7 +1009,7 @@ export default function LaunchpadSection({ address, onConnect }) {
     } finally {
       setImageUploading(false);
     }
-  }, [deployForm.image, deployForm.symbol, imageUploading, uploadPngBase64ToIpfs]);
+  }, [deployForm.image, deployForm.symbol, imageUploading, uploadPngToIpfs]);
 
   const handleImageFileChange = async (event) => {
     const file = event?.target?.files?.[0];
@@ -746,29 +1024,19 @@ export default function LaunchpadSection({ address, onConnect }) {
       setImageUploadError("Only PNG files are supported.");
       return;
     }
-    if (file.size > 256 * 1024) {
-      setImageUploadError("PNG file is too large. Max size is 256 KB.");
+    if (file.size > MAX_IMAGE_UPLOAD_BYTES) {
+      setImageUploadError(`PNG file is too large. Max size is ${MAX_IMAGE_UPLOAD_LABEL}.`);
       return;
     }
 
     try {
-      const dataUrl = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("Unable to read PNG file."));
-        reader.readAsDataURL(file);
-      });
-      if (!/^data:image\/png;base64,/iu.test(dataUrl)) {
-        throw new Error("Only PNG files are supported.");
-      }
-      const dataBase64 = String(dataUrl.split(",")[1] || "").trim();
-      if (!dataBase64) {
-        throw new Error("Invalid PNG payload.");
-      }
+      const fileArrayBuffer = await file.arrayBuffer();
+      const fileBytes = new Uint8Array(fileArrayBuffer);
+      if (!fileBytes.length) throw new Error("Invalid PNG payload.");
 
       setImageUploading(true);
-      const result = await uploadPngBase64ToIpfs({
-        dataBase64,
+      const result = await uploadPngToIpfs({
+        fileBytes,
         fileName: file.name || "token-image.png",
       });
       setDeployForm((prev) => ({ ...prev, image: result.imageValue }));
@@ -780,8 +1048,75 @@ export default function LaunchpadSection({ address, onConnect }) {
     }
   };
 
+  const focusMissingField = useCallback((field) => {
+    setHighlightedField(field);
+    if (highlightTimerRef.current) {
+      clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = setTimeout(() => setHighlightedField(""), 1800);
+
+    const targets = {
+      Name: nameInputRef.current,
+      Symbol: symbolInputRef.current,
+      Image: imageSectionRef.current,
+    };
+    const target = targets[field];
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    if ((field === "Name" || field === "Symbol") && target && typeof target.focus === "function") {
+      target.focus({ preventScroll: true });
+    }
+    if (field === "Image" && imageMode !== "upload") {
+      setImageMode("upload");
+    }
+  }, [imageMode]);
+
+  const handleCopyCid = useCallback(async () => {
+    if (!imageUploadCid) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(imageUploadCid);
+        setCidCopied(true);
+        if (cidCopiedTimerRef.current) clearTimeout(cidCopiedTimerRef.current);
+        cidCopiedTimerRef.current = setTimeout(() => setCidCopied(false), 1200);
+      }
+    } catch {
+      setImageUploadError("Unable to copy CID. Copy it manually.");
+    }
+  }, [imageUploadCid]);
+
+  const handleCopySummaryValue = useCallback(async (key, value) => {
+    if (!value) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(String(value));
+        setCopiedSummaryKey(key);
+        if (summaryCopyTimerRef.current) clearTimeout(summaryCopyTimerRef.current);
+        summaryCopyTimerRef.current = setTimeout(() => setCopiedSummaryKey(""), 1200);
+      }
+    } catch {
+      // keep UI silent if clipboard is unavailable
+    }
+  }, []);
+
+  useEffect(() => {
+    launchpadUiMemory.summaryAdvanced = Boolean(summaryAdvancedOpen);
+  }, [summaryAdvancedOpen]);
+
+  useEffect(() => {
+    launchpadUiMemory.formAdvanced = Boolean(formAdvancedOpen);
+  }, [formAdvancedOpen]);
+
+  useEffect(() => () => {
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    if (cidCopiedTimerRef.current) clearTimeout(cidCopiedTimerRef.current);
+    if (summaryCopyTimerRef.current) clearTimeout(summaryCopyTimerRef.current);
+  }, []);
+
   const handleDeploy = async (event) => {
     event.preventDefault();
+    setDeployAttempted(true);
     if (!address) {
       if (typeof onConnect === "function") onConnect();
       return;
@@ -790,11 +1125,30 @@ export default function LaunchpadSection({ address, onConnect }) {
       setDeployAction({ loading: false, error: "CurrentX address is invalid.", hash: "", message: "" });
       return;
     }
+    if (imageUploading) {
+      setDeployAction({
+        loading: false,
+        error: "Image upload in progress. Wait for IPFS upload to finish.",
+        hash: "",
+        message: "",
+      });
+      return;
+    }
+    const missing = getMissingBasicFields(deployForm);
+    if (missing.length) {
+      focusMissingField(missing[0]);
+      setDeployAction({
+        loading: false,
+        error: `Complete required fields before deploy: ${missing.join(", ")}.`,
+        hash: "",
+        message: "",
+      });
+      return;
+    }
 
     try {
       setDeployAction({ loading: true, error: "", hash: "", message: "Submitting deployment..." });
       setDeployResult(null);
-      if (imageUploading) throw new Error("Image upload in progress. Wait for IPFS upload to finish.");
 
       const name = String(deployForm.name || "").trim();
       const symbol = String(deployForm.symbol || "").trim();
@@ -802,8 +1156,9 @@ export default function LaunchpadSection({ address, onConnect }) {
       const legacyBase64 = extractPngBase64FromDataUrl(imageInput);
       if (legacyBase64) {
         setDeployAction({ loading: true, error: "", hash: "", message: "Converting legacy PNG to IPFS..." });
-        const migrated = await uploadPngBase64ToIpfs({
-          dataBase64: legacyBase64,
+        const legacyBytes = base64ToBytes(legacyBase64);
+        const migrated = await uploadPngToIpfs({
+          fileBytes: legacyBytes,
           fileName: `${String(symbol || "token").toLowerCase() || "token"}.png`,
         });
         imageInput = migrated.imageValue;
@@ -851,7 +1206,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       }
       if (!name) throw new Error("Token name is required.");
       if (!symbol) throw new Error("Token symbol is required.");
-      if (!image) throw new Error("Token image is required.");
+      if (!image) throw new Error(`Add a token image (PNG <=${MAX_IMAGE_UPLOAD_LABEL}).`);
       if (PROTOCOL_REWARD_CONFIG_ERROR) throw new Error(PROTOCOL_REWARD_CONFIG_ERROR);
       if (!isAddress(pairedToken)) throw new Error("Paired token is invalid.");
       if (!isAddress(creatorAdmin)) throw new Error("Creator admin is invalid.");
@@ -921,7 +1276,7 @@ export default function LaunchpadSection({ address, onConnect }) {
 
       const spacing = Number(tickSpacingRaw || 0);
       const tick = computeTickFromMarketCapEth({
-        marketCapEth: "10",
+        marketCapEth: FIXED_STARTING_MARKET_CAP_ETH,
         tokenSupplyRaw: tokenSupply,
         tickSpacing: spacing,
       });
@@ -1001,7 +1356,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         poolConfiguration: {
           type: "recommended",
           pairedToken,
-          startingMarketCapEth: "10",
+          startingMarketCapEth: FIXED_STARTING_MARKET_CAP_ETH,
           tickIfToken0IsNewToken: String(tick),
         },
         creatorVault: {
@@ -1223,13 +1578,15 @@ export default function LaunchpadSection({ address, onConnect }) {
     { id: "locker", label: "Locker", hint: "Read rewards and collect fees" },
   ];
 
-  const missingBasicFields = useMemo(() => {
-    const missing = [];
-    if (!String(deployForm.name || "").trim()) missing.push("Name");
-    if (!String(deployForm.symbol || "").trim()) missing.push("Symbol");
-    if (!String(deployForm.image || "").trim()) missing.push("Image");
-    return missing;
-  }, [deployForm.image, deployForm.name, deployForm.symbol]);
+  const missingBasicFields = getMissingBasicFields(deployForm);
+  const requiredFieldChecks = useMemo(
+    () => [
+      { key: "Name", done: !missingBasicFields.includes("Name") },
+      { key: "Symbol", done: !missingBasicFields.includes("Symbol") },
+      { key: "Image", done: !missingBasicFields.includes("Image") },
+    ],
+    [missingBasicFields]
+  );
   const maxCreatorRewardUi = useMemo(() => {
     if (protocol.maxCreatorReward == null) return null;
     const value = Number(protocol.maxCreatorReward);
@@ -1249,13 +1606,364 @@ export default function LaunchpadSection({ address, onConnect }) {
     () => (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) ? DEFAULT_PROTOCOL_REWARD_RECIPIENT : ""),
     []
   );
+  const imageRawValue = String(deployForm.image || "").trim();
   const imageIsLegacyDataUri = useMemo(
-    () => /^data:image\/png;base64,/iu.test(String(deployForm.image || "").trim()),
-    [deployForm.image]
+    () => /^data:image\/png;base64,/iu.test(imageRawValue),
+    [imageRawValue]
   );
+  const imagePreviewSrc = useMemo(() => toImagePreviewSrc(imageRawValue), [imageRawValue]);
+  const imageSourceLabel = useMemo(() => {
+    if (!imageRawValue) return "Not set";
+    if (imageUploadCid) return "Uploaded to IPFS";
+    if (/^ipfs:\/\//iu.test(imageRawValue) || /^https?:\/\//iu.test(imageRawValue)) return "From URL / IPFS";
+    return "Set";
+  }, [imageRawValue, imageUploadCid]);
+  const metadataLinkCount = useMemo(() => {
+    const links = [deployForm.telegram, deployForm.website, deployForm.x, deployForm.farcaster];
+    return links.filter((value) => String(value || "").trim()).length;
+  }, [deployForm.farcaster, deployForm.telegram, deployForm.website, deployForm.x]);
+  const metadataConfigured = useMemo(
+    () =>
+      Boolean(String(deployForm.description || "").trim()) ||
+      metadataLinkCount > 0 ||
+      Boolean(String(deployForm.metadata || "").trim()),
+    [deployForm.description, deployForm.metadata, metadataLinkCount]
+  );
+  const rewardAddressesCustomized = useMemo(() => {
+    const norm = (value) => String(value || "").trim().toLowerCase();
+    const defaultAddress = norm(address || "");
+    const creatorAdmin = norm(deployForm.creatorAdmin);
+    const creatorRecipient = norm(deployForm.creatorRewardRecipient);
+    const customCreatorAdmin = Boolean(creatorAdmin && creatorAdmin !== defaultAddress);
+    const customCreatorRecipient = Boolean(creatorRecipient && creatorRecipient !== defaultAddress);
+    return customCreatorAdmin || customCreatorRecipient;
+  }, [address, deployForm.creatorAdmin, deployForm.creatorRewardRecipient]);
+  const rewardsCustomized = useMemo(() => {
+    const norm = (value) => String(value || "").trim().toLowerCase();
+    const rewardType = String(deployForm.creatorRewardType || "paired").trim();
+    const rewardValue = String(deployForm.creatorReward || "80").trim() || "80";
+    const customTeamRecipient = Boolean(deployForm.useCustomTeamRewardRecipient && norm(deployForm.teamRewardRecipient));
+    return rewardAddressesCustomized || rewardType !== "paired" || rewardValue !== "80" || customTeamRecipient;
+  }, [
+    deployForm.creatorReward,
+    deployForm.creatorRewardType,
+    deployForm.teamRewardRecipient,
+    deployForm.useCustomTeamRewardRecipient,
+    rewardAddressesCustomized,
+  ]);
+  const rewardsEnabled = rewardExtensionEnabled || rewardsCustomized;
+  const rewardTypeLabel = useMemo(
+    () =>
+      REWARD_TYPE_OPTIONS.find((option) => option.value === String(deployForm.creatorRewardType || "paired"))?.label ||
+      "WETH",
+    [deployForm.creatorRewardType]
+  );
+  const rewardRecipientCount = useMemo(() => {
+    const recipients = new Set();
+    const creatorAddress = isAddress(deployForm.creatorRewardRecipient)
+      ? deployForm.creatorRewardRecipient
+      : isAddress(address)
+        ? address
+        : "";
+    if (creatorAddress) recipients.add(creatorAddress.toLowerCase());
+    if (deployForm.useCustomTeamRewardRecipient && isAddress(deployForm.teamRewardRecipient)) {
+      recipients.add(String(deployForm.teamRewardRecipient).toLowerCase());
+    }
+    return recipients.size;
+  }, [
+    address,
+    deployForm.creatorRewardRecipient,
+    deployForm.teamRewardRecipient,
+    deployForm.useCustomTeamRewardRecipient,
+  ]);
+  const vaultEnabled = useMemo(() => {
+    const value = Number.parseFloat(String(deployForm.vaultPercentage || "0"));
+    return Number.isFinite(value) && value > 0;
+  }, [deployForm.vaultPercentage]);
+  const creatorBuyAmount = useMemo(() => {
+    const value = Number.parseFloat(String(deployForm.txValueEth || "0"));
+    return Number.isFinite(value) ? value : 0;
+  }, [deployForm.txValueEth]);
+  const creatorBuyEnabled = creatorBuyAmount > 0;
+  const startingTickPreview = useMemo(() => {
+    try {
+      return computeTickFromMarketCapEth({
+        marketCapEth: FIXED_STARTING_MARKET_CAP_ETH,
+        tokenSupplyRaw: protocol.tokenSupply,
+        tickSpacing: Number(protocol.tickSpacing || 0),
+      });
+    } catch {
+      return null;
+    }
+  }, [protocol.tickSpacing, protocol.tokenSupply]);
+  const startingPricePreview = useMemo(() => {
+    try {
+      const tokenSupply = Number(formatUnits(protocol.tokenSupply ?? 0n, 18));
+      if (!Number.isFinite(tokenSupply) || tokenSupply <= 0) return null;
+      return Number(FIXED_STARTING_MARKET_CAP_ETH) / tokenSupply;
+    } catch {
+      return null;
+    }
+  }, [protocol.tokenSupply]);
+  const summaryReadyCount = 3 - missingBasicFields.length;
+  const imageMissing = missingBasicFields.includes("Image");
+  const imageNeedsAttention = imageMissing && (deployAttempted || highlightedField === "Image");
+  const creatorBuyAmountLabel = trimTrailingZeros(String(deployForm.txValueEth || "0")) || "0";
+  const metadataStatusLabel = metadataConfigured ? "Configured" : openSections.metadata ? "Not configured" : "Empty";
+  const metadataStatusTone = metadataConfigured ? "good" : openSections.metadata ? "warn" : "neutral";
+  const metadataStatusSummary = metadataConfigured
+    ? `${metadataLinkCount} link${metadataLinkCount === 1 ? "" : "s"}`
+    : "";
+  const rewardsStatusLabel = !rewardsEnabled
+    ? "Disabled"
+    : rewardsCustomized
+      ? "Configured"
+      : openSections.rewards
+        ? "Not configured"
+        : "Empty";
+  const rewardsStatusTone = !rewardsEnabled ? "neutral" : rewardsCustomized ? "good" : "warn";
+  const rewardStatusSummary = !rewardsEnabled
+    ? "Disabled"
+    : rewardsCustomized
+      ? `${allocatedRewardsLabel}% ${rewardTypeLabel}`
+      : "Enabled";
+  const vaultStatusLabel = vaultEnabled ? "Configured" : "Disabled";
+  const vaultStatusSummary = vaultEnabled
+    ? `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${deployForm.vestingDays || "0"}d vest`
+    : "Disabled";
+  const creatorBuyStatusLabel = creatorBuyEnabled ? "Configured" : "Disabled";
+  const creatorBuyStatusSummary = creatorBuyEnabled ? `${creatorBuyAmountLabel} ETH` : "Disabled";
+  const rewardsSummaryLine = `${rewardTypeLabel} • ${allocatedRewardsLabel}% • ${rewardRecipientCount} recipient${
+    rewardRecipientCount === 1 ? "" : "s"
+  }`;
+  const vaultSummaryLine = `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${
+    deployForm.vestingDays || "0"
+  }d vest`;
+  const creatorBuySummaryLine = `${creatorBuyAmountLabel} ETH`;
+  const startTickCopyValue = startingTickPreview != null ? String(startingTickPreview) : "";
+  const startingPriceCopyValue =
+    startingPricePreview != null ? `${formatEthPerTokenPrecise(startingPricePreview)} ETH/token` : "";
+  const isDeployLocked = deployAction.loading || imageUploading;
+  const deployLockReason = imageUploading
+    ? "Locked: waiting for image upload."
+    : deployAction.loading
+      ? "Locked: deployment in progress."
+      : "";
+  const actionBarNotice = isDeployLocked
+    ? deployLockReason
+    : deployAttempted && missingBasicFields.length
+      ? `Complete required fields: ${missingBasicFields.join(", ")}.`
+      : "";
   const toggleSection = useCallback((sectionKey) => {
     setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
   }, []);
+  const expandAllSections = useCallback(() => {
+    setOpenSections({ metadata: true, rewards: true, vault: true, buy: true });
+  }, []);
+  const collapseAllSections = useCallback(() => {
+    setOpenSections({ metadata: false, rewards: false, vault: false, buy: false });
+  }, []);
+  const jumpToSection = useCallback((sectionKey) => {
+    const refsMap = {
+      basic: basicSectionRef,
+      metadata: metadataSectionRef,
+      rewards: rewardsSectionRef,
+      vault: vaultSectionRef,
+      buy: creatorBuySectionRef,
+    };
+    if (sectionKey !== "basic") {
+      setOpenSections((prev) => ({ ...prev, [sectionKey]: true }));
+    }
+    const target = refsMap[sectionKey]?.current;
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, []);
+  const handleToggleRewardsExtension = useCallback(
+    (enabled) => {
+      setRewardExtensionEnabled(enabled);
+      if (enabled) {
+        setOpenSections((prev) => ({ ...prev, rewards: true }));
+        setRewardAddressEditing(true);
+        setDeployForm((prev) => ({
+          ...prev,
+          creatorAdmin: prev.creatorAdmin || address || "",
+          creatorRewardRecipient: prev.creatorRewardRecipient || address || "",
+        }));
+        return;
+      }
+      setRewardAddressEditing(false);
+      setOpenSections((prev) => ({ ...prev, rewards: false }));
+      setDeployForm((prev) => ({
+        ...prev,
+        creatorAdmin: address || "",
+        creatorRewardRecipient: address || "",
+        creatorReward: "80",
+        creatorRewardType: "paired",
+        useCustomTeamRewardRecipient: false,
+        teamRewardRecipient: autoProtocolRecipient || "",
+      }));
+    },
+    [address, autoProtocolRecipient]
+  );
+  const handleToggleVaultExtension = useCallback((enabled) => {
+    setOpenSections((prev) => ({ ...prev, vault: enabled }));
+    setDeployForm((prev) => {
+      const current = Number.parseFloat(String(prev.vaultPercentage || "0"));
+      const nextVaultPercentage =
+        enabled && !(Number.isFinite(current) && current > 0) ? VAULT_PERCENT_PRESETS[0] || "15" : prev.vaultPercentage;
+      return {
+        ...prev,
+        vaultPercentage: enabled ? nextVaultPercentage : "0",
+      };
+    });
+  }, []);
+  const handleToggleCreatorBuyExtension = useCallback((enabled) => {
+    setOpenSections((prev) => ({ ...prev, buy: enabled }));
+    setDeployForm((prev) => {
+      const current = Number.parseFloat(String(prev.txValueEth || "0"));
+      const nextAmount =
+        enabled && !(Number.isFinite(current) && current > 0) ? CREATOR_BUY_ETH_PRESETS[0] || "0.1" : prev.txValueEth;
+      return {
+        ...prev,
+        txValueEth: enabled ? nextAmount : "0",
+        useCustomCreatorBuyRecipient: enabled ? prev.useCustomCreatorBuyRecipient : false,
+        creatorBuyRecipient: enabled ? prev.creatorBuyRecipient : "",
+      };
+    });
+  }, []);
+  useEffect(() => {
+    if (rewardsCustomized) setRewardExtensionEnabled(true);
+  }, [rewardsCustomized]);
+  const createSummaryCard = (
+    <div className="space-y-3 rounded-2xl border border-slate-700/60 bg-slate-950/65 p-4">
+      <div className="flex items-center gap-3">
+        {imagePreviewSrc ? (
+          <img
+            src={imagePreviewSrc}
+            alt="Token preview"
+            className="h-11 w-11 rounded-full border border-slate-700 object-cover"
+          />
+        ) : (
+          <div className="h-11 w-11 rounded-full border border-slate-700 bg-slate-900/70" />
+        )}
+        <div>
+          <div className="text-sm font-semibold text-slate-100">
+            {String(deployForm.name || "").trim() || "Token name"}
+          </div>
+          <div className="text-xs text-slate-300/80">
+            {String(deployForm.symbol || "").trim() || "SYMBOL"}
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-slate-700/55 pt-3 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-300/80">Preset</span>
+          <span
+            className="rounded-full border border-cyan-300/55 bg-cyan-400/15 px-2 py-0.5 font-semibold text-cyan-100"
+            title="Preset locked"
+          >
+            <span className="inline-flex items-center gap-1">
+              {FIXED_STARTING_MARKET_CAP_ETH} ETH fixed
+              <LockIcon className="h-3.5 w-3.5" />
+            </span>
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-300/80">Initial price (preview)</span>
+          <span className="font-mono text-slate-200">{formatEthPerToken(startingPricePreview ?? Number.NaN)}</span>
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-slate-700/55 pt-3 text-xs">
+        <div className="font-semibold text-slate-100">Extensions enabled</div>
+        <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-300/80">Vault</span>
+            <span className={vaultEnabled ? "text-emerald-200" : "text-slate-300/75"}>{vaultEnabled ? "On" : "Off"}</span>
+          </div>
+          {vaultEnabled ? <div className="text-[11px] text-slate-300/75">{vaultSummaryLine}</div> : null}
+        </div>
+        <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-300/80">Creator Buy</span>
+            <span className={creatorBuyEnabled ? "text-emerald-200" : "text-slate-300/75"}>
+              {creatorBuyEnabled ? "On" : "Off"}
+            </span>
+          </div>
+          {creatorBuyEnabled ? <div className="text-[11px] text-slate-300/75">{creatorBuySummaryLine}</div> : null}
+        </div>
+        <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-slate-300/80">Reward Recipients</span>
+            <span className={rewardsEnabled ? "text-emerald-200" : "text-slate-300/75"}>
+              {rewardsEnabled ? "On" : "Off"}
+            </span>
+          </div>
+          {rewardsEnabled ? <div className="text-[11px] text-slate-300/75">{rewardsSummaryLine}</div> : null}
+        </div>
+      </div>
+
+      <div className="border-t border-slate-700/55 pt-3 text-xs">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-slate-300/80">Ready status</span>
+          <span className="font-semibold text-slate-100">{summaryReadyCount}/3 required fields done</span>
+        </div>
+      </div>
+
+      <div className="border-t border-slate-700/55 pt-3">
+        <button
+          type="button"
+          onClick={() => setSummaryAdvancedOpen((prev) => !prev)}
+          className="inline-flex items-center gap-2 rounded-full border border-slate-600/70 bg-slate-900/65 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100"
+        >
+          <span>Advanced</span>
+          <ChevronIcon open={summaryAdvancedOpen} />
+        </button>
+        {summaryAdvancedOpen ? (
+          <div className="mt-3 space-y-2 rounded-xl border border-slate-700/55 bg-slate-900/35 p-3 text-xs">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-300/80">Start tick (for V3 initialization)</span>
+              <div className="inline-flex items-center gap-1">
+                <span className="font-mono text-slate-200">
+                  {startingTickPreview != null ? String(startingTickPreview) : "--"}
+                </span>
+                {startTickCopyValue ? (
+                  <button
+                    type="button"
+                    title={copiedSummaryKey === "tick" ? "Copied" : "Copy start tick"}
+                    onClick={() => handleCopySummaryValue("tick", startTickCopyValue)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-300/75 transition hover:bg-slate-800/70 hover:text-slate-100"
+                  >
+                    <CopyIcon className="h-3.5 w-3.5" />
+                    <span className="sr-only">Copy start tick</span>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-slate-300/80">Initial price (full precision)</span>
+              <div className="inline-flex items-center gap-1">
+                <span className="font-mono text-slate-200">{startingPriceCopyValue || "--"}</span>
+                {startingPriceCopyValue ? (
+                  <button
+                    type="button"
+                    title={copiedSummaryKey === "price" ? "Copied" : "Copy full precision price"}
+                    onClick={() => handleCopySummaryValue("price", startingPriceCopyValue)}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-300/75 transition hover:bg-slate-800/70 hover:text-slate-100"
+                  >
+                    <CopyIcon className="h-3.5 w-3.5" />
+                    <span className="sr-only">Copy full precision price</span>
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 
   return (
     <section className="w-full px-4 py-8 text-slate-100 sm:px-6 lg:px-10">
@@ -1267,7 +1975,8 @@ export default function LaunchpadSection({ address, onConnect }) {
             </div>
             <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">Launchpad</h2>
             <p className="mt-1 max-w-2xl text-sm text-slate-300/80">
-              Deploy token + V3 setup through CurrentX, then manage CurrentxVault and LpLockerv2 with optional extensions.
+              Deploy token + create V3 pool (requires fixed {FIXED_STARTING_MARKET_CAP_ETH} ETH preset), then manage
+              CurrentxVault and LpLockerv2 extensions.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1324,7 +2033,9 @@ export default function LaunchpadSection({ address, onConnect }) {
           <div className="flex items-center justify-between">
             <div>
               <div className="font-display text-lg font-semibold">Create Token</div>
-              <div className="text-xs text-slate-300/70">Simple launch flow with optional extensions.</div>
+              <div className="text-xs text-slate-300/70">
+                Deploy token + create V3 pool flow (fixed {FIXED_STARTING_MARKET_CAP_ETH} ETH preset).
+              </div>
             </div>
             {protocol.loading ? <span className="text-xs text-slate-300/75">Preparing...</span> : null}
           </div>
@@ -1332,108 +2043,279 @@ export default function LaunchpadSection({ address, onConnect }) {
             <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{protocol.error}</div>
           ) : null}
 
-          <form className="mt-4 space-y-3" onSubmit={handleDeploy}>
-            <div className={`${TONED_PANEL_CLASS} space-y-3 p-3`}>
-              <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Basic Token Info</div>
-              <div className="text-xs text-slate-300/70">Required fields: Name, Symbol, Image.</div>
-              <div className="text-xs text-slate-300/70">Pool starts from the standard 10 ETH setup.</div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1">
-                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Name *</label>
-                  <input
-                    value={deployForm.name}
-                    onChange={(e) => setDeployForm((prev) => ({ ...prev, name: e.target.value }))}
-                    placeholder="Enter token name"
-                    className={INPUT_CLASS}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Symbol *</label>
-                  <input
-                    value={deployForm.symbol}
-                    onChange={(e) => setDeployForm((prev) => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
-                    placeholder="Enter token symbol"
-                    className={INPUT_CLASS}
-                  />
-                </div>
-                <div className="space-y-1 md:col-span-2">
-                  <label className="text-xs font-medium tracking-wide text-slate-300/85">Image URL or PNG Upload *</label>
-                  <input
-                    value={deployForm.image}
-                    onChange={(e) => {
-                      setImageUploadError("");
-                      setImageUploadCid("");
-                      setDeployForm((prev) => ({ ...prev, image: e.target.value }));
-                    }}
-                    placeholder="Paste image URL, ipfs:// URI, or upload PNG"
-                    className={INPUT_CLASS}
-                  />
-                  <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <label
-                      className={`inline-flex cursor-pointer items-center rounded-lg border border-cyan-300/45 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/10 ${
-                        imageUploading ? "pointer-events-none opacity-60" : ""
-                      }`}
-                    >
-                      {imageUploading ? "Uploading PNG..." : "Upload PNG to IPFS"}
-                      <input
-                        type="file"
-                        accept="image/png"
-                        onChange={handleImageFileChange}
-                        disabled={imageUploading}
-                        className="sr-only"
-                      />
-                    </label>
-                    <span className="text-[11px] text-slate-400/80">Max 256 KB. Stored on IPFS.</span>
+          <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <div className="space-y-3">
+              <details className="rounded-xl border border-slate-700/60 bg-slate-900/35 px-3 py-2 xl:hidden">
+                <summary className="cursor-pointer text-sm font-semibold text-slate-100">Review</summary>
+                <div className="pt-3">{createSummaryCard}</div>
+              </details>
+
+              <form className="space-y-4 pb-20" onSubmit={handleDeploy}>
+                <div ref={basicSectionRef} className="space-y-4 border-b border-slate-700/55 pb-4">
+                  <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Basic Token Info</div>
+                  <div className="rounded-xl border border-cyan-300/45 bg-cyan-500/10 px-3 py-2">
+                    <div className="flex items-center justify-between gap-2 text-sm font-semibold text-cyan-100">
+                      <span>Starting market cap preset: {FIXED_STARTING_MARKET_CAP_ETH} ETH (fixed)</span>
+                      <span title="Preset locked" className="inline-flex text-cyan-100">
+                        <LockIcon />
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-cyan-100/90">
+                      Doesn't transfer 10 ETH - only sets initial price/tick. Gas is still required.
+                    </div>
                   </div>
-                  {imageUploadError ? (
-                    <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                      {imageUploadError}
+
+                  <div className="grid gap-3 xl:grid-cols-2">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium tracking-wide text-slate-300/85">Name *</label>
+                      <input
+                        ref={nameInputRef}
+                        value={deployForm.name}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, name: e.target.value }))}
+                        placeholder="e.g., CurrentX"
+                        className={`${INPUT_CLASS} ${
+                          highlightedField === "Name" || (deployAttempted && missingBasicFields.includes("Name"))
+                            ? "border-amber-400/80 ring-2 ring-amber-400/30"
+                            : ""
+                        }`}
+                      />
                     </div>
-                  ) : null}
-                  {imageUploadCid ? (
-                    <div className="rounded-xl border border-emerald-400/45 bg-emerald-500/15 px-3 py-2 text-xs text-emerald-100">
-                      Uploaded to IPFS: <span className="font-mono">{shorten(imageUploadCid)}</span>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium tracking-wide text-slate-300/85">Symbol *</label>
+                      <input
+                        ref={symbolInputRef}
+                        value={deployForm.symbol}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, symbol: e.target.value.toUpperCase() }))}
+                        placeholder="e.g., CRX"
+                        className={`${INPUT_CLASS} ${
+                          highlightedField === "Symbol" || (deployAttempted && missingBasicFields.includes("Symbol"))
+                            ? "border-amber-400/80 ring-2 ring-amber-400/30"
+                            : ""
+                        }`}
+                      />
                     </div>
-                  ) : null}
-                  {imageIsLegacyDataUri ? (
-                    <div className="space-y-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                      <div>Legacy image format detected (`data:image...`). Convert it to IPFS before deploy.</div>
+                  </div>
+
+                  <div
+                    ref={imageSectionRef}
+                    className={`space-y-3 rounded-xl border p-3 transition ${
+                      imageNeedsAttention || highlightedField === "Image"
+                        ? "border-amber-400/70 bg-amber-500/10 ring-2 ring-amber-400/30"
+                        : "border-slate-700/60 bg-slate-900/30"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-medium tracking-wide text-slate-200">Image (required)</label>
+                      <span className="rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[11px] text-slate-300">
+                        {imageSourceLabel}
+                      </span>
+                    </div>
+
+                    <div className="inline-flex rounded-lg border border-slate-700/70 bg-slate-950/65 p-1">
                       <button
                         type="button"
-                        onClick={migrateLegacyImageToIpfs}
-                        disabled={imageUploading}
-                        className={AMBER_BUTTON_CLASS}
+                        onClick={() => setImageMode("upload")}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                          imageMode === "upload"
+                            ? "border border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
+                            : "text-slate-300/75 hover:text-slate-100"
+                        }`}
                       >
-                        {imageUploading ? "Converting..." : "Convert to IPFS now"}
+                        Upload PNG
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImageMode("url")}
+                        className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                          imageMode === "url"
+                            ? "border border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
+                            : "text-slate-300/75 hover:text-slate-100"
+                        }`}
+                      >
+                        Paste URL / ipfs://
                       </button>
                     </div>
-                  ) : null}
-                  {deployForm.image ? (
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/60 p-2">
-                      <div className="mb-1 text-[11px] text-slate-400/80">Image preview</div>
-                      <img
-                        src={toImagePreviewSrc(deployForm.image)}
-                        alt="Token preview"
-                        className="h-16 w-16 rounded-md border border-slate-700 object-cover"
-                      />
+
+                    {imageMode === "url" ? (
+                      <div className="space-y-2">
+                        <input
+                          ref={imageInputRef}
+                          value={deployForm.image}
+                          onChange={(e) => {
+                            setImageUploadError("");
+                            setImageUploadCid("");
+                            setDeployForm((prev) => ({ ...prev, image: e.target.value }));
+                          }}
+                          placeholder="https://... or ipfs://..."
+                          className={INPUT_CLASS}
+                        />
+                        <div className="text-[11px] text-slate-400/80">
+                          Upload PNG is available in the other tab as a secondary action.
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label
+                            className={`inline-flex cursor-pointer items-center rounded-lg border border-cyan-300/45 bg-slate-900/80 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/10 ${
+                              imageUploading ? "pointer-events-none opacity-60" : ""
+                            }`}
+                          >
+                            {imageUploading ? "Uploading PNG..." : "Upload PNG to IPFS"}
+                            <input
+                              type="file"
+                              accept="image/png"
+                              onChange={handleImageFileChange}
+                              disabled={imageUploading}
+                              className="sr-only"
+                            />
+                          </label>
+                          <span className="text-[11px] text-slate-400/80">PNG only, max {MAX_IMAGE_UPLOAD_LABEL}.</span>
+                        </div>
+                        <div className="text-[11px] text-slate-400/80">Switch mode to edit URL.</div>
+                      </div>
+                    )}
+
+                    <div className="grid gap-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
+                      <div className="flex h-20 w-20 items-center justify-center overflow-hidden rounded-xl border border-slate-700/70 bg-slate-950/70">
+                        {imagePreviewSrc ? (
+                          <img src={imagePreviewSrc} alt="Token preview" className="h-full w-full object-cover" />
+                        ) : (
+                          <span className="text-[11px] text-slate-400/80">No image</span>
+                        )}
+                      </div>
+                      <div className="space-y-2 text-xs">
+                        <div className="text-slate-300/85">Image preview</div>
+                        {imageUploadCid ? (
+                          <div className="flex flex-wrap items-center gap-2 text-emerald-100">
+                            <span className="rounded-full border border-emerald-400/45 bg-emerald-500/15 px-2 py-0.5">
+                              Uploaded to IPFS
+                            </span>
+                            <span className="font-mono">{shorten(imageUploadCid)}</span>
+                            <button
+                              type="button"
+                              onClick={handleCopyCid}
+                              className="rounded-lg border border-emerald-400/45 bg-emerald-500/15 px-2 py-0.5 font-semibold text-emerald-100 transition hover:border-emerald-300/70"
+                            >
+                              {cidCopied ? "Copied" : "Copy CID"}
+                            </button>
+                          </div>
+                        ) : null}
+                        {imageMissing ? (
+                          <div className="text-amber-100">Add a token image (PNG &lt;={MAX_IMAGE_UPLOAD_LABEL}).</div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {imageUploadError ? (
+                      <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                        {imageUploadError}
+                      </div>
+                    ) : null}
+                    {imageIsLegacyDataUri ? (
+                      <div className="space-y-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                        <div>Legacy image format detected (`data:image...`). Convert it to IPFS before deploy.</div>
+                        <button
+                          type="button"
+                          onClick={migrateLegacyImageToIpfs}
+                          disabled={imageUploading}
+                          className={AMBER_BUTTON_CLASS}
+                        >
+                          {imageUploading ? "Converting..." : "Convert to IPFS now"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/30 p-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormAdvancedOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left text-xs font-semibold uppercase tracking-wide text-slate-200 transition hover:bg-slate-900/45"
+                  >
+                    <span>Advanced</span>
+                    <ChevronIcon open={formAdvancedOpen} />
+                  </button>
+                  {formAdvancedOpen ? (
+                    <div className="mt-3 space-y-2 border-t border-slate-700/55 pt-3 text-xs">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-slate-300/80">Start tick (for V3 initialization)</span>
+                        <div className="inline-flex items-center gap-1">
+                          <span className="font-mono text-slate-200">
+                            {startingTickPreview != null ? String(startingTickPreview) : "--"}
+                          </span>
+                          {startTickCopyValue ? (
+                            <button
+                              type="button"
+                              title={copiedSummaryKey === "tick" ? "Copied" : "Copy start tick"}
+                              onClick={() => handleCopySummaryValue("tick", startTickCopyValue)}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-slate-300/75 transition hover:bg-slate-800/70 hover:text-slate-100"
+                            >
+                              <CopyIcon className="h-3.5 w-3.5" />
+                              <span className="sr-only">Copy start tick</span>
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="text-[11px] text-slate-400/80">
+                        Reserved for future advanced settings (slippage defaults, tick spacing info, and more).
+                      </div>
                     </div>
                   ) : null}
                 </div>
-              </div>
-            </div>
 
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Jump to</div>
+                    <div className="inline-flex items-center gap-2">
+                      <button type="button" onClick={expandAllSections} className={SOFT_BUTTON_CLASS}>
+                        Expand all
+                      </button>
+                      <button type="button" onClick={collapseAllSections} className={SOFT_BUTTON_CLASS}>
+                        Collapse all
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {[
+                      { key: "basic", label: "Basic" },
+                      { key: "metadata", label: "Metadata" },
+                      { key: "rewards", label: "Rewards" },
+                      { key: "vault", label: "Vault" },
+                      { key: "buy", label: "Creator Buy" },
+                    ].map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => jumpToSection(item.key)}
+                        className="rounded-full border border-slate-600/70 bg-slate-900/70 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100"
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+            <div ref={metadataSectionRef}>
             <CollapsibleSection
               title="Token Metadata (optional)"
               open={openSections.metadata}
               onToggle={() => toggleSection("metadata")}
+              statusLabel={metadataStatusLabel}
+              statusSummary={metadataStatusSummary}
+              statusTone={metadataStatusTone}
             >
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="text-xs text-slate-300/75">
+                What this does: adds description and social links to your token metadata.
+              </div>
+              <div className="grid gap-3 xl:grid-cols-2">
                 <textarea
                   value={deployForm.description}
                   onChange={(e) => setDeployForm((prev) => ({ ...prev, description: e.target.value }))}
                   placeholder="Description"
                   rows={3}
-                  className={`${INPUT_CLASS} md:col-span-2`}
+                  className={`${INPUT_CLASS} xl:col-span-2`}
                 />
                 <input
                   value={deployForm.telegram}
@@ -1461,251 +2343,372 @@ export default function LaunchpadSection({ address, onConnect }) {
                 />
               </div>
             </CollapsibleSection>
+            </div>
 
-            <CollapsibleSection
-              title="Reward Recipients (optional)"
-              open={openSections.rewards}
-              onToggle={() => toggleSection("rewards")}
-            >
-              <div className="space-y-3">
-                <AddressField
-                  label="Admin Address"
-                  value={deployForm.creatorAdmin}
-                  onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
-                />
-                <AddressField
-                  label="Reward Recipient Address"
-                  value={deployForm.creatorRewardRecipient}
-                  onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
-                />
-                <div className="space-y-1">
-                  <div className="text-xs text-slate-300/80">Reward Token</div>
-                  <SelectorPills
-                    value={deployForm.creatorRewardType}
-                    onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
-                    options={REWARD_TYPE_OPTIONS}
-                  />
+            <div ref={rewardsSectionRef}>
+              <CollapsibleSection
+                title="Reward Recipients (optional)"
+                open={openSections.rewards}
+                onToggle={() => toggleSection("rewards")}
+                statusLabel={rewardsStatusLabel}
+                statusSummary={rewardStatusSummary}
+                statusTone={rewardsStatusTone}
+                headerAction={<SectionEnableToggle enabled={rewardsEnabled} onToggle={handleToggleRewardsExtension} />}
+              >
+                <div className="text-xs text-slate-300/75">
+                  What this does: configures how creator-side rewards are split and distributed.
                 </div>
-                <div className="space-y-1">
-                  <div className="text-xs text-slate-300/80">Reward Percentage</div>
-                  <div className="relative">
-                    <input
-                      value={deployForm.creatorReward}
-                      onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
-                      placeholder={maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "80"}
-                      className={`${INPUT_CLASS} pr-8`}
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                {!rewardsEnabled ? (
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
+                    Disabled.
                   </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Creator addresses</div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (rewardAddressEditing) {
+                            setDeployForm((prev) => ({
+                              ...prev,
+                              creatorAdmin: address || "",
+                              creatorRewardRecipient: address || "",
+                            }));
+                          }
+                          setRewardAddressEditing((prev) => !prev);
+                        }}
+                        className={SOFT_BUTTON_CLASS}
+                      >
+                        {rewardAddressEditing ? "Use defaults" : "Edit custom"}
+                      </button>
+                    </div>
+                    {rewardAddressEditing ? (
+                      <div className="space-y-3">
+                        <AddressField
+                          label="Admin Address"
+                          value={deployForm.creatorAdmin}
+                          onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorAdmin: value }))}
+                        />
+                        <AddressField
+                          label="Reward Recipient Address"
+                          value={deployForm.creatorRewardRecipient}
+                          onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardRecipient: value }))}
+                        />
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <AddressPreviewRow
+                          label="Admin (auto)"
+                          value={deployForm.creatorAdmin || address || ""}
+                          copyKey="creator-admin"
+                          copiedKey={copiedSummaryKey}
+                          onCopy={handleCopySummaryValue}
+                        />
+                        <AddressPreviewRow
+                          label="Recipient (auto)"
+                          value={deployForm.creatorRewardRecipient || address || ""}
+                          copyKey="creator-recipient"
+                          copiedKey={copiedSummaryKey}
+                          onCopy={handleCopySummaryValue}
+                        />
+                      </div>
+                    )}
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Reward Token</div>
+                      <SelectorPills
+                        value={deployForm.creatorRewardType}
+                        onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorRewardType: value }))}
+                        options={REWARD_TYPE_OPTIONS}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Reward Percentage</div>
+                      <div className="relative">
+                        <input
+                          value={deployForm.creatorReward}
+                          onChange={(e) => setDeployForm((prev) => ({ ...prev, creatorReward: e.target.value }))}
+                          placeholder={maxCreatorRewardUi != null ? String(maxCreatorRewardUi) : "80"}
+                          className={`${INPUT_CLASS} pr-8`}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                          %
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-emerald-200">
+                      Allocated Rewards: {allocatedRewardsLabel}/{allocatedRewardsTotalLabel}%
+                    </div>
+                    <div className="text-xs text-slate-300/75">
+                      Interface reward is managed automatically by protocol recipient:{" "}
+                      <span className="font-mono text-slate-300">
+                        {autoProtocolRecipient ? shorten(autoProtocolRecipient) : "--"}
+                      </span>
+                    </div>
+                    {PROTOCOL_REWARD_CONFIG_ERROR ? (
+                      <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                        {PROTOCOL_REWARD_CONFIG_ERROR}
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </CollapsibleSection>
+            </div>
+
+            <div ref={vaultSectionRef}>
+              <CollapsibleSection
+                title="Extension: Creator Vault (optional)"
+                open={openSections.vault}
+                onToggle={() => toggleSection("vault")}
+                statusLabel={vaultStatusLabel}
+                statusSummary={vaultStatusSummary}
+                statusTone={vaultEnabled ? "good" : "neutral"}
+                headerAction={<SectionEnableToggle enabled={vaultEnabled} onToggle={handleToggleVaultExtension} />}
+              >
+                <div className="text-xs text-slate-300/75">
+                  What this does: locks a percentage of creator allocation in vesting.
                 </div>
+                {!vaultEnabled ? (
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
+                    Disabled.
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Vault Percentage</div>
+                      <div className="relative">
+                        <input
+                          value={deployForm.vaultPercentage}
+                          onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultPercentage: e.target.value }))}
+                          placeholder="15"
+                          className={`${INPUT_CLASS} pr-8`}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
+                          %
+                        </span>
+                      </div>
+                    </div>
+                    <SelectorPills
+                      value={
+                        VAULT_PERCENT_PRESETS.includes(String(deployForm.vaultPercentage))
+                          ? String(deployForm.vaultPercentage)
+                          : ""
+                      }
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, vaultPercentage: value }))}
+                      options={VAULT_PERCENT_PRESETS.map((value) => ({ value, label: `${value}%` }))}
+                    />
+
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Vault Recipient Address</div>
+                      <AddressPreviewRow
+                        label="Recipient wallet (auto)"
+                        value={address || ""}
+                        copyKey="vault-recipient"
+                        copiedKey={copiedSummaryKey}
+                        onCopy={handleCopySummaryValue}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Lockup Period</div>
+                      <input
+                        value={deployForm.lockupDays}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, lockupDays: e.target.value }))}
+                        placeholder="30"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                    <SelectorPills
+                      value={VAULT_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""}
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
+                      columns={4}
+                      options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+                    />
+                    <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+                      Vesting must be &gt;= lockup. Lockup minimum is 7 days.
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">Vesting Period</div>
+                      <input
+                        value={deployForm.vestingDays}
+                        onChange={(e) => setDeployForm((prev) => ({ ...prev, vestingDays: e.target.value }))}
+                        placeholder="30"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                    <SelectorPills
+                      value={VAULT_DAY_PRESETS.includes(String(deployForm.vestingDays)) ? String(deployForm.vestingDays) : ""}
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, vestingDays: value }))}
+                      columns={4}
+                      options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
+                    />
+                  </>
+                )}
+              </CollapsibleSection>
+            </div>
+
+            <div ref={creatorBuySectionRef}>
+              <CollapsibleSection
+                title="Extension: Creator Buy (optional)"
+                open={openSections.buy}
+                onToggle={() => toggleSection("buy")}
+                statusLabel={creatorBuyStatusLabel}
+                statusSummary={creatorBuyStatusSummary}
+                statusTone={creatorBuyEnabled ? "good" : "neutral"}
+                headerAction={<SectionEnableToggle enabled={creatorBuyEnabled} onToggle={handleToggleCreatorBuyExtension} />}
+              >
+                <div className="text-xs text-slate-300/75">
+                  What this does: executes an optional initial buy right after deployment.
+                </div>
+                {!creatorBuyEnabled ? (
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
+                    Disabled (0 ETH).
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="text-xs text-slate-300/80">ETH Amount for Creator Buy</div>
+                      <div className="relative">
+                        <input
+                          value={deployForm.txValueEth}
+                          onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
+                          placeholder="0.5"
+                          className={`${INPUT_CLASS} pr-14`}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-300">
+                          ETH
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-400/80">Set to 0 ETH to disable this extension.</div>
+
+                    <SelectorPills
+                      value={
+                        CREATOR_BUY_ETH_PRESETS.includes(String(deployForm.txValueEth))
+                          ? String(deployForm.txValueEth)
+                          : String(deployForm.txValueEth) === "0"
+                            ? "0"
+                            : ""
+                      }
+                      onChange={(value) => setDeployForm((prev) => ({ ...prev, txValueEth: value }))}
+                      options={[
+                        { value: "0", label: "0 ETH (Disabled)" },
+                        ...CREATOR_BUY_ETH_PRESETS.map((value) => ({ value, label: `${value} ETH` })),
+                      ]}
+                    />
+
+                    <div className="space-y-3 border-t border-slate-700/55 pt-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-semibold text-slate-100">Token Recipient</div>
+                        <label className="inline-flex items-center gap-2 text-sm text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={deployForm.useCustomCreatorBuyRecipient}
+                            onChange={(e) =>
+                              setDeployForm((prev) => ({ ...prev, useCustomCreatorBuyRecipient: e.target.checked }))
+                            }
+                            className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-300/40"
+                          />
+                          <span>Use custom recipient</span>
+                        </label>
+                      </div>
+
+                      {deployForm.useCustomCreatorBuyRecipient ? (
+                        <div className="space-y-2">
+                          <AddressField
+                            label="Recipient wallet"
+                            value={deployForm.creatorBuyRecipient}
+                            onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
+                            required
+                          />
+                          {Number.parseFloat(String(deployForm.txValueEth || "0")) > 0 ? (
+                            <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                              Custom recipient for Creator Buy is not supported by deployToken when ETH amount is greater than 0.
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300">
+                          Tokens will be sent to your wallet:{" "}
+                          <span className="font-mono text-slate-100">{address ? shorten(address) : "Connect wallet"}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CollapsibleSection>
+            </div>
+
+            <div className="space-y-2 border-t border-slate-700/55 pt-3">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Required fields</div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {requiredFieldChecks.map((field) => (
+                  <div
+                    key={field.key}
+                    className={`rounded-lg border px-2 py-1.5 text-xs font-semibold ${
+                      field.done
+                        ? "border-emerald-400/45 bg-emerald-500/10 text-emerald-100"
+                        : "border-amber-400/45 bg-amber-500/10 text-amber-100"
+                    }`}
+                  >
+                    {field.done ? "OK" : "!"} {field.key}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="sticky bottom-0 z-10 -mx-5 border-t border-slate-700/65 bg-slate-950/95 px-5 pb-4 pt-3 [padding-bottom:max(1rem,env(safe-area-inset-bottom))] backdrop-blur">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={() => {
+                    setImageUploading(false);
+                    setImageUploadCid("");
+                    setImageUploadError("");
+                    setImageMode("upload");
+                    setDeployAttempted(false);
+                    setHighlightedField("");
+                    setRewardExtensionEnabled(false);
+                    setRewardAddressEditing(false);
+                    setOpenSections({ metadata: false, rewards: false, vault: false, buy: false });
                     setDeployForm((prev) => ({
-                      ...prev,
-                      creatorAdmin: prev.creatorAdmin || address || "",
-                      creatorRewardRecipient: prev.creatorRewardRecipient || address || "",
-                    }))
-                  }
-                  className="w-full rounded-xl border border-cyan-300/50 bg-cyan-400/10 px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-400/15"
+                      ...defaultDeployForm(),
+                      creatorAdmin: address || prev.creatorAdmin || "",
+                      creatorRewardRecipient: address || prev.creatorRewardRecipient || "",
+                      interfaceAdmin:
+                        (isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN) && DEFAULT_PROTOCOL_REWARD_ADMIN) || prev.interfaceAdmin || "",
+                      interfaceRewardRecipient:
+                        (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
+                        prev.interfaceRewardRecipient ||
+                        "",
+                      teamRewardRecipient:
+                        (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
+                        prev.teamRewardRecipient ||
+                        "",
+                    }));
+                  }}
+                  className="rounded-xl border border-slate-600/70 bg-slate-900/75 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50"
                 >
-                  Add Reward Recipient
+                  Reset
                 </button>
-                <div className="text-sm font-semibold text-emerald-200">
-                  Allocated Rewards: {allocatedRewardsLabel}/{allocatedRewardsTotalLabel}%
-                </div>
-                <div className="text-xs text-slate-300/75">
-                  Interface reward is managed automatically by protocol recipient:{" "}
-                  <span className="font-mono text-slate-300">{autoProtocolRecipient ? shorten(autoProtocolRecipient) : "--"}</span>
-                </div>
-                {PROTOCOL_REWARD_CONFIG_ERROR ? (
-                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                    {PROTOCOL_REWARD_CONFIG_ERROR}
-                  </div>
-                ) : null}
-              </div>
-            </CollapsibleSection>
-
-            <CollapsibleSection
-              title="Extension: Creator Vault (optional)"
-              open={openSections.vault}
-              onToggle={() => toggleSection("vault")}
-            >
-              <div className="space-y-1">
-                <div className="text-xs text-slate-300/80">Vault Percentage</div>
-                <div className="relative">
-                  <input
-                    value={deployForm.vaultPercentage}
-                    onChange={(e) => setDeployForm((prev) => ({ ...prev, vaultPercentage: e.target.value }))}
-                    placeholder="15"
-                    className={`${INPUT_CLASS} pr-8`}
-                  />
-                  <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
-                </div>
-              </div>
-              <SelectorPills
-                value={VAULT_PERCENT_PRESETS.includes(String(deployForm.vaultPercentage)) ? String(deployForm.vaultPercentage) : ""}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, vaultPercentage: value }))}
-                options={VAULT_PERCENT_PRESETS.map((value) => ({ value, label: `${value}%` }))}
-              />
-
-              <div className="space-y-1">
-                <div className="text-xs text-slate-300/80">Vault Recipient Address</div>
-                <input
-                  value={address || ""}
-                  readOnly
-                  placeholder="Connect wallet"
-                  className={`${INPUT_CLASS} text-slate-300`}
-                />
-              </div>
-
-              <div className="space-y-1">
-                <div className="text-xs text-slate-300/80">Lockup Period</div>
-                <input
-                  value={deployForm.lockupDays}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, lockupDays: e.target.value }))}
-                  placeholder="30"
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <SelectorPills
-                value={VAULT_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
-                columns={4}
-                options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
-              />
-
-              <div className="space-y-1">
-                <div className="text-xs text-slate-300/80">Vesting Period</div>
-                <input
-                  value={deployForm.vestingDays}
-                  onChange={(e) => setDeployForm((prev) => ({ ...prev, vestingDays: e.target.value }))}
-                  placeholder="30"
-                  className={INPUT_CLASS}
-                />
-              </div>
-              <SelectorPills
-                value={VAULT_DAY_PRESETS.includes(String(deployForm.vestingDays)) ? String(deployForm.vestingDays) : ""}
-                onChange={(value) => setDeployForm((prev) => ({ ...prev, vestingDays: value }))}
-                columns={4}
-                options={VAULT_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
-              />
-
-              <div className="text-xs text-slate-300/75">Lockup has a minimum of 7 days. Vesting must be &gt;= lockup.</div>
-            </CollapsibleSection>
-
-            <CollapsibleSection
-              title="Extension: Creator Buy (optional)"
-              open={openSections.buy}
-              onToggle={() => toggleSection("buy")}
-            >
-              <div className="space-y-3">
-                <div className="space-y-1">
-                  <div className="text-xs text-slate-300/80">ETH Amount for Creator Buy</div>
-                  <div className="relative">
-                    <input
-                      value={deployForm.txValueEth}
-                      onChange={(e) => setDeployForm((prev) => ({ ...prev, txValueEth: e.target.value }))}
-                      placeholder="0.5"
-                      className={`${INPUT_CLASS} pr-14`}
-                    />
-                    <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-300">
-                      ETH
-                    </span>
-                  </div>
-                </div>
-
-                <SelectorPills
-                  value={
-                    CREATOR_BUY_ETH_PRESETS.includes(String(deployForm.txValueEth))
-                      ? String(deployForm.txValueEth)
-                      : ""
-                  }
-                  onChange={(value) => setDeployForm((prev) => ({ ...prev, txValueEth: value }))}
-                  options={CREATOR_BUY_ETH_PRESETS.map((value) => ({ value, label: `${value} ETH` }))}
-                />
-
-                <div className="space-y-3 border-t border-slate-700/55 pt-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-slate-100">Token Recipient</div>
-                    <label className="inline-flex items-center gap-2 text-sm text-slate-300">
-                      <input
-                        type="checkbox"
-                        checked={deployForm.useCustomCreatorBuyRecipient}
-                        onChange={(e) =>
-                          setDeployForm((prev) => ({ ...prev, useCustomCreatorBuyRecipient: e.target.checked }))
-                        }
-                        className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-300/40"
-                      />
-                      <span>Use custom recipient</span>
-                    </label>
-                  </div>
-
-                  {deployForm.useCustomCreatorBuyRecipient ? (
-                    <div className="space-y-2">
-                      <AddressField
-                        label="Recipient wallet"
-                        value={deployForm.creatorBuyRecipient}
-                        onChange={(value) => setDeployForm((prev) => ({ ...prev, creatorBuyRecipient: value }))}
-                        required
-                      />
-                      {Number.parseFloat(String(deployForm.txValueEth || "0")) > 0 ? (
-                        <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                          Custom recipient for Creator Buy is not supported by deployToken when ETH amount is greater than 0.
-                        </div>
-                      ) : null}
+                <div className="space-y-1 text-xs md:flex-1 md:px-2">
+                  <div className="text-slate-300/85">Deploy token + create V3 pool</div>
+                  {actionBarNotice ? (
+                    <div className="text-amber-100">
+                      {isDeployLocked ? `Disabled reason: ${actionBarNotice}` : actionBarNotice}
                     </div>
-                  ) : (
-                    <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300">
-                      Tokens will be sent to your wallet:{" "}
-                      <span className="font-mono text-slate-100">{address ? shorten(address) : "Connect wallet"}</span>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
+                <button
+                  type="submit"
+                  disabled={isDeployLocked}
+                  title={isDeployLocked ? deployLockReason : ""}
+                  className={PRIMARY_BUTTON_CLASS}
+                >
+                  {deployAction.loading ? "Deploying..." : "Deploy token"}
+                </button>
               </div>
-            </CollapsibleSection>
-
-            <div className="flex items-center justify-between gap-2">
-              <div className="text-xs text-slate-300/75">
-                {imageUploading
-                  ? "Uploading image to IPFS..."
-                  : missingBasicFields.length
-                  ? `Missing required fields: ${missingBasicFields.join(", ")}`
-                  : "Ready to deploy"}
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setImageUploading(false);
-                  setImageUploadCid("");
-                  setImageUploadError("");
-                  setDeployForm((prev) => ({
-                    ...defaultDeployForm(),
-                    creatorAdmin: address || prev.creatorAdmin || "",
-                    creatorRewardRecipient: address || prev.creatorRewardRecipient || "",
-                    interfaceAdmin:
-                      (isAddress(DEFAULT_PROTOCOL_REWARD_ADMIN) && DEFAULT_PROTOCOL_REWARD_ADMIN) || prev.interfaceAdmin || "",
-                    interfaceRewardRecipient:
-                      (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
-                      prev.interfaceRewardRecipient ||
-                      "",
-                    teamRewardRecipient:
-                      (isAddress(DEFAULT_PROTOCOL_REWARD_RECIPIENT) && DEFAULT_PROTOCOL_REWARD_RECIPIENT) ||
-                      prev.teamRewardRecipient ||
-                      "",
-                  }));
-                }}
-                className="rounded-xl border border-slate-600/70 bg-slate-900/75 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50"
-              >
-                Reset
-              </button>
-              <button
-                type="submit"
-                disabled={deployAction.loading || imageUploading || missingBasicFields.length > 0}
-                className={PRIMARY_BUTTON_CLASS}
-              >
-                {deployAction.loading ? "Deploying..." : "Deploy token"}
-              </button>
             </div>
           </form>
 
@@ -1716,6 +2719,12 @@ export default function LaunchpadSection({ address, onConnect }) {
             </div>
           ) : null}
           <ActionInfo state={deployAction} />
+        </div>
+
+            <div className="hidden xl:block">
+              <div className="sticky top-24">{createSummaryCard}</div>
+            </div>
+          </div>
         </div>
 
         <div className={`${PANEL_CLASS} ${activeView === "deployments" ? "cx-panel-enter" : "hidden"}`}>

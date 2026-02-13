@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 
-const MAX_IMAGE_BYTES = 256 * 1024; // 256 KB
-const MAX_BODY_BYTES = 420_000; // base64 payload guardrail
+const MAX_IMAGE_BYTES = 1024 * 1024; // 1 MB
+const MAX_IMAGE_LABEL = "1 MB";
+const MAX_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
+const MAX_BODY_BYTES = MAX_BASE64_CHARS + 40_000; // base64 payload + JSON envelope guardrail
 const RATE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_REQUESTS_PER_IP = 20;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -19,6 +21,25 @@ const sanitizeFileName = (value) => {
   return base.endsWith(".png") ? base : `${base}.png`;
 };
 
+const readJsonBodySize = (body) => {
+  try {
+    if (body == null) return 0;
+    if (typeof body === "string") return Buffer.byteLength(body, "utf8");
+    if (Buffer.isBuffer(body)) return body.length;
+    return Buffer.byteLength(JSON.stringify(body), "utf8");
+  } catch {
+    return Number.MAX_SAFE_INTEGER;
+  }
+};
+
+const toBufferFromUnknown = (value) => {
+  if (value == null) return null;
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  if (typeof value === "string") return Buffer.from(value, "binary");
+  return null;
+};
+
 const parseJsonBody = (body) => {
   if (!body) return {};
   if (typeof body === "string") {
@@ -31,6 +52,24 @@ const parseJsonBody = (body) => {
   if (typeof body === "object") return body;
   return {};
 };
+
+const readRawBodyFromStream = async (req, maxBytes) =>
+  new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+
+    req.on("data", (chunk) => {
+      const part = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      total += part.length;
+      if (total > maxBytes) {
+        reject(new Error("RAW_BODY_TOO_LARGE"));
+        return;
+      }
+      chunks.push(part);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", (error) => reject(error));
+  });
 
 const getClientIp = (req) => {
   const xfwd = req.headers["x-forwarded-for"];
@@ -94,21 +133,58 @@ const buildMultipartBody = ({ fileName, fileBuffer, network = "public" }) => {
   };
 };
 
+const normalizePinataJwt = (value) => {
+  let token = String(value || "").trim();
+  if (!token) return "";
+  token = token.replace(/^bearer\s+/iu, "").trim();
+  if (
+    (token.startsWith('"') && token.endsWith('"')) ||
+    (token.startsWith("'") && token.endsWith("'"))
+  ) {
+    token = token.slice(1, -1).trim();
+  }
+  // JWT must not include spaces/newlines; remove accidental formatting artifacts.
+  token = token.replace(/\s+/gu, "");
+  return token;
+};
+
+const isLikelyJwt = (value) =>
+  /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(String(value || ""));
+
 const buildPinataAuthHeaders = () => {
-  const jwt = String(
+  const rawJwt = String(
     process.env.PINATA_JWT ||
       process.env.PINATA_JWT_SECRET ||
       process.env.PINATA_API_JWT ||
       ""
   ).trim();
-  if (jwt) return { Authorization: `Bearer ${jwt}` };
-  return null;
+  const jwt = normalizePinataJwt(rawJwt);
+
+  if (!jwt) {
+    return {
+      headers: null,
+      error:
+        "IPFS upload is not configured. Set PINATA_JWT with org:files:write scope (Pinata: Files -> Write).",
+    };
+  }
+  if (!isLikelyJwt(jwt)) {
+    return {
+      headers: null,
+      error:
+        "PINATA_JWT format looks invalid. Use raw JWT token (no quotes/newlines, no 'Bearer ' prefix).",
+    };
+  }
+
+  return {
+    headers: { Authorization: `Bearer ${jwt}` },
+    error: "",
+  };
 };
 
 const setCors = (res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-File-Name");
 };
 
 export default async function handler(req, res) {
@@ -130,45 +206,71 @@ export default async function handler(req, res) {
       return;
     }
 
-    const authHeaders = buildPinataAuthHeaders();
-    if (!authHeaders) {
-      res.status(503).json({
-        error:
-          "IPFS upload is not configured. Set PINATA_JWT with org:files:write scope (Pinata: Files -> Write).",
-      });
+    const authConfig = buildPinataAuthHeaders();
+    if (!authConfig.headers) {
+      res.status(503).json({ error: authConfig.error });
       return;
     }
+    const authHeaders = authConfig.headers;
 
-    const rawBodySize = Buffer.byteLength(JSON.stringify(req.body || {}), "utf8");
-    if (rawBodySize > MAX_BODY_BYTES) {
-      res.status(413).json({ error: "Payload too large" });
-      return;
-    }
+    const requestContentType = String(req.headers["content-type"] || "").toLowerCase();
+    const isDirectPngUpload = requestContentType.startsWith("image/png");
+    let imageBuffer = null;
+    let fileName = "token-image.png";
 
-    const body = parseJsonBody(req.body);
-    const dataBase64 = String(body?.dataBase64 || "").trim();
-    const fileName = sanitizeFileName(body?.fileName || "token-image.png");
-    const contentType = String(body?.contentType || "").trim().toLowerCase();
+    if (isDirectPngUpload) {
+      fileName = sanitizeFileName(req.headers["x-file-name"] || "token-image.png");
+      imageBuffer = toBufferFromUnknown(req.body);
+      if (!imageBuffer) {
+        if (typeof req.on !== "function") {
+          res.status(400).json({ error: "Missing binary PNG payload." });
+          return;
+        }
+        try {
+          imageBuffer = await readRawBodyFromStream(req, MAX_IMAGE_BYTES + 1);
+        } catch (error) {
+          if (String(error?.message || "") === "RAW_BODY_TOO_LARGE") {
+            res.status(413).json({ error: `PNG file is too large. Max size is ${MAX_IMAGE_LABEL}.` });
+            return;
+          }
+          throw error;
+        }
+      }
+    } else {
+      const rawBodySize = readJsonBodySize(req.body);
+      if (rawBodySize > MAX_BODY_BYTES) {
+        res.status(413).json({ error: "Payload too large" });
+        return;
+      }
 
-    if (!dataBase64) {
-      res.status(400).json({ error: "Missing dataBase64" });
-      return;
-    }
-    if (contentType && contentType !== "image/png") {
-      res.status(400).json({ error: "Only image/png is supported." });
-      return;
-    }
-    if (!/^[a-zA-Z0-9+/=]+$/u.test(dataBase64)) {
-      res.status(400).json({ error: "Invalid base64 payload." });
-      return;
-    }
+      const body = parseJsonBody(req.body);
+      const dataBase64 = String(body?.dataBase64 || "").trim();
+      fileName = sanitizeFileName(body?.fileName || "token-image.png");
+      const contentType = String(body?.contentType || "").trim().toLowerCase();
 
-    let imageBuffer;
-    try {
-      imageBuffer = Buffer.from(dataBase64, "base64");
-    } catch {
-      res.status(400).json({ error: "Invalid base64 payload." });
-      return;
+      if (!dataBase64) {
+        res.status(400).json({ error: "Missing dataBase64" });
+        return;
+      }
+      if (dataBase64.length > MAX_BASE64_CHARS) {
+        res.status(413).json({ error: `PNG file is too large. Max size is ${MAX_IMAGE_LABEL}.` });
+        return;
+      }
+      if (contentType && contentType !== "image/png") {
+        res.status(400).json({ error: "Only image/png is supported." });
+        return;
+      }
+      if (!/^[a-zA-Z0-9+/=]+$/u.test(dataBase64)) {
+        res.status(400).json({ error: "Invalid base64 payload." });
+        return;
+      }
+
+      try {
+        imageBuffer = Buffer.from(dataBase64, "base64");
+      } catch {
+        res.status(400).json({ error: "Invalid base64 payload." });
+        return;
+      }
     }
 
     if (!imageBuffer?.length) {
@@ -176,7 +278,7 @@ export default async function handler(req, res) {
       return;
     }
     if (imageBuffer.length > MAX_IMAGE_BYTES) {
-      res.status(413).json({ error: "PNG file is too large. Max size is 256 KB." });
+      res.status(413).json({ error: `PNG file is too large. Max size is ${MAX_IMAGE_LABEL}.` });
       return;
     }
     if (!isPngBuffer(imageBuffer)) {
@@ -253,6 +355,17 @@ export default async function handler(req, res) {
     const lower = message.toLowerCase();
     if (lower.includes("fetch failed") || lower.includes("network") || lower.includes("timeout")) {
       res.status(502).json({ error: `Cannot reach Pinata upload service. ${message || ""}`.trim() });
+      return;
+    }
+    if (
+      lower.includes("invalid header") ||
+      lower.includes("headers.append") ||
+      lower.includes("invalid header value")
+    ) {
+      res.status(503).json({
+        error:
+          "PINATA_JWT is malformed. Use raw JWT (no quotes/newlines, no 'Bearer ' prefix).",
+      });
       return;
     }
     res.status(500).json({
