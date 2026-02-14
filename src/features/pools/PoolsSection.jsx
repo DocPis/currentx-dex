@@ -185,7 +185,6 @@ export default function PoolsSection({ onSelectPool }) {
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
   const [hideLowTvl, setHideLowTvl] = useState(true);
-  const [viewMode, setViewMode] = useState("basic"); // basic | pro
   const [intelFilter, setIntelFilter] = useState("all");
 
   const searchLower = searchTerm.trim().toLowerCase();
@@ -797,13 +796,7 @@ export default function PoolsSection({ onSelectPool }) {
             <div className="mt-1 text-[11px] text-slate-500">{bestAprMeta.pair}</div>
           </div>
         </div>
-        <div
-          className={
-            viewMode === "pro"
-              ? "grid grid-cols-1 sm:grid-cols-3 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70"
-              : "grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70"
-          }
-        >
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70">
           <div>
             <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
               Liquidity Trend
@@ -820,21 +813,6 @@ export default function PoolsSection({ onSelectPool }) {
               {protocolIntel.volatilityLabel}
             </div>
           </div>
-          {viewMode === "pro" && (
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Capital Efficiency Index
-              </div>
-              <div
-                className="text-base font-semibold text-slate-100"
-                title="Pro metric based on fee and turnover efficiency."
-              >
-                {Number.isFinite(protocolIntel.capitalEfficiencyIndex)
-                  ? `${protocolIntel.capitalEfficiencyIndex.toFixed(1)} / 10`
-                  : "--"}
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
@@ -842,7 +820,7 @@ export default function PoolsSection({ onSelectPool }) {
         <div>
           <h2 className="text-2xl font-semibold text-white">Pools</h2>
           <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 text-sm text-slate-400">
-            <span>Ranked by real capital efficiency and market activity.</span>
+            <span>Ranked by liquidity, volume, and fee activity.</span>
             <button
               type="button"
               onClick={() => setHideLowTvl((prev) => !prev)}
@@ -912,28 +890,6 @@ export default function PoolsSection({ onSelectPool }) {
                     >
                       {item.count}
                     </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="inline-flex rounded-full border border-slate-800 bg-slate-950/70 p-1">
-              {[
-                { id: "basic", label: "Basic" },
-                { id: "pro", label: "Pro" },
-              ].map((option) => {
-                const active = viewMode === option.id;
-                return (
-                  <button
-                    key={option.id}
-                    type="button"
-                    onClick={() => setViewMode(option.id)}
-                    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition ${
-                      active
-                        ? "bg-slate-200 text-slate-900"
-                        : "text-slate-400 hover:text-slate-100"
-                    }`}
-                  >
-                    {option.label}
                   </button>
                 );
               })}
@@ -1236,47 +1192,6 @@ export default function PoolsSection({ onSelectPool }) {
                       </div>
                     </div>
                   </div>
-                  {viewMode === "pro" && (
-                    <div className="mt-3 border-t border-slate-800/80 pt-3 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
-                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
-                        <div className="text-slate-500 uppercase tracking-wide">Capital Efficiency</div>
-                        <div className="mt-1 text-slate-100 font-semibold">
-                          {Number.isFinite(insight?.capitalEfficiency)
-                            ? insight.capitalEfficiency.toFixed(2)
-                            : "--"}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
-                        <div className="text-slate-500 uppercase tracking-wide">Fee / Liquidity</div>
-                        <div className="mt-1 text-slate-100 font-semibold">
-                          {Number.isFinite(insight?.feeLiquidityRatioPct)
-                            ? `${insight.feeLiquidityRatioPct.toFixed(2)}%`
-                            : "--"}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
-                        <div className="text-slate-500 uppercase tracking-wide">Liquidity Trend</div>
-                        <div className="mt-1 text-slate-100 font-semibold">
-                          {Number.isFinite(insight?.netFlowUsd)
-                            ? `${formatSignedUsd(insight?.netFlowUsd)} (24h)`
-                            : "--"}
-                        </div>
-                      </div>
-                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
-                        <div className="text-slate-500 uppercase tracking-wide">Volatility</div>
-                        <div
-                          className="mt-1 text-slate-100 font-semibold"
-                          title={
-                            Number.isFinite(insight?.volatilityScore)
-                              ? `Score ${insight.volatilityScore.toFixed(1)}/10`
-                              : undefined
-                          }
-                        >
-                          {insight?.volatilityLabel || "--"}
-                        </div>
-                      </div>
-                    </div>
-                  )}
                 </button>
               );
             })

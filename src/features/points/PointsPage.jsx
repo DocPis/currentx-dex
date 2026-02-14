@@ -1,5 +1,5 @@
 ﻿// src/features/points/PointsPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   SEASON_ID,
   SEASON_LABEL,
@@ -83,16 +83,6 @@ const formatSignedCompact = (value, suffix = "") => {
   return `${sign}${body}${suffix}`;
 };
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-const formatCountdown = (msRemaining) => {
-  const totalSeconds = Math.max(0, Math.floor(msRemaining / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const hh = String(hours).padStart(2, "0");
-  const mm = String(minutes).padStart(2, "0");
-  const ss = String(seconds).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
-};
 const hashString = (value = "") => {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
@@ -201,7 +191,6 @@ const AccordionItem = ({ title, children }) => (
 
 export default function PointsPage({ address, onConnect, onNavigate }) {
   const [copied, setCopied] = useState("");
-  const [nowMs, setNowMs] = useState(() => Date.now());
   const [whitelistClaimState, setWhitelistClaimState] = useState({
     loading: false,
     error: "",
@@ -220,11 +209,6 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
     refetch: refetchUserStats,
   } = useUserPoints(address);
   const whitelistQuery = useWhitelistRewards(address);
-
-  useEffect(() => {
-    const timer = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const resolvedSeasonId = String(
     userStats?.seasonId || leaderboardQuery?.seasonId || SEASON_ID || ""
@@ -334,12 +318,6 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
       return (userPoints / summaryTotalPoints) * summarySeasonRewardCrx;
     }
     return 0;
-  })();
-  const seasonCountdown = (() => {
-    const end = Number(seasonEndValue);
-    if (!Number.isFinite(end) || end <= 0) return null;
-    if (end <= nowMs) return "00:00:00";
-    return formatCountdown(end - nowMs);
   })();
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
@@ -536,9 +514,6 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <Pill tone="sky">Season</Pill>
-              {seasonCountdown ? (
-                <Pill tone="amber">{`Countdown ${seasonCountdown}`}</Pill>
-              ) : null}
             </div>
             <div className="mt-3 text-3xl sm:text-4xl font-semibold">
               {seasonHeadline}

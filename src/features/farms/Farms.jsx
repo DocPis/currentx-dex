@@ -457,6 +457,42 @@ function V3StakerList({ address, onConnect }) {
     () => incentives.filter((inc) => now >= inc.startTime && now <= inc.endTime).length,
     [incentives, now]
   );
+  const activePositionsCount = useMemo(
+    () => positions.filter((pos) => (pos?.liquidity ?? 0n) > 0n).length,
+    [positions]
+  );
+  const totalRewardsSummary = useMemo(() => {
+    const totalsBySymbol = new Map();
+    incentives.forEach((inc) => {
+      const symbol = inc?.rewardMeta?.symbol || "TOKEN";
+      const decimals = Number(inc?.rewardMeta?.decimals ?? 18);
+      try {
+        const amount = Number(formatUnits(inc?.reward || 0n, decimals));
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        totalsBySymbol.set(symbol, (totalsBySymbol.get(symbol) || 0) + amount);
+      } catch {
+        // Ignore malformed reward values.
+      }
+    });
+    const entries = Array.from(totalsBySymbol.entries());
+    if (!entries.length) {
+      return {
+        value: "--",
+        hint: "No reward budget loaded",
+      };
+    }
+    if (entries.length === 1) {
+      const [symbol, total] = entries[0];
+      return {
+        value: `${formatNumber(total)} ${symbol}`,
+        hint: "Total reward budget",
+      };
+    }
+    return {
+      value: formatNumber(incentives.length),
+      hint: "Mixed reward campaigns",
+    };
+  }, [incentives]);
 
   const buildIncentiveKey = (incentive) => {
     const coder = AbiCoder.defaultAbiCoder();
@@ -773,45 +809,42 @@ function V3StakerList({ address, onConnect }) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="relative overflow-hidden rounded-[28px] border border-white/5 bg-gradient-to-br from-slate-950/90 via-slate-900/70 to-emerald-900/20 p-5 shadow-2xl shadow-black/40">
-        <div className="absolute -top-24 -right-20 h-52 w-52 rounded-full bg-emerald-500/10 blur-3xl" />
-        <div className="absolute -bottom-24 -left-20 h-60 w-60 rounded-full bg-sky-500/10 blur-3xl" />
-        <div className="relative flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              Live
+    <div className="space-y-4">
+      <div className="rounded-2xl border border-slate-800/70 bg-slate-950/70 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500">
+              Incentives for V3 positions
             </div>
-            <div className="text-sm text-slate-200">
-              Incentives for V3 positions.
-            </div>
-            <div className="text-xs text-slate-500">
+            <div className="mt-1 text-xs text-slate-400">
               Stake, earn, and manage NFT positions without leaving the chain.
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                Incentives
-              </div>
-              <div className="text-lg font-semibold text-slate-100">
-                {formatNumber(incentives.length)}
-              </div>
+          <button
+            type="button"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20"
+          >
+            Create Incentive
+          </button>
+        </div>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Incentives Live</div>
+            <div className="mt-1 text-base font-semibold text-slate-100">{formatNumber(activeCount)}</div>
+            <div className="text-[11px] text-slate-500">{formatNumber(incentives.length)} total programs</div>
+          </div>
+          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Total Rewards</div>
+            <div className="mt-1 text-base font-semibold text-slate-100">{totalRewardsSummary.value}</div>
+            <div className="text-[11px] text-slate-500">{totalRewardsSummary.hint}</div>
+          </div>
+          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500">Active Positions</div>
+            <div className="mt-1 text-base font-semibold text-slate-100">{formatNumber(activePositionsCount)}</div>
+            <div className="text-[11px] text-slate-500">
+              {address ? "Wallet + deposited positions" : "Connect wallet to load positions"}
             </div>
-            <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
-              <div className="text-[11px] uppercase tracking-wide text-slate-500">Active</div>
-              <div className="text-lg font-semibold text-slate-100">
-                {formatNumber(activeCount)}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="px-4 py-2.5 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 text-xs font-semibold text-slate-950 shadow-lg shadow-emerald-500/30 hover:from-emerald-300 hover:to-emerald-500 transition"
-            >
-              Create Incentive
-            </button>
           </div>
         </div>
       </div>
