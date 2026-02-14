@@ -610,7 +610,14 @@ const defaultVaultForm = () => ({
   depositAdmin: "",
 });
 
-export default function LaunchpadSection({ address, onConnect }) {
+const LAUNCHPAD_VIEWS = new Set(["create", "deployments", "vault", "locker"]);
+
+const normalizeLaunchpadView = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return LAUNCHPAD_VIEWS.has(normalized) ? normalized : "create";
+};
+
+export default function LaunchpadSection({ address, onConnect, initialView = "create" }) {
   const [contracts] = useState({
     currentx: CURRENTX_ADDRESS || "",
     vault: CURRENTX_VAULT_ADDRESS || "",
@@ -656,7 +663,7 @@ export default function LaunchpadSection({ address, onConnect }) {
     tokenReward: null,
   });
   const [lockerAction, setLockerAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
-  const [activeView, setActiveView] = useState("create");
+  const [activeView, setActiveView] = useState(() => normalizeLaunchpadView(initialView));
   const [openSections, setOpenSections] = useState({
     metadata: false,
     rewards: false,
@@ -685,6 +692,10 @@ export default function LaunchpadSection({ address, onConnect }) {
   const highlightTimerRef = useRef(null);
   const cidCopiedTimerRef = useRef(null);
   const summaryCopyTimerRef = useRef(null);
+
+  useEffect(() => {
+    setActiveView(normalizeLaunchpadView(initialView));
+  }, [initialView]);
 
   const resolveTokenMeta = useCallback(async (tokenAddress, providerOverride) => {
     if (!isAddress(tokenAddress)) return null;
