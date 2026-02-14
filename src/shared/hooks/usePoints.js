@@ -329,6 +329,11 @@ export const useUserPoints = (address) => {
         const num = Number(value);
         return Number.isFinite(num) ? num : fallback;
       };
+      const toOptionalNumber = (value, fallback = null) => {
+        if (value === null || value === undefined || value === "") return fallback;
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+      };
       const toBool = (value) => {
         if (value === true || value === "1" || value === 1) return true;
         if (value === false || value === "0" || value === 0) return false;
@@ -357,11 +362,11 @@ export const useUserPoints = (address) => {
         }
 
         if (payload) {
-          const seasonStartResolved = toNumber(
+          const seasonStartResolved = toOptionalNumber(
             payload?.seasonStart,
             frontendSeasonStart
           );
-          const seasonEndResolved = toNumber(payload?.seasonEnd, frontendSeasonEnd);
+          const seasonEndResolved = toOptionalNumber(payload?.seasonEnd, frontendSeasonEnd);
           const seasonHasStartedResolved = Number.isFinite(seasonStartResolved)
             ? nowMs >= seasonStartResolved
             : frontendSeasonHasStarted;

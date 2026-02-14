@@ -101,6 +101,15 @@ const hashString = (value = "") => {
   }
   return Math.abs(hash);
 };
+const normalizeSeasonKey = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
+const isSeasonOne = (seasonId, seasonLabel) => {
+  const keys = new Set([normalizeSeasonKey(seasonId), normalizeSeasonKey(seasonLabel)]);
+  return keys.has("season1") || keys.has("s1") || keys.has("1");
+};
 const buildRowSparkline = (seedInput, pointsChange = 0, rankChange = 0) => {
   const seed = hashString(seedInput);
   const trend = clamp((Number(pointsChange) || 0) / 400, -0.24, 0.24);
@@ -218,6 +227,7 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
   }, []);
 
   const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
+  const seasonOne = isSeasonOne(SEASON_ID, SEASON_LABEL);
   const seasonStartValue =
     userStats?.seasonStart ?? leaderboardQuery?.seasonStart ?? SEASON_START_MS;
   const seasonEndValue =
@@ -228,11 +238,13 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
       : typeof leaderboardQuery?.seasonOngoing === "boolean"
       ? leaderboardQuery.seasonOngoing
       : SEASON_ONGOING;
-  const seasonStartLabel = formatDate(seasonStartValue);
-  const seasonEndLabel = seasonIsOngoing
-    ? "ONGOING"
-    : Number.isFinite(Number(seasonEndValue)) && Number(seasonEndValue) > 0
+  const hasExplicitSeasonEnd =
+    Number.isFinite(Number(seasonEndValue)) && Number(seasonEndValue) > 0;
+  const seasonStartLabel = seasonOne ? "Feb 12, 2026" : formatDate(seasonStartValue);
+  const seasonEndLabel = hasExplicitSeasonEnd
     ? formatDate(seasonEndValue)
+    : seasonIsOngoing
+    ? "ONGOING"
     : "TBD";
   const seasonHeadline = `${seasonTitle} - ${seasonStartLabel} -> ${seasonEndLabel}`;
   const seasonFinalizationLine =
