@@ -23,9 +23,11 @@ import {
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const DAY = 86400;
+const DATETIME_LOCAL_TOLERANCE_SECONDS = 59;
 const FIXED_STARTING_MARKET_CAP_ETH = "10";
 const MAX_IMAGE_UPLOAD_BYTES = 1024 * 1024;
-const MAX_IMAGE_UPLOAD_LABEL = "1 MB";
+const MAX_IMAGE_UPLOAD_LABEL = "1MB";
+const CREATOR_BUY_GAS_BUFFER_ETH = "0.0005";
 const launchpadUiMemory = {
   summaryAdvanced: false,
   formAdvanced: false,
@@ -187,15 +189,18 @@ const REWARD_TYPE_OPTIONS = [
   { value: "both", label: "Both" },
 ];
 const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
-const LOCKUP_DAY_PRESETS = ["7", "30", "90", "180"];
+const LOCKUP_DAY_PRESETS = ["30", "90", "180"];
 const VESTING_DAY_PRESETS = ["30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
 const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
 const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const IPFS_UPLOAD_ENDPOINT = String(ENV.VITE_IPFS_UPLOAD_ENDPOINT || "/api/ipfs/upload").trim();
+const TOKEN_IMAGE_REGISTRY_ENDPOINT = String(ENV.VITE_TOKEN_IMAGE_REGISTRY_ENDPOINT || "/api/ipfs/token-image").trim();
 const IPFS_IMAGE_GATEWAY = String(ENV.VITE_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/")
   .trim()
   .replace(/\/?$/u, "/");
+const IPFS_FALLBACK_GATEWAY = "https://ipfs.io/ipfs/";
+const TOKEN_IMAGE_CACHE_KEY = "currentx.launchpad.tokenImages.v1";
 const RAW_PROTOCOL_REWARD_RECIPIENT = String(
   ENV.VITE_PROTOCOL_REWARD_RECIPIENT || ENV.VITE_TEAM_REWARD_RECIPIENT || ""
 ).trim();
@@ -231,6 +236,182 @@ const toImagePreviewSrc = (value) => {
   return `${IPFS_IMAGE_GATEWAY}${clean}`;
 };
 
+const toFallbackIpfsGatewaySrc = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^ipfs:\/\//iu.test(raw)) {
+    const trimmed = raw.replace(/^ipfs:\/\//iu, "");
+    const clean = trimmed.startsWith("ipfs/") ? trimmed.slice(5) : trimmed;
+    return `${IPFS_FALLBACK_GATEWAY}${clean}`;
+  }
+  const match = raw.match(/\/ipfs\/(.+)$/iu);
+  if (!match?.[1]) return "";
+  return `${IPFS_FALLBACK_GATEWAY}${match[1]}`;
+};
+
+const isImageLikeValue = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return false;
+  if (/^ipfs:\/\//iu.test(raw)) return true;
+  if (/^data:image\//iu.test(raw)) return true;
+  if (/^https?:\/\//iu.test(raw)) {
+    return true;
+  }
+  return false;
+};
+
+const extractImageFromObject = (value, depth = 0) => {
+  if (depth > 3 || value == null) return "";
+  if (typeof value === "string") {
+    const raw = value.trim();
+    if (!raw) return "";
+    if (isImageLikeValue(raw)) return raw;
+    if ((raw.startsWith("{") && raw.endsWith("}")) || (raw.startsWith("[") && raw.endsWith("]"))) {
+      try {
+        const parsed = JSON.parse(raw);
+        return extractImageFromObject(parsed, depth + 1);
+      } catch {
+        return "";
+      }
+    }
+    if (/^data:application\/json;base64,/iu.test(raw) && typeof atob === "function") {
+      try {
+        const payload = String(raw.split(",")[1] || "");
+        const decoded = atob(payload);
+        const parsed = JSON.parse(decoded);
+        return extractImageFromObject(parsed, depth + 1);
+      } catch {
+        return "";
+      }
+    }
+    return "";
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractImageFromObject(item, depth + 1);
+      if (found) return found;
+    }
+    return "";
+  }
+  if (typeof value === "object") {
+    const directKeys = ["image", "image_url", "logo", "logoURI", "icon", "icon_url"];
+    for (const key of directKeys) {
+      const found = extractImageFromObject(value[key], depth + 1);
+      if (found) return found;
+    }
+    const nestedKeys = ["properties", "metadata", "data", "attributes"];
+    for (const key of nestedKeys) {
+      const found = extractImageFromObject(value[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  return "";
+};
+
+const readTokenImageCache = () => {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(TOKEN_IMAGE_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch {
+    return {};
+  }
+};
+
+const getCachedTokenImage = (tokenAddress) => {
+  if (!isAddress(tokenAddress)) return "";
+  const cache = readTokenImageCache();
+  const value = cache[String(tokenAddress).toLowerCase()];
+  return isImageLikeValue(value) ? String(value).trim() : "";
+};
+
+const cacheTokenImage = (tokenAddress, imageValue) => {
+  if (!isAddress(tokenAddress) || !isImageLikeValue(imageValue)) return;
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const cache = readTokenImageCache();
+    cache[String(tokenAddress).toLowerCase()] = String(imageValue).trim();
+    window.localStorage.setItem(TOKEN_IMAGE_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // keep UI silent if localStorage is unavailable
+  }
+};
+
+const resolveImageFromMetadataUri = async (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^data:image\//iu.test(raw)) return raw;
+  if (/^data:application\/json;base64,/iu.test(raw)) return extractImageFromObject(raw);
+  if (/^ipfs:\/\//iu.test(raw) || /^https?:\/\//iu.test(raw)) {
+    try {
+      const response = await fetch(toImagePreviewSrc(raw), { method: "GET" });
+      if (!response.ok) return "";
+      const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+      if (contentType.includes("image/")) return raw;
+      const text = await response.text();
+      if (!text) return "";
+      const parsed = JSON.parse(text);
+      return extractImageFromObject(parsed);
+    } catch {
+      return "";
+    }
+  }
+  return extractImageFromObject(raw);
+};
+
+const fetchTokenImageRegistryBatch = async (tokenAddresses) => {
+  const normalizedTokens = Array.from(
+    new Set(
+      (tokenAddresses || [])
+        .map((value) => String(value || "").trim())
+        .filter((value) => isAddress(value))
+        .map((value) => value.toLowerCase())
+    )
+  );
+  if (!normalizedTokens.length || !TOKEN_IMAGE_REGISTRY_ENDPOINT) return {};
+
+  try {
+    const response = await fetch(TOKEN_IMAGE_REGISTRY_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tokens: normalizedTokens }),
+    });
+    if (!response.ok) return {};
+    const payload = await response.json().catch(() => ({}));
+    const images = payload?.images;
+    if (!images || typeof images !== "object" || Array.isArray(images)) return {};
+    return images;
+  } catch {
+    return {};
+  }
+};
+
+const persistTokenImageRegistryEntry = async ({ tokenAddress, image, deployer = "", txHash = "", source = "launchpad" }) => {
+  const token = String(tokenAddress || "").trim();
+  const imageValue = String(image || "").trim();
+  if (!isAddress(token) || !isImageLikeValue(imageValue) || !TOKEN_IMAGE_REGISTRY_ENDPOINT) return;
+
+  const body = {
+    tokenAddress: token,
+    image: imageValue,
+    deployer: String(deployer || "").trim(),
+    txHash: String(txHash || "").trim(),
+    source: String(source || "launchpad").trim() || "launchpad",
+  };
+  const response = await fetch(TOKEN_IMAGE_REGISTRY_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(String(payload?.error || "Unable to persist token image mapping."));
+  }
+};
+
 const toBytes32Salt = (value, walletAddress) => {
   const raw = String(value ?? "").trim();
   if (/^0x[a-fA-F0-9]{64}$/u.test(raw)) return raw;
@@ -255,6 +436,17 @@ const formatDate = (unix) => {
   return d.toLocaleString();
 };
 
+const toDateTimeLocalValue = (date) => {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+  const pad = (value) => String(value).padStart(2, "0");
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+};
+
 const formatRemainingFromUnix = (unix) => {
   const end = Number(unix || 0);
   if (!Number.isFinite(end) || end <= 0) return "--";
@@ -267,6 +459,18 @@ const formatRemainingFromUnix = (unix) => {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+};
+
+const formatUpdatedAgo = (updatedAtMs, nowMs = Date.now()) => {
+  const updated = Number(updatedAtMs || 0);
+  const now = Number(nowMs || Date.now());
+  if (!Number.isFinite(updated) || updated <= 0 || !Number.isFinite(now) || now < updated) return "";
+  const diffSec = Math.floor((now - updated) / 1000);
+  if (diffSec < 60) return `Updated ${diffSec}s ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `Updated ${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  return `Updated ${diffHours}h ago`;
 };
 
 const errMsg = (error, fallback) => {
@@ -287,6 +491,58 @@ const trimTrailingZeros = (value) =>
   String(value || "")
     .replace(/(\.\d*?[1-9])0+$/u, "$1")
     .replace(/\.0+$/u, "");
+
+const roundDecimalString = (value, maxDecimals = 8) => {
+  const raw = String(value || "").trim();
+  if (!/^\d+(\.\d+)?$/u.test(raw)) return raw;
+  const [intPartRaw, fracPartRaw = ""] = raw.split(".");
+  const intPart = intPartRaw || "0";
+  if (!fracPartRaw) return `${intPart}.0`;
+  if (fracPartRaw.length <= maxDecimals) {
+    const trimmed = fracPartRaw.replace(/0+$/u, "");
+    return `${intPart}.${trimmed || "0"}`;
+  }
+
+  const roundedFracDigits = fracPartRaw
+    .slice(0, maxDecimals)
+    .split("")
+    .map((char) => Number(char));
+  const roundUp = Number(fracPartRaw.charAt(maxDecimals) || "0") >= 5;
+
+  if (roundUp) {
+    let carry = 1;
+    for (let index = roundedFracDigits.length - 1; index >= 0; index -= 1) {
+      const next = roundedFracDigits[index] + carry;
+      if (next >= 10) {
+        roundedFracDigits[index] = 0;
+        carry = 1;
+      } else {
+        roundedFracDigits[index] = next;
+        carry = 0;
+        break;
+      }
+    }
+    if (carry) {
+      const intDigits = intPart.split("").map((char) => Number(char));
+      for (let index = intDigits.length - 1; index >= 0; index -= 1) {
+        const next = intDigits[index] + carry;
+        if (next >= 10) {
+          intDigits[index] = 0;
+          carry = 1;
+        } else {
+          intDigits[index] = next;
+          carry = 0;
+          break;
+        }
+      }
+      if (carry) intDigits.unshift(1);
+      const nextIntPart = intDigits.join("");
+      return `${nextIntPart}.${roundedFracDigits.join("").replace(/0+$/u, "") || "0"}`;
+    }
+  }
+
+  return `${intPart}.${roundedFracDigits.join("").replace(/0+$/u, "") || "0"}`;
+};
 
 const formatEthPerToken = (value) => {
   if (!Number.isFinite(value) || value <= 0) return "--";
@@ -321,18 +577,18 @@ const buildTokenMap = () => {
 
 const KNOWN_TOKENS = buildTokenMap();
 const PANEL_CLASS =
-  "rounded-[1.75rem] border border-slate-700/45 bg-slate-950/60 p-5 shadow-[0_22px_50px_rgba(2,6,23,0.55)] backdrop-blur-xl";
+  "rounded-2xl border border-slate-700/45 bg-slate-950/60 p-6 shadow-[0_18px_42px_rgba(2,6,23,0.5)] backdrop-blur-xl";
 const INPUT_CLASS =
-  "w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/20";
+  "w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/20";
 const SOFT_BUTTON_CLASS =
-  "rounded-full border border-slate-600/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50";
+  "rounded-xl border border-slate-600/70 bg-slate-900/72 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800/80 hover:text-slate-50";
 const PRIMARY_BUTTON_CLASS =
-  "rounded-xl border border-emerald-300/60 bg-gradient-to-r from-emerald-400/25 to-cyan-400/20 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.2)] transition hover:brightness-110 disabled:opacity-60";
+  "rounded-xl border border-emerald-300/55 bg-gradient-to-r from-emerald-400/20 to-cyan-400/14 px-3.5 py-2.5 text-xs font-semibold text-emerald-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
 const CYAN_BUTTON_CLASS =
-  "rounded-xl border border-cyan-300/55 bg-gradient-to-r from-sky-500/20 to-cyan-400/18 px-3 py-2 text-xs font-semibold text-cyan-100 shadow-[0_10px_22px_rgba(56,189,248,0.18)] transition hover:brightness-110 disabled:opacity-60";
+  "rounded-xl border border-cyan-300/55 bg-gradient-to-r from-sky-500/18 to-cyan-400/15 px-3.5 py-2.5 text-xs font-semibold text-cyan-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
 const AMBER_BUTTON_CLASS =
-  "rounded-xl border border-amber-300/55 bg-gradient-to-r from-amber-400/20 to-orange-400/15 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[0_10px_22px_rgba(251,191,36,0.14)] transition hover:brightness-110 disabled:opacity-60";
-const TONED_PANEL_CLASS = "rounded-xl border border-slate-700/60 bg-slate-900/45";
+  "rounded-xl border border-amber-300/55 bg-gradient-to-r from-amber-400/18 to-orange-400/12 px-3.5 py-2.5 text-xs font-semibold text-amber-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
+const TONED_PANEL_CLASS = "rounded-2xl border border-slate-700/60 bg-slate-900/42";
 
 function ActionInfo({ state }) {
   if (!state?.error && !state?.hash && !state?.message) return null;
@@ -414,6 +670,69 @@ function LockIcon({ className = "h-3.5 w-3.5" }) {
     >
       <path d="M6 9V7a4 4 0 118 0v2" />
       <rect x="4.5" y="9" width="11" height="8" rx="2" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4.5 10.5l3.2 3.2L15.5 5.9" />
+    </svg>
+  );
+}
+
+function NftTagIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3.5 6.5a2 2 0 012-2h6.7l4.3 4.3V15a2 2 0 01-2 2h-9a2 2 0 01-2-2v-8.5z" />
+      <circle cx="7.3" cy="8.1" r="1.1" />
+    </svg>
+  );
+}
+
+function RewardIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="10" cy="10" r="6.2" />
+      <path d="M8.1 7.9c0-.9.8-1.5 1.9-1.5 1.1 0 1.9.6 1.9 1.5s-.7 1.3-1.9 1.6c-1.2.3-1.9.7-1.9 1.6 0 .9.8 1.5 1.9 1.5 1.1 0 1.9-.6 1.9-1.5" />
+    </svg>
+  );
+}
+
+function PairIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M5 7h7m-7 6h7" />
+      <path d="M12 4l3 3-3 3M12 10l3 3-3 3" />
     </svg>
   );
 }
@@ -635,6 +954,10 @@ export default function LaunchpadSection({ address, onConnect }) {
   const [deployments, setDeployments] = useState([]);
   const [deploymentsLoading, setDeploymentsLoading] = useState(false);
   const [deploymentsError, setDeploymentsError] = useState("");
+  const [deploymentsUpdating, setDeploymentsUpdating] = useState(false);
+  const [deploymentsUpdatedFlash, setDeploymentsUpdatedFlash] = useState(false);
+  const [deploymentsLastUpdatedAt, setDeploymentsLastUpdatedAt] = useState(0);
+  const [deploymentsNow, setDeploymentsNow] = useState(() => Date.now());
 
   const [vaultForm, setVaultForm] = useState(defaultVaultForm);
   const [vaultLocks, setVaultLocks] = useState({
@@ -643,7 +966,20 @@ export default function LaunchpadSection({ address, onConnect }) {
     items: [],
     minimumVaultTime: 0n,
   });
+  const [vaultLocksExpanded, setVaultLocksExpanded] = useState(false);
+  const [vaultLastUpdatedAt, setVaultLastUpdatedAt] = useState(0);
+  const [vaultNow, setVaultNow] = useState(() => Date.now());
   const [vaultTokenMeta, setVaultTokenMeta] = useState(null);
+  const [vaultTokenBalance, setVaultTokenBalance] = useState({ loading: false, value: 0n });
+  const [vaultAllowance, setVaultAllowance] = useState({ loading: false, value: 0n });
+  const [vaultApproveAdvanced, setVaultApproveAdvanced] = useState(false);
+  const [vaultApproveMode, setVaultApproveMode] = useState("exact");
+  const [vaultUseCustomAdmin, setVaultUseCustomAdmin] = useState(false);
+  const [vaultAdvancedOpen, setVaultAdvancedOpen] = useState(false);
+  const [vaultDepositFlash, setVaultDepositFlash] = useState(false);
+  const [vaultTokenPickerExpanded, setVaultTokenPickerExpanded] = useState(true);
+  const [vaultTokenMenuOpen, setVaultTokenMenuOpen] = useState(false);
+  const [vaultRecentTokenDetails, setVaultRecentTokenDetails] = useState({});
   const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [locker, setLocker] = useState({
@@ -669,6 +1005,7 @@ export default function LaunchpadSection({ address, onConnect }) {
   const [highlightedField, setHighlightedField] = useState("");
   const [cidCopied, setCidCopied] = useState(false);
   const [copiedSummaryKey, setCopiedSummaryKey] = useState("");
+  const [copyToast, setCopyToast] = useState("");
   const [summaryAdvancedOpen, setSummaryAdvancedOpen] = useState(() => launchpadUiMemory.summaryAdvanced);
   const [formAdvancedOpen, setFormAdvancedOpen] = useState(() => launchpadUiMemory.formAdvanced);
 
@@ -678,18 +1015,25 @@ export default function LaunchpadSection({ address, onConnect }) {
   const rewardsSectionRef = useRef(null);
   const vaultSectionRef = useRef(null);
   const creatorBuySectionRef = useRef(null);
+  const vaultDepositFormRef = useRef(null);
   const nameInputRef = useRef(null);
   const symbolInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const imageSectionRef = useRef(null);
+  const vaultTokenMenuRef = useRef(null);
   const highlightTimerRef = useRef(null);
   const cidCopiedTimerRef = useRef(null);
   const summaryCopyTimerRef = useRef(null);
+  const copyToastTimerRef = useRef(null);
+  const deploymentsUpdatingTimerRef = useRef(null);
+  const deploymentsUpdatedFlashTimerRef = useRef(null);
+  const vaultDepositFlashTimerRef = useRef(null);
 
   const resolveTokenMeta = useCallback(async (tokenAddress, providerOverride) => {
     if (!isAddress(tokenAddress)) return null;
     const lower = tokenAddress.toLowerCase();
     if (tokenMetaCache.current[lower]) return tokenMetaCache.current[lower];
+    const cachedImage = getCachedTokenImage(tokenAddress);
 
     const known = KNOWN_TOKENS[lower];
     if (known) {
@@ -698,7 +1042,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         name: known.name || known.displaySymbol || known.symbol || "Token",
         symbol: known.displaySymbol || known.symbol || "TOKEN",
         decimals: Number(known.decimals || 18),
-        logo: String(known.logo || ""),
+        logo: String(known.logo || cachedImage || ""),
       };
       tokenMetaCache.current[lower] = meta;
       return meta;
@@ -708,16 +1052,44 @@ export default function LaunchpadSection({ address, onConnect }) {
     const erc20 = new Contract(tokenAddress, ERC20_ABI, provider);
     const imageReader = new Contract(
       tokenAddress,
-      [{ inputs: [], name: "image", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" }],
+      [
+        { inputs: [], name: "image", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "imageUrl", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "tokenURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "metadata", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "contractURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "logoURI", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "icon", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+      ],
       provider
     );
-    const [name, symbol, decimals, imageRaw] = await Promise.all([
+    const [name, symbol, decimals, imageRaw, imageUrlRaw, tokenUriRaw, metadataRaw, contractUriRaw, logoUriRaw, iconRaw] =
+      await Promise.all([
       erc20.name().catch(() => "Token"),
       erc20.symbol().catch(() => "TOKEN"),
       erc20.decimals().catch(() => 18),
       imageReader.image().catch(() => ""),
+      imageReader.imageUrl().catch(() => ""),
+      imageReader.tokenURI().catch(() => ""),
+      imageReader.metadata().catch(() => ""),
+      imageReader.contractURI().catch(() => ""),
+      imageReader.logoURI().catch(() => ""),
+      imageReader.icon().catch(() => ""),
     ]);
-    const image = String(imageRaw || "").trim();
+    let image = extractImageFromObject(imageRaw);
+    if (!image) image = extractImageFromObject(imageUrlRaw);
+    if (!image) image = extractImageFromObject(logoUriRaw);
+    if (!image) image = extractImageFromObject(iconRaw);
+    if (!image) image = extractImageFromObject(metadataRaw);
+    if (!image) image = extractImageFromObject(tokenUriRaw);
+    if (!image) image = extractImageFromObject(contractUriRaw);
+    if (!image && tokenUriRaw) image = await resolveImageFromMetadataUri(tokenUriRaw);
+    if (!image && metadataRaw) image = await resolveImageFromMetadataUri(metadataRaw);
+    if (!image && contractUriRaw) image = await resolveImageFromMetadataUri(contractUriRaw);
+    if (!image) image = cachedImage;
+
+    if (image) cacheTokenImage(tokenAddress, image);
+
     const meta = {
       address: tokenAddress,
       name: String(name || "Token"),
@@ -728,6 +1100,30 @@ export default function LaunchpadSection({ address, onConnect }) {
     tokenMetaCache.current[lower] = meta;
     return meta;
   }, []);
+
+  const refreshVaultTokenWalletState = useCallback(async () => {
+    const token = String(vaultForm.token || "").trim();
+    if (!isAddress(token) || !address) {
+      setVaultTokenBalance({ loading: false, value: 0n });
+      setVaultAllowance({ loading: false, value: 0n });
+      return;
+    }
+    try {
+      setVaultTokenBalance((prev) => ({ ...prev, loading: true }));
+      setVaultAllowance((prev) => ({ ...prev, loading: true }));
+      const provider = getReadOnlyProvider(false, true);
+      const erc20 = new Contract(token, ERC20_ABI, provider);
+      const [balanceRaw, allowanceRaw] = await Promise.all([
+        erc20.balanceOf(address).catch(() => 0n),
+        isAddress(contracts.vault) ? erc20.allowance(address, contracts.vault).catch(() => 0n) : 0n,
+      ]);
+      setVaultTokenBalance({ loading: false, value: BigInt(balanceRaw ?? 0n) });
+      setVaultAllowance({ loading: false, value: BigInt(allowanceRaw ?? 0n) });
+    } catch {
+      setVaultTokenBalance({ loading: false, value: 0n });
+      setVaultAllowance({ loading: false, value: 0n });
+    }
+  }, [address, contracts.vault, vaultForm.token]);
 
   const refreshProtocol = useCallback(async () => {
     if (!isAddress(contracts.currentx)) {
@@ -765,6 +1161,7 @@ export default function LaunchpadSection({ address, onConnect }) {
   const refreshDeployments = useCallback(async () => {
     if (!address || !isAddress(contracts.currentx)) {
       setDeployments([]);
+      setDeploymentsLastUpdatedAt(0);
       return;
     }
     try {
@@ -776,12 +1173,14 @@ export default function LaunchpadSection({ address, onConnect }) {
       const rows = await Promise.all(
         (list || []).map(async (item) => {
           const tokenAddress = String(item.token || "");
+          const cachedLogo = getCachedTokenImage(tokenAddress);
           const base = {
             token: tokenAddress,
             positionId: String(item.positionId || ""),
             name: "Token",
             symbol: "TOKEN",
-            logo: "",
+            logo: cachedLogo ? toImagePreviewSrc(cachedLogo) : "",
+            status: "Deployed",
           };
           if (!isAddress(tokenAddress)) return base;
           try {
@@ -797,7 +1196,28 @@ export default function LaunchpadSection({ address, onConnect }) {
           }
         })
       );
-      setDeployments(rows);
+      const tokenImagesMap = await fetchTokenImageRegistryBatch(rows.map((row) => row.token));
+      const mergedRows = rows.map((row) => {
+        const tokenLower = String(row.token || "").toLowerCase();
+        const mappedRaw = String(tokenImagesMap?.[tokenLower] || "").trim();
+        if (mappedRaw && isImageLikeValue(mappedRaw)) {
+          cacheTokenImage(row.token, mappedRaw);
+        }
+        const mappedLogo = mappedRaw && isImageLikeValue(mappedRaw) ? toImagePreviewSrc(mappedRaw) : "";
+        return {
+          ...row,
+          logo: mappedLogo || row.logo || "",
+        };
+      });
+      setDeployments(mergedRows);
+      setDeploymentsLastUpdatedAt(Date.now());
+      setDeploymentsNow(Date.now());
+      setDeploymentsUpdatedFlash(true);
+      if (deploymentsUpdatedFlashTimerRef.current) clearTimeout(deploymentsUpdatedFlashTimerRef.current);
+      deploymentsUpdatedFlashTimerRef.current = setTimeout(() => {
+        setDeploymentsUpdatedFlash(false);
+        deploymentsUpdatedFlashTimerRef.current = null;
+      }, 900);
     } catch (error) {
       setDeployments([]);
       setDeploymentsError(errMsg(error, "Unable to load deployed tokens."));
@@ -809,6 +1229,8 @@ export default function LaunchpadSection({ address, onConnect }) {
   const refreshVaultLocks = useCallback(async () => {
     if (!isAddress(contracts.vault)) {
       setVaultLocks({ loading: false, error: "Set a valid vault address.", items: [], minimumVaultTime: 0n });
+      setVaultLastUpdatedAt(Date.now());
+      setVaultNow(Date.now());
       return;
     }
     try {
@@ -828,6 +1250,9 @@ export default function LaunchpadSection({ address, onConnect }) {
 
       if (!tokenList.length) {
         setVaultLocks({ loading: false, error: "", items: [], minimumVaultTime });
+        setVaultLocksExpanded(false);
+        setVaultLastUpdatedAt(Date.now());
+        setVaultNow(Date.now());
         return;
       }
 
@@ -867,12 +1292,17 @@ export default function LaunchpadSection({ address, onConnect }) {
         .filter(Boolean)
         .sort((a, b) => Number(a.endTime || 0) - Number(b.endTime || 0));
       setVaultLocks({ loading: false, error: "", items, minimumVaultTime });
+      setVaultLocksExpanded(items.length > 0);
+      setVaultLastUpdatedAt(Date.now());
+      setVaultNow(Date.now());
     } catch (error) {
       setVaultLocks((prev) => ({
         ...prev,
         loading: false,
         error: errMsg(error, "Unable to load active vault locks."),
       }));
+      setVaultLastUpdatedAt(Date.now());
+      setVaultNow(Date.now());
     }
   }, [address, contracts.vault, deployments, resolveTokenMeta, vaultForm.token]);
 
@@ -1020,6 +1450,21 @@ export default function LaunchpadSection({ address, onConnect }) {
       cancelled = true;
     };
   }, [resolveTokenMeta, vaultForm.token]);
+
+  useEffect(() => {
+    const tokenIsValid = isAddress(String(vaultForm.token || "").trim());
+    if (tokenIsValid && vaultTokenMeta) {
+      setVaultTokenPickerExpanded((prev) => (prev ? false : prev));
+      return;
+    }
+    if (!tokenIsValid) {
+      setVaultTokenPickerExpanded((prev) => (prev ? true : prev));
+    }
+  }, [vaultForm.token, vaultTokenMeta]);
+
+  useEffect(() => {
+    refreshVaultTokenWalletState();
+  }, [refreshVaultTokenWalletState]);
 
   useEffect(() => {
     if (protocol.weth && !isAddress(deployForm.pairedToken)) {
@@ -1247,11 +1692,33 @@ export default function LaunchpadSection({ address, onConnect }) {
         setCopiedSummaryKey(key);
         if (summaryCopyTimerRef.current) clearTimeout(summaryCopyTimerRef.current);
         summaryCopyTimerRef.current = setTimeout(() => setCopiedSummaryKey(""), 1200);
+        setCopyToast("Copied");
+        if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+        copyToastTimerRef.current = setTimeout(() => {
+          setCopyToast("");
+          copyToastTimerRef.current = null;
+        }, 1000);
       }
     } catch {
       // keep UI silent if clipboard is unavailable
     }
   }, []);
+
+  const handleRefreshDeployments = useCallback(async () => {
+    const startedAt = Date.now();
+    setDeploymentsUpdating(true);
+    try {
+      await refreshDeployments();
+    } finally {
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, 1000 - elapsed);
+      if (deploymentsUpdatingTimerRef.current) clearTimeout(deploymentsUpdatingTimerRef.current);
+      deploymentsUpdatingTimerRef.current = setTimeout(() => {
+        setDeploymentsUpdating(false);
+        deploymentsUpdatingTimerRef.current = null;
+      }, remaining);
+    }
+  }, [refreshDeployments]);
 
   useEffect(() => {
     launchpadUiMemory.summaryAdvanced = Boolean(summaryAdvancedOpen);
@@ -1261,15 +1728,48 @@ export default function LaunchpadSection({ address, onConnect }) {
     launchpadUiMemory.formAdvanced = Boolean(formAdvancedOpen);
   }, [formAdvancedOpen]);
 
+  useEffect(() => {
+    if (!deploymentsLastUpdatedAt || activeView !== "deployments") return undefined;
+    const timer = setInterval(() => setDeploymentsNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activeView, deploymentsLastUpdatedAt]);
+
+  useEffect(() => {
+    if (!vaultLastUpdatedAt || activeView !== "vault") return undefined;
+    const timer = setInterval(() => setVaultNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [activeView, vaultLastUpdatedAt]);
+
+  useEffect(() => {
+    if (activeView !== "vault") return;
+    if (String(vaultForm.depositUnlockAt || "").trim()) return;
+    const minLockSeconds = Number(vaultLocks.minimumVaultTime || 0n);
+    const minSeconds = minLockSeconds > 0 ? minLockSeconds : 30 * DAY;
+    const unlockDate = new Date(Date.now() + minSeconds * 1000);
+    setVaultForm((prev) => {
+      if (String(prev.depositUnlockAt || "").trim()) return prev;
+      return { ...prev, depositUnlockAt: toDateTimeLocalValue(unlockDate) };
+    });
+  }, [activeView, vaultForm.depositUnlockAt, vaultLocks.minimumVaultTime]);
+
   useEffect(() => () => {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     if (cidCopiedTimerRef.current) clearTimeout(cidCopiedTimerRef.current);
     if (summaryCopyTimerRef.current) clearTimeout(summaryCopyTimerRef.current);
+    if (copyToastTimerRef.current) clearTimeout(copyToastTimerRef.current);
+    if (deploymentsUpdatingTimerRef.current) clearTimeout(deploymentsUpdatingTimerRef.current);
+    if (deploymentsUpdatedFlashTimerRef.current) clearTimeout(deploymentsUpdatedFlashTimerRef.current);
+    if (vaultDepositFlashTimerRef.current) clearTimeout(vaultDepositFlashTimerRef.current);
   }, []);
 
   const handleDeploy = async (event) => {
     event.preventDefault();
     setDeployAttempted(true);
+    const creatorBuyAttemptAmount = String(deployForm.txValueEth || "")
+      .replace(/,/gu, ".")
+      .trim();
+    const creatorBuyAttemptEnabled =
+      creatorBuyAttemptAmount !== "" && creatorBuyAttemptAmount !== "0" && creatorBuyAttemptAmount !== "0.0";
     if (!address) {
       if (typeof onConnect === "function") onConnect();
       return;
@@ -1354,12 +1854,12 @@ export default function LaunchpadSection({ address, onConnect }) {
       const lockupDays = Number(parseUint(deployForm.lockupDays, "Lockup period (days)"));
       const vestingDays = Number(parseUint(deployForm.vestingDays, "Vesting period (days)"));
       if (vaultPercentageNum > 0) {
-        if (lockupDays < 7) throw new Error("Lockup period must be at least 7 days.");
+        if (lockupDays < 30) throw new Error("Lockup period must be at least 30 days.");
         if (vestingDays < lockupDays) throw new Error("Vesting period must be >= lockup period.");
       }
       if (!name) throw new Error("Token name is required.");
       if (!symbol) throw new Error("Token symbol is required.");
-      if (!image) throw new Error(`Add a token image (PNG <=${MAX_IMAGE_UPLOAD_LABEL}).`);
+      if (!image) throw new Error(`Add a token image (PNG max ${MAX_IMAGE_UPLOAD_LABEL}).`);
       if (PROTOCOL_REWARD_CONFIG_ERROR) throw new Error(PROTOCOL_REWARD_CONFIG_ERROR);
       if (!isAddress(pairedToken)) throw new Error("Paired token is invalid.");
       if (!isAddress(creatorAdmin)) throw new Error("Creator admin is invalid.");
@@ -1459,6 +1959,19 @@ export default function LaunchpadSection({ address, onConnect }) {
         );
       }
       const initialBuyMinOutRaw = parseUint(deployForm.pairedTokenSwapAmountOutMinimum, "Initial buy min out");
+      const initialBuyMinOutFinal = txValue > 0n && initialBuyMinOutRaw === "0" ? "1" : initialBuyMinOutRaw;
+      if (txValue > 0n) {
+        const signerAddress = await signer.getAddress();
+        const walletBalance = await provider.getBalance(signerAddress);
+        const gasReserve = parseEthAmount(CREATOR_BUY_GAS_BUFFER_ETH);
+        if (walletBalance < txValue + gasReserve) {
+          throw new Error(
+            `Insufficient ETH for Creator Buy. Need at least ${trimTrailingZeros(
+              String(deployForm.txValueEth || "0")
+            )} ETH + gas (~${CREATOR_BUY_GAS_BUFFER_ETH} ETH buffer).`
+          );
+        }
+      }
       const vaultDurationSeconds = vaultPercentageNum > 0 ? BigInt(Math.floor(vestingDays * DAY)) : 0n;
       if (vaultPercentageNum > 0 && isAddress(contracts.vault)) {
         const vaultContract = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
@@ -1548,7 +2061,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         },
         initialBuyConfig: {
           pairedTokenPoolFee: Number(pairedTokenPoolFee),
-          pairedTokenSwapAmountOutMinimum: BigInt(initialBuyMinOutRaw),
+          pairedTokenSwapAmountOutMinimum: BigInt(initialBuyMinOutFinal),
         },
         rewardsConfig: {
           creatorReward: BigInt(creatorRewardRaw),
@@ -1597,11 +2110,30 @@ export default function LaunchpadSection({ address, onConnect }) {
         }
       }
 
+      if (isAddress(tokenAddress) && image) {
+        cacheTokenImage(tokenAddress, image);
+        try {
+          await persistTokenImageRegistryEntry({
+            tokenAddress,
+            image,
+            deployer: address || "",
+            txHash: receipt.hash || tx.hash || "",
+            source: "deploy",
+          });
+        } catch {
+          // keep deployment successful even if registry persistence is temporarily unavailable
+        }
+      }
       setDeployResult({ tokenAddress, positionId, txHash: receipt.hash || tx.hash || "" });
       setDeployAction({ loading: false, error: "", hash: receipt.hash || tx.hash || "", message: "Token deployed." });
       await Promise.all([refreshDeployments(), refreshLocker()]);
     } catch (error) {
-      setDeployAction({ loading: false, error: errMsg(error, "Deploy failed."), hash: "", message: "" });
+      const baseError = errMsg(error, "Deploy failed.");
+      const withCreatorBuyHint =
+        creatorBuyAttemptEnabled && baseError.includes("without revert data")
+          ? `${baseError} Creator Buy preflight failed: try a higher amount (e.g. 0.01 ETH), ensure enough ETH for value + gas, or set Creator Buy to 0.`
+          : baseError;
+      setDeployAction({ loading: false, error: withCreatorBuyHint, hash: "", message: "" });
     }
   };
 
@@ -1615,11 +2147,12 @@ export default function LaunchpadSection({ address, onConnect }) {
       const provider = await getProvider();
       const signer = await provider.getSigner();
       const meta = await resolveTokenMeta(vaultForm.token, provider);
-      const amount = parseTokenAmount(vaultForm.approveAmount, meta.decimals, "Approve amount");
+      const amount = parseTokenAmount(vaultApproveAmountRaw, meta.decimals, "Approve amount");
       const erc20 = new Contract(vaultForm.token, ERC20_ABI, signer);
       const tx = await erc20.approve(contracts.vault, amount);
       const receipt = await tx.wait();
       setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Allowance updated." });
+      await refreshVaultTokenWalletState();
     } catch (error) {
       setVaultAction({ loadingKey: "", error: errMsg(error, "Approve failed."), hash: "", message: "" });
     }
@@ -1642,21 +2175,73 @@ export default function LaunchpadSection({ address, onConnect }) {
       const now = Math.floor(Date.now() / 1000);
       if (unlockTime <= now) throw new Error("Unlock date must be in the future.");
       const minTime = Number(vaultLocks.minimumVaultTime || 0n);
-      if (minTime > 0 && unlockTime - now < minTime) {
-        throw new Error(`Unlock date must be at least ${minTime} seconds from now.`);
+      if (minTime > 0 && unlockTime - now + DATETIME_LOCAL_TOLERANCE_SECONDS < minTime) {
+        const minimumDays = Math.ceil(minTime / DAY);
+        throw new Error(`Unlock date must be at least ${minimumDays} days from now.`);
       }
-      const admin = vaultForm.depositAdmin || address;
+      const admin = String(vaultAdminEffective || "").trim() || address;
       if (!isAddress(admin)) throw new Error("Deposit admin is invalid.");
 
       const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
       const tx = await vault.deposit(vaultForm.token, amount, unlockTime, admin);
       const receipt = await tx.wait();
       setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Deposit completed." });
-      await refreshVaultLocks();
+      await Promise.all([refreshVaultLocks(), refreshVaultTokenWalletState()]);
     } catch (error) {
       setVaultAction({ loadingKey: "", error: errMsg(error, "Deposit failed."), hash: "", message: "" });
     }
   };
+
+  const handleVaultJumpToDeposit = useCallback(() => {
+    const target = vaultDepositFormRef.current;
+    if (target && typeof target.scrollIntoView === "function") {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    setVaultDepositFlash(true);
+    if (vaultDepositFlashTimerRef.current) clearTimeout(vaultDepositFlashTimerRef.current);
+    vaultDepositFlashTimerRef.current = setTimeout(() => {
+      setVaultDepositFlash(false);
+      vaultDepositFlashTimerRef.current = null;
+    }, 650);
+  }, []);
+
+  const handleVaultUnlockPreset = useCallback((days) => {
+    const parsed = Number(days);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    const unlockDate = new Date(Date.now() + parsed * DAY * 1000);
+    setVaultForm((prev) => ({ ...prev, depositUnlockAt: toDateTimeLocalValue(unlockDate) }));
+  }, []);
+
+  const handleVaultUnlockBlur = useCallback(() => {
+    const unlockMs = Date.parse(vaultForm.depositUnlockAt || "");
+    if (!Number.isFinite(unlockMs)) return;
+    const minSeconds = Number(vaultLocks.minimumVaultTime || 0n);
+    if (minSeconds <= 0) return;
+    const minAllowedMs = Date.now() + minSeconds * 1000;
+    if (unlockMs + DATETIME_LOCAL_TOLERANCE_SECONDS * 1000 < minAllowedMs) {
+      setVaultForm((prev) => ({ ...prev, depositUnlockAt: toDateTimeLocalValue(new Date(minAllowedMs)) }));
+    }
+  }, [vaultForm.depositUnlockAt, vaultLocks.minimumVaultTime]);
+
+  const handleVaultSetMaxDeposit = useCallback(() => {
+    if (!vaultTokenMeta) return;
+    const decimals = Number(vaultTokenMeta.decimals || 18);
+    const maxAmount = formatUnits(vaultTokenBalance.value || 0n, decimals);
+    setVaultForm((prev) => ({ ...prev, depositAmount: trimTrailingZeros(maxAmount) || "0" }));
+  }, [vaultTokenBalance.value, vaultTokenMeta]);
+
+  const handleVaultAmountPreset = useCallback(
+    (percentage) => {
+      if (!vaultTokenMeta) return;
+      const pct = Number(percentage);
+      if (!Number.isFinite(pct) || pct <= 0) return;
+      const decimals = Number(vaultTokenMeta.decimals || 18);
+      const scaled = (BigInt(vaultTokenBalance.value || 0n) * BigInt(Math.round(pct))) / 100n;
+      const value = formatUnits(scaled, decimals);
+      setVaultForm((prev) => ({ ...prev, depositAmount: trimTrailingZeros(value) || "0" }));
+    },
+    [vaultTokenBalance.value, vaultTokenMeta]
+  );
 
   const handleCollectLocker = async () => {
     if (!address) {
@@ -1697,6 +2282,395 @@ export default function LaunchpadSection({ address, onConnect }) {
     ],
     [missingBasicFields]
   );
+  const deploymentsUpdatedLabel = useMemo(
+    () => formatUpdatedAgo(deploymentsLastUpdatedAt, deploymentsNow),
+    [deploymentsLastUpdatedAt, deploymentsNow]
+  );
+  const vaultUpdatedLabel = useMemo(() => formatUpdatedAgo(vaultLastUpdatedAt, vaultNow), [vaultLastUpdatedAt, vaultNow]);
+  const vaultActiveTokenSet = useMemo(
+    () =>
+      new Set(
+        (vaultLocks.items || [])
+          .map((item) => String(item?.token || "").trim().toLowerCase())
+          .filter((token) => isAddress(token))
+      ),
+    [vaultLocks.items]
+  );
+  const vaultMinimumLockSeconds = Number(vaultLocks.minimumVaultTime || 0n);
+  const vaultMinimumLockDays = vaultMinimumLockSeconds > 0 ? Math.ceil(vaultMinimumLockSeconds / DAY) : 0;
+  const vaultActiveLocksCount = (vaultLocks.items || []).length;
+  const deploymentsVaultedCount = useMemo(() => {
+    if (!deployments.length) return 0;
+    return deployments.filter((item) => {
+      const token = String(item?.token || "").trim().toLowerCase();
+      return isAddress(token) && vaultActiveTokenSet.has(token);
+    }).length;
+  }, [deployments, vaultActiveTokenSet]);
+  const deploymentsClaimableLabel = "0";
+  const vaultRecentTokenOptions = useMemo(() => {
+    const seen = new Set();
+    return (deployments || [])
+      .map((item) => {
+        const token = String(item?.token || "").trim();
+        if (!isAddress(token)) return null;
+        const lower = token.toLowerCase();
+        if (seen.has(lower)) return null;
+        seen.add(lower);
+        const name = String(item?.name || "Token");
+        const symbol = String(item?.symbol || "TOKEN").toUpperCase();
+        return {
+          token,
+          name,
+          symbol,
+          logo: String(item?.logo || ""),
+          label: `${name} (${symbol})`,
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 5);
+  }, [deployments]);
+  const vaultTotalLockedLabel = useMemo(() => {
+    const items = vaultLocks.items || [];
+    if (!items.length) return "0";
+    const uniqueSymbols = new Set(items.map((item) => String(item?.symbol || "TOKEN")));
+    const uniqueDecimals = new Set(items.map((item) => Number(item?.decimals || 18)));
+    if (uniqueSymbols.size === 1 && uniqueDecimals.size === 1) {
+      const total = items.reduce((acc, item) => acc + BigInt(item?.amount ?? 0n), 0n);
+      const symbol = String(items[0]?.symbol || "TOKEN");
+      const decimals = Number(items[0]?.decimals || 18);
+      return `${formatAmount(total, decimals, 4)} ${symbol}`;
+    }
+    return `${items.length} positions`;
+  }, [vaultLocks.items]);
+  const vaultTotalLockedIsZero = vaultActiveLocksCount === 0;
+  const vaultTokenInput = String(vaultForm.token || "").trim();
+  const vaultTokenValid = isAddress(vaultTokenInput);
+  const vaultSelectedRecentToken = useMemo(() => {
+    if (!vaultTokenInput) return null;
+    const lower = vaultTokenInput.toLowerCase();
+    return vaultRecentTokenOptions.find((item) => String(item.token || "").toLowerCase() === lower) || null;
+  }, [vaultRecentTokenOptions, vaultTokenInput]);
+  const vaultTokenBalanceLabel = useMemo(() => {
+    if (!vaultTokenMeta) return "--";
+    return formatAmount(vaultTokenBalance.value, Number(vaultTokenMeta.decimals || 18), 6);
+  }, [vaultTokenBalance.value, vaultTokenMeta]);
+  useEffect(() => {
+    if (vaultRecentTokenOptions.length) return;
+    setVaultTokenMenuOpen(false);
+  }, [vaultRecentTokenOptions.length]);
+
+  useEffect(() => {
+    if (!vaultTokenPickerExpanded) return;
+    setVaultTokenMenuOpen(false);
+  }, [vaultTokenPickerExpanded]);
+
+  useEffect(() => {
+    if (!vaultTokenMenuOpen) return () => {};
+    const handlePointerDown = (event) => {
+      if (!vaultTokenMenuRef.current?.contains?.(event.target)) {
+        setVaultTokenMenuOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setVaultTokenMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [vaultTokenMenuOpen]);
+
+  useEffect(() => {
+    if (!vaultTokenMenuOpen || !vaultRecentTokenOptions.length) return () => {};
+    let cancelled = false;
+    const optionList = vaultRecentTokenOptions.filter((item) => isAddress(String(item?.token || "").trim()));
+
+    setVaultRecentTokenDetails((prev) => {
+      const next = {};
+      optionList.forEach((item) => {
+        const lower = String(item.token || "").toLowerCase();
+        const existing = prev[lower] || {};
+        next[lower] = {
+          name: existing.name || item.name || "Token",
+          symbol: existing.symbol || item.symbol || "TOKEN",
+          logo: existing.logo || item.logo || "",
+          balanceLabel: address ? existing.balanceLabel || "Loading..." : "--",
+          loading: Boolean(address),
+        };
+      });
+      return next;
+    });
+
+    if (!address) return () => {
+      cancelled = true;
+    };
+
+    const loadOptionDetails = async () => {
+      const provider = getReadOnlyProvider(false, true);
+      const details = await Promise.all(
+        optionList.map(async (item) => {
+          const token = String(item.token || "").trim();
+          const lower = token.toLowerCase();
+          try {
+            const meta = await resolveTokenMeta(token, provider).catch(() => null);
+            const symbol = String(meta?.symbol || item.symbol || "TOKEN").toUpperCase();
+            const name = String(meta?.name || item.name || "Token");
+            const logo = String(meta?.logo || item.logo || "");
+            const decimals = Number(meta?.decimals || 18);
+            const erc20 = new Contract(token, ERC20_ABI, provider);
+            const balanceRaw = await erc20.balanceOf(address).catch(() => 0n);
+            return {
+              lower,
+              value: {
+                name,
+                symbol,
+                logo,
+                loading: false,
+                balanceLabel: `${formatAmount(balanceRaw, decimals, 6)} ${symbol}`,
+              },
+            };
+          } catch {
+            return {
+              lower,
+              value: {
+                name: String(item.name || "Token"),
+                symbol: String(item.symbol || "TOKEN").toUpperCase(),
+                logo: String(item.logo || ""),
+                loading: false,
+                balanceLabel: "--",
+              },
+            };
+          }
+        })
+      );
+      if (cancelled) return;
+      setVaultRecentTokenDetails((prev) => {
+        const next = { ...prev };
+        details.forEach((entry) => {
+          if (!entry) return;
+          next[entry.lower] = {
+            ...(next[entry.lower] || {}),
+            ...entry.value,
+          };
+        });
+        return next;
+      });
+    };
+
+    loadOptionDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, resolveTokenMeta, vaultRecentTokenOptions, vaultTokenMenuOpen]);
+  const vaultDepositAmountRaw = String(vaultForm.depositAmount || "").trim();
+  const vaultApproveAmountRaw = useMemo(() => {
+    if (!vaultTokenMeta) return "";
+    if (vaultApproveAdvanced && vaultApproveMode === "max") {
+      return formatUnits(vaultTokenBalance.value || 0n, Number(vaultTokenMeta.decimals || 18));
+    }
+    if (vaultApproveAdvanced) return String(vaultForm.approveAmount || "").trim();
+    return vaultDepositAmountRaw;
+  }, [vaultApproveAdvanced, vaultApproveMode, vaultDepositAmountRaw, vaultForm.approveAmount, vaultTokenBalance.value, vaultTokenMeta]);
+  const vaultApproveAmountHuman = useMemo(() => {
+    const value = Number.parseFloat(vaultApproveAmountRaw || "0");
+    if (!Number.isFinite(value) || value <= 0) return "";
+    return value.toLocaleString(undefined, {
+      useGrouping: true,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 4,
+    });
+  }, [vaultApproveAmountRaw]);
+  const vaultDepositAmountWei = useMemo(() => {
+    if (!vaultTokenMeta) return null;
+    try {
+      return parseTokenAmount(vaultDepositAmountRaw, Number(vaultTokenMeta.decimals || 18), "Deposit amount");
+    } catch {
+      return null;
+    }
+  }, [vaultDepositAmountRaw, vaultTokenMeta]);
+  const vaultApproveAmountWei = useMemo(() => {
+    if (!vaultTokenMeta) return null;
+    try {
+      return parseTokenAmount(vaultApproveAmountRaw, Number(vaultTokenMeta.decimals || 18), "Approve amount");
+    } catch {
+      return null;
+    }
+  }, [vaultApproveAmountRaw, vaultTokenMeta]);
+  const vaultAllowanceSufficient = useMemo(() => {
+    if (!vaultDepositAmountWei || vaultDepositAmountWei <= 0n) return false;
+    return BigInt(vaultAllowance.value || 0n) >= vaultDepositAmountWei;
+  }, [vaultAllowance.value, vaultDepositAmountWei]);
+  const vaultUnlockMs = useMemo(() => Date.parse(vaultForm.depositUnlockAt || ""), [vaultForm.depositUnlockAt]);
+  const vaultUnlockIsValid = Number.isFinite(vaultUnlockMs);
+  const vaultUnlockInSeconds = useMemo(() => {
+    if (!vaultUnlockIsValid) return 0;
+    const now = Math.floor(Date.now() / 1000);
+    return Math.floor(vaultUnlockMs / 1000) - now;
+  }, [vaultUnlockIsValid, vaultUnlockMs]);
+  const vaultUnlockInSecondsWithTolerance = vaultUnlockInSeconds + DATETIME_LOCAL_TOLERANCE_SECONDS;
+  const vaultUnlockMeetsMinimum =
+    !vaultUnlockIsValid || vaultMinimumLockSeconds <= 0
+      ? true
+      : vaultUnlockInSecondsWithTolerance >= vaultMinimumLockSeconds;
+  const vaultMinimumUnlockInputValue = useMemo(() => {
+    const minSeconds = vaultMinimumLockSeconds > 0 ? vaultMinimumLockSeconds : 30 * DAY;
+    return toDateTimeLocalValue(new Date(Date.now() + minSeconds * 1000));
+  }, [vaultMinimumLockSeconds]);
+  const vaultSelectedUnlockPreset = useMemo(() => {
+    if (!vaultUnlockIsValid) return vaultMinimumLockDays > 0 ? vaultMinimumLockDays : 30;
+    const presets = [30, 90, 180, 365];
+    return (
+      presets.find((days) => Math.abs(vaultUnlockInSeconds - days * DAY) <= 120) ||
+      (vaultMinimumLockDays > 0 ? vaultMinimumLockDays : null)
+    );
+  }, [vaultMinimumLockDays, vaultUnlockInSeconds, vaultUnlockIsValid]);
+  const vaultSelectedAmountPreset = useMemo(() => {
+    if (!vaultTokenMeta || !vaultDepositAmountWei || vaultDepositAmountWei <= 0n) return null;
+    const walletBalanceWei = BigInt(vaultTokenBalance.value || 0n);
+    if (walletBalanceWei <= 0n) return null;
+    if (vaultDepositAmountWei === walletBalanceWei) return "max";
+    for (const pct of [25, 50, 75]) {
+      const presetAmount = (walletBalanceWei * BigInt(pct)) / 100n;
+      if (vaultDepositAmountWei === presetAmount) return String(pct);
+    }
+    return null;
+  }, [vaultDepositAmountWei, vaultTokenBalance.value, vaultTokenMeta]);
+  const vaultUnlockPreview = useMemo(() => {
+    if (!vaultUnlockIsValid) return "Unlocks in -- days - -- (local time)";
+    const unlockDate = new Date(vaultUnlockMs);
+    if (Number.isNaN(unlockDate.getTime())) return "Unlocks in -- days - -- (local time)";
+    const remaining = Math.max(0, vaultUnlockInSeconds);
+    const days = Math.ceil(remaining / DAY);
+    const dateLabel = unlockDate.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    return `Unlocks in ${days} day${days === 1 ? "" : "s"} - ${dateLabel} (local time)`;
+  }, [vaultUnlockInSeconds, vaultUnlockIsValid, vaultUnlockMs]);
+  const vaultAdminEffective = useMemo(() => {
+    const custom = String(vaultForm.depositAdmin || "").trim();
+    if (vaultUseCustomAdmin) return custom;
+    if (isAddress(address)) return String(address);
+    return custom;
+  }, [address, vaultForm.depositAdmin, vaultUseCustomAdmin]);
+  const vaultAdminValid = isAddress(vaultAdminEffective);
+  const vaultApproveStepDone = vaultAllowanceSufficient;
+  const vaultApproveDisabled =
+    vaultAction.loadingKey === "approve" ||
+    !vaultTokenValid ||
+    !vaultTokenMeta ||
+    !isAddress(contracts.vault) ||
+    !vaultApproveAmountWei ||
+    vaultApproveAmountWei <= 0n;
+  const vaultApproveButtonLabel = vaultApproveStepDone
+    ? "Approved"
+    : vaultAction.loadingKey === "approve"
+      ? "Approving..."
+      : "Approve";
+  const vaultApproveBlockedReason = useMemo(() => {
+    if (!address) return "Connect wallet to continue.";
+    if (!vaultTokenValid) return "Select a valid token.";
+    if (!vaultTokenMeta) return "Token metadata is loading.";
+    if (!isAddress(contracts.vault)) return "Vault contract is not configured.";
+    if (!vaultApproveAmountWei || vaultApproveAmountWei <= 0n) return "Set amount to approve.";
+    return "";
+  }, [address, contracts.vault, vaultApproveAmountWei, vaultTokenMeta, vaultTokenValid]);
+  const vaultDepositBlockedReason = useMemo(() => {
+    if (!address) return "Connect wallet to continue.";
+    if (!vaultTokenValid) return "Select a valid token.";
+    if (!vaultDepositAmountWei || vaultDepositAmountWei <= 0n) return "Set amount to lock.";
+    if (!vaultUnlockIsValid) return "Set unlock date.";
+    if (vaultUnlockInSeconds <= 0) return "Unlock date must be in the future.";
+    if (!vaultUnlockMeetsMinimum) return `Unlock date must be at least ${vaultMinimumLockDays} days from now.`;
+    if (!vaultAdminValid) return "Set a valid admin wallet.";
+    if (!vaultApproveStepDone) return "Approve required.";
+    return "";
+  }, [
+    address,
+    vaultAdminValid,
+    vaultApproveStepDone,
+    vaultDepositAmountWei,
+    vaultMinimumLockDays,
+    vaultTokenValid,
+    vaultUnlockInSeconds,
+    vaultUnlockIsValid,
+    vaultUnlockMeetsMinimum,
+  ]);
+  const vaultDepositDisabled = vaultAction.loadingKey === "deposit" || Boolean(vaultDepositBlockedReason);
+  const vaultPrimaryAction = vaultApproveStepDone ? "deposit" : "approve";
+  const vaultPrimaryDisabled = vaultPrimaryAction === "approve" ? vaultApproveDisabled : vaultDepositDisabled;
+  const vaultPrimaryLabel =
+    vaultPrimaryAction === "approve"
+      ? vaultAction.loadingKey === "approve"
+        ? "Confirm approval in wallet..."
+        : vaultApproveButtonLabel
+      : vaultAction.loadingKey === "deposit"
+        ? "Confirm lock in wallet..."
+        : "Create lock";
+  const vaultSummaryTokenLabel = vaultTokenMeta
+    ? `${vaultTokenMeta.name} (${vaultTokenMeta.symbol})`
+    : vaultTokenValid
+      ? shorten(vaultTokenInput)
+      : "--";
+  const vaultSummaryAmountRounded = useMemo(
+    () => roundDecimalString(vaultDepositAmountRaw, 8),
+    [vaultDepositAmountRaw]
+  );
+  const vaultSummaryAmountValue = vaultSummaryAmountRounded;
+  const vaultSummaryAmountLabel =
+    vaultSummaryAmountValue && vaultTokenMeta?.symbol
+      ? `${vaultSummaryAmountValue} ${vaultTokenMeta.symbol}`
+      : vaultSummaryAmountValue || "--";
+  const vaultSummaryDurationLabel =
+    vaultUnlockIsValid && vaultUnlockInSeconds > 0
+      ? `${Math.max(1, Math.ceil(vaultUnlockInSeconds / DAY))} days`
+      : vaultMinimumLockDays > 0
+        ? `min ${vaultMinimumLockDays} days`
+        : "--";
+  const vaultTokenStatus = useMemo(() => {
+    if (!vaultTokenInput) return "";
+    if (!vaultTokenValid) return "Invalid address";
+    if (vaultTokenMeta) return "Ready";
+    return "Loading token";
+  }, [vaultTokenInput, vaultTokenMeta, vaultTokenValid]);
+  const vaultAmountFeedback = useMemo(() => {
+    if (!vaultTokenMeta) return "";
+    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
+    const decimals = Number(vaultTokenMeta.decimals || 18);
+    const balanceLabel = `${formatAmount(vaultTokenBalance.value || 0n, decimals, 6)} ${symbol}`;
+    if (!vaultDepositAmountWei || vaultDepositAmountWei <= 0n) {
+      return `Balance: ${balanceLabel}`;
+    }
+    const lockLabel = `${formatAmount(vaultDepositAmountWei, decimals, 6)} ${symbol}`;
+    const remaining = BigInt(vaultTokenBalance.value || 0n) - BigInt(vaultDepositAmountWei || 0n);
+    const remainingLabel = `${formatAmount(remaining > 0n ? remaining : 0n, decimals, 6)} ${symbol}`;
+    return `You will lock: ${lockLabel} / Balance: ${balanceLabel} / Remaining after lock: ${remainingLabel}`;
+  }, [vaultDepositAmountWei, vaultTokenBalance.value, vaultTokenMeta]);
+  const vaultApprovalTargetLine = vaultDepositAmountRaw
+    ? `${vaultApproveAmountHuman || vaultApproveAmountRaw || "--"} ${vaultTokenMeta?.symbol || ""}`.trim()
+    : "Waiting for amount";
+  const vaultSummaryDisabledReason = useMemo(() => {
+    if (!vaultDepositBlockedReason) return "Ready";
+    if (vaultDepositBlockedReason.includes("Select a valid token")) return "Missing: token";
+    if (vaultDepositBlockedReason.includes("Set amount to lock")) return "Missing: amount";
+    if (vaultDepositBlockedReason.includes("Set unlock date")) return "Missing: unlock date";
+    if (vaultDepositBlockedReason.includes("Approve required")) return "Missing: approval";
+    if (vaultDepositBlockedReason.includes("admin wallet")) return "Missing: admin wallet";
+    return vaultDepositBlockedReason;
+  }, [vaultDepositBlockedReason]);
+  const vaultPrimaryHint = vaultPrimaryAction === "approve" ? vaultApproveBlockedReason : vaultSummaryDisabledReason;
+  const vaultPrimaryHintTone = useMemo(() => {
+    if (!vaultPrimaryHint || vaultPrimaryHint === "Ready") return "ok";
+    const hint = String(vaultPrimaryHint).toLowerCase();
+    if (hint.includes("invalid") || hint.includes("unlock date must") || hint.includes("future")) return "error";
+    if (hint.startsWith("missing") || hint.includes("set ")) return "warn";
+    return "warn";
+  }, [vaultPrimaryHint]);
   const maxCreatorRewardUi = useMemo(() => {
     if (protocol.maxCreatorReward == null) return null;
     const value = Number(protocol.maxCreatorReward);
@@ -1858,6 +2832,49 @@ export default function LaunchpadSection({ address, onConnect }) {
     : deployAttempted && missingBasicFields.length
       ? `Complete required fields: ${missingBasicFields.join(", ")}.`
       : "";
+  const lockerActiveNftCount = locker.ids.length;
+  const lockerCreatorRewardRaw = useMemo(() => {
+    try {
+      return BigInt(locker.tokenReward?.creatorReward ?? 0);
+    } catch {
+      return 0n;
+    }
+  }, [locker.tokenReward]);
+  const lockerMaxCreatorRewardRaw = useMemo(() => {
+    try {
+      return BigInt(locker.maxCreatorReward ?? 0);
+    } catch {
+      return 0n;
+    }
+  }, [locker.maxCreatorReward]);
+  const lockerCreatorRewardLabel = locker.tokenReward ? lockerCreatorRewardRaw.toLocaleString() : "--";
+  const lockerMaxCreatorRewardLabel = locker.maxCreatorReward != null ? lockerMaxCreatorRewardRaw.toLocaleString() : "--";
+  const lockerCreatorRewardPercentLabel = useMemo(() => {
+    if (!locker.tokenReward || locker.maxCreatorReward == null || lockerMaxCreatorRewardRaw <= 0n) return null;
+    const ratio = (Number(lockerCreatorRewardRaw) / Number(lockerMaxCreatorRewardRaw)) * 100;
+    if (!Number.isFinite(ratio) || ratio < 0) return null;
+    return trimTrailingZeros((ratio >= 10 ? ratio.toFixed(1) : ratio.toFixed(2)).replace(/\.0+$/u, ""));
+  }, [locker.maxCreatorReward, locker.tokenReward, lockerCreatorRewardRaw, lockerMaxCreatorRewardRaw]);
+  const lockerCreatorRewardMeta = locker.tokenReward
+    ? lockerCreatorRewardPercentLabel != null
+      ? `${lockerCreatorRewardPercentLabel}% of max`
+      : locker.maxCreatorReward != null
+        ? `Max ${lockerMaxCreatorRewardLabel}`
+        : "Configured share"
+    : "No reward data";
+  const lockerPairSymbol0 = String(locker.tokenReward?.token0Meta?.symbol || "TOKEN0");
+  const lockerPairSymbol1 = String(locker.tokenReward?.token1Meta?.symbol || "TOKEN1");
+  const lockerPairLabel =
+    locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? `${lockerPairSymbol0} / ${lockerPairSymbol1}` : "--";
+  const lockerFeeTierLabel = locker.tokenReward?.fee ? formatFeeTierPercent(locker.tokenReward.fee) : "--";
+  const lockerClaimableNow = Boolean(locker.selectedId) && lockerCreatorRewardRaw > 0n;
+  const lockerClaimableSummary = lockerClaimableNow ? `${lockerCreatorRewardLabel} share pts` : "0 share pts";
+  const lockerCollectDisabled = lockerAction.loadingKey === "collect" || !locker.selectedId || !lockerClaimableNow;
+  const lockerCollectHelper = !locker.selectedId
+    ? "Select an NFT ID to enable collection."
+    : lockerClaimableNow
+      ? `Available to claim: ${lockerClaimableSummary}`
+      : "Available to claim: 0 share pts.";
   const toggleSection = useCallback((sectionKey) => {
     setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
   }, []);
@@ -2038,26 +3055,27 @@ export default function LaunchpadSection({ address, onConnect }) {
   );
 
   return (
-    <section className="w-full px-4 py-8 text-slate-100 sm:px-6 lg:px-10">
-      <div className="cx-fade-up mb-6 rounded-[2rem] border border-slate-700/45 bg-slate-950/55 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.58)] backdrop-blur-xl">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <section className="w-full px-4 py-7 text-slate-100 sm:px-6 lg:px-10">
+      <div className="cx-fade-up mb-8 rounded-[1.75rem] border border-slate-700/45 bg-slate-950/55 p-4 shadow-[0_20px_48px_rgba(2,6,23,0.52)] backdrop-blur-xl">
+        <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="mb-2 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
+            <div className="mb-1.5 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/6 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/75">
               Token Studio
             </div>
-            <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">Launchpad</h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-300/80">
+            <h2 className="font-display text-3xl font-semibold text-white sm:text-[2.7rem]">Launchpad</h2>
+            <p className="mt-1 max-w-xl text-sm text-slate-300/80">
               Deploy token + create V3 pool (requires fixed {FIXED_STARTING_MARKET_CAP_ETH} ETH preset), then manage
-              CurrentxVault and LpLockerv2 extensions.
+              CurrentX Vault and LpLockerv2 extensions.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-600/65 bg-slate-900/62 px-2 py-1.5">
             <button
               type="button"
               onClick={() => {
                 refreshProtocol();
                 refreshDeployments();
                 refreshVaultLocks();
+                refreshVaultTokenWalletState();
                 refreshLocker();
               }}
               className={SOFT_BUTTON_CLASS}
@@ -2068,12 +3086,12 @@ export default function LaunchpadSection({ address, onConnect }) {
               <button
                 type="button"
                 onClick={onConnect}
-                className="rounded-full border border-sky-300/65 bg-gradient-to-r from-sky-500/90 to-cyan-400/90 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(56,189,248,0.35)] transition hover:brightness-110"
+                className="rounded-xl border border-sky-300/60 bg-gradient-to-r from-sky-500/80 to-cyan-400/80 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
               >
                 Connect wallet
               </button>
             ) : (
-              <span className="rounded-full border border-emerald-300/50 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-100">
+              <span className="rounded-xl border border-emerald-300/50 bg-emerald-400/12 px-3 py-1.5 text-xs font-semibold text-emerald-100">
                 {shorten(address)}
               </span>
             )}
@@ -2089,18 +3107,18 @@ export default function LaunchpadSection({ address, onConnect }) {
             onClick={() => setActiveView(view.id)}
             className={`cx-fade-up cx-tab-button rounded-2xl border px-4 py-3 text-left transition ${
               activeView === view.id
-                ? "cx-tab-button-active border-cyan-300/60 bg-gradient-to-br from-sky-500/20 via-cyan-400/18 to-emerald-400/14 text-cyan-50 shadow-[0_12px_28px_rgba(56,189,248,0.22)]"
-                : "border-slate-700/60 bg-slate-950/45 text-slate-200 hover:border-slate-500 hover:bg-slate-900/60"
+                ? "cx-tab-button-active border-cyan-300/75 bg-slate-800/78 text-cyan-50 shadow-[0_7px_18px_rgba(34,211,238,0.14)]"
+                : "border-slate-700/65 bg-slate-950/42 text-slate-300/85 hover:border-cyan-300/45 hover:bg-slate-900/70 hover:text-slate-100"
             }`}
             style={{ animationDelay: `${80 + index * 55}ms` }}
           >
             <div className="font-display text-sm font-semibold">{view.label}</div>
-            <div className="mt-1 text-xs text-slate-300/70">{view.hint}</div>
+            <div className={`mt-1 text-xs ${activeView === view.id ? "text-cyan-100/90" : "text-slate-400/78"}`}>{view.hint}</div>
           </button>
         ))}
       </div>
 
-      <div className={`mt-6 ${activeView === "create" || activeView === "deployments" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+      <div className={`mt-8 ${activeView === "create" || activeView === "deployments" ? "grid gap-8 xl:grid-cols-1" : "hidden"}`}>
         <div className={`${PANEL_CLASS} ${activeView === "create" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
@@ -2242,7 +3260,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                               className="sr-only"
                             />
                           </label>
-                          <span className="text-[11px] text-slate-400/80">PNG only, max {MAX_IMAGE_UPLOAD_LABEL}.</span>
+                          <span className="text-[11px] text-slate-400/80">PNG max {MAX_IMAGE_UPLOAD_LABEL}.</span>
                         </div>
                         <div className="text-[11px] text-slate-400/80">Switch mode to edit URL.</div>
                       </div>
@@ -2274,7 +3292,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                           </div>
                         ) : null}
                         {imageMissing ? (
-                          <div className="text-amber-100">Add a token image (PNG &lt;={MAX_IMAGE_UPLOAD_LABEL}).</div>
+                          <div className="text-amber-100">Add a token image (PNG max {MAX_IMAGE_UPLOAD_LABEL}).</div>
                         ) : null}
                       </div>
                     </div>
@@ -2588,11 +3606,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                         LOCKUP_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""
                       }
                       onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
-                      columns={4}
+                      columns={3}
                       options={LOCKUP_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
                     />
                     <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-                      Vesting must be &gt;= lockup. Lockup minimum is 7 days.
+                      Vesting must be &gt;= lockup. Lockup minimum is 30 days.
                     </div>
 
                     <div className="space-y-1">
@@ -2798,81 +3816,322 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
 
         <div className={`${PANEL_CLASS} ${activeView === "deployments" ? "cx-panel-enter" : "hidden"}`}>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="font-display text-lg font-semibold">My Tokens</div>
-              <div className="text-xs text-slate-300/70">Logo, name, symbol, and address.</div>
+              <div className="text-xs text-slate-300/70">Tokens you deployed via Token Studio.</div>
             </div>
-            <button
-              type="button"
-              onClick={refreshDeployments}
-              className={SOFT_BUTTON_CLASS}
-            >
-              Reload
-            </button>
+            <div className="flex items-center gap-2 text-[11px] text-slate-400/85">
+              {deploymentsUpdatedLabel ? (
+                <span
+                  className={`transition-opacity duration-500 ${
+                    deploymentsUpdatedFlash ? "text-slate-300/90 opacity-100" : "text-slate-400/80 opacity-75"
+                  }`}
+                >
+                  {deploymentsUpdatedLabel}
+                </span>
+              ) : (
+                <span>Updated --</span>
+              )}
+              <button
+                type="button"
+                onClick={handleRefreshDeployments}
+                disabled={deploymentsLoading || deploymentsUpdating}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 font-semibold text-cyan-200/90 transition hover:text-cyan-100 disabled:opacity-60"
+              >
+                {deploymentsLoading || deploymentsUpdating ? (
+                  <span className="h-3 w-3 animate-spin rounded-full border border-cyan-200/80 border-t-transparent" />
+                ) : null}
+                {deploymentsLoading || deploymentsUpdating ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
           </div>
 
           {deploymentsError ? (
             <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{deploymentsError}</div>
           ) : null}
 
-          {deploymentsLoading ? <div className="mt-3 text-sm text-slate-300/75">Loading...</div> : null}
+          <div className="mt-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-700/55 bg-slate-900/35 px-2.5 py-2 text-[10px]">
+            <span className="inline-flex h-5 items-center rounded-full border border-slate-600/65 bg-slate-900/65 px-2 font-semibold text-slate-200">
+              Tokens: {deployments.length}
+            </span>
+            <span className="inline-flex h-5 items-center rounded-full border border-slate-600/65 bg-slate-900/65 px-2 font-semibold text-slate-200">
+              Total vaulted: {deploymentsVaultedCount}
+            </span>
+            <span className="inline-flex h-5 items-center rounded-full border border-slate-600/65 bg-slate-900/65 px-2 font-semibold text-slate-200">
+              Claimable: {deploymentsClaimableLabel}
+            </span>
+            <span className="inline-flex h-5 items-center rounded-full border border-slate-600/65 bg-slate-900/65 px-2 font-semibold text-slate-200">
+              {deploymentsUpdatedLabel || "Updated --"}
+            </span>
+          </div>
+
+          {deploymentsLoading ? (
+            <div className="mt-3 space-y-2">
+              {Array.from({ length: 3 }).map((_, idx) => (
+                <div key={`deploy-skeleton-${idx}`} className={`${TONED_PANEL_CLASS} animate-pulse px-3 py-2`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <div className="h-10 w-10 rounded-full border border-slate-700/60 bg-slate-800/70" />
+                      <div className="space-y-1">
+                        <div className="h-2.5 w-36 rounded bg-slate-700/65" />
+                        <div className="h-2.5 w-28 rounded bg-slate-800/65" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="h-8 w-24 rounded-lg bg-slate-700/65" />
+                      <div className="h-8 w-20 rounded-lg bg-slate-800/65" />
+                    </div>
+                  </div>
+                  <div className="mt-2 flex gap-1.5">
+                    <div className="h-4 w-20 rounded-full bg-slate-700/65" />
+                    <div className="h-4 w-24 rounded-full bg-slate-800/65" />
+                    <div className="h-4 w-16 rounded-full bg-slate-700/65" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {!deploymentsLoading && address && deployments.length === 0 ? (
-            <div className="mt-3 text-sm text-slate-300/75">No deployments found for this wallet.</div>
+            <div className="mt-3 rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-3">
+              <div className="text-sm text-slate-100">No tokens deployed yet.</div>
+              <div className="mt-1 text-xs text-slate-300/75">Create your first token to start using vault and locker flows.</div>
+              <button
+                type="button"
+                onClick={() => setActiveView("create")}
+                className="mt-2 rounded-lg border border-cyan-300/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-500/15"
+              >
+                Create token
+              </button>
+            </div>
           ) : null}
           {!address ? <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load deployments.</div> : null}
 
-          <div className="mt-3 space-y-2">
-            {deployments.map((item) => (
-              <div key={`${item.token}-${item.positionId}`} className={`${TONED_PANEL_CLASS} p-3`}>
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                    {item.logo ? (
-                      <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
-                    ) : (
-                      <span className="text-xs font-semibold text-slate-200">
-                        {String(item.symbol || "T")
-                          .slice(0, 2)
-                          .toUpperCase()}
-                      </span>
-                    )}
+          {!deploymentsLoading && address && deployments.length > 0 ? (
+            <div className="mt-3 space-y-2">
+              {deployments.map((item) => {
+                const tokenAddress = String(item.token || "");
+                const tokenSymbol = String(item.symbol || "TOKEN").toUpperCase();
+                const tokenName = String(item.name || "Token");
+                const copyKey = `deployment-token-${tokenAddress.toLowerCase()}`;
+                const canView = Boolean(isAddress(tokenAddress) && EXPLORER_BASE_URL);
+                const fallbackLogo = toFallbackIpfsGatewaySrc(item.logo);
+                const positionLabel = item.positionId ? `#${item.positionId}` : "--";
+                const hasVaultDeposit = isAddress(tokenAddress) && vaultActiveTokenSet.has(tokenAddress.toLowerCase());
+                let deploymentVaultStatusLabel = "No deposits";
+                let deploymentVaultStatusClass = "border-slate-600/70 bg-slate-800/55 text-slate-200";
+                if (vaultLocks.loading) {
+                  deploymentVaultStatusLabel = "Loading...";
+                } else if (hasVaultDeposit) {
+                  deploymentVaultStatusLabel = "Deposited";
+                  deploymentVaultStatusClass = "border-emerald-300/50 bg-emerald-500/12 text-emerald-100";
+                } else if (!isAddress(contracts.vault)) {
+                  deploymentVaultStatusLabel = "Not enabled";
+                  deploymentVaultStatusClass = "border-amber-300/45 bg-amber-500/12 text-amber-100";
+                }
+                const vaultValueLabel = vaultLocks.loading || !isAddress(contracts.vault) ? "--" : hasVaultDeposit ? ">0" : "0";
+
+                return (
+                  <div key={`${item.token}-${item.positionId}`} className={`${TONED_PANEL_CLASS} group px-3 py-2`}>
+                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                            {item.logo ? (
+                              <img
+                                src={item.logo}
+                                data-fallback-src={fallbackLogo || undefined}
+                                onError={(event) => {
+                                  const fallbackSrc = String(event.currentTarget.dataset.fallbackSrc || "");
+                                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
+                                    event.currentTarget.src = fallbackSrc;
+                                    event.currentTarget.dataset.fallbackSrc = "";
+                                  }
+                                }}
+                                alt={`${item.symbol || "TOKEN"} logo`}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <span className="text-xs font-semibold text-slate-200">
+                                {String(item.symbol || "T")
+                                  .slice(0, 2)
+                                  .toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-slate-100">
+                              {tokenName} ({tokenSymbol})
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                              <span className="text-[10px] text-slate-400/65">Token address</span>
+                              <span className="font-mono text-xs text-slate-100">{shorten(tokenAddress)}</span>
+                              {isAddress(tokenAddress) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopySummaryValue(copyKey, tokenAddress)}
+                                  title={copiedSummaryKey === copyKey ? "Copied!" : "Copy token address"}
+                                  aria-label={copiedSummaryKey === copyKey ? "Copied!" : "Copy token address"}
+                                  className={`inline-flex h-5 w-5 items-center justify-center rounded-md border transition md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto ${
+                                    copiedSummaryKey === copyKey
+                                      ? "border-emerald-300/50 bg-emerald-500/10 text-emerald-100"
+                                      : "border-slate-600/55 text-slate-300/85 hover:border-slate-400 hover:text-slate-50"
+                                  }`}
+                                >
+                                  {copiedSummaryKey === copyKey ? (
+                                    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                                      <path
+                                        d="M3 8.5l3 3L13 4.5"
+                                        fill="none"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  ) : (
+                                    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                                      <rect x="5" y="3" width="8" height="10" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                                      <path d="M3 11V5a2 2 0 0 1 2-2h5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ) : null}
+                              {canView ? (
+                                <a
+                                  href={`${EXPLORER_BASE_URL}/address/${tokenAddress}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="View token on explorer"
+                                  aria-label="View token on explorer"
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-slate-600/55 text-slate-300/85 transition hover:border-slate-400 hover:text-slate-50 md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto"
+                                >
+                                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                                    <path d="M9.5 3H13v3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                                    <path d="M7 9l6-6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                                    <rect x="3" y="5" width="8" height="8" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                                  </svg>
+                                </a>
+                              ) : null}
+                              {copiedSummaryKey === copyKey ? <span className="text-[10px] font-semibold text-emerald-200">Copied!</span> : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                          <span className="inline-flex h-5 items-center rounded-full border border-emerald-300/45 bg-emerald-500/10 px-2 font-semibold leading-none text-emerald-100">
+                            {item.status || "Deployed"}
+                          </span>
+                          {item.positionId ? (
+                            <span className="inline-flex h-5 items-center rounded-full border border-slate-600/70 bg-slate-800/45 px-2 font-semibold leading-none text-slate-200/90">
+                              Position {positionLabel}
+                            </span>
+                          ) : null}
+                          <span className="inline-flex h-5 items-center rounded-full border border-slate-600/65 bg-slate-900/65 px-2 font-semibold leading-none text-slate-100">
+                            Vault: {vaultValueLabel}
+                          </span>
+                          <span className={`inline-flex h-5 items-center rounded-full border px-2 font-semibold leading-none ${deploymentVaultStatusClass}`}>
+                            {deploymentVaultStatusLabel}
+                          </span>
+                          <span className="inline-flex h-5 items-center rounded-full border border-slate-600/55 bg-slate-800/45 px-2 font-semibold leading-none text-slate-300/75">
+                            Claimable: N/A
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 lg:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVaultForm((prev) => ({ ...prev, token: tokenAddress }));
+                            setActiveView("vault");
+                          }}
+                          className={`${CYAN_BUTTON_CLASS} h-8 px-3`}
+                        >
+                          Deposit to Vault
+                        </button>
+                        {canView ? (
+                          <a
+                            href={`${EXPLORER_BASE_URL}/address/${tokenAddress}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 items-center justify-center gap-1 rounded-xl border border-slate-700/40 px-3 text-xs font-semibold text-slate-300/70 transition hover:border-slate-500/50 hover:text-slate-200"
+                          >
+                            <span>Open token</span>
+                            <svg viewBox="0 0 16 16" className="h-3 w-3" aria-hidden="true">
+                              <path d="M9.5 3H13v3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                              <path d="M7 9l6-6" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                              <path d="M11 9v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h3" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                            </svg>
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-slate-100">{item.name || "Token"}</div>
-                    <div className="text-xs text-slate-300/80">{item.symbol || "TOKEN"}</div>
-                  </div>
-                </div>
-                <div className="mt-2 text-xs text-slate-400/75">Address</div>
-                <div className="font-mono text-sm break-all text-slate-100">{item.token}</div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setVaultForm((prev) => ({ ...prev, token: item.token }))}
-                    className={SOFT_BUTTON_CLASS}
-                  >
-                    Use in vault
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className={`mt-6 ${activeView === "vault" || activeView === "locker" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+      <div className={`mt-8 ${activeView === "vault" || activeView === "locker" ? "grid gap-8 xl:grid-cols-1" : "hidden"}`}>
         <div className={`${PANEL_CLASS} ${activeView === "vault" ? "cx-panel-enter" : "hidden"}`}>
-          <div className="flex items-center justify-between">
+          <div className="flex items-start justify-between">
             <div>
-              <div className="font-display text-lg font-semibold">CurrentxVault</div>
+              <div className="font-display text-lg font-semibold">CurrentX Vault</div>
               <div className="text-xs text-slate-300/70">Active locks and new vault deposits.</div>
+              {vaultUpdatedLabel ? <div className="mt-1 text-[11px] text-slate-400/80">{vaultUpdatedLabel}</div> : null}
             </div>
-            <button
-              type="button"
-              onClick={refreshVaultLocks}
-              className={SOFT_BUTTON_CLASS}
-            >
-              Reload
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  refreshVaultLocks();
+                  refreshVaultTokenWalletState();
+                }}
+                disabled={vaultLocks.loading}
+                title={vaultLocks.loading ? "Refreshing..." : "Reload"}
+                aria-label={vaultLocks.loading ? "Refreshing..." : "Reload"}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-600/70 bg-slate-900/70 text-slate-200 transition hover:border-slate-400 hover:text-slate-50 disabled:opacity-60"
+              >
+                {vaultLocks.loading ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border border-slate-300/60 border-t-transparent" />
+                ) : (
+                  <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" aria-hidden="true">
+                    <path
+                      d="M13 8a5 5 0 1 1-1.5-3.6M13 3v3.5H9.5"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-700/55 bg-slate-900/40 px-4 py-4 ring-1 ring-white/5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400/80">Active Locks</div>
+              <div className="mt-2 text-3xl font-semibold leading-none text-slate-100">
+                {vaultLocks.loading ? "..." : String(vaultActiveLocksCount)}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-400/75">Across this wallet.</div>
+            </div>
+            <div className="rounded-2xl border border-slate-700/55 bg-slate-900/40 px-4 py-4 ring-1 ring-white/5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400/80">Total Locked</div>
+              <div className="mt-2 text-3xl font-semibold leading-none text-slate-100">
+                {vaultLocks.loading ? "..." : vaultTotalLockedLabel}
+              </div>
+              <div className="mt-1 text-[11px] text-slate-400/75">Current vault balance.</div>
+              {vaultTotalLockedIsZero && !vaultLocks.loading ? (
+                <div className="mt-1 text-[11px] text-slate-500/75">Lock tokens to start vesting.</div>
+              ) : null}
+            </div>
           </div>
 
           <div className="mt-3 space-y-4">
@@ -2882,137 +4141,739 @@ export default function LaunchpadSection({ address, onConnect }) {
               </div>
             ) : null}
 
-            <div className={`${TONED_PANEL_CLASS} p-3`}>
-              <div className="flex items-start justify-between gap-3">
+            <div className={`${TONED_PANEL_CLASS} p-4`}>
+              <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Active locks</div>
-                  <div className="text-[11px] text-slate-400/80">Locks that are still active for this wallet.</div>
+                  <div className="text-[11px] text-slate-400/80">State overview for this wallet.</div>
                 </div>
-                <div className="text-right text-[11px] text-slate-400/80">
-                  <div>Minimum lock</div>
-                  <div className="font-semibold text-slate-100">
-                    {Number(vaultLocks.minimumVaultTime || 0n) > 0
-                      ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
-                      : "--"}
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setVaultLocksExpanded((prev) => !prev)}
+                  className="rounded-lg border border-slate-600/70 bg-slate-900/70 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50"
+                >
+                  {vaultLocksExpanded ? "Collapse" : "Expand"}
+                </button>
+              </div>
+              <div className="mt-2 text-[11px] text-slate-300/80">
+                {vaultLocks.loading ? "Refreshing locks..." : `${vaultActiveLocksCount} active lock${vaultActiveLocksCount === 1 ? "" : "s"}`}
               </div>
 
-              {vaultLocks.loading ? <div className="mt-3 text-sm text-slate-300/75">Loading active locks...</div> : null}
-              {!vaultLocks.loading && !address ? (
-                <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load active locks.</div>
-              ) : null}
-              {!vaultLocks.loading && address && vaultLocks.items.length === 0 ? (
-                <div className="mt-3 text-sm text-slate-300/75">No active locks found.</div>
-              ) : null}
+              {vaultLocksExpanded ? (
+                <>
+                  {vaultLocks.loading ? <div className="mt-3 text-sm text-slate-300/75">Loading active locks...</div> : null}
+                  {!vaultLocks.loading && !address ? (
+                    <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load active locks.</div>
+                  ) : null}
+                  {!vaultLocks.loading && address && vaultLocks.items.length === 0 ? (
+                    <div className="mt-3 rounded-2xl border border-slate-700/55 bg-slate-900/35 px-4 py-4 text-center">
+                      <div className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-full border border-slate-600/70 bg-slate-950/70 text-slate-300/85">
+                        <LockIcon className="h-6 w-6" />
+                      </div>
+                      <div className="mt-2 text-sm font-semibold text-slate-100">No active locks yet</div>
+                      <div className="mt-1 text-xs text-slate-300/78">Your created locks will appear here.</div>
+                      <div className="mt-1 text-[11px] text-slate-400/80">
+                        Minimum lock: {vaultMinimumLockDays > 0 ? `${vaultMinimumLockDays} days` : "--"}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleVaultJumpToDeposit}
+                        className="mt-3 rounded-lg border border-cyan-300/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-500/15"
+                      >
+                        Create first lock
+                      </button>
+                    </div>
+                  ) : null}
 
-              {!vaultLocks.loading && vaultLocks.items.length > 0 ? (
-                <div className="mt-3 space-y-2">
-                  {vaultLocks.items.map((item) => (
-                    <div key={`vault-lock-${item.token}`} className="rounded-xl border border-slate-700/55 bg-slate-900/35 p-3">
+                  {!vaultLocks.loading && vaultLocks.items.length > 0 ? (
+                    <div className="mt-3 overflow-hidden rounded-xl border border-slate-700/55 bg-slate-900/35">
+                      <div className="hidden grid-cols-[minmax(0,2fr)_1.2fr_1.4fr_1fr_auto] gap-2 border-b border-slate-700/55 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/85 md:grid">
+                        <span>Token</span>
+                        <span>Amount</span>
+                        <span>Unlock</span>
+                        <span>Remaining</span>
+                        <span className="text-right">Actions</span>
+                      </div>
+                      <div className="divide-y divide-slate-700/45">
+                        {vaultLocks.items.map((item) => {
+                          const canViewToken = Boolean(isAddress(item.token) && EXPLORER_BASE_URL);
+                          return (
+                            <div key={`vault-lock-${item.token}`} className="px-3 py-2">
+                              <div className="grid gap-2 md:grid-cols-[minmax(0,2fr)_1.2fr_1.4fr_1fr_auto] md:items-center">
+                                <div className="flex min-w-0 items-center gap-2">
+                                  <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                                    {item.logo ? (
+                                      <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-slate-200">
+                                        {String(item.symbol || "T")
+                                          .slice(0, 2)
+                                          .toUpperCase()}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate text-xs font-semibold text-slate-100">{item.name || "Token"}</div>
+                                    <div className="text-[11px] text-slate-300/80">{item.symbol || "TOKEN"}</div>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-slate-200">
+                                  {formatAmount(item.amount, item.decimals || 18, 6)} {item.symbol || ""}
+                                </div>
+                                <div className="text-xs text-slate-200">{formatDate(item.endTime)}</div>
+                                <div className="text-xs text-slate-200">{formatRemainingFromUnix(item.endTime)}</div>
+                                <div className="flex items-center justify-start md:justify-end">
+                                  {canViewToken ? (
+                                    <a
+                                      href={`${EXPLORER_BASE_URL}/address/${item.token}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex h-7 items-center justify-center rounded-lg border border-slate-600/65 px-2 text-[11px] font-semibold text-slate-300/85 transition hover:border-slate-400 hover:text-slate-50"
+                                    >
+                                      Open
+                                    </a>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500/80">-</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+
+            <div
+              ref={vaultDepositFormRef}
+              className={`${TONED_PANEL_CLASS} border-slate-600/75 bg-gradient-to-b from-slate-900/58 to-slate-900/46 p-6 shadow-[0_14px_30px_rgba(2,6,23,0.34)] transition ${
+                vaultDepositFlash ? "ring-2 ring-cyan-300/40 shadow-[0_0_0_2px_rgba(34,211,238,0.1)]" : ""
+              }`}
+            >
+              <div className="text-base font-semibold text-slate-100">Create lock</div>
+              <div className="mt-1 text-xs text-slate-300/75">Lock a token amount until a future unlock date.</div>
+
+              <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-700/55 bg-slate-900/35 px-4 py-3">
+                  <div className="relative">
+                    <div className="pointer-events-none absolute left-[22%] right-[22%] top-4 h-px bg-slate-700/70" />
+                    <div className="relative z-10 grid grid-cols-2 gap-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                          {item.logo ? (
-                            <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
+                            vaultApproveStepDone
+                              ? "border-emerald-300/60 bg-emerald-500/18 text-emerald-100"
+                              : "border-cyan-300/70 bg-cyan-500/18 text-cyan-100 shadow-[0_0_0_4px_rgba(34,211,238,0.08)]"
+                          }`}
+                        >
+                          {vaultApproveStepDone ? <CheckIcon className="h-4 w-4" /> : "1"}
+                        </span>
+                        <div className="min-w-0">
+                          <div className={`text-xs font-semibold uppercase tracking-[0.08em] ${vaultApproveStepDone ? "text-emerald-100" : "text-cyan-100"}`}>
+                            Approve
+                          </div>
+                          <div className="text-[11px] text-slate-400/85">{vaultApproveStepDone ? "Completed" : "Required"}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
+                            vaultApproveStepDone
+                              ? "border-cyan-300/65 bg-cyan-500/16 text-cyan-100"
+                              : "border-slate-700/55 bg-slate-900/65 text-slate-400/85"
+                          }`}
+                        >
+                          2
+                        </span>
+                        <div className="min-w-0">
+                          <div className={`text-xs font-semibold uppercase tracking-[0.08em] ${vaultApproveStepDone ? "text-cyan-100" : "text-slate-300/75"}`}>
+                            Create Lock
+                          </div>
+                          <div className="text-[11px] text-slate-400/85">{vaultApproveStepDone ? "Active" : "Waiting approval"}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-300/90">Token</label>
+                    <span className="inline-flex items-center gap-2">
+                      {vaultTokenStatus ? (
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                            vaultTokenStatus === "Ready"
+                              ? "border-emerald-300/50 bg-emerald-500/12 text-emerald-100"
+                              : vaultTokenStatus === "Invalid address"
+                                ? "border-rose-300/55 bg-rose-500/15 text-rose-100"
+                                : "border-slate-600/70 bg-slate-900/60 text-slate-300"
+                          }`}
+                        >
+                          {vaultTokenStatus}
+                        </span>
+                      ) : null}
+                      {vaultTokenValid && !vaultTokenPickerExpanded ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVaultTokenMenuOpen(false);
+                            setVaultTokenPickerExpanded(true);
+                          }}
+                          className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
+                        >
+                          Change
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                  {vaultTokenPickerExpanded || !vaultTokenValid ? (
+                    <input
+                      value={vaultForm.token}
+                      onChange={(e) => {
+                        setVaultTokenMenuOpen(false);
+                        setVaultTokenPickerExpanded(true);
+                        setVaultForm((prev) => ({ ...prev, token: e.target.value.trim() }));
+                      }}
+                      placeholder="Token symbol or 0x address"
+                      className={`${INPUT_CLASS} h-11 focus:border-cyan-300/90 focus:ring-cyan-300/30`}
+                    />
+                  ) : null}
+                  {!vaultTokenValid && vaultTokenInput ? (
+                    <div className="text-[11px] text-rose-100">Invalid address.</div>
+                  ) : null}
+                  {vaultRecentTokenOptions.length ? (
+                    <div className="space-y-2">
+                      <span className="text-[11px] text-slate-400/85">My tokens</span>
+                      <div className="relative w-full" ref={vaultTokenMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setVaultTokenMenuOpen((prev) => !prev)}
+                          className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs transition-colors duration-150 ${
+                            vaultTokenMenuOpen
+                              ? "border-cyan-300/60 bg-slate-900/85 text-slate-100 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]"
+                              : "border-slate-700/60 bg-slate-900/70 text-slate-200 hover:border-slate-500/75 hover:bg-slate-900/80 hover:text-slate-100"
+                          }`}
+                          aria-haspopup="listbox"
+                          aria-expanded={vaultTokenMenuOpen}
+                        >
+                          {vaultSelectedRecentToken ? (
+                            <span className="min-w-0 flex items-center gap-1.5">
+                              <span className="shrink-0 text-[13px] font-semibold text-slate-100">{vaultSelectedRecentToken.symbol}</span>
+                              <span className="shrink-0 text-slate-500/75">-</span>
+                              <span className="min-w-0 truncate font-mono text-[11px] text-slate-400/85">
+                                {shorten(vaultSelectedRecentToken.token)}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="truncate text-slate-300/90">Recent / My tokens</span>
+                          )}
+                          <ChevronIcon open={vaultTokenMenuOpen} />
+                        </button>
+                        <div
+                          className={`absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 origin-top rounded-xl border border-slate-700/65 bg-slate-950/95 shadow-[0_22px_42px_rgba(2,6,23,0.5)] transition-all duration-150 ${
+                            vaultTokenMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-1 opacity-0"
+                          }`}
+                        >
+                          <div className="border-b border-slate-700/55 px-3 py-1.5">
+                            <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-500/70">Recent / My tokens</div>
+                          </div>
+                          <div
+                            role="listbox"
+                            className="max-h-64 overflow-y-auto px-1 py-1.5 [scrollbar-width:thin] [scrollbar-color:rgba(100,116,139,0.82)_rgba(2,6,23,0.4)] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-[rgba(2,6,23,0.35)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[rgba(100,116,139,0.78)] hover:[&::-webkit-scrollbar-thumb]:bg-[rgba(148,163,184,0.84)]"
+                          >
+                            {vaultRecentTokenOptions.map((item) => {
+                              const token = String(item.token || "");
+                              const lower = token.toLowerCase();
+                              const option = vaultRecentTokenDetails[lower] || {};
+                              const isSelected = lower === String(vaultTokenInput || "").toLowerCase();
+                              const optionSymbol = String(option.symbol || item.symbol || "TOKEN").toUpperCase();
+                              const optionName = String(option.name || item.name || "Token");
+                              const optionLogo = String(option.logo || item.logo || "");
+                              const optionBalance = option.loading ? "Loading..." : option.balanceLabel || "--";
+                              return (
+                                <button
+                                  key={`vault-token-option-${item.token}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setVaultTokenMenuOpen(false);
+                                    setVaultTokenPickerExpanded(true);
+                                    setVaultForm((prev) => ({ ...prev, token }));
+                                  }}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  className={`grid w-full min-h-[104px] grid-cols-[2rem_minmax(0,1fr)_auto] grid-rows-[auto_auto_auto] items-start gap-x-2.5 gap-y-1.5 border-l px-3 py-3.5 text-left transition-colors duration-150 ${
+                                    isSelected
+                                      ? "border-l-cyan-300/55 bg-slate-800/70 text-slate-100"
+                                      : "border-l-transparent text-slate-300/92 hover:border-l-slate-500/60 hover:bg-slate-800/60 hover:text-slate-100"
+                                  }`}
+                                >
+                                  <div className="col-start-1 row-span-3 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/72">
+                                    {optionLogo ? (
+                                      <img src={optionLogo} alt={`${optionSymbol} logo`} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-slate-200">{optionSymbol.slice(0, 2)}</span>
+                                    )}
+                                  </div>
+                                  <div className="col-start-2 row-start-1 min-w-0 flex items-center gap-1.5">
+                                    <span className="truncate text-[13px] font-semibold leading-tight text-slate-100">{optionSymbol}</span>
+                                    <span className="truncate text-[11px] leading-tight text-slate-300/86">{optionName}</span>
+                                  </div>
+                                  <div className="col-start-2 row-start-2 min-w-0 truncate font-mono text-[10px] leading-normal text-slate-400/85">{token}</div>
+                                  <div className="col-start-2 row-start-3 min-w-0 truncate text-[11px] leading-normal text-slate-300/88">
+                                    Wallet balance: <span className="font-semibold text-slate-100">{optionBalance}</span>
+                                  </div>
+                                  <div className="col-start-3 row-start-1 shrink-0 self-start pt-0.5">
+                                    <span
+                                      className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] leading-tight ${
+                                        isSelected
+                                          ? "border-cyan-300/55 bg-cyan-500/15 text-cyan-100"
+                                          : "border-slate-600/70 bg-slate-900/60 text-slate-300/85"
+                                      }`}
+                                    >
+                                      {isSelected ? "Selected" : "My token"}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                  {vaultTokenValid && !vaultTokenMenuOpen ? (
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                      <div className="flex min-w-0 items-start gap-2">
+                        <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                          {vaultTokenMeta?.logo ? (
+                            <img src={vaultTokenMeta.logo} alt={`${vaultTokenMeta.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
                           ) : (
                             <span className="text-xs font-semibold text-slate-200">
-                              {String(item.symbol || "T")
+                              {String(vaultTokenMeta?.symbol || "T")
                                 .slice(0, 2)
                                 .toUpperCase()}
                             </span>
                           )}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-slate-100">{item.name || "Token"}</div>
-                          <div className="text-xs text-slate-300/80">{item.symbol || "TOKEN"}</div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="truncate text-[15px] font-semibold text-slate-100">
+                              {vaultTokenMeta ? vaultTokenMeta.name : shorten(vaultTokenInput)}
+                            </div>
+                            {vaultTokenMeta?.symbol ? (
+                              <span className="inline-flex rounded-md border border-cyan-300/40 bg-cyan-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                                {vaultTokenMeta.symbol}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-[11px] text-slate-400/80">
+                            {vaultTokenMeta ? `${vaultTokenMeta.decimals} decimals - ${shorten(vaultTokenInput)}` : "Resolving token metadata..."}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-300/88">
+                            Wallet balance: <span className="font-semibold text-slate-100">{vaultTokenBalance.loading ? "..." : vaultTokenBalanceLabel}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleVaultSetMaxDeposit}
+                            disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
+                            className="mt-1 inline-flex text-[10px] font-semibold text-cyan-200/90 transition-colors duration-150 hover:text-cyan-100 disabled:opacity-60"
+                          >
+                            Use balance
+                          </button>
                         </div>
-                      </div>
-
-                      <div className="mt-2 text-xs text-slate-400/75">Address</div>
-                      <div className="font-mono text-sm break-all text-slate-100">{item.token}</div>
-
-                      <div className="mt-2 grid gap-1 text-xs text-slate-200">
-                        <div>
-                          Locked amount: {formatAmount(item.amount, item.decimals || 18, 6)} {item.symbol || ""}
-                        </div>
-                        <div>Unlock date: {formatDate(item.endTime)}</div>
-                        <div>Status: unlocks in {formatRemainingFromUnix(item.endTime)}</div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-
-            <div className={`${TONED_PANEL_CLASS} p-3`}>
-              <div className="text-sm font-semibold text-slate-100">Deposit token into vault</div>
-              <div className="mt-1 text-xs text-slate-300/75">Lock a token amount until a future unlock date.</div>
-
-              <div className="mt-3 space-y-3">
-                <AddressField
-                  label="Token"
-                  value={vaultForm.token}
-                  onChange={(value) => setVaultForm((prev) => ({ ...prev, token: value }))}
-                  required
-                />
-                <div className="text-xs text-slate-300/75">
-                  Token meta: {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
+                  ) : null}
                 </div>
 
-                <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-                  <input
-                    value={vaultForm.approveAmount}
-                    onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
-                    placeholder="Amount to approve"
-                    className={INPUT_CLASS}
-                  />
+                <div
+                  className={`space-y-3 rounded-2xl border p-4 transition ${
+                    vaultApproveStepDone
+                      ? "border-slate-700/55 bg-slate-900/30 opacity-80"
+                      : "border-cyan-300/60 bg-cyan-500/[0.06]"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-100">
+                        {vaultApproveStepDone ? <CheckIcon className="h-3.5 w-3.5 text-emerald-100" /> : null}
+                        Step 1 - Approve
+                      </div>
+                        <div className="text-[11px] text-slate-200/85">
+                          {vaultApproveStepDone ? "Allowance is ready for deposit." : "Approve token spending before deposit."}
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {vaultApproveStepDone ? (
+                        <span className="inline-flex h-5 items-center rounded-full border border-emerald-300/50 bg-emerald-500/12 px-2 text-[10px] font-semibold text-emerald-100">
+                          Completed
+                        </span>
+                      ) : (
+                        <span className="inline-flex h-5 items-center rounded-full border border-cyan-300/50 bg-cyan-500/14 px-2 text-[10px] font-semibold text-cyan-100">
+                          Required
+                        </span>
+                      )}
+                      {vaultApproveStepDone ? (
+                        <button type="button" onClick={handleVaultApprove} disabled={vaultApproveDisabled} className={SOFT_BUTTON_CLASS}>
+                          Re-approve
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {!vaultApproveStepDone ? (
+                    <button
+                      type="button"
+                      onClick={handleVaultApprove}
+                      disabled={vaultApproveDisabled}
+                      className="w-full rounded-xl border border-cyan-300/65 bg-cyan-500/18 px-3 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/24 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500"
+                    >
+                      {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
+                    </button>
+                  ) : null}
+
+                  {vaultApproveStepDone && !vaultApproveAdvanced ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300/45 bg-emerald-500/10 px-2.5 py-2">
+                      <span className="text-[11px] font-semibold text-emerald-100">Approved: {vaultApprovalTargetLine}</span>
+                      <span className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setVaultApproveAdvanced(true)}
+                          className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
+                        >
+                          Show advanced
+                        </button>
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      {!vaultApproveAdvanced ? (
+                        <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-700/55 bg-slate-950/45 px-2.5 py-2">
+                          <span className="text-[11px] text-slate-200/95">Approve amount = Amount to lock.</span>
+                          <button
+                            type="button"
+                            onClick={() => setVaultApproveAdvanced(true)}
+                            className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
+                          >
+                            Show advanced
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] text-slate-300/85">Advanced approval</span>
+                            <button
+                              type="button"
+                              onClick={() => setVaultApproveAdvanced(false)}
+                              className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
+                            >
+                              Use simple approval
+                            </button>
+                          </div>
+                          <div className="inline-flex rounded-lg border border-slate-700/70 bg-slate-950/65 p-1">
+                            <button
+                              type="button"
+                              onClick={() => setVaultApproveMode("exact")}
+                              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                vaultApproveMode === "exact"
+                                  ? "border border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
+                                  : "text-slate-300/75 hover:text-slate-100"
+                              }`}
+                            >
+                              Exact
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setVaultApproveMode("max")}
+                              className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                                vaultApproveMode === "max"
+                                  ? "border border-cyan-300/50 bg-cyan-400/15 text-cyan-100"
+                                  : "text-slate-300/75 hover:text-slate-100"
+                              }`}
+                            >
+                              Unlimited
+                            </button>
+                          </div>
+                          {vaultApproveMode === "exact" ? (
+                            <input
+                              value={vaultForm.approveAmount}
+                              onChange={(e) => setVaultForm((prev) => ({ ...prev, approveAmount: e.target.value }))}
+                              placeholder="Amount to approve"
+                              className={INPUT_CLASS}
+                            />
+                          ) : (
+                            <div className="text-[11px] text-amber-100/90">
+                              Risk notice: unlimited allowance increases spend risk.
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-950/45 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-slate-400/80">Approval target</div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-semibold text-slate-100">{vaultApprovalTargetLine}</div>
+                        </div>
+                      </div>
+
+                    </>
+                  )}
+                </div>
+
+                <div
+                  className={`space-y-3 rounded-2xl border p-4 ${
+                    vaultApproveStepDone
+                      ? "border-cyan-300/55 bg-cyan-500/8 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]"
+                      : "border-slate-700/50 bg-slate-900/30 opacity-85"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`text-xs font-semibold uppercase tracking-wide ${vaultApproveStepDone ? "text-cyan-100" : "text-slate-300/90"}`}>
+                      Step 2 - Create lock
+                    </div>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                        vaultApproveStepDone
+                          ? "border-cyan-300/50 bg-cyan-500/12 text-cyan-100"
+                          : "border-slate-700/60 bg-slate-900/70 text-slate-300/75"
+                      }`}
+                    >
+                      {vaultApproveStepDone ? "Active" : "Waiting approval"}
+                    </span>
+                  </div>
+                  {!vaultApproveStepDone ? (
+                    <div className="text-[11px] text-slate-200/80">Step 2 is blocked until Step 1 approval is completed.</div>
+                  ) : null}
+                  <div className="space-y-3">
+                    <input
+                      value={vaultForm.depositAmount}
+                      onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
+                      placeholder="Amount to lock"
+                      className={`${INPUT_CLASS} h-12 text-base font-semibold`}
+                    />
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {[25, 50, 75].map((pct) => (
+                        <button
+                          key={`vault-amount-${pct}`}
+                          type="button"
+                          onClick={() => handleVaultAmountPreset(pct)}
+                          disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
+                          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-60 ${
+                            vaultSelectedAmountPreset === String(pct)
+                              ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
+                              : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-400 hover:text-slate-100"
+                          }`}
+                        >
+                          {pct}%
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={handleVaultSetMaxDeposit}
+                        disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
+                        className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-60 ${
+                          vaultSelectedAmountPreset === "max"
+                            ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
+                            : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-400 hover:text-slate-100"
+                        }`}
+                      >
+                        Max
+                      </button>
+                    </div>
+                    <div className="rounded-lg border border-slate-700/55 bg-slate-950/45 px-2.5 py-1.5 text-[11px] font-semibold text-slate-200">
+                      {vaultAmountFeedback || "Balance: --"}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 pt-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-medium tracking-wide text-slate-300/85">Unlock date</label>
+                      <span className="rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200">
+                        Min lock: {vaultMinimumLockDays > 0 ? `${vaultMinimumLockDays}d` : "--"}
+                      </span>
+                    </div>
+                    <input
+                      type="datetime-local"
+                      min={vaultMinimumUnlockInputValue}
+                      value={vaultForm.depositUnlockAt}
+                      onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
+                      onBlur={handleVaultUnlockBlur}
+                      className={`${INPUT_CLASS} ${
+                        !vaultUnlockMeetsMinimum && vaultUnlockIsValid ? "border-rose-300/55 focus:border-rose-300" : ""
+                      }`}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      {[30, 90, 180, 365].map((days) => (
+                        <button
+                          key={`vault-unlock-${days}`}
+                          type="button"
+                          onClick={() => handleVaultUnlockPreset(days)}
+                          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+                            vaultSelectedUnlockPreset === days
+                              ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
+                              : "border-slate-600/70 bg-slate-900/70 text-slate-200 hover:border-slate-400 hover:text-slate-50"
+                          }`}
+                        >
+                          {days}d{days === 30 ? " (min)" : ""}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="text-[11px] font-medium text-slate-200/80">{vaultUnlockPreview}</div>
+                    {!vaultUnlockMeetsMinimum && vaultUnlockIsValid ? (
+                      <div className="text-[11px] text-rose-100">
+                        Minimum lock is {vaultMinimumLockDays} days from now.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-700/45 bg-slate-900/25 p-3">
+                  <div className="mb-2 rounded-lg border border-slate-700/55 bg-slate-950/45 px-3 py-2 text-xs text-slate-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-slate-400/75">Admin wallet</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-slate-100">{shorten(vaultAdminEffective || "") || "--"}</span>
+                        {vaultAdminValid ? (
+                          <button
+                            type="button"
+                            title={copiedSummaryKey === "vault-admin-inline" ? "Copied" : "Copy admin"}
+                            onClick={() => handleCopySummaryValue("vault-admin-inline", vaultAdminEffective)}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-600/70 bg-slate-900/70 text-slate-300/80 transition hover:border-cyan-300/55 hover:bg-slate-800/85 hover:text-cyan-100"
+                          >
+                            <CopyIcon className="h-3 w-3" />
+                            <span className="sr-only">Copy admin</span>
+                          </button>
+                        ) : null}
+                      </span>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={handleVaultApprove}
-                    disabled={vaultAction.loadingKey === "approve"}
-                    className={CYAN_BUTTON_CLASS}
+                    onClick={() => setVaultAdvancedOpen((prev) => !prev)}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-slate-900/35"
                   >
-                    {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-300/90">Advanced</span>
+                    <span className="text-[11px] font-semibold text-slate-400/90">{vaultAdvancedOpen ? "Collapse" : "Expand"}</span>
                   </button>
+
+                  {vaultAdvancedOpen ? (
+                    <div className="mt-3 space-y-2 border-t border-slate-700/45 pt-3">
+                      <div className="text-[11px] text-slate-300/75">Advanced approval and custom admin wallet controls.</div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium tracking-wide text-slate-300/85">Admin wallet</span>
+                        <label className="inline-flex items-center gap-2 text-[11px] text-slate-300/85">
+                          <input
+                            type="checkbox"
+                            checked={vaultUseCustomAdmin}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setVaultUseCustomAdmin(checked);
+                              if (checked) {
+                                setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address || "" }));
+                              }
+                            }}
+                            className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-cyan-400 focus:ring-cyan-300/35"
+                          />
+                          Use custom admin wallet
+                        </label>
+                      </div>
+                      {vaultUseCustomAdmin ? (
+                        <input
+                          value={vaultForm.depositAdmin}
+                          onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAdmin: e.target.value.trim() }))}
+                          placeholder="0x..."
+                          className={`${INPUT_CLASS} border-cyan-300/50 focus:border-cyan-300`}
+                        />
+                      ) : (
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-950/55 px-3 py-2 text-xs text-slate-200">
+                          <div>
+                            Admin: <span className="font-mono text-slate-100">{shorten(vaultAdminEffective || "") || "--"}</span>
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400/80">
+                            Admin can manage lock and withdraw once unlock conditions are met.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
-                <div className="grid gap-2 md:grid-cols-2">
-                  <input
-                    value={vaultForm.depositAmount}
-                    onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
-                    placeholder="Amount to lock"
-                    className={INPUT_CLASS}
-                  />
-                  <input
-                    type="datetime-local"
-                    value={vaultForm.depositUnlockAt}
-                    onChange={(e) => setVaultForm((prev) => ({ ...prev, depositUnlockAt: e.target.value }))}
-                    className={INPUT_CLASS}
-                  />
-                  <AddressField
-                    label="Admin wallet"
-                    value={vaultForm.depositAdmin}
-                    onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
-                    required
-                  />
                 </div>
 
-                <div className="text-[11px] text-slate-400/80">
-                  Minimum lock:{" "}
-                  {Number(vaultLocks.minimumVaultTime || 0n) > 0
-                    ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
-                    : "--"}
-                </div>
+                <div className="space-y-4 xl:sticky xl:top-[92px] xl:self-start">
+                <div className="space-y-4 rounded-2xl border border-slate-700/60 bg-slate-900/40 p-4 text-xs">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400/70">Summary</div>
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300/90">Token &amp; Amount</div>
+                      <div className="mt-1 truncate text-sm font-semibold text-slate-100">{vaultSummaryTokenLabel}</div>
+                      <div className="mt-1 text-2xl font-semibold leading-none text-slate-100">{vaultSummaryAmountLabel}</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">Duration</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-100">{vaultSummaryDurationLabel}</div>
+                      <div className="mt-1 text-[11px] text-slate-300/78">
+                        Unlock: {vaultUnlockIsValid ? vaultUnlockPreview.replace("Unlocks in ", "") : "--"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">Admin</div>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate font-mono text-[12px] text-slate-100">{vaultAdminValid ? vaultAdminEffective : "--"}</span>
+                        {vaultAdminValid ? (
+                          <button
+                            type="button"
+                            title={copiedSummaryKey === "vault-admin" ? "Copied" : "Copy admin"}
+                            onClick={() => handleCopySummaryValue("vault-admin", vaultAdminEffective)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-600/70 bg-slate-900/70 text-slate-300/80 transition hover:border-cyan-300/55 hover:bg-slate-800/85 hover:text-cyan-100 hover:shadow-[0_0_0_1px_rgba(34,211,238,0.18)]"
+                          >
+                            <CopyIcon className="h-3.5 w-3.5" />
+                            <span className="sr-only">Copy admin</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    className={`rounded-lg border-[0.5px] px-2.5 py-1.5 text-[11px] ${
+                      vaultPrimaryHintTone === "error"
+                        ? "border-rose-300/55 bg-rose-500/12 text-rose-100"
+                        : vaultPrimaryHintTone === "warn"
+                          ? "border-amber-300/30 bg-amber-500/[0.06] text-amber-100/80"
+                          : "border-emerald-300/45 bg-emerald-500/10 text-emerald-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-current/50 text-[10px] leading-none">
+                        i
+                      </span>
+                      <span>
+                        {vaultPrimaryHint && vaultPrimaryHint !== "Ready"
+                          ? `Disabled reason: ${vaultPrimaryHint}`
+                          : vaultPrimaryAction === "approve"
+                            ? "Ready: approve allowance for Step 1."
+                            : "Ready: submit Step 2 create lock."}
+                      </span>
+                    </div>
+                  </div>
 
-                <div className="flex justify-end">
                   <button
                     type="button"
-                    onClick={handleVaultDeposit}
-                    disabled={vaultAction.loadingKey === "deposit"}
-                    className={PRIMARY_BUTTON_CLASS}
+                    onClick={vaultPrimaryAction === "approve" ? handleVaultApprove : handleVaultDeposit}
+                    disabled={vaultPrimaryDisabled}
+                    className={`w-full rounded-xl border px-4 py-[22px] text-[15px] font-black leading-none transition duration-200 ${
+                      vaultPrimaryDisabled
+                        ? "cursor-not-allowed border-slate-700/70 bg-slate-900/70 text-slate-500 opacity-50"
+                        : "border-cyan-300/65 bg-gradient-to-r from-cyan-500/24 to-emerald-400/20 text-cyan-50 shadow-[0_12px_24px_rgba(34,211,238,0.16)] hover:border-cyan-200/80 hover:shadow-[0_14px_28px_rgba(34,211,238,0.2)] hover:brightness-110"
+                    }`}
                   >
-                    {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Deposit into vault"}
+                    {vaultPrimaryLabel}
                   </button>
+                </div>
                 </div>
               </div>
             </div>
@@ -3021,10 +4882,20 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
 
         <div className={`${PANEL_CLASS} ${activeView === "locker" ? "cx-panel-enter" : "hidden"}`}>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <div className="font-display text-lg font-semibold">LpLockerv2</div>
-              <div className="text-xs text-slate-300/70">LP pair for selected NFT ID + collect fees.</div>
+              <div className="font-display text-xl font-semibold text-slate-100">LpLockerv2</div>
+              <div className="mt-1 text-sm text-slate-300/75">LP pair for selected NFT ID + collect fees.</div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/65">Total claimable</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-100">{lockerClaimableSummary}</div>
+                </div>
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/65">Active NFTs</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-100">{lockerActiveNftCount}</div>
+                </div>
+              </div>
             </div>
             <button
               type="button"
@@ -3036,102 +4907,181 @@ export default function LaunchpadSection({ address, onConnect }) {
           </div>
 
           {locker.error ? (
-            <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
+            <div className="mt-3 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
           ) : null}
 
-          <div className="mt-3 space-y-3">
-            <select
-              value={locker.selectedId}
-              onChange={(e) => setLocker((prev) => ({ ...prev, selectedId: e.target.value }))}
-              className={INPUT_CLASS}
-            >
-              {!locker.ids.length ? <option value="">No LP token IDs</option> : null}
-              {locker.ids.map((tokenId) => (
-                <option key={tokenId} value={tokenId}>
-                  {tokenId}
-                </option>
-              ))}
-            </select>
-
-            <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-300/80">NFT ID</span>
-                <span className="font-mono text-slate-100">{locker.selectedId || "--"}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-300/80">Creator reward</span>
-                <span className="font-semibold text-slate-100">
-                  {locker.tokenReward ? String(locker.tokenReward.creatorReward) : "--"}
-                </span>
-              </div>
-              <div className="pt-1 text-slate-300/80">LP pair</div>
-              {locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? (
-                <div className="flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-2">
-                  <div className="inline-flex items-center gap-1.5">
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                      {locker.tokenReward?.token0Meta?.logo ? (
-                        <img
-                          src={locker.tokenReward.token0Meta.logo}
-                          alt={`${locker.tokenReward?.token0Meta?.symbol || "TOKEN0"} logo`}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-[10px] font-semibold text-slate-200">
-                          {String(locker.tokenReward?.token0Meta?.symbol || "T0")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs font-semibold text-slate-100">
-                      {locker.tokenReward?.token0Meta?.symbol || "TOKEN0"}
-                    </span>
-                  </div>
-                  <span className="text-slate-400/80">/</span>
-                  <div className="inline-flex items-center gap-1.5">
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                      {locker.tokenReward?.token1Meta?.logo ? (
-                        <img
-                          src={locker.tokenReward.token1Meta.logo}
-                          alt={`${locker.tokenReward?.token1Meta?.symbol || "TOKEN1"} logo`}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-[10px] font-semibold text-slate-200">
-                          {String(locker.tokenReward?.token1Meta?.symbol || "T1")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs font-semibold text-slate-100">
-                      {locker.tokenReward?.token1Meta?.symbol || "TOKEN1"}
-                    </span>
-                  </div>
-                  <span className="ml-auto rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[11px] text-slate-200">
-                    {locker.tokenReward?.fee ? `Fee ${formatFeeTierPercent(locker.tokenReward.fee)}` : "Fee --"}
-                  </span>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-300/75">Pair details unavailable for this NFT ID.</div>
-              )}
+          {locker.loading ? (
+            <div className="mt-6 rounded-2xl border border-slate-700/60 bg-slate-900/35 px-4 py-4 text-sm text-slate-300/80">
+              Loading LP NFTs...
             </div>
-
-            <div className="flex justify-end">
+          ) : !locker.ids.length ? (
+            <div className="mt-6 rounded-2xl border border-slate-700/60 bg-slate-900/35 px-4 py-7 text-center">
+              <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-300/90">
+                <NftTagIcon className="h-5 w-5" />
+              </div>
+              <div className="mt-3 text-base font-semibold text-slate-100">No LP positions found</div>
+              <div className="mt-1 text-sm text-slate-300/75">
+                Provide liquidity to mint an LP NFT, then return here to manage fee rewards.
+              </div>
               <button
                 type="button"
-                onClick={handleCollectLocker}
-                disabled={lockerAction.loadingKey === "collect" || !locker.selectedId}
-                className={CYAN_BUTTON_CLASS}
+                onClick={() => setActiveView("create")}
+                className="mt-4 rounded-xl border border-slate-600/70 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100"
               >
-                {lockerAction.loadingKey === "collect" ? "Collecting..." : "Collect rewards"}
+                Provide liquidity
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="mt-6 space-y-8">
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-300/85">NFT ID Selector</label>
+                <select
+                  value={locker.selectedId}
+                  onChange={(e) => setLocker((prev) => ({ ...prev, selectedId: e.target.value }))}
+                  className={`${INPUT_CLASS} h-11`}
+                >
+                  {!locker.ids.length ? <option value="">No LP token IDs</option> : null}
+                  {locker.ids.map((tokenId) => (
+                    <option key={tokenId} value={tokenId}>
+                      NFT #{tokenId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="inline-flex items-center rounded-full border border-cyan-300/45 bg-cyan-500/12 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+                    NFT ID #{locker.selectedId || "--"}
+                  </span>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-[0.08em] leading-tight ${
+                      lockerClaimableNow
+                        ? "border-emerald-300/35 bg-emerald-500/[0.08] text-emerald-100/90"
+                        : "border-slate-600/70 bg-slate-900/70 text-slate-300/80"
+                    }`}
+                  >
+                    {lockerClaimableNow ? "Claimable" : "No rewards"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <NftTagIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">NFT ID</div>
+                    <div className="mt-1 font-mono text-sm font-semibold text-slate-100">#{locker.selectedId || "--"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <RewardIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/70">Creator Reward</div>
+                    <div className="mt-1 text-[2rem] font-black leading-tight text-white">{lockerCreatorRewardLabel}</div>
+                    <div className="mt-0.5 text-[10px] text-slate-400/50">{lockerCreatorRewardMeta}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <PairIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">LP Pair</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-100">{lockerPairLabel}</div>
+                    <div className="text-[11px] text-slate-300/75">Fee: {lockerFeeTierLabel}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/80">LP Pair</div>
+                {locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? (
+                  <div className="mt-2 flex items-center gap-3 rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <div className="inline-flex items-center gap-2">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                        {locker.tokenReward?.token0Meta?.logo ? (
+                          <img
+                            src={locker.tokenReward.token0Meta.logo}
+                            alt={`${locker.tokenReward?.token0Meta?.symbol || "TOKEN0"} logo`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-[10px] font-semibold text-slate-200">
+                            {String(locker.tokenReward?.token0Meta?.symbol || "T0")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {locker.tokenReward?.token0Meta?.symbol || "TOKEN0"}
+                      </span>
+                    </div>
+                    <span className="text-lg font-semibold text-slate-100">/</span>
+                    <div className="inline-flex items-center gap-2">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                        {locker.tokenReward?.token1Meta?.logo ? (
+                          <img
+                            src={locker.tokenReward.token1Meta.logo}
+                            alt={`${locker.tokenReward?.token1Meta?.symbol || "TOKEN1"} logo`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-[10px] font-semibold text-slate-200">
+                            {String(locker.tokenReward?.token1Meta?.symbol || "T1")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {locker.tokenReward?.token1Meta?.symbol || "TOKEN1"}
+                      </span>
+                    </div>
+                    <span className="ml-auto inline-flex h-7 items-center self-center rounded-full border border-cyan-300/45 bg-cyan-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-100">
+                      Fee {lockerFeeTierLabel}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-slate-300/75">Pair details unavailable for this NFT ID.</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/40 p-4">
+                <div
+                  className={`rounded-lg border px-3 py-1 text-[11px] font-semibold ${
+                    lockerClaimableNow
+                      ? "border-emerald-300/30 bg-emerald-500/[0.06] text-emerald-100"
+                      : "border-slate-700/70 bg-slate-950/45 text-slate-300/78"
+                  }`}
+                >
+                  {lockerCollectHelper}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCollectLocker}
+                  disabled={lockerCollectDisabled}
+                  className={`mt-4 w-full rounded-xl border px-4 py-5 text-[15px] font-black transition duration-200 ${
+                    lockerCollectDisabled
+                      ? "cursor-not-allowed border-slate-700/70 bg-slate-900/70 text-slate-500 opacity-50"
+                      : "border-cyan-300/65 bg-gradient-to-r from-cyan-500/24 to-emerald-400/20 text-cyan-50 shadow-[0_12px_24px_rgba(34,211,238,0.16)] hover:border-cyan-200/80 hover:shadow-[0_20px_38px_rgba(34,211,238,0.3)] hover:brightness-110"
+                  }`}
+                >
+                  {lockerAction.loadingKey === "collect" ? "Collecting..." : "Collect rewards"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <ActionInfo state={lockerAction} />
         </div>
       </div>
+
+      {copyToast ? (
+        <div className="pointer-events-none fixed bottom-5 right-5 z-40 rounded-lg border border-emerald-300/45 bg-emerald-500/15 px-3 py-1.5 text-xs font-semibold text-emerald-100 shadow-[0_8px_30px_rgba(0,0,0,0.35)]">
+          {copyToast}
+        </div>
+      ) : null}
     </section>
   );
 }
+

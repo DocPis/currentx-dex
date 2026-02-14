@@ -21,6 +21,19 @@ const TAB_ROUTES = {
   megavault: "/megavault",
 };
 
+const NAV_TABS = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "swap", label: "Swap" },
+  { id: "liquidity", label: "Liquidity" },
+  { id: "pools", label: "Pools" },
+  { id: "points", label: "Points" },
+  { id: "farms", label: "Farms" },
+  { id: "megavault", label: "MegaVault" },
+  { id: "bridge", label: "Bridge" },
+];
+
+const URL_ONLY_TABS = new Set(["launchpad"]);
+
 const SECTION_LOADERS = {
   dashboard: () => import("./features/dashboard/Dashboard"),
   points: () => import("./features/points/PointsPage"),
@@ -42,6 +55,59 @@ const LaunchpadSection = React.lazy(SECTION_LOADERS.launchpad);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
 const Farms = React.lazy(SECTION_LOADERS.farms);
 const MegaVaultSection = React.lazy(SECTION_LOADERS.megavault);
+
+class SectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+    this.handleRetry = this.handleRetry.bind(this);
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    if (typeof this.props.onError === "function") {
+      this.props.onError(error, info);
+    }
+  }
+
+  componentDidUpdate(prevProps) {
+    if (prevProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  handleRetry() {
+    this.setState({ error: null });
+    if (typeof this.props.onRetry === "function") {
+      this.props.onRetry();
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      const message = String(this.state.error?.message || "Section failed to render.");
+      return (
+        <div className="px-6 py-12">
+          <div className="mx-auto max-w-3xl rounded-2xl border border-amber-500/45 bg-slate-950/75 p-4 text-sm text-amber-100 shadow-[0_16px_40px_rgba(2,6,23,0.55)]">
+            <div className="font-semibold">Section render error</div>
+            <div className="mt-1 text-xs text-amber-200/90 break-words">{message}</div>
+            <button
+              type="button"
+              onClick={this.handleRetry}
+              className="mt-3 rounded-lg border border-amber-300/60 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-100 transition hover:border-amber-200/80 hover:bg-amber-500/20"
+            >
+              Retry section
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const normalizePath = (path = "") => {
   const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
@@ -272,7 +338,7 @@ export default function App() {
 
     const handle = idle(() => {
       Object.keys(SECTION_LOADERS).forEach((key) => {
-        if (key !== tab) preloadSection(key);
+        if (key !== tab && !URL_ONLY_TABS.has(key)) preloadSection(key);
       });
       ["swap", "liquidity", "pools"].forEach((key) => {
         if (key !== tab) prefetchTabData(key);
@@ -316,7 +382,9 @@ export default function App() {
     setTab("liquidity");
   };
 
-  const handleTabClick = (nextTab) => {
+  const handleTabClick = (nextTab, { allowUrlOnly = false } = {}) => {
+    if (!TAB_ROUTES[nextTab]) return;
+    if (!allowUrlOnly && URL_ONLY_TABS.has(nextTab)) return;
     preloadSection(nextTab);
     prefetchTabData(nextTab);
     setTab(nextTab);
@@ -360,16 +428,7 @@ export default function App() {
       {/* Tabs */}
       <div className="cx-fade-up px-4 pt-6 sm:px-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap justify-center gap-2 rounded-3xl border border-slate-700/40 bg-slate-900/45 p-2 text-xs shadow-[0_24px_60px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:text-sm">
-          {[
-            { id: "dashboard", label: "Dashboard" },
-            { id: "swap", label: "Swap" },
-            { id: "liquidity", label: "Liquidity" },
-            { id: "pools", label: "Pools" },
-            { id: "points", label: "Points" },
-            { id: "farms", label: "Farms" },
-            { id: "megavault", label: "MegaVault" },
-            { id: "bridge", label: "Bridge" },
-          ].map((item) => (
+          {NAV_TABS.map((item) => (
             <button
               key={item.id}
               onClick={() => handleTabClick(item.id)}
@@ -398,52 +457,64 @@ export default function App() {
       </div>
 
       <main className="flex-1">
-        <Suspense
-          fallback={
-            <div className="px-6 py-12 text-center text-sm text-slate-300/80">
-              Loading section...
-            </div>
-          }
+        <SectionErrorBoundary
+          resetKey={tab}
+          onError={(error) => {
+            // Keep production UX alive and surface hard render failures in devtools.
+            console.error("Section render failed:", error);
+          }}
+          onRetry={() => {
+            preloadSection(tab);
+            prefetchTabData(tab);
+          }}
         >
-          {tab === "swap" && (
-            <SwapSection
-              balances={balances}
-              address={address}
-              chainId={chainId}
-              onBalancesRefresh={refresh}
-            />
-          )}
-          {tab === "bridge" && (
-            <BridgeSection address={address} onConnect={handleConnect} />
-          )}
-          {tab === "liquidity" && (
-            <LiquiditySection
-              address={address}
-              chainId={chainId}
-              balances={balances}
-              showV3={true}
-              poolSelection={poolSelection}
-              onBalancesRefresh={refresh}
-            />
-          )}
-          {tab === "launchpad" && (
-            <LaunchpadSection
-              address={address}
-              onConnect={handleConnect}
-            />
-          )}
-          {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
-          {tab === "dashboard" && <Dashboard />}
-          {tab === "points" && (
-            <PointsPage address={address} onConnect={handleConnect} />
-          )}
-          {tab === "farms" && (
-            <Farms address={address} onConnect={handleConnect} />
-          )}
-          {tab === "megavault" && (
-            <MegaVaultSection address={address} onConnectWallet={handleConnect} />
-          )}
-        </Suspense>
+          <Suspense
+            fallback={
+              <div className="px-6 py-12 text-center text-sm text-slate-300/80">
+                Loading section...
+              </div>
+            }
+          >
+            {tab === "swap" && (
+              <SwapSection
+                balances={balances}
+                address={address}
+                chainId={chainId}
+                onBalancesRefresh={refresh}
+              />
+            )}
+            {tab === "bridge" && (
+              <BridgeSection address={address} onConnect={handleConnect} />
+            )}
+            {tab === "liquidity" && (
+              <LiquiditySection
+                address={address}
+                chainId={chainId}
+                balances={balances}
+                showV3={true}
+                poolSelection={poolSelection}
+                onBalancesRefresh={refresh}
+              />
+            )}
+            {tab === "launchpad" && (
+              <LaunchpadSection
+                address={address}
+                onConnect={handleConnect}
+              />
+            )}
+            {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
+            {tab === "dashboard" && <Dashboard />}
+            {tab === "points" && (
+              <PointsPage address={address} onConnect={handleConnect} />
+            )}
+            {tab === "farms" && (
+              <Farms address={address} onConnect={handleConnect} />
+            )}
+            {tab === "megavault" && (
+              <MegaVaultSection address={address} onConnectWallet={handleConnect} />
+            )}
+          </Suspense>
+        </SectionErrorBoundary>
       </main>
 
       <Footer />
