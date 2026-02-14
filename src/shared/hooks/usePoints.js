@@ -655,6 +655,7 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
   return {
     ...query,
     data: items,
+    seasonId: query.data?.seasonId || seasonId || SEASON_ID || "",
     summary: query.data?.summary || null,
     updatedAt: query.data?.updatedAt || null,
     seasonStart: query.data?.seasonStart ?? null,

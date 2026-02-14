@@ -226,8 +226,11 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
     return () => clearInterval(timer);
   }, []);
 
-  const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
-  const seasonOne = isSeasonOne(SEASON_ID, SEASON_LABEL);
+  const resolvedSeasonId = String(
+    userStats?.seasonId || leaderboardQuery?.seasonId || SEASON_ID || ""
+  );
+  const seasonTitle = String(SEASON_LABEL || resolvedSeasonId || "SEASON").toUpperCase();
+  const seasonOne = isSeasonOne(resolvedSeasonId, SEASON_LABEL);
   const seasonStartValue =
     userStats?.seasonStart ?? leaderboardQuery?.seasonStart ?? SEASON_START_MS;
   const seasonEndValue =
@@ -243,6 +246,8 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
   const seasonStartLabel = seasonOne ? "Feb 12, 2026" : formatDate(seasonStartValue);
   const seasonEndLabel = hasExplicitSeasonEnd
     ? formatDate(seasonEndValue)
+    : seasonOne
+    ? "Mar 12, 2026"
     : seasonIsOngoing
     ? "ONGOING"
     : "TBD";
