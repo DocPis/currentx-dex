@@ -26,13 +26,12 @@ const NAV_TABS = [
   { id: "swap", label: "Swap" },
   { id: "liquidity", label: "Liquidity" },
   { id: "pools", label: "Pools" },
+  { id: "launchpad", label: "Launchpad" },
   { id: "points", label: "Points" },
   { id: "farms", label: "Farms" },
   { id: "megavault", label: "MegaVault" },
   { id: "bridge", label: "Bridge" },
 ];
-
-const URL_ONLY_TABS = new Set(["launchpad"]);
 
 const SECTION_LOADERS = {
   dashboard: () => import("./features/dashboard/Dashboard"),
@@ -40,7 +39,7 @@ const SECTION_LOADERS = {
   swap: () => import("./features/swap/SwapSection"),
   bridge: () => import("./features/bridge/BridgeSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
-  launchpad: () => import("./features/launchpad/LaunchpadSection"),
+  launchpad: () => import("./features/launchpad/LaunchpadMarketplaceSection"),
   pools: () => import("./features/pools/PoolsSection"),
   farms: () => import("./features/farms/Farms"),
   megavault: () => import("./features/megavault/MegaVaultSection"),
@@ -116,6 +115,9 @@ const normalizePath = (path = "") => {
 
 const getTabFromPath = (path = "") => {
   const cleaned = normalizePath(path);
+  if (cleaned === "/launchpad" || cleaned.startsWith("/launchpad/")) {
+    return "launchpad";
+  }
   if (cleaned === "/") return "dashboard";
   const match = Object.entries(TAB_ROUTES).find(([, route]) => route === cleaned);
   return match ? match[0] : "dashboard";
@@ -149,6 +151,10 @@ export default function App() {
   const [tab, setTab] = useState(() =>
     getTabFromPath(window?.location?.pathname)
   );
+  const [launchpadPath, setLaunchpadPath] = useState(() => {
+    const currentPath = normalizePath(window?.location?.pathname);
+    return currentPath.startsWith("/launchpad") ? currentPath : "/launchpad";
+  });
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [poolSelection, setPoolSelection] = useState(null);
@@ -162,7 +168,11 @@ export default function App() {
 
   useEffect(() => {
     const handlePop = () => {
-      const nextTab = getTabFromPath(window?.location?.pathname);
+      const nextPath = normalizePath(window?.location?.pathname);
+      const nextTab = getTabFromPath(nextPath);
+      if (nextPath.startsWith("/launchpad")) {
+        setLaunchpadPath(nextPath);
+      }
       setTab((prev) => (prev === nextTab ? prev : nextTab));
     };
     window.addEventListener("popstate", handlePop);
@@ -170,13 +180,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const targetPath = getPathForTab(tab);
+    const targetPath =
+      tab === "launchpad"
+        ? launchpadPath || "/launchpad"
+        : getPathForTab(tab);
     const currentPath = normalizePath(window?.location?.pathname);
-    if (currentPath !== targetPath) {
+    const preserveLaunchpadDetail =
+      tab === "launchpad" &&
+      currentPath.startsWith("/launchpad/") &&
+      (launchpadPath || "").startsWith("/launchpad/");
+    if (currentPath !== targetPath && !preserveLaunchpadDetail) {
       const suffix = `${window?.location?.search || ""}${window?.location?.hash || ""}`;
       window.history.pushState({}, "", `${targetPath}${suffix}`);
     }
-  }, [tab]);
+  }, [launchpadPath, tab]);
   useEffect(() => {
     if (!connectError) return undefined;
     const id = setTimeout(() => setConnectError(""), 4000);
@@ -338,7 +355,7 @@ export default function App() {
 
     const handle = idle(() => {
       Object.keys(SECTION_LOADERS).forEach((key) => {
-        if (key !== tab && !URL_ONLY_TABS.has(key)) preloadSection(key);
+        if (key !== tab) preloadSection(key);
       });
       ["swap", "liquidity", "pools"].forEach((key) => {
         if (key !== tab) prefetchTabData(key);
@@ -382,9 +399,21 @@ export default function App() {
     setTab("liquidity");
   };
 
-  const handleTabClick = (nextTab, { allowUrlOnly = false } = {}) => {
+  const navigateLaunchpad = useCallback((nextPath) => {
+    const cleaned = normalizePath(nextPath);
+    const target = cleaned.startsWith("/launchpad") ? cleaned : "/launchpad";
+    setLaunchpadPath(target);
+    preloadSection("launchpad");
+    prefetchTabData("launchpad");
+    setTab("launchpad");
+  }, [prefetchTabData]);
+
+  const handleTabClick = (nextTab) => {
     if (!TAB_ROUTES[nextTab]) return;
-    if (!allowUrlOnly && URL_ONLY_TABS.has(nextTab)) return;
+    if (nextTab === "launchpad") {
+      navigateLaunchpad("/launchpad");
+      return;
+    }
     preloadSection(nextTab);
     prefetchTabData(nextTab);
     setTab(nextTab);
@@ -500,6 +529,9 @@ export default function App() {
               <LaunchpadSection
                 address={address}
                 onConnect={handleConnect}
+                onBalancesRefresh={refresh}
+                routePath={launchpadPath}
+                onNavigate={navigateLaunchpad}
               />
             )}
             {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
