@@ -9,6 +9,7 @@ import {
 const PAGE_LIMIT = 1000;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
+const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const POINTS_DEFAULT_VOLUME_CAP_USD = 250_000;
 const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
 const POINTS_DEFAULT_SCORING_MODE = "volume";
@@ -1241,6 +1242,16 @@ export default async function handler(req, res) {
       const row = existingRows?.[idx] || {};
       const increment = aggregated.get(wallet) || 0;
       const currentVolume = (toNumberSafe(row?.volumeUsd) || 0) + increment;
+      const previousPoints = toNumberSafe(row?.points);
+      const previousRank = toNumberSafe(row?.rank);
+      const previousUpdatedAt = toNumberSafe(row?.updatedAt);
+      const snapshot24hAtRaw = toNumberSafe(row?.snapshot24hAt);
+      const snapshot24hPointsRaw = toNumberSafe(row?.snapshot24hPoints);
+      const snapshot24hRankRaw = toNumberSafe(row?.snapshot24hRank);
+      const hasFreshSnapshot =
+        Number.isFinite(snapshot24hAtRaw) &&
+        snapshot24hAtRaw > 0 &&
+        now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
       const lpData = await computeLpData({
         url: v3Url,
@@ -1262,6 +1273,28 @@ export default async function handler(req, res) {
       return {
         wallet,
         volumeUsd: currentVolume,
+        previousPoints,
+        previousRank,
+        previousUpdatedAt,
+        snapshot24hAt: hasFreshSnapshot ? snapshot24hAtRaw : now,
+        snapshot24hPoints: hasFreshSnapshot
+          ? Number.isFinite(snapshot24hPointsRaw)
+            ? snapshot24hPointsRaw
+            : Number.isFinite(previousPoints)
+            ? previousPoints
+            : points.totalPoints
+          : Number.isFinite(previousPoints)
+          ? previousPoints
+          : points.totalPoints,
+        snapshot24hRank: hasFreshSnapshot
+          ? Number.isFinite(snapshot24hRankRaw)
+            ? snapshot24hRankRaw
+            : Number.isFinite(previousRank)
+            ? previousRank
+            : ""
+          : Number.isFinite(previousRank)
+          ? previousRank
+          : "",
         rawVolumeUsd: points.rawVolumeUsd,
         effectiveVolumeUsd: points.effectiveVolumeUsd,
         scoringMode: points.scoringMode,
@@ -1318,6 +1351,12 @@ export default async function handler(req, res) {
         hasBoostLp: entry.hasBoostLp ? 1 : 0,
         hasRangeData: entry.hasRangeData ? 1 : 0,
         hasInRange: entry.hasInRange ? 1 : 0,
+        prevPoints: Number.isFinite(entry.previousPoints) ? entry.previousPoints : "",
+        prevRank: Number.isFinite(entry.previousRank) ? entry.previousRank : "",
+        prevUpdatedAt: Number.isFinite(entry.previousUpdatedAt) ? entry.previousUpdatedAt : "",
+        snapshot24hPoints: entry.snapshot24hPoints,
+        snapshot24hRank: entry.snapshot24hRank,
+        snapshot24hAt: entry.snapshot24hAt,
         lpAgeSeconds: entry.lpAgeSeconds ?? "",
         updatedAt: now,
       });

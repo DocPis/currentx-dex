@@ -22,6 +22,7 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
     if (!address || isConnected) return;
     reconnect();
   }, [address, isConnected, reconnect]);
+
   useEffect(() => {
     if (!address || isConnected || wagmiConnectAttempted.current) return;
     const connector =
@@ -41,10 +42,9 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
 
   return (
     <section className="px-4 sm:px-6 py-6">
-      <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70 shadow-[0_40px_80px_-55px_rgba(2,6,23,0.9)]">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.12),transparent_60%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(14,165,233,0.08),transparent_65%)]" />
-        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,0.92fr),minmax(0,1.08fr)] p-6">
+      <div className="mx-auto max-w-[1280px] relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/70 shadow-[0_40px_80px_-55px_rgba(2,6,23,0.9)]">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.06),transparent_62%)]" />
+        <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1.05fr),minmax(0,0.95fr)] p-6">
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
               <span className="px-3 py-1 rounded-full text-[10px] uppercase tracking-[0.3em] border border-sky-500/40 bg-sky-500/10 text-sky-100">
@@ -56,47 +56,58 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
             </div>
 
             <div>
-              <div className="text-3xl font-semibold text-slate-100">
-                Avon MegaVault
-              </div>
-              <div className="mt-2 text-sm text-slate-400 leading-relaxed">
-                Deposit and withdraw without leaving CurrentX.
+              <div className="text-3xl font-semibold text-slate-100">Avon MegaVault</div>
+              <div className="mt-2 text-base text-slate-300 leading-relaxed">
+                Convert USDM into USDmY - a yield-bearing composable asset.
               </div>
             </div>
 
-            <div className="grid gap-3">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                  Stablecoin Drain
-                </div>
-                <div className="mt-1 text-sm text-slate-200">
-                  Legacy issuers capture treasury yield offchain. MegaETH keeps value onchain with
-                  USDm and USDmY.
-                </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                Yield Source
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                  USDm + USDmY
-                </div>
-                <div className="mt-1 text-sm text-slate-200">
-                  USDm is the native settlement dollar. Deposit into MegaVault to mint USDmY, a
-                  yield-bearing and composable asset.
-                </div>
+              <div className="mt-2 text-sm text-slate-300">
+                Yield accrues from onchain capital deployment:
               </div>
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-3">
-                <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                  Yield Model
+              <ul className="mt-2 space-y-1 text-sm text-slate-100">
+                <li>Liquidity provision</li>
+                <li>Lending markets</li>
+                <li>Credit activity</li>
+              </ul>
+            </div>
+
+            <div className="h-px bg-slate-800" />
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                How it works
+              </div>
+              <ol className="mt-2 space-y-1.5 text-sm text-slate-100">
+                <li>1. Deposit USDM</li>
+                <li>2. Receive USDmY (1:1 mint)</li>
+                <li>3. USDmY accrues yield automatically</li>
+              </ol>
+              <div className="mt-3 text-xs text-slate-500">
+                No lockup | Fully withdrawable | Variable yield
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/45 p-4">
+              <div className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                Vault Transparency
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-sm text-slate-200">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                  Non custodial
                 </div>
-                <div className="mt-1 text-sm text-slate-200">
-                  Yield comes from onchain activity: lending, liquidity, and credit markets.
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                  Onchain strategies
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                  <span className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/70">
-                    Phase 1: 100% to users + LPs
-                  </span>
-                  <span className="px-2 py-1 rounded-full border border-slate-700 bg-slate-950/70">
-                    Phase 2: fee up to 10%
-                  </span>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                  Variable yield
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-slate-900/70 px-3 py-2">
+                  No fixed returns
                 </div>
               </div>
             </div>
@@ -104,8 +115,8 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
             <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300" />
           </div>
 
-          <div className="flex justify-center lg:justify-end">
-            <div className="w-full max-w-[460px] lg:min-w-[420px]">
+          <div className="flex items-start justify-center lg:justify-end">
+            <div className="w-full max-w-[560px] lg:min-w-[520px] xl:min-w-[560px] lg:[--spacing:0.275rem] lg:[--text-base:1.08rem] lg:[--text-sm:0.95rem] lg:[--text-xs:0.82rem] lg:[--text-4xl:2.45rem] lg:mt-24">
               <MegaVaultPositionWidget
                 chainId={chainId}
                 referrerAddress={safeReferrer}

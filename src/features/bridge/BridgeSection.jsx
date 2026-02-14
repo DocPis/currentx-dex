@@ -257,6 +257,8 @@ export default function BridgeSection({ address, onConnect }) {
 
   const [toToken, setToToken] = useState(defaultMegaethToken);
   const [bridgeError, setBridgeError] = useState(null);
+  const [isTransactionMode, setIsTransactionMode] = useState(false);
+  const [isSupportOpen, setIsSupportOpen] = useState(false);
 
   useEffect(() => {
     if (!address || isConnected) return;
@@ -348,6 +350,15 @@ export default function BridgeSection({ address, onConnect }) {
     setBridgeError(null);
   }, []);
 
+  const handleWidgetInputActivity = useCallback((event) => {
+    const target = event?.target;
+    const tagName = String(target?.tagName || "").toLowerCase();
+    const isEditable = Boolean(target?.isContentEditable);
+    if (tagName !== "input" && tagName !== "textarea" && !isEditable) return;
+    setIsTransactionMode(true);
+    setIsSupportOpen(false);
+  }, []);
+
   const relayScopedVars = useMemo(
     () => ({
       "--relay-colors-slate-1": "#030912",
@@ -422,7 +433,7 @@ export default function BridgeSection({ address, onConnect }) {
   return (
     <section className="px-4 py-6 sm:px-6">
       <div className="mx-auto w-full max-w-6xl xl:max-w-7xl 2xl:max-w-[1480px]">
-        <div className="mb-4 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:p-6">
+        <div className="mb-3 rounded-3xl border border-slate-800/80 bg-slate-900/60 p-5 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-[11px] uppercase tracking-[0.35em] text-sky-300/90">
               Bridge
@@ -459,7 +470,12 @@ export default function BridgeSection({ address, onConnect }) {
           <div className="min-w-0 md:self-start">
             <RelayKitProvider options={relayOptions} theme={relayTheme}>
               <style>{relayScopedCss}</style>
-              <div className="relative">
+              <div
+                className="relative lg:mt-8"
+                onInputCapture={handleWidgetInputActivity}
+                onChangeCapture={handleWidgetInputActivity}
+                onKeyDownCapture={handleWidgetInputActivity}
+              >
                 <div
                   className="rounded-3xl border border-slate-800/80 bg-slate-900/70 p-2 shadow-[0_28px_80px_-48px_rgba(2,6,23,0.9)] sm:p-4"
                   style={relayScopedVars}
@@ -490,46 +506,116 @@ export default function BridgeSection({ address, onConnect }) {
             ) : null}
           </div>
 
-          <aside className="flex h-full flex-col gap-4 md:self-stretch lg:gap-5 xl:gap-6">
-            <section className="flex flex-1 flex-col rounded-3xl border border-slate-800/80 bg-slate-900/60 px-5 py-6 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:px-6 lg:py-7">
-              <h3 className="font-display text-xl font-semibold text-slate-100">How it works</h3>
-              <ol className="mt-4 space-y-4">
+          <aside
+            className={`flex h-fit flex-col gap-3 md:self-start lg:gap-4 xl:gap-5 ${
+              isTransactionMode ? "lg:sticky lg:top-[120px]" : ""
+            }`}
+          >
+            <section
+              className={`flex flex-col rounded-3xl border border-slate-800/80 bg-slate-900/60 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] ${
+                isTransactionMode ? "px-4 py-4 lg:px-5 lg:py-5" : "px-4 py-5 lg:px-5 lg:py-6"
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="font-display text-xl font-semibold text-slate-100">How it works</h3>
+                {isTransactionMode ? (
+                  <span className="rounded-full border border-sky-300/35 bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-sky-100/90">
+                    Transaction mode
+                  </span>
+                ) : null}
+              </div>
+              <ol className={isTransactionMode ? "mt-3 space-y-2.5" : "mt-3 space-y-2.5"}>
                 {HOW_IT_WORKS_STEPS.map((step, index) => (
-                  <li key={step} className="flex items-center gap-3 text-sm leading-relaxed text-slate-200/95">
-                    <span className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-sky-300/25 bg-sky-400/5 text-[11px] font-semibold text-sky-200/80">
+                  <li
+                    key={step}
+                    className={`flex items-center leading-relaxed text-slate-200/92 ${
+                      isTransactionMode ? "gap-2.5 text-xs" : "gap-2.5 text-[13px]"
+                    }`}
+                  >
+                    <span
+                      className={`inline-flex items-center justify-center rounded-full border border-sky-300/25 bg-sky-400/5 font-semibold text-sky-200/80 ${
+                        isTransactionMode ? "h-4 w-4 text-[10px]" : "h-[18px] w-[18px] text-[10px]"
+                      }`}
+                    >
                       {index + 1}
                     </span>
                     <span>{step}</span>
                   </li>
                 ))}
               </ol>
-              <div className="mt-auto flex flex-col gap-1 pt-6 text-xs text-slate-300/80 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                <p>Start with a small test transfer if it's your first time.</p>
-                <a
-                  href={DOCS_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] font-medium text-slate-400/80 underline-offset-2 transition hover:text-slate-200 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:shrink-0"
-                >
-                  Learn more in Docs
-                </a>
-              </div>
+              {isTransactionMode ? (
+                <div className="mt-3 text-[11px] text-slate-400/70">
+                  Transaction mode active: focus on execution details.
+                </div>
+              ) : (
+                <div className="mt-auto flex flex-col gap-1 pt-4 text-[11px] text-slate-400/78 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                  <p>Start with a small test transfer if it's your first time.</p>
+                  <a
+                    href={DOCS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] font-medium text-slate-500/85 underline-offset-2 transition hover:text-slate-200 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:shrink-0"
+                  >
+                    Learn more in Docs
+                  </a>
+                </div>
+              )}
             </section>
 
-            <section className="rounded-3xl border border-slate-800/80 bg-slate-900/60 px-5 pt-6 pb-8 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] lg:px-6 lg:pt-7 lg:pb-9">
-              <h3 className="font-display text-lg font-semibold text-slate-100">Support</h3>
-              <p className="mt-3 text-xs text-slate-300/80">
-                Share your wallet address and transaction hash.
-              </p>
-              <a
-                href={DISCORD_SUPPORT_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-2xl border border-sky-400/40 bg-sky-500/70 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-sky-500/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:w-auto sm:self-start sm:px-4"
-              >
-                <span>Open Discord support</span>
-              </a>
-              <p className="mt-2 text-[11px] text-slate-400/80">#need-help</p>
+            <section
+              className={`rounded-3xl shadow-[0_24px_60px_-36px_rgba(15,23,42,0.9)] ${
+                isTransactionMode
+                  ? "border border-slate-800/80 bg-slate-900/60 px-4 py-4 lg:px-5 lg:py-5"
+                  : "border border-slate-800/60 bg-slate-900/45 px-4 py-4 lg:px-5 lg:py-5"
+              }`}
+            >
+              {isTransactionMode ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setIsSupportOpen((open) => !open)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-700/80 bg-slate-900/65 px-3 py-2 text-left"
+                    aria-expanded={isSupportOpen}
+                  >
+                    <span className="font-display text-sm font-semibold text-slate-100">Support</span>
+                    <span className="text-[10px] uppercase tracking-[0.14em] text-slate-400">
+                      {isSupportOpen ? "Hide" : "Show"}
+                    </span>
+                  </button>
+                  {isSupportOpen ? (
+                    <div className="pt-3">
+                      <p className="text-xs text-slate-300/80">
+                        Share your wallet address and transaction hash.
+                      </p>
+                      <a
+                        href={DISCORD_SUPPORT_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-sky-400/40 bg-sky-500/70 px-4 py-1.5 text-sm font-semibold text-white transition hover:bg-sky-500/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:w-auto sm:self-start sm:px-4"
+                      >
+                        <span>Open Discord support</span>
+                      </a>
+                      <p className="mt-2 text-[11px] text-slate-400/80">#need-help</p>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <h3 className="font-display text-base font-semibold text-slate-200/92">Support</h3>
+                  <p className="mt-2 text-[11px] text-slate-400/75">
+                    Share your wallet address and transaction hash.
+                  </p>
+                  <a
+                    href={DISCORD_SUPPORT_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-600/80 bg-slate-800/80 px-4 py-1.5 text-sm font-semibold text-slate-100 transition hover:bg-slate-700/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 sm:w-auto sm:self-start sm:px-4"
+                  >
+                    <span>Open Discord support</span>
+                  </a>
+                  <p className="mt-2 text-[10px] text-slate-500/80">#need-help</p>
+                </>
+              )}
             </section>
           </aside>
         </div>

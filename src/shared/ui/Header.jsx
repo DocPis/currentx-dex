@@ -11,6 +11,7 @@ export default function Header({
   onDisconnect,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const menuRef = useRef(null);
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
 
@@ -35,26 +36,33 @@ export default function Header({
       normalizedChainId === uiChainId
   );
   const isWrongNetwork = Boolean(address && !isOnUiNetwork);
+  const handleCopyAddress = async () => {
+    if (!address || !navigator?.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  };
   return (
-    <header className="relative z-20 w-full border-b border-slate-700/45 bg-slate-950/45 px-4 py-4 backdrop-blur-xl sm:px-6">
-      <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-1 w-full md:w-auto">
+    <header className="relative z-20 h-[60px] w-full border-b border-slate-800/85 bg-[#070b16] px-4 sm:px-6">
+      <div className="flex h-full w-full items-center justify-between gap-4">
+        <div className="flex items-center gap-1">
           <img
             src={currentxLogo}
             alt="CurrentX logo"
-            className="h-20 w-20 object-contain drop-shadow-[0_10px_18px_rgba(8,14,28,0.7)]"
+            className="h-[30px] w-[30px] object-contain"
           />
-          <div className="flex flex-col">
-            <span className="font-display text-lg font-semibold italic tracking-tight text-slate-50">
+          <div className="flex items-center">
+            <span className="font-display text-[15px] font-medium tracking-tight text-slate-300/80">
               CurrentX
-            </span>
-            <span className="max-w-[19rem] text-xs text-slate-300/70">
-              The new current of decentralized trading.
             </span>
           </div>
         </div>
 
-        <div className="flex flex-wrap md:flex-nowrap items-center gap-3 justify-end w-full md:w-auto">
+        <div className="flex items-center justify-end">
           <div className="relative z-30" ref={menuRef}>
             <button
               onClick={() => {
@@ -64,24 +72,24 @@ export default function Header({
                   setMenuOpen((v) => !v);
                 }
               }}
-              className={`flex w-full items-center gap-2 rounded-full px-4 py-1.5 text-xs font-semibold shadow-md sm:w-auto ${
+              className={`flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs leading-none transition-colors ${
                 address
-                  ? "border border-slate-600/80 bg-slate-900/80 text-slate-100 hover:border-sky-400/60"
-                  : "border border-sky-300/70 bg-gradient-to-r from-sky-500 to-cyan-400 text-white shadow-[0_8px_24px_rgba(56,189,248,0.35)] hover:brightness-110"
+                  ? "border-slate-700/40 bg-slate-950/20 text-slate-200/85 hover:border-slate-600/50 hover:text-slate-100"
+                  : "border-slate-700/40 bg-slate-950/20 text-slate-300/75 hover:border-slate-600/50 hover:text-slate-200"
               }`}
             >
               {address ? (
                 <>
                   <span
-                    className={`h-2 w-2 rounded-full ${
+                    className={`h-[5px] w-[5px] rounded-full ${
                       isWrongNetwork
-                        ? "bg-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.8)]"
-                        : "bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,0.8)]"
+                        ? "bg-amber-400/75"
+                        : "bg-emerald-400/75"
                     }`}
                   />
-                  <span>{shortAddress}</span>
+                  <span className="font-mono text-[13px] font-medium tracking-[0.01em]">{shortAddress}</span>
                   <svg
-                    className="h-3 w-3 text-slate-400"
+                    className="h-2 w-2 text-slate-400/80"
                     viewBox="0 0 20 20"
                     fill="none"
                     xmlns="http://www.w3.org/2000/svg"
@@ -101,51 +109,89 @@ export default function Header({
             </button>
 
             {address && menuOpen && (
-              <div className="absolute right-0 mt-2 w-56 overflow-hidden rounded-2xl border border-slate-600/50 bg-slate-950/90 shadow-2xl shadow-black/40 backdrop-blur">
-                <div className="border-b border-slate-700/60 px-4 py-3">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                    Wallet
-                  </div>
-                  <div className="font-display text-sm font-semibold text-slate-100">
-                    {shortAddress}
-                  </div>
-                  <div
-                    className={`mt-1 inline-flex items-center gap-2 px-2 py-1 rounded-lg text-[11px] ${
-                      isWrongNetwork
-                        ? "bg-amber-500/10 text-amber-200 border border-amber-500/40"
-                        : "bg-emerald-500/10 text-emerald-200 border border-emerald-500/40"
-                    }`}
-                  >
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        isWrongNetwork ? "bg-amber-400" : "bg-emerald-400"
-                      }`}
-                    />
-                    <span>{activeNetwork?.label || "Network"}</span>
+              <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-lg bg-[#090f1d] shadow-[0_24px_60px_rgba(0,0,0,0.46)]">
+                <div className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-[16px] font-medium tracking-[0.012em] text-slate-100">
+                        {shortAddress}
+                      </div>
+                      <div className="mt-1 flex items-center gap-1.5 text-[12px] font-medium tracking-[0.01em] text-slate-300/70">
+                        <span
+                          className={`h-[4px] w-[4px] rounded-full ${
+                            isWrongNetwork ? "bg-amber-400/75" : "bg-emerald-400/75"
+                          }`}
+                        />
+                        <span>Connected</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCopyAddress}
+                      className="inline-flex h-5 w-5 items-center justify-center text-slate-300/60 transition-colors hover:text-slate-100/90"
+                      aria-label="Copy wallet address"
+                      title={copied ? "Copied" : "Copy address"}
+                    >
+                      <svg
+                        className="h-3 w-3"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path
+                          d="M7 6.5A1.5 1.5 0 0 1 8.5 5h6A1.5 1.5 0 0 1 16 6.5v7A1.5 1.5 0 0 1 14.5 15h-6A1.5 1.5 0 0 1 7 13.5v-7Z"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                        />
+                        <path
+                          d="M4 11.5v-7A1.5 1.5 0 0 1 5.5 3h6"
+                          stroke="currentColor"
+                          strokeWidth="1.25"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </button>
                   </div>
                 </div>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onSwitchWallet?.();
-                  }}
-                  className="w-full px-4 py-3 text-left text-sm text-slate-100 hover:bg-slate-800/80 flex items-center gap-2 transition"
-                >
-                  <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.8)]" />
-                  Switch wallet
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onDisconnect?.();
-                  }}
-                  className="flex w-full items-center gap-2 border-t border-slate-700/60 px-4 py-3 text-left text-sm text-rose-200 transition hover:bg-rose-500/10"
-                >
-                  <span
-                    className="h-2 w-2 rounded-full bg-rose-400 shadow-[0_0_12px_rgba(248,113,113,0.8)]"
-                  />
-                  Disconnect
-                </button>
+                <div className="mx-5 my-3.5 h-px bg-white/[0.09]" />
+                <div className="space-y-2.5 px-5 pb-4">
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onSwitchWallet?.();
+                    }}
+                    className="flex h-9 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-normal text-slate-300/95 transition-colors hover:bg-slate-800/38 hover:text-slate-100 active:bg-slate-700/45"
+                  >
+                    <svg
+                      className="h-[14px] w-[14px] text-slate-300/60"
+                      viewBox="0 0 20 20"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                    >
+                      <path
+                        d="M3.5 6.5A1.5 1.5 0 0 1 5 5h10a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 15 15H5a1.5 1.5 0 0 1-1.5-1.5v-7Z"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                      />
+                      <path
+                        d="M12 10h2"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                    Switch wallet
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onDisconnect?.();
+                    }}
+                    className="flex h-9 w-full items-center rounded-lg px-3 text-left text-sm font-normal text-slate-300/90 transition-colors hover:bg-rose-400/[0.04] hover:text-rose-300/80 active:bg-rose-400/[0.06]"
+                  >
+                    Disconnect
+                  </button>
+                </div>
               </div>
             )}
           </div>

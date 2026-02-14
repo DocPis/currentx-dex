@@ -19,6 +19,11 @@ const pickEnvValue = (...values) => {
   }
   return "";
 };
+const parseTime = (value) => {
+  if (!value) return null;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const parseAddressList = (...values) =>
   values
@@ -75,10 +80,18 @@ const getSeasonConfig = () => {
     process.env.POINTS_SEASON_ID,
     process.env.VITE_POINTS_SEASON_ID
   );
+  const seasonStartMs =
+    parseTime(process.env.POINTS_SEASON_START) ||
+    parseTime(process.env.VITE_POINTS_SEASON_START);
+  const seasonEndMs =
+    parseTime(process.env.POINTS_SEASON_END) ||
+    parseTime(process.env.VITE_POINTS_SEASON_END);
   const missing = [];
   if (!seasonId) missing.push("POINTS_SEASON_ID");
   return {
     seasonId,
+    seasonStartMs: Number.isFinite(seasonStartMs) ? seasonStartMs : null,
+    seasonEndMs: Number.isFinite(seasonEndMs) ? seasonEndMs : null,
     missing,
   };
 };
@@ -220,7 +233,12 @@ export default async function handler(req, res) {
   }
 
   const { seasonId: seasonParam } = req.query || {};
-  const { seasonId: configuredSeasonId, missing: missingSeasonEnv } = getSeasonConfig();
+  const {
+    seasonId: configuredSeasonId,
+    seasonStartMs,
+    seasonEndMs,
+    missing: missingSeasonEnv,
+  } = getSeasonConfig();
   let targetSeason = seasonParam || configuredSeasonId;
   if (!targetSeason) {
     try {
@@ -335,6 +353,18 @@ export default async function handler(req, res) {
       const points = toNumber(row?.points, score);
       const multiplier = toNumber(row?.multiplier, 1);
       const lpUsd = toNumber(row?.lpUsd, 0);
+      const rank = idx + 1;
+      const snapshot24hPoints = toNumber(row?.snapshot24hPoints, points);
+      const snapshot24hRankRaw = toNumber(row?.snapshot24hRank, NaN);
+      const snapshot24hRank =
+        Number.isFinite(snapshot24hRankRaw) && snapshot24hRankRaw > 0
+          ? snapshot24hRankRaw
+          : NaN;
+      const snapshot24hAt = toNumber(row?.snapshot24hAt, null);
+      const pointsChange24h = round6(points - snapshot24hPoints);
+      const rankChange24h = Number.isFinite(snapshot24hRank)
+        ? Math.floor(snapshot24hRank) - rank
+        : 0;
       const rewardCrx = toNumber(rewardsTable?.rewardsByAddress?.get(address), 0);
       const rewardSharePct = seasonRewardCrx > 0
         ? round6((rewardCrx / seasonRewardCrx) * 100)
@@ -344,9 +374,12 @@ export default async function handler(req, res) {
         points,
         multiplier,
         lpUsd,
-        rank: idx + 1,
+        rank,
         rewardCrx,
         rewardSharePct,
+        pointsChange24h,
+        rankChange24h,
+        snapshot24hAt,
       };
     });
     const visibleRewardsCrx = round6(
@@ -356,6 +389,11 @@ export default async function handler(req, res) {
     const updatedAt = await kv.get(keys.updatedAt);
     res.status(200).json({
       seasonId: targetSeason,
+      seasonStart: seasonStartMs,
+      seasonEnd: seasonEndMs,
+      seasonOngoing:
+        Number.isFinite(seasonStartMs) &&
+        (!Number.isFinite(seasonEndMs) || nowMs < seasonEndMs),
       updatedAt: updatedAt || null,
       leaderboard: items,
       summary: {

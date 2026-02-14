@@ -1,7 +1,6 @@
 // src/features/pools/PoolsSection.jsx
 import React, { useMemo, useState } from "react";
 import { DEFAULT_TOKEN_LOGO, TOKENS } from "../../shared/config/tokens";
-import megaLogo from "../../tokens/megaeth.png";
 import { usePoolsData } from "../../shared/hooks/usePoolsData";
 
 const SORT_KEYS = {
@@ -11,6 +10,13 @@ const SORT_KEYS = {
   APR: "apr",
 };
 const LOW_TVL_THRESHOLD = 50;
+const PROTOCOL_INTEL_FILTERS = [
+  { id: "all", label: "All Pools" },
+  { id: "highest-apr", label: "Highest APR" },
+  { id: "highest-efficiency", label: "Highest Efficiency" },
+  { id: "highest-flow", label: "Highest Flow" },
+  { id: "stable-yield", label: "Stable Yield" },
+];
 
 const trimTrailingZeros = (value) => {
   if (typeof value !== "string" || !value.includes(".")) return value;
@@ -46,6 +52,47 @@ const formatNumber = (num) => {
 
 const formatUsd = (num) =>
   num === null || num === undefined ? "--" : `$${formatNumber(num)}`;
+const formatSignedUsd = (num) => {
+  if (!Number.isFinite(num)) return "--";
+  const sign = num > 0 ? "+" : num < 0 ? "-" : "";
+  return `${sign}${formatUsd(Math.abs(num))}`;
+};
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const getMedian = (values = []) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+};
+const hashString = (value = "") => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+const buildSparklinePath = (seedInput, baseLevel = 0.5, trendShift = 0) => {
+  const points = [];
+  const seed = hashString(seedInput);
+  for (let idx = 0; idx < 12; idx += 1) {
+    const phase = ((seed % 11) + idx) * 0.8;
+    const jitter = (((seed >> (idx % 15)) & 7) - 3) / 40;
+    const wave = Math.sin(phase) * 0.08;
+    const trend = (idx / 11 - 0.5) * trendShift;
+    const value = clamp(baseLevel + wave + jitter + trend, 0.08, 0.92);
+    points.push(value);
+  }
+  return points;
+};
+const mapVolatilityLabel = (score) => {
+  if (!Number.isFinite(score)) return "--";
+  if (score < 3.4) return "Low";
+  if (score < 6.8) return "Medium";
+  return "High";
+};
 
 const formatFeePercent = (feeTier, fallback = "0.30%") => {
   const num = Number(feeTier);
@@ -138,6 +185,8 @@ export default function PoolsSection({ onSelectPool }) {
   const [sortDir, setSortDir] = useState("desc");
   const [typeFilter, setTypeFilter] = useState("all"); // all | v3 | v2
   const [hideLowTvl, setHideLowTvl] = useState(true);
+  const [viewMode, setViewMode] = useState("basic"); // basic | pro
+  const [intelFilter, setIntelFilter] = useState("all");
 
   const searchLower = searchTerm.trim().toLowerCase();
 
@@ -257,6 +306,32 @@ export default function PoolsSection({ onSelectPool }) {
   const protocolTvl = protocolAggregates.tvl;
   const protocolVolumeUtc = protocolAggregates.volume24h;
   const protocolFeesUtc = protocolAggregates.fees24h;
+  const activePoolsCount = useMemo(
+    () =>
+      combinedPools.filter(
+        (pool) =>
+          (Number.isFinite(pool?.liquidityUsd) && pool.liquidityUsd > 0) ||
+          (Number.isFinite(pool?.volume24hUsd) && pool.volume24hUsd > 0)
+      ).length,
+    [combinedPools]
+  );
+  const bestAprPool = useMemo(() => {
+    let best = null;
+    combinedPools.forEach((pool) => {
+      if (!Number.isFinite(pool?.apr) || pool.apr <= 0) return;
+      if (!best || pool.apr > best.apr) best = pool;
+    });
+    return best;
+  }, [combinedPools]);
+  const bestAprMeta = useMemo(() => {
+    if (!bestAprPool || !Number.isFinite(bestAprPool.apr)) {
+      return { value: "--", pair: "--" };
+    }
+    return {
+      value: `${bestAprPool.apr.toFixed(2)}%`,
+      pair: `${bestAprPool.token0Symbol || "Token0"} / ${bestAprPool.token1Symbol || "Token1"}`,
+    };
+  }, [bestAprPool]);
 
   const filteredPools = useMemo(() => {
     let list = combinedPools;
@@ -277,6 +352,351 @@ export default function PoolsSection({ onSelectPool }) {
     const target = typeFilter === "v3" ? "V3" : "V2";
     return filteredPools.filter((pool) => pool.type === target);
   }, [filteredPools, typeFilter]);
+  const typeCounts = useMemo(() => {
+    const counts = { all: filteredPools.length, v3: 0, v2: 0 };
+    filteredPools.forEach((pool) => {
+      if (pool.type === "V3") counts.v3 += 1;
+      if (pool.type === "V2") counts.v2 += 1;
+    });
+    return counts;
+  }, [filteredPools]);
+  const poolAnalytics = useMemo(() => {
+    const liquidityValues = [];
+    const volumeValues = [];
+    const feeLiquidityRatios = [];
+    const volumeLiquidityRatios = [];
+    let totalLiquidity = 0;
+
+    filteredByType.forEach((pool) => {
+      const liquidity = Number(pool?.liquidityUsd);
+      const volume = Number(pool?.volume24hUsd);
+      const fees = Number(pool?.fees24hUsd);
+      if (Number.isFinite(liquidity) && liquidity > 0) {
+        liquidityValues.push(liquidity);
+        totalLiquidity += liquidity;
+        if (Number.isFinite(volume) && volume >= 0) {
+          volumeValues.push(volume);
+          volumeLiquidityRatios.push(volume / liquidity);
+        }
+        if (Number.isFinite(fees) && fees >= 0) {
+          feeLiquidityRatios.push(fees / liquidity);
+        }
+      }
+    });
+
+    const flowMean = volumeLiquidityRatios.length
+      ? volumeLiquidityRatios.reduce((sum, value) => sum + value, 0) /
+        volumeLiquidityRatios.length
+      : null;
+    const flowStd =
+      flowMean !== null && volumeLiquidityRatios.length
+        ? Math.sqrt(
+            volumeLiquidityRatios.reduce(
+              (sum, value) => sum + (value - flowMean) ** 2,
+              0
+            ) / volumeLiquidityRatios.length
+          )
+        : null;
+
+    return {
+      totalLiquidity: totalLiquidity || null,
+      maxLiquidity: liquidityValues.length ? Math.max(...liquidityValues) : null,
+      maxVolume: volumeValues.length ? Math.max(...volumeValues) : null,
+      medianVolume: getMedian(volumeValues),
+      maxFeeLiquidityRatio: feeLiquidityRatios.length
+        ? Math.max(...feeLiquidityRatios)
+        : null,
+      flowMean,
+      flowMedian: getMedian(volumeLiquidityRatios),
+      flowStd,
+    };
+  }, [filteredByType]);
+  const poolInsightsByKey = useMemo(() => {
+    const map = {};
+    const baselineFlowRatio =
+      poolAnalytics.flowMedian ?? poolAnalytics.flowMean ?? 0;
+    const maxLiquidity = poolAnalytics.maxLiquidity || 0;
+    const totalLiquidity = poolAnalytics.totalLiquidity || 0;
+    const maxFeeLiquidityRatio = poolAnalytics.maxFeeLiquidityRatio || 0;
+    const flowStd = poolAnalytics.flowStd || 0;
+    const flowMean = poolAnalytics.flowMean || 0;
+
+    filteredByType.forEach((pool) => {
+      const poolKey = `${pool.type}-${pool.id}`;
+      const liquidity = Number(pool?.liquidityUsd);
+      const volume = Number(pool?.volume24hUsd);
+      const fees = Number(pool?.fees24hUsd);
+      const apr = Number(pool?.apr);
+      const feeLiquidityRatio =
+        Number.isFinite(liquidity) &&
+        liquidity > 0 &&
+        Number.isFinite(fees) &&
+        fees >= 0
+          ? fees / liquidity
+          : null;
+      const volumeLiquidityRatio =
+        Number.isFinite(liquidity) &&
+        liquidity > 0 &&
+        Number.isFinite(volume) &&
+        volume >= 0
+          ? volume / liquidity
+          : null;
+      const capitalEfficiency =
+        Number.isFinite(feeLiquidityRatio) && maxFeeLiquidityRatio > 0
+          ? clamp(feeLiquidityRatio / maxFeeLiquidityRatio, 0, 1)
+          : null;
+      const expectedVolume =
+        Number.isFinite(liquidity) && liquidity > 0
+          ? liquidity * baselineFlowRatio
+          : null;
+      const netFlowUsd =
+        Number.isFinite(volume) && volume >= 0 && Number.isFinite(expectedVolume)
+          ? volume - expectedVolume
+          : null;
+      const netFlowPct =
+        Number.isFinite(volumeLiquidityRatio) && baselineFlowRatio > 0
+          ? ((volumeLiquidityRatio - baselineFlowRatio) / baselineFlowRatio) * 100
+          : null;
+      const depthRatio =
+        Number.isFinite(liquidity) && maxLiquidity > 0
+          ? clamp(liquidity / maxLiquidity, 0, 1)
+          : 0;
+      const concentrationRatio =
+        Number.isFinite(liquidity) && totalLiquidity > 0
+          ? clamp(liquidity / totalLiquidity, 0, 1)
+          : 0;
+      const flowZScore =
+        Number.isFinite(volumeLiquidityRatio) && flowStd > 0
+          ? (volumeLiquidityRatio - flowMean) / flowStd
+          : 0;
+      const volatilityScore = clamp(
+        Math.abs(flowZScore) * 2.4 +
+          (Number.isFinite(netFlowPct) ? Math.min(Math.abs(netFlowPct), 120) / 40 : 0) +
+          (Number.isFinite(apr) && apr > 0 ? Math.min(apr, 40) / 20 : 0),
+        0,
+        10
+      );
+      const concentrationLabel =
+        concentrationRatio >= 0.22
+          ? "High"
+          : concentrationRatio >= 0.1
+          ? "Medium"
+          : "Low";
+      const sparkline = buildSparklinePath(
+        `${poolKey}:${liquidity}:${volume}`,
+        0.28 + depthRatio * 0.45,
+        Number.isFinite(netFlowPct) ? clamp(netFlowPct / 140, -0.35, 0.35) : 0
+      );
+
+      map[poolKey] = {
+        feeLiquidityRatioPct:
+          Number.isFinite(feeLiquidityRatio) ? feeLiquidityRatio * 100 : null,
+        volumeLiquidityRatioPct:
+          Number.isFinite(volumeLiquidityRatio) ? volumeLiquidityRatio * 100 : null,
+        capitalEfficiency,
+        netFlowUsd,
+        netFlowPct,
+        depthRatio,
+        concentrationRatio,
+        concentrationLabel,
+        volatilityScore,
+        volatilityLabel: mapVolatilityLabel(volatilityScore),
+        sparkline,
+      };
+    });
+    return map;
+  }, [filteredByType, poolAnalytics]);
+  const protocolIntel = useMemo(() => {
+    const tvl = Number(protocolTvl);
+    const volume24h = Number(protocolVolumeUtc);
+    const fees24h = Number(protocolFeesUtc);
+    const volumeLiquidityRatio =
+      Number.isFinite(tvl) && tvl > 0 && Number.isFinite(volume24h) && volume24h >= 0
+        ? volume24h / tvl
+        : null;
+    const feeLiquidityRatio =
+      Number.isFinite(tvl) && tvl > 0 && Number.isFinite(fees24h) && fees24h >= 0
+        ? fees24h / tvl
+        : null;
+    const capitalEfficiencyIndex =
+      Number.isFinite(volumeLiquidityRatio) && Number.isFinite(feeLiquidityRatio)
+        ? clamp(volumeLiquidityRatio * 8 + feeLiquidityRatio * 1200, 0, 10)
+        : null;
+    const baselineFlowRatio =
+      poolAnalytics.flowMedian ?? poolAnalytics.flowMean ?? null;
+    const expectedVolume =
+      Number.isFinite(tvl) && tvl > 0 && Number.isFinite(baselineFlowRatio)
+        ? tvl * baselineFlowRatio
+        : null;
+    const netLiquidityFlow24h =
+      Number.isFinite(volume24h) && Number.isFinite(expectedVolume)
+        ? volume24h - expectedVolume
+        : null;
+    const dispersionRatio =
+      Number.isFinite(poolAnalytics.flowStd) &&
+      Number.isFinite(poolAnalytics.flowMean) &&
+      Math.abs(poolAnalytics.flowMean) > 0
+        ? poolAnalytics.flowStd / Math.abs(poolAnalytics.flowMean)
+        : null;
+    const volatilityScore = Number.isFinite(dispersionRatio)
+      ? clamp(dispersionRatio * 4.5, 0, 10)
+      : null;
+
+    return {
+      capitalEfficiencyIndex,
+      netLiquidityFlow24h,
+      volatilityScore,
+      volatilityLabel: mapVolatilityLabel(volatilityScore),
+    };
+  }, [protocolTvl, protocolVolumeUtc, protocolFeesUtc, poolAnalytics]);
+  const intelligenceFilteredPools = useMemo(() => {
+    if (intelFilter === "all") return filteredByType;
+    const ranked = filteredByType.map((pool) => {
+      const key = `${pool.type}-${pool.id}`;
+      return {
+        pool,
+        insight: poolInsightsByKey[key] || {},
+      };
+    });
+    if (!ranked.length) return [];
+
+    switch (intelFilter) {
+      case "highest-apr":
+        return ranked
+          .sort((a, b) => (Number(b.pool?.apr) || -1) - (Number(a.pool?.apr) || -1))
+          .slice(0, 20)
+          .map((entry) => entry.pool);
+      case "highest-efficiency":
+        return ranked
+          .sort(
+            (a, b) =>
+              (Number(b.insight?.capitalEfficiency) || -1) -
+              (Number(a.insight?.capitalEfficiency) || -1)
+          )
+          .slice(0, 20)
+          .map((entry) => entry.pool);
+      case "highest-flow":
+        return ranked
+          .sort(
+            (a, b) =>
+              Math.abs(Number(b.insight?.netFlowUsd) || 0) -
+              Math.abs(Number(a.insight?.netFlowUsd) || 0)
+          )
+          .slice(0, 20)
+          .map((entry) => entry.pool);
+      case "stable-yield": {
+        const stable = ranked
+          .filter((entry) => {
+            const feeRatio = Number(entry.insight?.feeLiquidityRatioPct);
+            const flowPct = Number(entry.insight?.netFlowPct);
+            const volScore = Number(entry.insight?.volatilityScore);
+            if (!Number.isFinite(feeRatio) || feeRatio <= 0) return false;
+            if (!Number.isFinite(volScore) || volScore > 5.2) return false;
+            if (!Number.isFinite(flowPct)) return false;
+            return Math.abs(flowPct) <= 45;
+          })
+          .sort(
+            (a, b) =>
+              (Number(b.insight?.feeLiquidityRatioPct) || -1) -
+              (Number(a.insight?.feeLiquidityRatioPct) || -1)
+          )
+          .map((entry) => entry.pool);
+        if (stable.length) return stable;
+        return ranked
+          .sort(
+            (a, b) =>
+              (Number(a.insight?.volatilityScore) || 10) -
+              (Number(b.insight?.volatilityScore) || 10)
+          )
+          .slice(0, 20)
+          .map((entry) => entry.pool);
+      }
+      default:
+        return filteredByType;
+    }
+  }, [filteredByType, intelFilter, poolInsightsByKey]);
+  const displayPools = intelligenceFilteredPools;
+  const highlightKeys = useMemo(() => {
+    const output = {
+      apr: null,
+      liquidity: null,
+      volume: null,
+    };
+    const topBy = (field) => {
+      let winner = null;
+      displayPools.forEach((pool) => {
+        const value = Number(pool?.[field]);
+        if (!Number.isFinite(value) || value <= 0) return;
+        if (!winner || value > winner.value) {
+          winner = {
+            key: `${pool.type}-${pool.id}`,
+            value,
+          };
+        }
+      });
+      return winner?.key || null;
+    };
+    output.apr = topBy("apr");
+    output.liquidity = topBy("liquidityUsd");
+    output.volume = topBy("volume24hUsd");
+    return output;
+  }, [displayPools]);
+  const volumeStats = useMemo(() => {
+    const values = displayPools
+      .map((pool) => Number(pool?.volume24hUsd))
+      .filter((value) => Number.isFinite(value) && value >= 0)
+      .sort((a, b) => a - b);
+    if (!values.length) return { median: null, max: null };
+    const mid = Math.floor(values.length / 2);
+    const median =
+      values.length % 2 === 0
+        ? (values[mid - 1] + values[mid]) / 2
+        : values[mid];
+    const max = values[values.length - 1];
+    return { median, max };
+  }, [displayPools]);
+  const getActivitySignal = (insight) => {
+    const flowPct = Number(insight?.netFlowPct);
+    const feeRatio = Number(insight?.feeLiquidityRatioPct);
+    const volatilityScore = Number(insight?.volatilityScore);
+    if (!Number.isFinite(flowPct)) {
+      return {
+        icon: "\u2022",
+        label: "No flow",
+        className: "border-slate-800 text-slate-500 bg-slate-900/40",
+        detail: "24h volume data unavailable.",
+      };
+    }
+    const flowDetail = `24h flow ${flowPct >= 0 ? "+" : ""}${flowPct.toFixed(0)}% vs baseline.`;
+    const feeDetail = Number.isFinite(feeRatio)
+      ? ` Fee/Liquidity ${feeRatio.toFixed(2)}%.`
+      : "";
+    const volDetail = Number.isFinite(volatilityScore)
+      ? ` Volatility ${volatilityScore.toFixed(1)}/10.`
+      : "";
+    if (flowPct >= 30) {
+      return {
+        icon: "\u2191",
+        label: "Hot flow",
+        className: "border-emerald-500/40 text-emerald-200 bg-emerald-500/10",
+        detail: `${flowDetail}${feeDetail}${volDetail}`,
+      };
+    }
+    if (flowPct >= -12) {
+      return {
+        icon: "\u2192",
+        label: "Active flow",
+        className: "border-sky-500/40 text-sky-200 bg-sky-500/10",
+        detail: `${flowDetail}${feeDetail}${volDetail}`,
+      };
+    }
+    return {
+      icon: "\u2193",
+      label: "Light flow",
+      className: "border-slate-700 text-slate-300 bg-slate-900/50",
+      detail: `${flowDetail}${feeDetail}${volDetail}`,
+    };
+  };
 
   const sortedPools = useMemo(() => {
     const getValue = (pool) => {
@@ -292,14 +712,14 @@ export default function PoolsSection({ onSelectPool }) {
           return pool.liquidityUsd ?? 0;
       }
     };
-    const sorted = [...filteredByType].sort((a, b) => {
+    const sorted = [...displayPools].sort((a, b) => {
       const aVal = getValue(a);
       const bVal = getValue(b);
       if (aVal === bVal) return 0;
       return aVal > bVal ? -1 : 1;
     });
     return sortDir === "desc" ? sorted : sorted.reverse();
-  }, [filteredByType, sortKey, sortDir]);
+  }, [displayPools, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -325,49 +745,96 @@ export default function PoolsSection({ onSelectPool }) {
   };
 
   const sortIndicator = (key) =>
-    sortKey === key ? (sortDir === "desc" ? "↓" : "↑") : "";
+    sortKey === key ? (sortDir === "desc" ? "\u2193" : "\u2191") : "";
 
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
-      <div className="mb-6 rounded-3xl bg-gradient-to-br from-slate-900 via-slate-950 to-indigo-900/60 border border-slate-800/80 shadow-2xl shadow-black/40 overflow-hidden">
-        <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
-          <div className="flex flex-col items-center gap-3 max-w-3xl">
-            <p className="text-base sm:text-lg text-slate-200">
-              Track all pools across V2 and V3 with live liquidity and fee stats.
+      <div className="mb-6 rounded-2xl border border-slate-800/90 bg-slate-950/85 overflow-hidden">
+        <div className="flex items-center justify-between gap-3 px-5 sm:px-6 py-4 border-b border-slate-800/80">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+              Protocol Overview
             </p>
-            <div className="flex items-center justify-center gap-2 flex-wrap">
-              <span className="text-xs px-2 py-1 rounded-full bg-slate-800/70 border border-slate-700 text-slate-200 inline-flex items-center">
-                Live data
-              </span>
-              <img src={megaLogo} alt="MegaETH" className="h-7 w-7 rounded-full" />
+            <p className="mt-1 text-sm text-slate-400">
+              Live capital snapshot across V2 and V3.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-[11px] font-semibold text-emerald-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+            Live
+          </span>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 px-5 sm:px-6 py-5">
+          <div className="col-span-2 lg:col-span-1">
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              TVL
+            </div>
+            <div className="text-3xl font-semibold text-white">{formatUsd(protocolTvl)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              24h Volume
+            </div>
+            <div className="text-xl font-semibold">{formatUsd(protocolVolumeUtc)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              24h Fees
+            </div>
+            <div className="text-xl font-semibold">{formatUsd(protocolFeesUtc)}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              Active Pools
+            </div>
+            <div className="text-xl font-semibold">{activePoolsCount.toLocaleString()}</div>
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              Best APR
+            </div>
+            <div className="text-xl font-semibold">{bestAprMeta.value}</div>
+            <div className="mt-1 text-[11px] text-slate-500">{bestAprMeta.pair}</div>
+          </div>
+        </div>
+        <div
+          className={
+            viewMode === "pro"
+              ? "grid grid-cols-1 sm:grid-cols-3 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70"
+              : "grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70"
+          }
+        >
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              Liquidity Trend
+            </div>
+            <div className="text-base font-semibold text-slate-100">
+              {formatSignedUsd(protocolIntel.netLiquidityFlow24h)} (24h)
             </div>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl text-center">
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol Volume Daily
-              </div>
-              <div className="text-xl font-semibold">
-                {formatUsd(protocolVolumeUtc)}
-              </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+              Volatility
             </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol Fees Daily
-              </div>
-              <div className="text-xl font-semibold">
-                {formatUsd(protocolFeesUtc)}
-              </div>
-            </div>
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                Protocol TVL
-              </div>
-              <div className="text-xl font-semibold">
-                {formatUsd(protocolTvl)}
-              </div>
+            <div className="text-base font-semibold text-slate-100">
+              {protocolIntel.volatilityLabel}
             </div>
           </div>
+          {viewMode === "pro" && (
+            <div>
+              <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
+                Capital Efficiency Index
+              </div>
+              <div
+                className="text-base font-semibold text-slate-100"
+                title="Pro metric based on fee and turnover efficiency."
+              >
+                {Number.isFinite(protocolIntel.capitalEfficiencyIndex)
+                  ? `${protocolIntel.capitalEfficiencyIndex.toFixed(1)} / 10`
+                  : "--"}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -375,7 +842,7 @@ export default function PoolsSection({ onSelectPool }) {
         <div>
           <h2 className="text-2xl font-semibold text-white">Pools</h2>
           <div className="flex flex-col sm:flex-row sm:items-center sm:gap-3 text-sm text-slate-400">
-            <span>All available pools across V3 and V2.</span>
+            <span>Ranked by real capital efficiency and market activity.</span>
             <button
               type="button"
               onClick={() => setHideLowTvl((prev) => !prev)}
@@ -389,57 +856,120 @@ export default function PoolsSection({ onSelectPool }) {
             </button>
           </div>
         </div>
-        <div className="flex items-center gap-3 w-full lg:w-auto">
-          <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full lg:w-80">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4 text-slate-500"
-            >
-              <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
-              <path
-                d="M15.5 15.5 20 20"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
-            </svg>
-            <input
-              name="pool-search"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by symbol or address..."
-              className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            {[
-              { id: "all", label: "All" },
-              { id: "v3", label: "V3" },
-              { id: "v2", label: "V2" },
-            ].map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => setTypeFilter(item.id)}
-                className={`px-3 py-2 rounded-full text-xs border transition ${
-                  typeFilter === item.id
-                    ? "border-sky-500/60 bg-slate-900 text-white"
-                    : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600"
-                }`}
+        <div className="flex flex-col gap-3 w-full lg:w-auto lg:min-w-[680px]">
+          <div className="flex flex-col xl:flex-row xl:items-center gap-3">
+            <div className="flex items-center gap-2 bg-slate-900/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300 w-full xl:w-80">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 text-slate-500"
               >
-                {item.label}
-              </button>
-            ))}
+                <circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="1.5" />
+                <path
+                  d="M15.5 15.5 20 20"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+              </svg>
+              <input
+                name="pool-search"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search by symbol or address..."
+                className="bg-transparent outline-none flex-1 text-slate-200 placeholder:text-slate-600 text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              {[
+                { id: "all", label: "All", count: typeCounts.all },
+                { id: "v3", label: "V3", count: typeCounts.v3 },
+                { id: "v2", label: "V2", count: typeCounts.v2 },
+              ].map((item) => {
+                const active = typeFilter === item.id;
+                const style = active
+                  ? item.id === "v3"
+                    ? "border-sky-400/70 bg-sky-500/15 text-sky-100"
+                    : "border-slate-500/70 bg-slate-900 text-white"
+                  : item.id === "v3"
+                  ? "border-sky-900/80 bg-slate-900/70 text-sky-300 hover:border-sky-600/60 hover:text-sky-100"
+                  : "border-slate-800 bg-slate-900/60 text-slate-400 hover:text-slate-100 hover:border-slate-600";
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setTypeFilter(item.id)}
+                    className={`inline-flex items-center gap-2 px-3 py-2 rounded-full text-xs border transition ${style}`}
+                  >
+                    <span>{item.label}</span>
+                    <span
+                      className={`min-w-5 h-5 px-1 rounded-full text-[10px] leading-5 text-center ${
+                        active
+                          ? "bg-slate-950/80 text-slate-100"
+                          : "bg-slate-950/70 text-slate-400"
+                      }`}
+                    >
+                      {item.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="inline-flex rounded-full border border-slate-800 bg-slate-950/70 p-1">
+              {[
+                { id: "basic", label: "Basic" },
+                { id: "pro", label: "Pro" },
+              ].map((option) => {
+                const active = viewMode === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setViewMode(option.id)}
+                    className={`px-3 py-1.5 rounded-full text-[11px] font-semibold transition ${
+                      active
+                        ? "bg-slate-200 text-slate-900"
+                        : "text-slate-400 hover:text-slate-100"
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {PROTOCOL_INTEL_FILTERS.map((filter) => {
+              const active = intelFilter === filter.id;
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  onClick={() => setIntelFilter(filter.id)}
+                  className={`px-3 py-1.5 rounded-full text-[11px] border transition ${
+                    active
+                      ? "border-sky-500/60 bg-sky-500/12 text-sky-100"
+                      : "border-slate-800 bg-slate-950/40 text-slate-400 hover:text-slate-100 hover:border-slate-600"
+                  }`}
+                >
+                  {filter.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
       <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
-          <div className="text-lg font-semibold text-slate-50">
-            Pools ({sortedPools.length})
+          <div>
+            <div className="text-lg font-semibold text-slate-50">
+              Pools ({sortedPools.length})
+            </div>
+            <div className="text-[11px] text-slate-500">
+              Showing {sortedPools.length} of {activePoolsCount} active pools
+            </div>
           </div>
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
           {v2Error || v3Error ? "Partial data loaded" : "Live data"}
@@ -493,15 +1023,99 @@ export default function PoolsSection({ onSelectPool }) {
             sortedPools.map((pool) => {
               const meta0 = resolveTokenMeta(pool.token0Id, pool.token0Symbol);
               const meta1 = resolveTokenMeta(pool.token1Id, pool.token1Symbol);
+              const poolKey = `${pool.type}-${pool.id}`;
+              const badges = [];
+              if (poolKey === highlightKeys.apr) {
+                badges.push({
+                  label: "Highest APR",
+                  className: "border-emerald-500/40 bg-emerald-500/10 text-emerald-200",
+                });
+              }
+              if (poolKey === highlightKeys.liquidity) {
+                badges.push({
+                  label: "Highest Liquidity",
+                  className: "border-sky-500/40 bg-sky-500/10 text-sky-200",
+                });
+              }
+              if (poolKey === highlightKeys.volume) {
+                badges.push({
+                  label: "Most Traded",
+                  className: "border-amber-500/40 bg-amber-500/10 text-amber-200",
+                });
+              }
+              const insight = poolInsightsByKey[poolKey] || {};
+              const activity = getActivitySignal(insight);
+              const volumeValue = Number(pool?.volume24hUsd);
+              const volumeRatio =
+                Number.isFinite(volumeValue) &&
+                volumeValue > 0 &&
+                Number.isFinite(volumeStats.max) &&
+                volumeStats.max > 0
+                  ? Math.min(1, volumeValue / volumeStats.max)
+                  : 0;
+              const trendBarClass =
+                volumeRatio >= 0.65
+                  ? "bg-emerald-300"
+                  : volumeRatio >= 0.35
+                  ? "bg-sky-300"
+                  : "bg-slate-500";
+              const depthRatio = Number(insight?.depthRatio);
+              const concentrationLabel = insight?.concentrationLabel || "--";
+              const flowPct = Number(insight?.netFlowPct);
+              const flowLabel = Number.isFinite(flowPct)
+                ? `${flowPct >= 0 ? "+" : ""}${flowPct.toFixed(0)}%`
+                : "--";
+              const flowTrendTone =
+                Number.isFinite(flowPct) && flowPct >= 0
+                  ? "text-emerald-300"
+                  : "text-slate-400";
+              const flowArrow =
+                Number.isFinite(flowPct) && flowPct >= 14
+                  ? "\u2191"
+                  : Number.isFinite(flowPct) && flowPct <= -14
+                  ? "\u2193"
+                  : "\u2192";
+              const sparklineValues = Array.isArray(insight?.sparkline)
+                ? insight.sparkline
+                : [];
+              const sparklinePoints = sparklineValues
+                .map((value, idx) => {
+                  const x = idx * 4;
+                  const y = Math.round((1 - value) * 16) + 1;
+                  return `${x},${y}`;
+                })
+                .join(" ");
+              const isTopLiquidityPool = poolKey === highlightKeys.liquidity;
+              const contextBadges = [
+                {
+                  key: "activity",
+                  label: `${activity.icon} ${activity.label}`,
+                  className: activity.className,
+                  title: activity.detail,
+                },
+                ...badges.map((badge) => ({
+                  key: badge.label,
+                  label: badge.label,
+                  className: badge.className,
+                  title: undefined,
+                })),
+              ];
+              const visibleContextBadges = contextBadges.slice(0, 2);
+              const hiddenContextLabels = contextBadges
+                .slice(2)
+                .map((badge) => badge.label)
+                .join(", ");
+              const hiddenContextCount = Math.max(0, contextBadges.length - 2);
               return (
                 <button
-                  key={`${pool.type}-${pool.id}`}
+                  key={poolKey}
                   type="button"
                   onClick={() => handlePoolSelect(pool)}
-                  className="w-full text-left rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3 hover:border-sky-500/40 hover:bg-slate-900/60 transition"
+                  className="group relative isolate overflow-hidden w-full text-left rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3 hover:border-sky-500/70 hover:bg-slate-900/70 hover:shadow-[0_0_0_1px_rgba(56,189,248,0.18),0_12px_30px_-20px_rgba(56,189,248,0.45)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 transition"
                   aria-label={`Open ${pool.token0Symbol || "Token0"} / ${pool.token1Symbol || "Token1"} pool`}
                 >
-                  <div className="flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
+                  <div className="pointer-events-none absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-sky-500/0 via-sky-500/8 to-emerald-400/0" />
+                  <div className="relative flex flex-col md:grid md:grid-cols-12 md:items-center gap-3">
                     <div className="md:col-span-4 flex items-center gap-3">
                       <div className="flex -space-x-2">
                         {[meta0, meta1].map((t, idx) => (
@@ -523,31 +1137,146 @@ export default function PoolsSection({ onSelectPool }) {
                           </div>
                         ))}
                       </div>
-                        <div className="flex flex-col">
-                          <div className="text-sm font-semibold text-slate-100">
-                            {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
-                          </div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
-                              {pool.type} {pool.feeLabel ? pool.feeLabel : ""}
+                      <div className="flex flex-col">
+                        <div className="text-sm font-semibold text-slate-100">
+                          {pool.token0Symbol || "Token0"} / {pool.token1Symbol || "Token1"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2">
+                          <span className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/60 text-slate-200">
+                            {pool.type} {pool.feeLabel ? pool.feeLabel : ""}
+                          </span>
+                          {visibleContextBadges.map((badge) => (
+                            <span
+                              key={badge.key}
+                              className={`px-2 py-0.5 rounded-full border ${badge.className}`}
+                              title={badge.title}
+                            >
+                              {badge.label}
                             </span>
-                          </div>
+                          ))}
+                          {hiddenContextCount > 0 && (
+                            <span
+                              className="px-2 py-0.5 rounded-full border border-slate-700/60 bg-slate-900/70 text-slate-300"
+                              title={hiddenContextLabels}
+                            >
+                              +{hiddenContextCount}
+                            </span>
+                          )}
                         </div>
                       </div>
+                    </div>
 
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      {formatUsd(pool.liquidityUsd)}
+                      <div>{formatUsd(pool.liquidityUsd)}</div>
+                      <div className="mt-1 inline-flex w-full items-center justify-end gap-1 text-[10px] text-slate-500">
+                        <span className="uppercase tracking-wide">Depth</span>
+                        <span className="inline-flex h-1.5 w-14 rounded-full bg-slate-800 overflow-hidden">
+                          <span
+                            className="bg-sky-300/90"
+                            style={{
+                              width:
+                                Number.isFinite(depthRatio) && depthRatio > 0
+                                  ? `${Math.max(10, Math.round(depthRatio * 100))}%`
+                                  : "0%",
+                            }}
+                          />
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        <span className={flowTrendTone}>
+                          Flow {flowArrow} {flowLabel}
+                        </span>
+                        {" \u00b7 "}
+                        <span>Whale {concentrationLabel}</span>
+                      </div>
                     </div>
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      {pool.volume24hUsd !== null ? formatUsd(pool.volume24hUsd) : "--"}
+                      <div className="inline-flex w-full items-center justify-end gap-2">
+                        <span>
+                          {pool.volume24hUsd !== null ? formatUsd(pool.volume24hUsd) : "--"}
+                        </span>
+                        <span className="hidden md:inline-flex h-1.5 w-12 rounded-full bg-slate-800 overflow-hidden">
+                          <span
+                            className={`${trendBarClass} origin-left transition-all duration-500 ease-out group-hover:scale-x-105 group-hover:brightness-110`}
+                            style={{
+                              width:
+                                volumeRatio > 0
+                                  ? `${Math.max(16, Math.round(volumeRatio * 100))}%`
+                                  : "0%",
+                            }}
+                          />
+                        </span>
+                      </div>
+                      {isTopLiquidityPool && sparklinePoints ? (
+                        <div className="mt-1 inline-flex items-center justify-end gap-1 w-full text-[10px] text-slate-500">
+                          <span>24h sparkline</span>
+                          <svg viewBox="0 0 44 18" className="h-[14px] w-[44px]">
+                            <polyline
+                              points={sparklinePoints}
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.5"
+                              className="text-sky-300"
+                            />
+                          </svg>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
                       {pool.fees24hUsd !== null ? formatUsd(pool.fees24hUsd) : "--"}
                     </div>
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      {pool.apr !== null ? `${pool.apr.toFixed(2)}%` : "--"}
+                      <div className="inline-flex w-full items-center justify-end gap-2">
+                        <span className="text-base font-semibold">
+                          {pool.apr !== null ? `${pool.apr.toFixed(2)}%` : "--"}
+                        </span>
+                        <span className="hidden md:inline-flex text-[11px] font-medium text-slate-500 group-hover:text-sky-300 transition">
+                          Open {"\u2192"}
+                        </span>
+                      </div>
                     </div>
                   </div>
+                  {viewMode === "pro" && (
+                    <div className="mt-3 border-t border-slate-800/80 pt-3 grid grid-cols-2 lg:grid-cols-4 gap-2 text-[11px]">
+                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
+                        <div className="text-slate-500 uppercase tracking-wide">Capital Efficiency</div>
+                        <div className="mt-1 text-slate-100 font-semibold">
+                          {Number.isFinite(insight?.capitalEfficiency)
+                            ? insight.capitalEfficiency.toFixed(2)
+                            : "--"}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
+                        <div className="text-slate-500 uppercase tracking-wide">Fee / Liquidity</div>
+                        <div className="mt-1 text-slate-100 font-semibold">
+                          {Number.isFinite(insight?.feeLiquidityRatioPct)
+                            ? `${insight.feeLiquidityRatioPct.toFixed(2)}%`
+                            : "--"}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
+                        <div className="text-slate-500 uppercase tracking-wide">Liquidity Trend</div>
+                        <div className="mt-1 text-slate-100 font-semibold">
+                          {Number.isFinite(insight?.netFlowUsd)
+                            ? `${formatSignedUsd(insight?.netFlowUsd)} (24h)`
+                            : "--"}
+                        </div>
+                      </div>
+                      <div className="rounded-xl border border-slate-800/80 bg-slate-950/50 px-3 py-2">
+                        <div className="text-slate-500 uppercase tracking-wide">Volatility</div>
+                        <div
+                          className="mt-1 text-slate-100 font-semibold"
+                          title={
+                            Number.isFinite(insight?.volatilityScore)
+                              ? `Score ${insight.volatilityScore.toFixed(1)}/10`
+                              : undefined
+                          }
+                        >
+                          {insight?.volatilityLabel || "--"}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </button>
               );
             })

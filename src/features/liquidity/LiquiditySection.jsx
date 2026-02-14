@@ -162,6 +162,36 @@ const formatTokenBalance = (v) => {
   });
 };
 
+const formatTokenFixed = (value, decimals = 4) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+    useGrouping: false,
+  });
+};
+
+const formatLpBalanceTable = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return "0";
+  const minDecimals = num < 1 ? 6 : 2;
+  return num.toLocaleString("en-US", {
+    minimumFractionDigits: minDecimals,
+    maximumFractionDigits: 8,
+    useGrouping: false,
+  });
+};
+
+const formatUsdTableValue = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  return `$${num.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
+
 const normalizeCustomTokenLogo = (logo) => {
   const raw = String(logo || "").trim();
   if (!raw) return null;
@@ -1070,7 +1100,6 @@ export default function LiquiditySection({
   const [v3PositionListMenuOpenId, setV3PositionListMenuOpenId] = useState(null);
   const [v3CopiedAddress, setV3CopiedAddress] = useState("");
   const [v2PositionMenuOpenId, setV2PositionMenuOpenId] = useState(null);
-  const [v2DepositMenuOpen, setV2DepositMenuOpen] = useState(false);
   const [v3ActionModal, setV3ActionModal] = useState({
     open: false,
     type: null,
@@ -1092,8 +1121,10 @@ export default function LiquiditySection({
   const [nftMetaById, setNftMetaById] = useState({});
   const [nftMetaRefreshTick] = useState(0);
   const [showNftDebug, setShowNftDebug] = useState(false);
+  const [showV3NftCard, setShowV3NftCard] = useState(false);
   const [v3RefreshTick, setV3RefreshTick] = useState(0);
   const [lpBalanceRaw, setLpBalanceRaw] = useState(null);
+  const [pairTotalSupplyRaw, setPairTotalSupplyRaw] = useState(null);
   const [lpDecimalsState, setLpDecimalsState] = useState(18);
   const DEFAULT_SLIPPAGE = "0.5";
   const [slippageInput, setSlippageInput] = useState(DEFAULT_SLIPPAGE);
@@ -1111,7 +1142,7 @@ export default function LiquiditySection({
   const v3PoolLiveThrottle = useRef(0);
   const [tokenBalances, setTokenBalances] = useState(null);
   const [tokenBalanceError, setTokenBalanceError] = useState("");
-  const [tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
+  const [_tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
   const [showTokenList, setShowTokenList] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
   const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
@@ -1142,7 +1173,6 @@ export default function LiquiditySection({
   const suppressSelectionResetRef = useRef(false);
   const v3PositionMenuRef = useRef(null);
   const v3CopyTimerRef = useRef(null);
-  const v2DepositMenuRef = useRef(null);
   const nftMetaRef = useRef({});
   const v3Token0DropdownRef = useRef(null);
   const v3Token1DropdownRef = useRef(null);
@@ -2287,39 +2317,6 @@ export default function LiquiditySection({
     v3ChartRef.current = v3Chart;
   }, [v3Chart]);
 
-  const v3RangeStrategies = useMemo(
-    () => [
-      {
-        id: "stable",
-        title: "Stable",
-        range: "± 3 ticks",
-        description: "Good for stablecoins or low volatility pairs.",
-        apply: () => applyV3RangeTickPreset(3),
-      },
-      {
-        id: "wide",
-        title: "Wide",
-        range: "-50% → +100%",
-        description: "Good for volatile pairs.",
-        apply: () => applyV3RangeAsymmetric(-0.5, 1),
-      },
-      {
-        id: "lower",
-        title: "One-sided lower",
-        range: "-50%",
-        description: "Supply liquidity if price goes down.",
-        apply: () => applyV3RangeAsymmetric(-0.5, 0),
-      },
-      {
-        id: "upper",
-        title: "One-sided upper",
-        range: "+100%",
-        description: "Supply liquidity if price goes up.",
-        apply: () => applyV3RangeAsymmetric(0, 1),
-      },
-    ],
-    [applyV3RangeTickPreset, applyV3RangeAsymmetric]
-  );
 
   const v3PoolSeriesRaw = useMemo(() => {
     const history = Array.isArray(v3PoolTvlHistory) ? v3PoolTvlHistory : [];
@@ -2636,33 +2633,33 @@ export default function LiquiditySection({
   const v3MetricPalette = useMemo(() => {
     if (showV3PriceChart) {
       return {
-        stroke: "#fbbf24",
-        glow: "#f59e0b",
-        from: "rgba(251,191,36,0.35)",
-        to: "rgba(251,191,36,0.05)",
+        stroke: "#7dd3fc",
+        glow: "#7dd3fc",
+        from: "rgba(125,211,252,0.08)",
+        to: "rgba(125,211,252,0.02)",
       };
     }
     if (showV3VolumeChart) {
       return {
-        stroke: "#a855f7",
-        glow: "#9333ea",
-        from: "rgba(168,85,247,0.35)",
-        to: "rgba(168,85,247,0.05)",
+        stroke: "#93c5fd",
+        glow: "#93c5fd",
+        from: "rgba(147,197,253,0.08)",
+        to: "rgba(147,197,253,0.02)",
       };
     }
     if (showV3FeesChart) {
       return {
-        stroke: "#34d399",
-        glow: "#10b981",
-        from: "rgba(52,211,153,0.35)",
-        to: "rgba(52,211,153,0.05)",
+        stroke: "#86efac",
+        glow: "#86efac",
+        from: "rgba(134,239,172,0.08)",
+        to: "rgba(134,239,172,0.02)",
       };
     }
     return {
-      stroke: "#38bdf8",
-      glow: "#0ea5e9",
-      from: "rgba(56,189,248,0.35)",
-      to: "rgba(14,165,233,0.05)",
+      stroke: "#7dd3fc",
+      glow: "#7dd3fc",
+      from: "rgba(125,211,252,0.08)",
+      to: "rgba(125,211,252,0.02)",
     };
   }, [showV3FeesChart, showV3PriceChart, showV3VolumeChart]);
 
@@ -2697,11 +2694,11 @@ export default function LiquiditySection({
       return (
         <div className="absolute inset-0 pointer-events-none z-30">
           <div
-            className="absolute top-0 bottom-0 w-px bg-white/25"
+            className="absolute top-0 bottom-0 w-px bg-slate-200/25"
             style={{ left: `${v3ChartHover.x}%` }}
           />
           <div
-            className="absolute h-2.5 w-2.5 rounded-full bg-white shadow-[0_0_8px_rgba(255,255,255,0.6)]"
+            className="absolute h-2 w-2 rounded-full border border-slate-200/70 bg-[#0b111b]"
             style={{
               left: `${v3ChartHover.x}%`,
               top: `${v3ChartHover.y}%`,
@@ -2709,25 +2706,15 @@ export default function LiquiditySection({
             }}
           />
           <div
-            className={`absolute ${translate} rounded-lg border border-slate-700/80 bg-slate-950/95 px-2 py-1 text-[10px] text-slate-200 shadow-xl`}
+            className={`absolute ${translate} rounded-md border border-slate-700/60 bg-[#0b111b]/95 px-2 py-1 text-[11px] text-slate-200 font-mono tabular-nums`}
             style={{ left: `${v3ChartHover.x}%`, top: `${tooltipTop}%` }}
           >
-            {hidePriceDetails ? null : (
-              <div className="text-[10px] uppercase tracking-[0.12em] text-slate-400">
-                {v3ChartHover.label}
-              </div>
-            )}
-            {hidePriceDetails ? null : (
-              <div className="text-sm font-semibold text-slate-100">
-                {v3HoverValueLabel}
-              </div>
-            )}
-            {!hidePriceDetails && v3ChartHover.subLabel ? (
-              <div className="text-[10px] text-slate-500">{v3ChartHover.subLabel}</div>
-            ) : null}
             {v3HoverDateLabel ? (
-              <div className="text-[10px] text-slate-500">{v3HoverDateLabel}</div>
+              <div className="text-[10px] text-slate-400">{v3HoverDateLabel}</div>
             ) : null}
+            {hidePriceDetails ? null : (
+              <div className="text-[13px] leading-tight text-slate-100">{v3HoverValueLabel}</div>
+            )}
           </div>
         </div>
       );
@@ -2940,6 +2927,12 @@ export default function LiquiditySection({
     v3DraggingHandle
       ? "transition-none"
       : "transition-[top] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]";
+  const v3RangeIsInChart = useMemo(() => {
+    if (!v3Chart || v3Chart.currentPct === null || v3Chart.currentPct === undefined) return false;
+    const low = Math.min(v3Chart.rangeStart, v3Chart.rangeEnd);
+    const high = Math.max(v3Chart.rangeStart, v3Chart.rangeEnd);
+    return v3Chart.currentPct >= low && v3Chart.currentPct <= high;
+  }, [v3Chart]);
   const v3PoolBalance0 = v3PoolIsReversed ? v3PoolBalances.token1 : v3PoolBalances.token0;
   const v3PoolBalance1 = v3PoolIsReversed ? v3PoolBalances.token0 : v3PoolBalances.token1;
   const v3PoolBalance0Num = safeNumber(v3PoolBalance0);
@@ -4103,19 +4096,6 @@ export default function LiquiditySection({
   }, [v2PositionMenuOpenId]);
 
   useEffect(() => {
-    if (!v2DepositMenuOpen) return undefined;
-    const handleClick = (event) => {
-      const target = event.target;
-      if (v2DepositMenuRef.current && v2DepositMenuRef.current.contains(target)) {
-        return;
-      }
-      setV2DepositMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [v2DepositMenuOpen]);
-
-  useEffect(() => {
     setV3PositionMenuOpen(false);
   }, [selectedPositionId]);
 
@@ -4514,6 +4494,27 @@ export default function LiquiditySection({
     const found = allPools.find((p) => p.id === selectedPoolId);
     return found || allPools[0];
   }, [allPools, selectedPoolId]);
+  const selectedV2LpPosition = useMemo(() => {
+    if (!selectedPoolId || !v2LpPositions.length) return null;
+    return v2LpPositions.find((pos) => pos.id === selectedPoolId) || null;
+  }, [v2LpPositions, selectedPoolId]);
+  const selectedV2PositionValueLabel =
+    selectedV2LpPosition?.positionUsd !== null &&
+    selectedV2LpPosition?.positionUsd !== undefined
+      ? formatUsdTableValue(selectedV2LpPosition.positionUsd)
+      : "--";
+  const selectedV2ShareLabel =
+    selectedV2LpPosition?.lpShare !== null &&
+    selectedV2LpPosition?.lpShare !== undefined
+      ? `${(selectedV2LpPosition.lpShare * 100).toFixed(2)}%`
+      : "--";
+  const selectedV2PoolTvlLabel =
+    selectedPool?.tvlUsd !== null &&
+    selectedPool?.tvlUsd !== undefined &&
+    Number.isFinite(Number(selectedPool.tvlUsd)) &&
+    Number(selectedPool.tvlUsd) > 0
+      ? formatUsdTableValue(selectedPool.tvlUsd)
+      : "--";
 
   const token0Meta = selectedPool
     ? tokenRegistry[selectedPool.token0Symbol]
@@ -4538,6 +4539,192 @@ export default function LiquiditySection({
   const pairMissing =
     pairNotDeployed ||
     (pairError && pairError.toLowerCase().includes("pair not found"));
+  const selectedV2AprLabel =
+    selectedPool?.feeApr !== null &&
+    selectedPool?.feeApr !== undefined &&
+    Number.isFinite(Number(selectedPool.feeApr))
+      ? `${Number(selectedPool.feeApr).toFixed(2)}%`
+      : "--";
+  const selectedV2Volume24hLabel =
+    selectedPool?.volume24hUsd !== null &&
+    selectedPool?.volume24hUsd !== undefined &&
+    Number.isFinite(Number(selectedPool.volume24hUsd))
+      ? formatUsdTableValue(selectedPool.volume24hUsd)
+      : "--";
+  const selectedV2Fees24hLabel = (() => {
+    const fees24h = Number(selectedPool?.fees24hUsd);
+    if (Number.isFinite(fees24h)) return formatUsdTableValue(fees24h);
+    const volume24h = Number(selectedPool?.volume24hUsd);
+    if (Number.isFinite(volume24h)) return formatUsdTableValue(volume24h * 0.003);
+    return "--";
+  })();
+  const selectedV2FeesEarnedLabel = "$0.00";
+  const selectedV2FeeLabel = "0.30%";
+  const selectedV2LpTokensLabel =
+    lpBalance !== null && lpBalance !== undefined && Number.isFinite(lpBalance)
+      ? formatTokenFixed(lpBalance, 6)
+      : "--";
+
+  const v2PairReservesForInputOrder = useMemo(() => {
+    if (!pairInfo || !token0Address || !token1Address) return null;
+    const pairToken0Lower = safeLower(pairInfo.token0);
+    const inputToken0Lower = safeLower(token0Address || "");
+    if (!pairToken0Lower || !inputToken0Lower) return null;
+    return {
+      reserveToken0:
+        pairToken0Lower === inputToken0Lower ? pairInfo.reserve0 : pairInfo.reserve1,
+      reserveToken1:
+        pairToken0Lower === inputToken0Lower ? pairInfo.reserve1 : pairInfo.reserve0,
+    };
+  }, [pairInfo, token0Address, token1Address]);
+
+  const v2DepositPreview = useMemo(() => {
+    if (
+      !pairTotalSupplyRaw ||
+      pairTotalSupplyRaw <= 0n ||
+      !v2PairReservesForInputOrder ||
+      !lpDecimalsState
+    ) {
+      return null;
+    }
+    const dec0 = token0Meta?.decimals ?? 18;
+    const dec1 = token1Meta?.decimals ?? 18;
+    const amount0Input = sanitizeAmountInput(depositToken0, dec0);
+    const amount1Input = sanitizeAmountInput(depositToken1, dec1);
+    if (!amount0Input || !amount1Input) return null;
+    const amount0Raw = safeParseUnits(amount0Input, dec0);
+    const amount1Raw = safeParseUnits(amount1Input, dec1);
+    if (!amount0Raw || !amount1Raw || amount0Raw <= 0n || amount1Raw <= 0n) return null;
+
+    const reserve0 = v2PairReservesForInputOrder.reserveToken0;
+    const reserve1 = v2PairReservesForInputOrder.reserveToken1;
+    if (!reserve0 || !reserve1 || reserve0 <= 0n || reserve1 <= 0n) return null;
+
+    const mintedFrom0 = (amount0Raw * pairTotalSupplyRaw) / reserve0;
+    const mintedFrom1 = (amount1Raw * pairTotalSupplyRaw) / reserve1;
+    const mintedRaw = mintedFrom0 < mintedFrom1 ? mintedFrom0 : mintedFrom1;
+    if (!mintedRaw || mintedRaw <= 0n) return null;
+
+    const newTotalSupply = pairTotalSupplyRaw + mintedRaw;
+    if (!newTotalSupply || newTotalSupply <= 0n) return null;
+    const currentLp = lpBalanceRaw && lpBalanceRaw > 0n ? lpBalanceRaw : 0n;
+    const nextLp = currentLp + mintedRaw;
+    const shareScaled = (nextLp * 10000n) / newTotalSupply;
+    const nextSharePct = Number(shareScaled) / 100;
+    const mintedLpNum = Number(formatUnits(mintedRaw, lpDecimalsState || 18));
+    return {
+      mintedLpLabel: formatTokenFixed(mintedLpNum, 6),
+      nextShareLabel: Number.isFinite(nextSharePct) ? `${nextSharePct.toFixed(2)}%` : "--",
+    };
+  }, [
+    pairTotalSupplyRaw,
+    v2PairReservesForInputOrder,
+    lpDecimalsState,
+    token0Meta?.decimals,
+    token1Meta?.decimals,
+    depositToken0,
+    depositToken1,
+    lpBalanceRaw,
+  ]);
+
+  const v2WithdrawLpRaw = useMemo(() => {
+    const lpDecimals = lpDecimalsState || 18;
+    const normalized = sanitizeAmountInput(withdrawLp, lpDecimals);
+    if (!normalized) return null;
+    const parsed = safeParseUnits(normalized, lpDecimals);
+    if (!parsed || parsed <= 0n) return null;
+    return parsed;
+  }, [withdrawLp, lpDecimalsState]);
+
+  const v2WithdrawPct = useMemo(() => {
+    if (!lpBalanceRaw || lpBalanceRaw <= 0n || !v2WithdrawLpRaw) return 0;
+    const scaled = (v2WithdrawLpRaw * 10000n) / lpBalanceRaw;
+    const pct = Number(scaled) / 100;
+    if (!Number.isFinite(pct)) return 0;
+    return Math.max(0, Math.min(100, pct));
+  }, [v2WithdrawLpRaw, lpBalanceRaw]);
+
+  const v2WithdrawPreview = useMemo(() => {
+    if (
+      !v2WithdrawLpRaw ||
+      !pairTotalSupplyRaw ||
+      pairTotalSupplyRaw <= 0n ||
+      !v2PairReservesForInputOrder
+    ) {
+      return null;
+    }
+    const reserve0 = v2PairReservesForInputOrder.reserveToken0;
+    const reserve1 = v2PairReservesForInputOrder.reserveToken1;
+    if (!reserve0 || !reserve1 || reserve0 <= 0n || reserve1 <= 0n) return null;
+
+    const out0Raw = (v2WithdrawLpRaw * reserve0) / pairTotalSupplyRaw;
+    const out1Raw = (v2WithdrawLpRaw * reserve1) / pairTotalSupplyRaw;
+    const dec0 = token0Meta?.decimals ?? 18;
+    const dec1 = token1Meta?.decimals ?? 18;
+    const out0Num = Number(formatUnits(out0Raw, dec0));
+    const out1Num = Number(formatUnits(out1Raw, dec1));
+    return {
+      token0OutNum: Number.isFinite(out0Num) ? out0Num : null,
+      token1OutNum: Number.isFinite(out1Num) ? out1Num : null,
+      token0OutLabel: formatTokenFixed(out0Num, 4),
+      token1OutLabel: formatTokenFixed(out1Num, 4),
+    };
+  }, [
+    v2WithdrawLpRaw,
+    pairTotalSupplyRaw,
+    v2PairReservesForInputOrder,
+    token0Meta?.decimals,
+    token1Meta?.decimals,
+  ]);
+
+  const v2WithdrawPreviewUsdLabel = useMemo(() => {
+    if (!v2WithdrawPreview) return "--";
+    const raw0 =
+      tokenPrices[safeLower(token0Address || "")] ??
+      tokenPrices[safeLower(token0Meta?.address || "")];
+    const raw1 =
+      tokenPrices[safeLower(token1Address || "")] ??
+      tokenPrices[safeLower(token1Meta?.address || "")];
+    const symbol0 = token0Meta?.symbol || selectedPool?.token0Symbol || "";
+    const symbol1 = token1Meta?.symbol || selectedPool?.token1Symbol || "";
+    const price0 =
+      Number.isFinite(Number(raw0)) && Number(raw0) > 0
+        ? Number(raw0)
+        : isStableSymbol(symbol0)
+        ? 1
+        : null;
+    const price1 =
+      Number.isFinite(Number(raw1)) && Number(raw1) > 0
+        ? Number(raw1)
+        : isStableSymbol(symbol1)
+        ? 1
+        : null;
+    const usd0 =
+      price0 !== null &&
+      v2WithdrawPreview.token0OutNum !== null &&
+      Number.isFinite(v2WithdrawPreview.token0OutNum)
+        ? v2WithdrawPreview.token0OutNum * price0
+        : null;
+    const usd1 =
+      price1 !== null &&
+      v2WithdrawPreview.token1OutNum !== null &&
+      Number.isFinite(v2WithdrawPreview.token1OutNum)
+        ? v2WithdrawPreview.token1OutNum * price1
+        : null;
+    if (usd0 === null && usd1 === null) return "--";
+    return formatUsdTableValue((usd0 || 0) + (usd1 || 0));
+  }, [
+    v2WithdrawPreview,
+    tokenPrices,
+    token0Address,
+    token1Address,
+    token0Meta?.address,
+    token1Meta?.address,
+    token0Meta?.symbol,
+    token1Meta?.symbol,
+    selectedPool?.token0Symbol,
+    selectedPool?.token1Symbol,
+  ]);
 
   // Listen for Sync events on the active pair to refresh reserves instantly
   useEffect(() => {
@@ -4634,6 +4821,7 @@ export default function LiquiditySection({
     if (pairMissing) {
       setLpBalance(null);
       setLpBalanceError("");
+      setPairTotalSupplyRaw(null);
       return;
     }
     try {
@@ -4658,6 +4846,7 @@ export default function LiquiditySection({
         setPairNotDeployed(true);
         setLpBalance(null);
         setLpBalanceError("");
+        setPairTotalSupplyRaw(null);
         return;
       }
 
@@ -4666,16 +4855,21 @@ export default function LiquiditySection({
         typeof pairErc20.decimals === "function"
           ? await pairErc20.decimals().catch(() => 18)
           : 18;
-      const balance = await pairErc20.balanceOf(user);
+      const [balance, totalSupply] = await Promise.all([
+        pairErc20.balanceOf(user),
+        pairErc20.totalSupply().catch(() => 0n),
+      ]);
       setLpDecimalsState(Number(decimals) || 18);
       setLpBalanceRaw(balance);
       setLpBalance(Number(formatUnits(balance, decimals)));
+      setPairTotalSupplyRaw(totalSupply && totalSupply > 0n ? totalSupply : null);
     } catch (err) {
       console.warn("LP balance lookup failed:", err?.message || err);
       // Treat any failure as "not deployed yet" to allow first deposit
       setPairNotDeployed(true);
       setLpBalanceError("");
       setLpBalance(null);
+      setPairTotalSupplyRaw(null);
     }
   }, [
     address,
@@ -4688,6 +4882,7 @@ export default function LiquiditySection({
     token0Address,
     token1Address,
     getRpcProviderWithRetry,
+    setPairTotalSupplyRaw,
   ]);
 
   useEffect(() => {
@@ -4866,6 +5061,7 @@ export default function LiquiditySection({
       setPairInfo(null);
       setPairError("");
       setPairNotDeployed(false);
+      setPairTotalSupplyRaw(null);
 
       if (!selectedPool) return;
       if (!poolSupportsActions) {
@@ -4901,6 +5097,15 @@ export default function LiquiditySection({
           token0Address,
           token1Address,
         });
+        try {
+          const pairReadErc20 = new Contract(res.pairAddress, ERC20_ABI, provider);
+          const totalSupply = await pairReadErc20.totalSupply().catch(() => 0n);
+          if (!cancelled) {
+            setPairTotalSupplyRaw(totalSupply && totalSupply > 0n ? totalSupply : null);
+          }
+        } catch {
+          if (!cancelled) setPairTotalSupplyRaw(null);
+        }
 
         // Warm decimals cache for ratio calculations and balances
         try {
@@ -4933,8 +5138,14 @@ export default function LiquiditySection({
               typeof pairErc20.decimals === "function"
                 ? await pairErc20.decimals().catch(() => 18)
                 : 18;
-            const balance = await pairErc20.balanceOf(user);
-            if (!cancelled) setLpBalance(Number(formatUnits(balance, decimals)));
+            const [balance, totalSupply] = await Promise.all([
+              pairErc20.balanceOf(user),
+              pairErc20.totalSupply().catch(() => 0n),
+            ]);
+            if (!cancelled) {
+              setLpBalance(Number(formatUnits(balance, decimals)));
+              setPairTotalSupplyRaw(totalSupply && totalSupply > 0n ? totalSupply : null);
+            }
           }
         } catch (balanceErr) {
           if (!cancelled) {
@@ -4952,6 +5163,7 @@ export default function LiquiditySection({
           setPairNotDeployed(true);
           setLpBalance(null);
           setLpBalanceError("");
+          setPairTotalSupplyRaw(null);
         }
       }
     };
@@ -5722,6 +5934,18 @@ export default function LiquiditySection({
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
   };
+
+  const handleAddLiquidityAction = useCallback(() => {
+    if (isV2View) {
+      setShowTokenList(true);
+      return;
+    }
+    if (isV3View) {
+      if (!hasV3Liquidity) return;
+      const target = document.getElementById("v3-add-liquidity");
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [isV2View, isV3View, hasV3Liquidity]);
 
   const handleOpenPoolDepositFromRow = (pool) => {
     if (!pool) return;
@@ -6634,362 +6858,367 @@ export default function LiquiditySection({
             {selectionDepositPoolId && selectedPool && selectedPool.id === selectionDepositPoolId && (
               <div
                 id="token-selection-deposit"
-                className="mt-6 rounded-3xl border border-slate-800 bg-slate-900/70 shadow-xl shadow-black/40 p-5"
+                className="mt-6 rounded-md border border-[#1B2433] bg-[#0b111b] p-4 space-y-4"
               >
-                <div className="flex items-center justify-between mb-3">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                      Pool Status
-                    </div>
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-                      {getPoolLabel(selectedPool)}
-                      {(() => {
-                        const { label, className } = getStatusStyle(selectedPool?.isActive);
-                        return (
-                          <span className={`px-2 py-0.5 rounded-full text-[11px] border ${className}`}>
-                            {label}
+                {(() => {
+                  const token0SymbolRaw = token0Meta?.symbol || selectedPool?.token0Symbol || "--";
+                  const token1SymbolRaw = token1Meta?.symbol || selectedPool?.token1Symbol || "--";
+                  const deskToken0Symbol =
+                    token0SymbolRaw === "USDT0" ? "USDT" : token0SymbolRaw;
+                  const deskToken1Symbol =
+                    token1SymbolRaw === "USDT0" ? "USDT" : token1SymbolRaw;
+                  const { label: poolStatusLabel } = getStatusStyle(selectedPool?.isActive);
+                  const poolStatusColor =
+                    selectedPool?.isActive === null
+                      ? "text-slate-300"
+                      : selectedPool?.isActive
+                      ? "text-emerald-300"
+                      : "text-rose-300";
+                  return (
+                    <>
+                      <div className="border-b border-[#1B2433] pb-3">
+                        <div className="text-[10px] uppercase tracking-[0.1em] text-slate-500">
+                          Manage Position
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-100">
+                          <span className="font-semibold">{deskToken0Symbol} / {deskToken1Symbol}</span>
+                          <span className="text-slate-500">&middot;</span>
+                          <span className="text-slate-300">V2</span>
+                          <span className="text-slate-500">&middot;</span>
+                          <span className={`inline-flex items-center gap-1 text-xs font-medium ${poolStatusColor}`}>
+                            <span className="text-[8px] leading-none">&#9679;</span>
+                            <span>{poolStatusLabel}</span>
                           </span>
-                        );
-                      })()}
-                    </div>
-                    {!selectedPool?.isActive && (
-                      <div className="text-[11px] text-amber-200 mt-1">
-                        No live liquidity detected yet. Deposits here will seed the pool.
+                        </div>
+                        <div className="mt-1">
+                          <span
+                            title={selectedV2PositionValueLabel}
+                            className="text-[32px] leading-none font-bold tracking-[-0.015em] text-white drop-shadow-[0_0_6px_rgba(255,255,255,0.14)] font-mono tabular-nums"
+                          >
+                            {selectedV2PositionValueLabel}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-400">
+                          <div className="inline-flex items-center gap-1">
+                            <span>Share</span>
+                            <span title={selectedV2ShareLabel} className="font-mono tabular-nums text-slate-200">
+                              {selectedV2ShareLabel}
+                            </span>
+                          </div>
+                          <span>&middot;</span>
+                          <div className="inline-flex items-center gap-1">
+                            <span>Pool TVL</span>
+                            <span title={selectedV2PoolTvlLabel} className="font-mono tabular-nums text-slate-200">
+                              {selectedV2PoolTvlLabel}
+                            </span>
+                          </div>
+                          <span>&middot;</span>
+                          <div className="inline-flex items-center gap-1">
+                            <span>Fee</span>
+                            <span title={selectedV2FeeLabel} className="font-mono tabular-nums text-slate-200">
+                              {selectedV2FeeLabel}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    )}
-                    {!poolSupportsActions && (
-                      <div className="text-[11px] text-amber-200 mt-1">
-                        Interaction disabled: missing on-chain address for at least one token.
-                      </div>
-                    )}
-                    {pairError && (
-                      <div className="text-[11px] text-amber-200 mt-1">
-                        {pairError}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="relative" ref={v2DepositMenuRef}>
-                      <button
-                        type="button"
-                        onClick={() => setV2DepositMenuOpen((prev) => !prev)}
-                        className="h-8 w-8 rounded-full border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-slate-500 inline-flex items-center justify-center"
-                        aria-haspopup="menu"
-                        aria-expanded={v2DepositMenuOpen}
-                        aria-label="Open pool details"
-                      >
-                        <svg
-                          viewBox="0 0 20 20"
-                          fill="none"
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-4 w-4 text-slate-300"
-                        >
-                          <circle cx="4" cy="10" r="1.5" fill="currentColor" />
-                          <circle cx="10" cy="10" r="1.5" fill="currentColor" />
-                          <circle cx="16" cy="10" r="1.5" fill="currentColor" />
-                        </svg>
-                      </button>
-                      {v2DepositMenuOpen && (
-                        <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
-                          {[
-                            {
-                              id: "token0",
-                              label: token0Meta?.symbol || selectedPool?.token0Symbol,
-                              address: token0Address,
-                            },
-                            {
-                              id: "token1",
-                              label: token1Meta?.symbol || selectedPool?.token1Symbol,
-                              address: token1Address,
-                            },
-                            {
-                              id: "pool",
-                              label: "Pool",
-                              address:
-                                pairInfo?.pairAddress ||
-                                selectedPool?.pairAddress ||
-                                pairIdOverride ||
-                                "",
-                            },
-                          ].map((item) => {
-                            const hasAddress = Boolean(item.address);
-                            return (
-                              <div
-                                key={`v2-pool-${item.id}`}
-                                className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
-                              >
-                                <span className="font-semibold">{item.label || "--"}</span>
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => copyAddress(item.address)}
-                                    disabled={!hasAddress}
-                                    className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 disabled:opacity-40"
-                                    aria-label={`Copy ${item.label} address`}
-                                  >
-                                    {v3CopiedAddress === item.address ? (
-                                      <svg
-                                        viewBox="0 0 20 20"
-                                        fill="none"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        className="h-3.5 w-3.5 text-emerald-300 mx-auto"
-                                      >
-                                        <path
-                                          d="M5 11l3 3 7-7"
-                                          stroke="currentColor"
-                                          strokeWidth="1.6"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                      </svg>
-                                    ) : (
-                                      <svg
-                                        viewBox="0 0 20 20"
-                                        fill="none"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        className="h-3.5 w-3.5 mx-auto"
-                                      >
-                                        <path
-                                          d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.3"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                        <path
-                                          d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
-                                          stroke="currentColor"
-                                          strokeWidth="1.3"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                      </svg>
-                                    )}
-                                  </button>
-                                  {hasAddress ? (
-                                    <a
-                                      href={`${EXPLORER_BASE_URL}/address/${item.address}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 inline-flex items-center justify-center"
-                                      aria-label={`Open ${item.label} on explorer`}
-                                    >
-                                      <svg
-                                        viewBox="0 0 20 20"
-                                        fill="none"
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        className="h-3.5 w-3.5"
-                                      >
-                                        <path
-                                          d="M5 13l9-9m0 0h-5m5 0v5"
-                                          stroke="currentColor"
-                                          strokeWidth="1.5"
-                                          strokeLinecap="round"
-                                          strokeLinejoin="round"
-                                        />
-                                      </svg>
-                                    </a>
-                                  ) : (
-                                    <div className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-600 inline-flex items-center justify-center">
-                                      <span className="text-[10px]">--</span>
-                                    </div>
-                                  )}
+
+                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)] gap-3">
+                        <div className="rounded-md border border-[#1B2433] p-3">
+                          <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-slate-200">
+                            Position Overview
+                          </div>
+                          <div className="mt-2 space-y-2.5">
+                            <div className="rounded-md border border-[#1B2433] bg-[#0b111b] p-2.5">
+                              <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                                Position
+                              </div>
+                              <div className="mt-1.5 space-y-1.5 text-[12px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">Position Value</span>
+                                  <span title={selectedV2PositionValueLabel} className="font-mono tabular-nums text-slate-100">
+                                    {selectedV2PositionValueLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">Status</span>
+                                  <span className={`text-xs font-medium ${poolStatusColor}`}>{poolStatusLabel}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">Your Share</span>
+                                  <span title={selectedV2ShareLabel} className="font-mono tabular-nums text-slate-100">
+                                    {selectedV2ShareLabel}
+                                  </span>
                                 </div>
                               </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    {pairInfo?.pairAddress && (
-                      <a
-                        href={`${EXPLORER_BASE_URL}/address/${pairInfo.pairAddress}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-sky-400 hover:text-sky-300 underline"
-                      >
-                        View pair on {EXPLORER_LABEL}
-                      </a>
-                    )}
-                  </div>
-                </div>
+                            </div>
 
-                {poolSupportsActions && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                    {[
-                      {
-                        symbol: token0Meta?.symbol || selectedPool?.token0Symbol,
-                        balance: tokenBalances?.token0,
-                        logo: token0Meta?.logo,
-                      },
-                      {
-                        symbol: token1Meta?.symbol || selectedPool?.token1Symbol,
-                        balance: tokenBalances?.token1,
-                        logo: token1Meta?.logo,
-                      },
-                    ].map((t, idx) => (
-                      <div
-                        key={idx}
-                        className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-sky-900/40 border border-slate-800/80 px-4 py-3 flex items-center justify-between"
-                      >
-                        <div>
-                          <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                            Balance
+                            <div className="rounded-md border border-[#1B2433] bg-[#0b111b] p-2.5">
+                              <div className="text-[10px] uppercase tracking-[0.08em] text-slate-500">
+                                Earnings
+                              </div>
+                              <div className="mt-1.5 space-y-1.5 text-[11px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">Fees earned</span>
+                                  <span title={selectedV2FeesEarnedLabel} className="font-mono tabular-nums text-slate-200">
+                                    {selectedV2FeesEarnedLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">24h Fees</span>
+                                  <span title={selectedV2Fees24hLabel} className="font-mono tabular-nums text-slate-200">
+                                    {selectedV2Fees24hLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">24h Volume</span>
+                                  <span title={selectedV2Volume24hLabel} className="font-mono tabular-nums text-slate-200">
+                                    {selectedV2Volume24hLabel}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-slate-400">APR</span>
+                                  <span title={selectedV2AprLabel} className="font-mono tabular-nums text-slate-200">
+                                    {selectedV2AprLabel}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <details className="rounded-md border border-[#1B2433] bg-[#0b111b] p-2.5">
+                              <summary className="cursor-pointer text-[11px] font-medium text-slate-500 hover:text-slate-400">
+                                &#9662; Technical (for LP details)
+                              </summary>
+                              <div className="mt-2 space-y-1.5 text-[10px] text-slate-500">
+                                <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                                  <span>LP tokens</span>
+                                  <span title={selectedV2LpTokensLabel} className="font-mono tabular-nums text-right text-slate-400">
+                                    {selectedV2LpTokensLabel}
+                                  </span>
+                                </div>
+                                {pairInfo?.pairAddress && (
+                                  <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                                    <span>Pool address</span>
+                                    <span title={pairInfo.pairAddress} className="font-mono tabular-nums text-right text-slate-400">
+                                      {shortenAddress(pairInfo.pairAddress)}
+                                    </span>
+                                  </div>
+                                )}
+                                {(token0Address || token1Address) && (
+                                  <div className="grid grid-cols-[1fr_auto] items-start gap-2">
+                                    <span>Contract</span>
+                                    <span className="font-mono tabular-nums text-right text-slate-400 break-all">
+                                      {[token0Address && shortenAddress(token0Address), token1Address && shortenAddress(token1Address)]
+                                        .filter(Boolean)
+                                        .join(" / ")}
+                                    </span>
+                                  </div>
+                                )}
+                                {pairInfo?.pairAddress && (
+                                  <div className="pt-0.5">
+                                    <a
+                                      href={`${EXPLORER_BASE_URL}/address/${pairInfo.pairAddress}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[10px] text-slate-600 underline decoration-slate-700 hover:text-slate-400"
+                                    >
+                                      Explorer link
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </details>
                           </div>
-                          <div className="text-xl font-semibold text-slate-100 flex items-baseline gap-2">
-                            <span>
-                              {tokenBalanceLoading
-                                ? "Loading..."
-                                : formatTokenBalance(t.balance)}
-                            </span>
-                            <span className="text-sm text-slate-400">{t.symbol}</span>
+
+                          <div className="mt-2 space-y-1">
+                            {!selectedPool?.isActive && (
+                              <div className="text-[11px] text-amber-200">
+                                No live liquidity detected yet. Deposits here will seed the pool.
+                              </div>
+                            )}
+                            {!poolSupportsActions && (
+                              <div className="text-[11px] text-amber-200">
+                                Interaction disabled: missing on-chain address for at least one token.
+                              </div>
+                            )}
+                            {pairError && <div className="text-[11px] text-amber-200">{pairError}</div>}
+                            {tokenBalanceError && !pairMissing && (
+                              <div className="text-[11px] text-amber-200">
+                                Balances unavailable. Open your wallet and try again.
+                              </div>
+                            )}
                           </div>
                         </div>
-                        {t.logo && (
-                          <img
-                            src={t.logo}
-                            alt={`${t.symbol || "token"} logo`}
-                            className="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain shadow-lg shadow-black/30"
-                          />
-                        )}
-                        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_20%_20%,rgba(94,234,212,0.08),transparent_35%),radial-gradient(circle_at_80%_0%,rgba(14,165,233,0.08),transparent_35%)]" />
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {tokenBalanceError && !pairMissing && (
-                  <div className="text-[11px] text-amber-200 mb-3">
-                    Balances unavailable. Open your wallet and try again.
-                  </div>
-                )}
 
-                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <input
-                      name="v2-deposit-token0"
-                      value={depositToken0}
-                      onChange={(e) => {
-                        setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
-                        setDepositToken0(e.target.value);
-                        if (actionStatus) setActionStatus(null);
-                      }}
-                      placeholder={`${token0Meta?.symbol || "Token A"} amount`}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
-                    />
-                    <input
-                      name="v2-deposit-token1"
-                      value={depositToken1}
-                      onChange={(e) => {
-                        setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
-                        setDepositToken1(e.target.value);
-                        if (actionStatus) setActionStatus(null);
-                      }}
-                      placeholder={`${token1Meta?.symbol || "Token B"} amount`}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100"
-                    />
-                    <button
-                      disabled={actionLoading || !poolSupportsActions || pairBlockingError}
-                      onClick={handleDeposit}
-                      className="px-4 py-2.5 rounded-xl bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60 w-full md:w-auto"
-                    >
-                      {actionLoading
-                        ? "Processing..."
-                        : `Deposit ${getPoolLabel(selectedPool)}`}
-                    </button>
-                    <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      {[0.25, 0.5, 0.75, 1].map((pct) => (
-                        <button
-                          key={pct}
-                          type="button"
-                          disabled={!tokenBalances && !walletBalances}
-                          onClick={() => applyDepositRatio(pct)}
-                          className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
-                        >
-                          {Math.round(pct * 100)}%
-                        </button>
-                      ))}
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-500">Slippage %</span>
-                        <input
-                          name="v2-slippage"
-                          value={slippageInput}
-                          onChange={(e) => {
-                            setSlippageInput(e.target.value);
-                            setSlippageMode("custom");
-                          }}
-                          className="w-20 px-2 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-100"
-                          placeholder="0.5"
-                        />
+                        <div className="space-y-3">
+                          <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-slate-200">
+                            Actions
+                          </div>
+                          <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
+                          <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-slate-200">
+                            Add Liquidity
+                          </div>
+                          <div className="mt-2 space-y-1.5">
+                            <div className="grid grid-cols-[auto,1fr] items-center gap-2">
+                              <span className="text-[11px] text-slate-400">{deskToken0Symbol}</span>
+                              <input
+                                name="v2-deposit-token0"
+                                value={depositToken0}
+                                onChange={(e) => {
+                                  setLastEdited(token0Meta?.symbol || selectedPool?.token0Symbol);
+                                  setDepositToken0(e.target.value);
+                                  if (actionStatus) setActionStatus(null);
+                                }}
+                                placeholder="0.0000"
+                                className="h-8 rounded-md border border-[#1B2433] bg-[#0b111b] px-2.5 text-[13px] text-slate-100 font-mono tabular-nums"
+                              />
+                            </div>
+                            <div className="grid grid-cols-[auto,1fr] items-center gap-2">
+                              <span className="text-[11px] text-slate-400">{deskToken1Symbol}</span>
+                              <input
+                                name="v2-deposit-token1"
+                                value={depositToken1}
+                                onChange={(e) => {
+                                  setLastEdited(token1Meta?.symbol || selectedPool?.token1Symbol);
+                                  setDepositToken1(e.target.value);
+                                  if (actionStatus) setActionStatus(null);
+                                }}
+                                placeholder="0.0000"
+                                className="h-8 rounded-md border border-[#1B2433] bg-[#0b111b] px-2.5 text-[13px] text-slate-100 font-mono tabular-nums"
+                              />
+                            </div>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400">
+                            {[0.25, 0.5, 0.75, 1].map((pct) => (
+                              <button
+                                key={pct}
+                                type="button"
+                                disabled={!tokenBalances && !walletBalances}
+                                onClick={() => applyDepositRatio(pct)}
+                                className="rounded-md border border-[#1B2433] bg-[#0b111b] px-2 py-0.5 text-[10px] text-slate-200 disabled:opacity-50"
+                              >
+                                {Math.round(pct * 100)}%
+                              </button>
+                            ))}
+                            <span className="ml-1 text-slate-500">Slippage</span>
+                            <input
+                              name="v2-slippage"
+                              value={slippageInput}
+                              onChange={(e) => {
+                                setSlippageInput(e.target.value);
+                                setSlippageMode("custom");
+                              }}
+                              className="h-6 w-14 rounded-md border border-[#1B2433] bg-[#0b111b] px-2 text-[10px] text-slate-100 font-mono tabular-nums"
+                              placeholder="0.5"
+                            />
+                            <span>%</span>
+                          </div>
+                          <div className="mt-2 rounded-md border border-[#273244] bg-[#0b111b] px-2 py-1.5 text-[11px]">
+                            <div className="text-[10px] uppercase tracking-[0.08em] text-slate-300">Preview</div>
+                            <div className="mt-1 flex items-center justify-between">
+                              <span className="text-slate-300">You will receive</span>
+                              <span className="text-[13px] font-semibold font-mono tabular-nums text-white">
+                                {v2DepositPreview?.mintedLpLabel ?? "--"} LP
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex items-center justify-between">
+                              <span className="text-slate-300">New pool share</span>
+                              <span className="text-[13px] font-semibold font-mono tabular-nums text-white">
+                                {v2DepositPreview?.nextShareLabel ?? "--"}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            disabled={actionLoading || !poolSupportsActions || pairBlockingError}
+                            onClick={handleDeposit}
+                            className="mt-2.5 h-8 rounded-md border border-sky-500/40 bg-sky-600 px-3 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-60"
+                          >
+                            {actionLoading ? "Processing..." : "Add Liquidity"}
+                          </button>
+                        </div>
+
+                        <div className="rounded-md border border-rose-500/30 bg-rose-500/[0.03] p-3">
+                          <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-slate-200">
+                            Remove Liquidity
+                          </div>
+                          <div className="mt-2 grid grid-cols-[auto,1fr] items-center gap-2">
+                            <span className="text-[11px] text-slate-400">LP Tokens</span>
+                            <div className="h-8 rounded-md border border-rose-500/25 bg-[#0b111b] px-2.5 text-[13px] font-mono tabular-nums text-slate-100 flex items-center justify-end">
+                              {withdrawLp ? formatTokenFixed(withdrawLp, 6) : "--"}
+                            </div>
+                          </div>
+                          <div className="mt-2 text-[12px]">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-400">Remove %</span>
+                              <span className="text-[14px] font-semibold font-mono tabular-nums text-slate-100">
+                                {v2WithdrawPct.toFixed(2)}%
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="100"
+                              step="0.1"
+                              value={Number.isFinite(v2WithdrawPct) ? v2WithdrawPct : 0}
+                              onChange={(e) => applyWithdrawRatio(Number(e.target.value) / 100)}
+                              disabled={!hasLpBalance}
+                              className="mt-2 w-full accent-rose-300 disabled:opacity-50 [&::-webkit-slider-runnable-track]:h-2.5 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-rose-200/25 [&::-moz-range-track]:h-2.5 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-rose-200/25 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-rose-200/80 [&::-webkit-slider-thumb]:bg-rose-100 [&::-webkit-slider-thumb]:-mt-[3px] [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-rose-200/80 [&::-moz-range-thumb]:bg-rose-100"
+                            />
+                          </div>
+                          <div className="mt-2 rounded-md border border-rose-500/20 bg-[#0b111b] px-2 py-1.5 text-[11px]">
+                            <div className="text-slate-300">You will receive</div>
+                            <div className="mt-0.5 flex items-center justify-between">
+                              <span className="text-slate-400">{deskToken0Symbol}</span>
+                              <span className="text-[14px] font-semibold font-mono tabular-nums text-white">
+                                {v2WithdrawPreview?.token0OutLabel ?? "--"}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex items-center justify-between">
+                              <span className="text-slate-400">{deskToken1Symbol}</span>
+                              <span className="text-[14px] font-semibold font-mono tabular-nums text-white">
+                                {v2WithdrawPreview?.token1OutLabel ?? "--"}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 border-t border-rose-500/20 pt-1.5 flex items-center justify-between">
+                              <span className="text-slate-400">Est. Value (USD)</span>
+                              <span title={v2WithdrawPreviewUsdLabel} className="text-[14px] font-semibold font-mono tabular-nums text-white">
+                                {v2WithdrawPreviewUsdLabel}
+                              </span>
+                            </div>
+                          </div>
+                          {pairMissing ? (
+                            <div className="mt-2 text-[11px] text-slate-400">
+                              Pool not deployed yet. Your first deposit will create it.
+                            </div>
+                          ) : lpBalanceError ? (
+                            <div className="mt-2 text-[11px] text-rose-300">{lpBalanceError}</div>
+                          ) : !hasLpBalance ? (
+                            <div className="mt-2 text-[11px] text-slate-400">
+                              You need LP tokens in this pool before withdrawing.
+                            </div>
+                          ) : null}
+                          {lpBalance !== null && (
+                            <div className="mt-2 text-[11px] text-slate-400">
+                              LP balance: <span className="font-mono tabular-nums">{lpBalance.toFixed(8)}</span>
+                            </div>
+                          )}
+                          <button
+                            disabled={
+                              actionLoading ||
+                              !poolSupportsActions ||
+                              pairBlockingError ||
+                              !hasLpBalance
+                            }
+                            onClick={handleWithdraw}
+                            className="mt-2.5 h-8 rounded-md border border-slate-500/60 bg-transparent px-3 text-xs font-medium text-slate-100 hover:border-slate-300/70 hover:bg-slate-800/40 disabled:opacity-60"
+                          >
+                            {actionLoading ? "Processing..." : "Remove Liquidity"}
+                          </button>
+                        </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                  <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <input
-                      name="v2-withdraw-lp"
-                      value={withdrawLp}
-                      onChange={(e) => {
-                        setWithdrawLp(e.target.value);
-                        if (actionStatus) setActionStatus(null);
-                      }}
-                      disabled={!hasLpBalance}
-                      placeholder={hasLpBalance ? "LP tokens" : "No LP to withdraw"}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50"
-                    />
-                    {lpBalance !== null && (
-                      <div className="text-xs text-slate-400 self-center">
-                        LP balance: {lpBalance.toFixed(8)}{" "}
-                        <button
-                          type="button"
-                          className="text-sky-400 hover:text-sky-300 underline ml-1 disabled:opacity-50"
-                          onClick={() => setLpRefreshTick((t) => t + 1)}
-                          disabled={actionLoading}
-                        >
-                          Refresh
-                        </button>
-                      </div>
-                    )}
-                    {pairMissing ? (
-                      <div className="text-xs text-slate-400 self-center">
-                        Pool not deployed yet. Your first deposit will create it.
-                      </div>
-                    ) : lpBalanceError ? (
-                      <div className="text-xs text-rose-300 self-center">
-                        {lpBalanceError}
-                      </div>
-                    ) : !hasLpBalance ? (
-                      <div className="text-xs text-slate-400 self-center">
-                        You need LP tokens in this pool before withdrawing.
-                      </div>
-                    ) : null}
-                    <button
-                      disabled={
-                        actionLoading ||
-                        !poolSupportsActions ||
-                        pairBlockingError ||
-                        !hasLpBalance
-                      }
-                      onClick={handleWithdraw}
-                      className="px-4 py-2.5 rounded-xl bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30 disabled:opacity-60 w-full md:w-auto"
-                    >
-                      {actionLoading
-                        ? "Processing..."
-                        : `Withdraw ${getPoolLabel(selectedPool)}`}
-                    </button>
-                    <div className="md:col-span-3 flex flex-wrap items-center gap-2 text-xs text-slate-400">
-                      {[0.25, 0.5, 0.75, 1].map((pct) => (
-                        <button
-                          key={pct}
-                          type="button"
-                          disabled={!hasLpBalance}
-                          onClick={() => applyWithdrawRatio(pct)}
-                          className="px-3 py-1.5 rounded-full border border-slate-800 bg-slate-900 text-slate-100 disabled:opacity-50"
-                        >
-                          {Math.round(pct * 100)}%
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                    </>
+                  );
+                })()}
                 <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-300">
                   {depositQuoteError && (
                     <div className="px-2 py-1.5 rounded border border-rose-500/30 bg-transparent text-rose-200">
@@ -7015,10 +7244,14 @@ export default function LiquiditySection({
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          {hasBothLiquidityViews && (
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3">
-              <div className="text-sm font-semibold text-slate-100">Liquidity View</div>
-              <div className="flex items-center gap-1 rounded-full bg-slate-950/70 border border-slate-800 p-1 text-xs">
+          <div>
+            <div className="text-xl font-semibold text-slate-100">Liquidity</div>
+            <div className="text-sm text-slate-400">Manage your liquidity positions</div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-2">
+            <div className="flex items-center gap-5 text-sm">
+              {showV2 && (
                 <button
                   type="button"
                   onClick={() => {
@@ -7029,60 +7262,67 @@ export default function LiquiditySection({
                       setPairSelectorOpen(false);
                     }
                   }}
-                  className={`px-3 py-1.5 rounded-full transition ${
+                  className={`inline-flex border-b pb-2 text-sm font-medium transition-colors ${
                     isV2View
-                      ? "bg-sky-500/20 text-sky-200"
-                      : "text-slate-400 hover:text-slate-100"
+                      ? "border-slate-300/70 text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-200"
                   }`}
                   aria-pressed={isV2View}
                 >
                   V2 Liquidity
                 </button>
+              )}
+              {showV3 && (
                 <button
                   type="button"
                   onClick={() => setLiquidityView("v3")}
-                  className={`px-3 py-1.5 rounded-full transition ${
+                  className={`inline-flex border-b pb-2 text-sm font-medium transition-colors ${
                     isV3View
-                      ? "bg-emerald-500/20 text-emerald-200"
-                      : "text-slate-400 hover:text-slate-100"
+                      ? "border-slate-300/70 text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-200"
                   }`}
                   aria-pressed={isV3View}
                 >
                   V3 Positions
                 </button>
-              </div>
+              )}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={handleAddLiquidityAction}
+              disabled={isV3View && !hasV3Liquidity}
+              className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800/90 active:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              + Add Liquidity
+            </button>
+          </div>
           {isV3View && (
             <div
               id="v3-add-liquidity"
-              className="bg-[#050816] border border-slate-800/80 rounded-3xl shadow-xl shadow-black/40"
+              className="bg-[#080d16] border border-[#1B2433] rounded-md"
             >
-            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 px-4 sm:px-6 py-4 border-b border-slate-800/70">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 px-4 sm:px-5 py-3 border-b border-[#1B2433]">
               <div>
-                <div className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-                  Add Liquidity
-                  <span className="px-2 py-0.5 rounded-full text-[10px] border border-emerald-400/40 bg-emerald-500/10 text-emerald-200">
-                    V3
-                  </span>
+                <div className="text-[11px] uppercase tracking-[0.12em] text-[#C7D2E0]">
+                  New Position
                 </div>
-                <div className="text-xs text-slate-500">
-                  Create a concentrated position with custom price ranges.
+                <div className="mt-1 text-[12px] uppercase tracking-[0.08em] text-[#C7D2E0]/85">
+                  {v3Token0} / {v3Token1} - {formatFeeTier(v3FeeTier)}
                 </div>
               </div>
               {!hasV3Liquidity && (
-                <div className="text-xs text-amber-200">
+                <div className="text-[11px] text-amber-200/90">
                   V3 contracts not configured on this network.
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr),minmax(0,0.85fr)] gap-4 px-4 sm:px-6 py-4">
-              <div className="flex flex-col gap-4 h-full">
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr),minmax(0,0.6fr)]">
+              <div className="flex flex-col gap-3 h-full px-4 sm:px-5 py-4 border-b xl:border-b-0 xl:border-r border-[#1B2433]">
+                <div className="rounded-md border border-[#1B2433] bg-[#0b111b] p-3">
                 <div className="flex items-center justify-between mb-3">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                    Add Position
+                  <div className="text-[11px] uppercase tracking-[0.12em] text-[#C7D2E0]/90">
+                    New Position
                   </div>
                   <div className="relative" ref={v3AddMenuRef}>
                     <button
@@ -7105,7 +7345,7 @@ export default function LiquiditySection({
                       </svg>
                     </button>
                     {v3AddMenuOpen && (
-                      <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
+                      <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
                         {[
                           {
                             id: "token0",
@@ -7127,7 +7367,7 @@ export default function LiquiditySection({
                           return (
                             <div
                               key={`v3-add-${item.id}`}
-                              className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
+                              className="flex items-center justify-between gap-2 rounded-md px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
                             >
                               <span className="font-semibold">{item.label}</span>
                               <div className="flex items-center gap-2">
@@ -7224,7 +7464,7 @@ export default function LiquiditySection({
                           setV3Token1Open(false);
                           setV3Token0Search("");
                         }}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
+                        className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
                         aria-haspopup="listbox"
                         aria-expanded={v3Token0Open}
                       >
@@ -7258,7 +7498,7 @@ export default function LiquiditySection({
                         </svg>
                       </button>
                       {v3Token0Open && (
-                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-md bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
                           <div className="sticky top-0 z-10 bg-slate-900/95 border-b border-slate-800 px-3 py-2">
                             <div className="flex items-center gap-2 bg-slate-950/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300">
                               <svg
@@ -7347,7 +7587,7 @@ export default function LiquiditySection({
                           setV3Token0Open(false);
                           setV3Token1Search("");
                         }}
-                        className="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
+                        className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
                         aria-haspopup="listbox"
                         aria-expanded={v3Token1Open}
                       >
@@ -7381,7 +7621,7 @@ export default function LiquiditySection({
                         </svg>
                       </button>
                       {v3Token1Open && (
-                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
+                        <div className="absolute z-20 mt-2 w-full max-h-64 overflow-y-auto rounded-md bg-slate-900 border border-slate-800 shadow-2xl shadow-black/40">
                           <div className="sticky top-0 z-10 bg-slate-900/95 border-b border-slate-800 px-3 py-2">
                             <div className="flex items-center gap-2 bg-slate-950/70 border border-slate-800 rounded-full px-3 py-2 text-xs text-slate-300">
                               <svg
@@ -7472,7 +7712,7 @@ export default function LiquiditySection({
                         v3FeeTierLockedRef.current = true;
                         setV3FeeTier(Number(e.target.value));
                       }}
-                      className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-100"
+                      className="bg-transparent border-0 border-b border-[#1B2433] rounded-none px-0 py-2 text-sm text-[#C7D2E0] focus:outline-none"
                     >
                       {V3_FEE_OPTIONS.map((opt) => (
                         <option key={`fee-${opt.fee}`} value={opt.fee}>
@@ -7481,9 +7721,9 @@ export default function LiquiditySection({
                       ))}
                     </select>
                   </div>
-                  <div className="flex flex-col gap-2">
-                    <span className="text-xs text-slate-400">Set price range</span>
-                    <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950/70 p-1">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 border-b border-[#1B2433] pb-1 text-xs text-slate-400">
+                      <span>Range:</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -7493,14 +7733,15 @@ export default function LiquiditySection({
                           setV3RangeInitialized(true);
                           setV3StrategyId("full");
                         }}
-                        className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        className={`px-1 pb-1 text-xs font-medium transition-colors border-b ${
                           v3RangeMode === "full"
-                            ? "bg-slate-200 text-slate-900 shadow"
-                            : "text-slate-300 hover:text-slate-100"
+                            ? "border-slate-300/80 text-slate-100"
+                            : "border-transparent text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        Full range
+                        Full
                       </button>
+                      <span className="text-slate-600">|</span>
                       <button
                         type="button"
                         onClick={() => {
@@ -7509,25 +7750,20 @@ export default function LiquiditySection({
                             applyV3DefaultRange();
                           }
                         }}
-                        className={`flex-1 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        className={`px-1 pb-1 text-xs font-medium transition-colors border-b ${
                           v3RangeMode === "custom"
-                            ? "bg-slate-200 text-slate-900 shadow"
-                            : "text-slate-300 hover:text-slate-100"
+                            ? "border-slate-300/80 text-slate-100"
+                            : "border-transparent text-slate-400 hover:text-slate-200"
                         }`}
                       >
-                        Custom range
+                        Custom
                       </button>
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      {v3RangeMode === "custom"
-                        ? "Custom range allows you to concentrate your liquidity within specific price bounds, enhancing fee earnings but requiring active management."
-                        : "Full range spreads liquidity across all prices for a hands-off position with lower capital efficiency."}
                     </div>
                   </div>
                 </div>
 
                 {v3PoolRequiresInit && (
-                  <div className="mb-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+                  <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3">
                     <div className="text-[11px] uppercase tracking-wide text-amber-200">
                       {v3PoolMissing ? "Pool creation required" : "Pool initialization required"}
                     </div>
@@ -7558,16 +7794,16 @@ export default function LiquiditySection({
                         value={v3StartPrice}
                         onChange={(e) => setV3StartPrice(e.target.value)}
                         placeholder="0.0"
-                        className="bg-slate-900 border border-amber-500/30 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder:text-amber-200/40"
+                        className="bg-slate-900 border border-amber-500/30 rounded-md px-3 py-2 text-sm text-slate-100 placeholder:text-amber-200/40"
                       />
                     </div>
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Min price</span>
+                      <span>Min Price</span>
                       <span>{v3Token1} per {v3Token0}</span>
                     </div>
                     <div className="relative">
@@ -7581,14 +7817,14 @@ export default function LiquiditySection({
                         }}
                         disabled={v3RangeMode === "full"}
                         placeholder="0.0"
-                        className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 pr-12 text-sm text-slate-100 disabled:opacity-60"
+                        className="w-full bg-transparent border-0 border-b border-[#1B2433] rounded-none px-0 py-1.5 pr-10 text-sm text-slate-100 font-mono tabular-nums disabled:opacity-60"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("lower", 1)}
                           disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                          className="h-4 w-5 text-[10px] text-slate-300 hover:text-slate-100 disabled:opacity-50"
                         >
                           +
                         </button>
@@ -7596,7 +7832,7 @@ export default function LiquiditySection({
                           type="button"
                           onClick={() => adjustV3RangeValue("lower", -1)}
                           disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                          className="h-4 w-5 text-[10px] text-slate-300 hover:text-slate-100 disabled:opacity-50"
                         >
                           -
                         </button>
@@ -7605,7 +7841,7 @@ export default function LiquiditySection({
                   </div>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Max price</span>
+                      <span>Max Price</span>
                       <span>{v3Token1} per {v3Token0}</span>
                     </div>
                     <div className="relative">
@@ -7619,14 +7855,14 @@ export default function LiquiditySection({
                         }}
                         disabled={v3RangeMode === "full"}
                         placeholder="0.0"
-                        className="bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 pr-12 text-sm text-slate-100 disabled:opacity-60"
+                        className="w-full bg-transparent border-0 border-b border-[#1B2433] rounded-none px-0 py-1.5 pr-10 text-sm text-slate-100 font-mono tabular-nums disabled:opacity-60"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
                         <button
                           type="button"
                           onClick={() => adjustV3RangeValue("upper", 1)}
                           disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                          className="h-4 w-5 text-[10px] text-slate-300 hover:text-slate-100 disabled:opacity-50"
                         >
                           +
                         </button>
@@ -7634,7 +7870,7 @@ export default function LiquiditySection({
                           type="button"
                           onClick={() => adjustV3RangeValue("upper", -1)}
                           disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                          className="h-5 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
+                          className="h-4 w-5 text-[10px] text-slate-300 hover:text-slate-100 disabled:opacity-50"
                         >
                           -
                         </button>
@@ -7642,17 +7878,16 @@ export default function LiquiditySection({
                     </div>
                   </div>
                 </div>
-
-                <div className="rounded-3xl border border-slate-800 bg-slate-950/60 px-5 pt-5 pb-6 mb-6">
-                  <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div className="rounded-md border border-[#1B2433] bg-[#0b111b] px-3.5 pt-3 pb-3 mb-3">
+                  <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                     <div className="min-w-0">
-                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500">
                         Current price
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-2 text-lg font-semibold text-slate-100">
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-[17px] font-medium text-slate-100 font-mono tabular-nums">
                         <span className="truncate">{v3PriceStatus}</span>
                         {v3ReferencePriceUsd !== null && (
-                          <span className="text-sm text-slate-400">
+                          <span className="text-sm text-slate-400 font-mono tabular-nums">
                             ({formatUsdPrice(v3ReferencePriceUsd)})
                           </span>
                         )}
@@ -7666,8 +7901,8 @@ export default function LiquiditySection({
                       )}
                     </div>
                       <div className="flex items-center gap-2">
-                        <div className="flex items-center rounded-full border border-slate-700/60 bg-slate-900/80 p-1 text-[11px] text-slate-100 shadow-[0_8px_20px_rgba(0,0,0,0.45)]">
-                          <div className="flex items-center gap-1 rounded-full bg-slate-800/90 px-2 py-1 text-[11px] font-semibold text-slate-100">
+                        <div className="flex items-center rounded-md border border-[#1B2433] bg-[#0f1624] px-2 py-1 text-[11px] text-slate-100">
+                          <div className="flex items-center gap-1 text-[11px] font-medium text-slate-100">
                             {v3Token1Meta?.logo ? (
                               <img
                               src={v3Token1Meta.logo}
@@ -7681,7 +7916,7 @@ export default function LiquiditySection({
                           )}
                           <span>{v3Token1}</span>
                         </div>
-                        <div className="flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold text-slate-300">
+                        <div className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-slate-300">
                           {v3Token0Meta?.logo ? (
                             <img
                               src={v3Token0Meta.logo}
@@ -7701,7 +7936,7 @@ export default function LiquiditySection({
                           <button
                             type="button"
                             onClick={() => setV3ChartMenuOpen((v) => !v)}
-                            className="flex items-center gap-2 rounded-full border border-slate-700/60 bg-slate-900/80 px-3 py-1.5 text-[10px] uppercase tracking-[0.12em] text-slate-200 shadow-[0_10px_24px_rgba(0,0,0,0.45)]"
+                            className="flex items-center gap-2 rounded-md border border-[#1B2433] bg-[#0f1624] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-slate-200"
                           >
                             {v3ChartMode.replace("-", " ")}
                             <svg
@@ -7720,7 +7955,7 @@ export default function LiquiditySection({
                             </svg>
                           </button>
                           <div
-                            className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-1 text-[9px] text-slate-200 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right z-50 ${
+                            className={`absolute top-full right-0 mt-2 w-32 max-h-28 overflow-y-auto rounded-md border border-[#1B2433] bg-[#0b111b] p-1 text-[9px] text-slate-200 transition-all duration-200 origin-top-right z-50 ${
                               v3ChartMenuOpen
                                 ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
                                 : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
@@ -7742,8 +7977,8 @@ export default function LiquiditySection({
                                 }}
                                 className={`w-full rounded-md px-2 py-1 text-left uppercase tracking-[0.08em] ${
                                   v3ChartMode === opt.id
-                                    ? "bg-sky-500/20 text-sky-100"
-                                    : "hover:bg-slate-800/70"
+                                    ? "bg-slate-800/70 text-slate-100"
+                                    : "hover:bg-slate-800/60"
                                 }`}
                               >
                                 {opt.label}
@@ -7757,25 +7992,11 @@ export default function LiquiditySection({
 
                   <div className="relative">
                     <div
-                      className={`relative h-64 rounded-3xl border border-slate-800 overflow-hidden ${
-                        showV3MetricChart ? "bg-[#050b16]" : "bg-[#0f0707]"
+                      className={`relative h-60 rounded-md border border-[#1B2433] overflow-hidden ${
+                        showV3MetricChart ? "bg-[#0B111B]" : "bg-[#0B111B]"
                       }`}
                     >
-                      {showV3PriceRangeChart ? (
-                        <>
-                          <div className="absolute inset-0 bg-[#1b1b1b]" />
-                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_0%,rgba(255,255,255,0.06),transparent_45%),radial-gradient(circle_at_85%_65%,rgba(255,255,255,0.04),transparent_55%)]" />
-                          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),transparent_42%)]" />
-                        </>
-                      ) : showV3MetricChart ? (
-                        <>
-                          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(56,189,248,0.25),transparent_55%),radial-gradient(circle_at_80%_0%,rgba(16,185,129,0.18),transparent_50%)]" />
-                          <div className="absolute inset-0 bg-[repeating-linear-gradient(90deg,rgba(15,23,42,0.9)_0px,rgba(15,23,42,0.9)_40px,rgba(56,189,248,0.12)_40px,rgba(56,189,248,0.12)_42px)] opacity-70" />
-                          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/55" />
-                        </>
-                      ) : (
-                        <div className="absolute inset-0 bg-gradient-to-b from-slate-900/40 via-slate-950/70 to-black/60" />
-                      )}
+                      <div className="absolute inset-0 bg-[#0B111B]" />
 
                       {showV3PriceRangeChart ? (
                         v3Chart ? (
@@ -7832,7 +8053,7 @@ export default function LiquiditySection({
                               }}
                             >
                               <div
-                                className={`absolute left-0 right-5 rounded-md border border-sky-200/30 bg-[linear-gradient(180deg,rgba(14,165,233,0.35)_0%,rgba(30,64,175,0.65)_100%)] shadow-[0_0_24px_rgba(56,189,248,0.22)] ${v3RangeTransition} z-10`}
+                                className={`absolute left-0 right-4 rounded-sm border border-slate-300/20 bg-slate-300/10 ${v3RangeTransition} z-10`}
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -7848,8 +8069,8 @@ export default function LiquiditySection({
                                   <path
                                     d={v3PriceRangeChartDisplay.line}
                                     fill="none"
-                                    stroke="rgba(226,232,240,0.65)"
-                                    strokeWidth="0.7"
+                                    stroke="rgba(203,213,225,0.72)"
+                                    strokeWidth="1.5"
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                   />
@@ -7873,8 +8094,8 @@ export default function LiquiditySection({
                                           <path
                                             d={highlight}
                                             fill="none"
-                                            stroke="#38bdf8"
-                                            strokeWidth="1.4"
+                                            stroke="#cbd5e1"
+                                            strokeWidth="1.5"
                                             strokeLinecap="round"
                                             strokeLinejoin="round"
                                           />
@@ -7883,10 +8104,8 @@ export default function LiquiditySection({
                                           <circle
                                             cx={last.x}
                                             cy={last.y}
-                                            r="2.4"
-                                            fill="#38bdf8"
-                                            stroke="#e0f2fe"
-                                            strokeWidth="0.9"
+                                            r="1.8"
+                                            fill="#cbd5e1"
                                           />
                                         ) : null}
                                       </>
@@ -7894,9 +8113,24 @@ export default function LiquiditySection({
                                   })()}
                                 </svg>
                               ) : null}
-                              <div className="absolute right-1 top-3 bottom-3 w-3 rounded-full bg-slate-800/80 shadow-inner" />
+                              <div className="absolute right-1 top-3 bottom-3 w-[2px] bg-slate-600/70" />
                               <div
-                                className="absolute right-1 w-3 rounded-full bg-[linear-gradient(180deg,#38bdf8_0%,#0ea5e9_55%,#1d4ed8_100%)] shadow-[0_0_18px_rgba(56,189,248,0.45)] z-30"
+                                className={`absolute left-0 right-4 z-10 pointer-events-none rounded-sm ${v3RangeTransition} ${
+                                  v3RangeIsInChart
+                                    ? "bg-emerald-400/[0.10] shadow-[inset_0_0_18px_rgba(16,185,129,0.22)]"
+                                    : "bg-rose-400/[0.10] shadow-[inset_0_0_18px_rgba(244,63,94,0.20)]"
+                                }`}
+                                style={{
+                                  top: `${100 - v3Chart.rangeEnd}%`,
+                                  height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
+                                }}
+                              />
+                              <div
+                                className={`absolute right-1 w-[2px] z-30 ${
+                                  v3RangeIsInChart
+                                    ? "bg-emerald-300/90 shadow-[0_0_8px_rgba(52,211,153,0.45)]"
+                                    : "bg-rose-300/90 shadow-[0_0_8px_rgba(251,113,133,0.45)]"
+                                }`}
                                 style={{
                                   top: `${100 - v3Chart.rangeEnd}%`,
                                   height: `${Math.max(6, v3Chart.rangeEnd - v3Chart.rangeStart)}%`,
@@ -7904,7 +8138,11 @@ export default function LiquiditySection({
                               />
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className="absolute right-1 w-4 h-1.5 rounded-full bg-white/90 shadow-[0_0_8px_rgba(255,255,255,0.6)] z-40"
+                                  className={`absolute right-1 w-4 h-[3px] z-40 ${
+                                    v3RangeIsInChart
+                                      ? "bg-emerald-100 shadow-[0_0_8px_rgba(52,211,153,0.45)]"
+                                      : "bg-rose-100 shadow-[0_0_8px_rgba(251,113,133,0.45)]"
+                                  }`}
                                   style={{
                                     top: `${100 - v3Chart.currentPct}%`,
                                     transform: "translateY(-50%)",
@@ -7913,17 +8151,21 @@ export default function LiquiditySection({
                               )}
                               {v3Chart.currentPct !== null && (
                                 <div
-                                  className={`absolute left-0 right-5 h-px border-t border-dotted border-slate-200/50 ${v3RangeLineTransition} z-30`}
+                                  className={`absolute left-0 right-4 h-[2px] ${v3RangeLineTransition} z-30 ${
+                                    v3RangeIsInChart
+                                      ? "bg-emerald-300/75 shadow-[0_0_8px_rgba(52,211,153,0.30)]"
+                                      : "bg-rose-300/75 shadow-[0_0_8px_rgba(251,113,133,0.30)]"
+                                  }`}
                                   style={{ top: `${100 - v3Chart.currentPct}%` }}
                                 />
                               )}
 
                               <div
-                                className={`absolute left-0 right-5 h-px bg-sky-200/70 ${v3RangeLineTransition} z-20`}
+                                className={`absolute left-0 right-4 h-px bg-slate-300/60 ${v3RangeLineTransition} z-20`}
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               />
                               <div
-                                className={`absolute left-0 right-5 h-px bg-sky-200/70 ${v3RangeLineTransition} z-20`}
+                                className={`absolute left-0 right-4 h-px bg-slate-300/60 ${v3RangeLineTransition} z-20`}
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               />
 
@@ -7934,10 +8176,10 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("lower");
                                 }}
-                                className={`absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize ${v3RangeLineTransition} z-40`}
+                                className={`absolute right-[1px] h-3 w-3 -translate-y-1/2 rounded-full border border-slate-200 bg-[#0b111b] touch-none cursor-ns-resize transition-transform duration-150 hover:scale-110 ${v3RangeLineTransition} z-40`}
                                 style={{ top: `${100 - v3Chart.rangeStart}%` }}
                               >
-                                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />
+                                <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-100" />
                               </button>
                               <button
                                 type="button"
@@ -7946,17 +8188,17 @@ export default function LiquiditySection({
                                   event.preventDefault();
                                   setV3DraggingHandle("upper");
                                 }}
-                                className={`absolute right-1 h-4 w-4 -translate-y-1/2 rounded-full border border-white bg-white shadow-[0_0_10px_rgba(56,189,248,0.45)] touch-none cursor-ns-resize ${v3RangeLineTransition} z-40`}
+                                className={`absolute right-[1px] h-3 w-3 -translate-y-1/2 rounded-full border border-slate-200 bg-[#0b111b] touch-none cursor-ns-resize transition-transform duration-150 hover:scale-110 ${v3RangeLineTransition} z-40`}
                                 style={{ top: `${100 - v3Chart.rangeEnd}%` }}
                               >
-                                <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-500" />
+                                <span className="absolute left-1/2 top-1/2 h-1 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-100" />
                               </button>
 
                               {/* Prices moved to the card below */}
                             </div>
                             <div className="absolute left-5 right-5 bottom-7 h-px bg-slate-700/70 z-30" />
                             {v3PriceAxisTicks.length ? (
-                              <div className="absolute left-5 right-5 bottom-3 text-[11px] leading-none text-slate-300 drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)] pointer-events-none z-30">
+                              <div className="absolute left-5 right-5 bottom-3 text-[11px] leading-none text-slate-300 font-mono tabular-nums pointer-events-none z-30">
                                 {v3PriceAxisTicks.map((tick) => {
                                   const align =
                                     tick.pct <= 3 ? "left" : tick.pct >= 97 ? "right" : "center";
@@ -8008,7 +8250,7 @@ export default function LiquiditySection({
                                   d={v3MetricChart.line}
                                   fill="none"
                                   stroke={v3MetricPalette.stroke}
-                                  strokeWidth="2"
+                                  strokeWidth="1.5"
                                   strokeLinecap="round"
                                   strokeLinejoin="round"
                                 />
@@ -8016,10 +8258,10 @@ export default function LiquiditySection({
                                   <circle
                                     cx={v3MetricChart.points[v3MetricChart.points.length - 1].x}
                                     cy={v3MetricChart.points[v3MetricChart.points.length - 1].y}
-                                    r="2.2"
+                                    r="1.8"
                                     fill={v3MetricPalette.stroke}
                                     stroke={v3MetricPalette.glow}
-                                    strokeWidth="1.2"
+                                    strokeWidth="0.6"
                                   />
                                 ) : null}
                               </svg>
@@ -8027,7 +8269,7 @@ export default function LiquiditySection({
                                 <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
                                   {v3MetricLabel}
                                 </div>
-                                <div className="text-sm font-semibold text-slate-100">
+                                <div className="text-sm font-medium text-slate-100 font-mono tabular-nums">
                                   {v3MetricValue}
                                 </div>
                                 {v3MetricSubLabel ? (
@@ -8057,12 +8299,12 @@ export default function LiquiditySection({
                           )}
                         </div>
                       ) : (
-                        <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-slate-950/70 text-xs text-slate-300">
+                        <div className="absolute inset-0 flex items-center justify-center rounded-md bg-[#0b111b] text-xs text-slate-300">
                           {v3ChartMode.replace("-", " ").toUpperCase()} view coming soon
                         </div>
                       )}
                     </div>
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         {[
                           { label: "1D", value: "1D" },
@@ -8075,10 +8317,10 @@ export default function LiquiditySection({
                             key={item.value}
                             type="button"
                             onClick={() => setV3RangeTimeframe(item.value)}
-                            className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${
+                            className={`border-b pb-1 text-[10px] font-medium ${
                               v3RangeTimeframe === item.value
-                                ? "border-sky-400/70 bg-sky-500/15 text-sky-100"
-                                : "border-slate-800 bg-slate-950/70 text-slate-300 hover:border-slate-600"
+                                ? "border-slate-300/80 text-slate-100"
+                                : "border-transparent text-slate-400 hover:text-slate-200"
                             }`}
                           >
                             {item.label}
@@ -8089,7 +8331,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => zoomV3Range(1)}
-                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          className="h-7 w-7 rounded-md border border-[#1B2433] bg-[#0f1624] text-slate-200 hover:border-slate-500"
                           aria-label="Zoom in"
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
@@ -8101,7 +8343,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={fitV3RangeView}
-                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          className="h-7 w-7 rounded-md border border-[#1B2433] bg-[#0f1624] text-slate-200 hover:border-slate-500"
                           aria-label="Fit view"
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
@@ -8117,7 +8359,7 @@ export default function LiquiditySection({
                         <button
                           type="button"
                           onClick={() => zoomV3Range(-1)}
-                          className="h-8 w-8 rounded-full border border-slate-700 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                          className="h-7 w-7 rounded-md border border-[#1B2433] bg-[#0f1624] text-slate-200 hover:border-slate-500"
                           aria-label="Zoom out"
                         >
                           <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4 mx-auto">
@@ -8136,141 +8378,108 @@ export default function LiquiditySection({
                           setV3RangeInitialized(true);
                           setV3StrategyId("full");
                         }}
-                        className="rounded-full border border-slate-700 bg-slate-950/70 px-3 py-1 text-[10px] font-semibold text-slate-200 hover:border-slate-500"
+                        className="rounded-md border border-[#1B2433] bg-[#0f1624] px-2 py-1 text-[10px] font-medium text-slate-200 hover:border-slate-500"
                       >
                         Reset
                       </button>
                     </div>
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-5 py-4 mb-5">
-                  <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-wide text-slate-500">
-                    <span>Price strategies</span>
-                    {v3PoolDataLoading ? (
-                      <span className="inline-flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-2 py-1 text-[10px] text-slate-300 normal-case">
-                        <span className="h-1.5 w-1.5 rounded-full bg-sky-400 animate-pulse" />
-                        Loading pool data...
-                      </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                    {v3RangeStrategies.map((strategy) => {
-                      const isActive = v3StrategyId === strategy.id;
-                      return (
+                    <div className="mt-3 border-t border-[#1B2433] pt-2">
+                      <div className="mb-1.5 text-[10px] uppercase tracking-[0.1em] text-slate-500">
+                        Quick Strategy
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                         <button
-                          key={strategy.id}
                           type="button"
                           disabled={!v3ReferencePrice}
                           onClick={() => {
-                            if (!v3ReferencePrice) return;
-                            strategy.apply();
-                            setV3StrategyId(strategy.id);
+                            applyV3RangeTickPreset(3);
+                            setV3StrategyId("stable");
                           }}
-                          className={`rounded-2xl border px-4 py-3 text-left transition ${
-                            isActive
-                              ? "border-sky-400/60 bg-sky-500/10 text-sky-100"
-                              : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-600"
+                           className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            v3StrategyId === "stable"
+                              ? "border-slate-300/80 bg-slate-200/10 text-slate-100"
+                              : "border-[#1B2433] bg-[#0f1624] text-slate-300 hover:border-slate-500 hover:text-slate-100"
                           } disabled:opacity-50`}
                         >
-                          <div className="text-sm font-semibold">{strategy.title}</div>
-                          <div className="mt-1 text-xs text-slate-300">{strategy.range}</div>
-                          <div className="mt-2 text-[11px] text-slate-500">
-                            {strategy.description}
-                          </div>
+                          Stable
                         </button>
-                      );
-                    })}
+                        <button
+                          type="button"
+                          disabled={!v3ReferencePrice}
+                          onClick={() => {
+                            applyV3RangeAsymmetric(-0.5, 1);
+                            setV3StrategyId("wide");
+                          }}
+                           className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            v3StrategyId === "wide"
+                              ? "border-slate-300/80 bg-slate-200/10 text-slate-100"
+                              : "border-[#1B2433] bg-[#0f1624] text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                          } disabled:opacity-50`}
+                        >
+                          Wide
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!v3ReferencePrice}
+                          onClick={() => {
+                            applyV3RangeAsymmetric(-0.5, 0);
+                            setV3StrategyId("lower");
+                          }}
+                           className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            v3StrategyId === "lower"
+                              ? "border-slate-300/80 bg-slate-200/10 text-slate-100"
+                              : "border-[#1B2433] bg-[#0f1624] text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                          } disabled:opacity-50`}
+                        >
+                          Lower
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!v3ReferencePrice}
+                          onClick={() => {
+                            applyV3RangeAsymmetric(0, 1);
+                            setV3StrategyId("upper");
+                          }}
+                           className={`rounded-md border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+                            v3StrategyId === "upper"
+                              ? "border-slate-300/80 bg-slate-200/10 text-slate-100"
+                              : "border-[#1B2433] bg-[#0f1624] text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                          } disabled:opacity-50`}
+                        >
+                          Upper
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-5 mb-4">
-                  <div className="relative rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
-                    <div className="text-[11px] uppercase tracking-wide text-slate-500">Min</div>
-                    <div className="mt-2 text-xl font-semibold text-slate-100">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 border-t border-[#1B2433] pt-2">
+                  <div className="flex items-center justify-between border-b border-[#1B2433] pb-1 text-[11px]">
+                    <span className="text-slate-500">Min</span>
+                    <span className="font-mono tabular-nums text-slate-100">
                       {v3HasCustomRange ? formatPrice(v3RangeLowerNum) : "--"}
-                    </div>
-                    <div className="absolute right-3 top-10 flex flex-col gap-1">
-                      <button
-                        type="button"
-                        onClick={() => adjustV3RangeValue("lower", 1)}
-                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => adjustV3RangeValue("lower", -1)}
-                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
-                      >
-                        -
-                      </button>
-                    </div>
+                    </span>
                   </div>
-                  <div className="relative rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
-                    <div className="flex items-center justify-between pr-10">
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">Max</div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setV3RangeMode("full");
-                          setV3RangeLower("");
-                          setV3RangeUpper("");
-                          setV3RangeInitialized(true);
-                        }}
-                        className="px-2 py-0.5 rounded-full text-[10px] border border-slate-700/60 bg-slate-950/70 text-slate-300"
-                      >
-                        Full range
-                      </button>
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-slate-100">
+                  <div className="flex items-center justify-between border-b border-[#1B2433] pb-1 text-[11px]">
+                    <span className="text-slate-500">Max</span>
+                    <span className="font-mono tabular-nums text-slate-100">
                       {v3HasCustomRange ? formatPrice(v3RangeUpperNum) : "--"}
-                    </div>
-                    <div className="absolute right-3 top-10 flex flex-col gap-1">
-                      <button
-                        type="button"
-                        onClick={() => adjustV3RangeValue("upper", 1)}
-                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
-                      >
-                        +
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => adjustV3RangeValue("upper", -1)}
-                        disabled={!v3ReferencePrice || v3RangeMode === "full"}
-                        className="h-6 w-6 rounded-md border border-slate-700 bg-slate-950 text-xs text-slate-200 hover:border-slate-500 disabled:opacity-50"
-                      >
-                        -
-                      </button>
-                    </div>
+                    </span>
                   </div>
-                  <div className="rounded-2xl border border-slate-800 bg-[#0b0c1a] px-5 py-4">
-                    <div className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-slate-500">
-                      APR
-                      <span className="text-[10px] text-slate-600">ⓘ</span>
-                    </div>
-                    <div className="mt-2 text-xl font-semibold text-slate-100">
+                  <div className="flex items-center justify-between border-b border-[#1B2433] pb-1 text-[11px]">
+                    <span className="text-slate-500">APR</span>
+                    <span className="font-mono tabular-nums text-slate-100">
                       {v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
                         ? `${v3EstimatedApr.toFixed(2)}%`
                         : "--"}
-                    </div>
-                    <div
-                      className={`text-[11px] ${
-                        v3RangeSide !== "dual" ? "text-rose-400" : "text-slate-500"
-                      }`}
-                    >
-                      {v3RangeSide !== "dual" ? "Out of range" : "Estimated"}
-                    </div>
+                    </span>
                   </div>
                 </div>
 
                 {/* Deposit inputs moved to the Add Liquidity panel */}
               </div>
 
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 flex flex-col flex-1">
+              <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-3 flex flex-col flex-1">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
@@ -8284,7 +8493,7 @@ export default function LiquiditySection({
                     <button
                       type="button"
                       onClick={() => setSelectedPositionId(null)}
-                      className="px-2 py-1 rounded-full border border-slate-700 text-xs text-slate-300 hover:border-slate-500"
+                      className="px-2 py-1 rounded-md border border-[#1B2433] text-xs text-slate-300 hover:border-slate-500"
                     >
                       Close
                     </button>
@@ -8292,7 +8501,7 @@ export default function LiquiditySection({
                 </div>
 
                 {!selectedPosition ? (
-                  <div className="mt-5 flex-1 min-h-[260px] rounded-2xl border border-slate-800 bg-slate-950/60 px-6 py-8 text-center text-sm text-slate-400 flex items-center justify-center">
+                  <div className="mt-3 flex-1 min-h-[220px] rounded-md border border-[#1B2433] bg-[#0b111b] px-4 py-6 text-center text-sm text-slate-400 flex items-center justify-center">
                     Select a position on the right to expand it here.
                   </div>
                 ) : (
@@ -8330,8 +8539,8 @@ export default function LiquiditySection({
                     const hasImage = Boolean(nftImage);
 
                     return (
-                      <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1.45fr,1fr] gap-5">
-                        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                      <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1.6fr,0.9fr] gap-4">
+                        <div className="rounded-md border border-slate-800 bg-slate-900/60 p-3.5">
                           {(() => {
                             const key = `${selectedPosition.token0?.toLowerCase?.() || ""}-${
                               selectedPosition.token1?.toLowerCase?.() || ""
@@ -8452,7 +8661,7 @@ export default function LiquiditySection({
                                 : null;
 
                             const minLabel = isFullRange ? "0" : formatPrice(lowerPrice);
-                            const maxLabel = isFullRange ? "∞" : formatPrice(upperPrice);
+                            const maxLabel = isFullRange ? "\u221E" : formatPrice(upperPrice);
                             const currentLabel =
                               currentPrice && Number.isFinite(currentPrice)
                                 ? formatPrice(currentPrice)
@@ -8513,7 +8722,7 @@ export default function LiquiditySection({
                                       </div>
                                     </div>
                                     <div className="text-[11px] text-slate-500">
-                                      Position #{selectedPosition.tokenId} · Fee {formatFeeTier(selectedPosition.fee)}
+                                      Position #{selectedPosition.tokenId} Â· Fee {formatFeeTier(selectedPosition.fee)}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -8553,13 +8762,13 @@ export default function LiquiditySection({
                                       </svg>
                                     </button>
                                     {v3PositionMenuOpen && (
-                                      <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
+                                      <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
                                         {menuItems.map((item) => {
                                           const hasAddress = Boolean(item.address);
                                           return (
                                             <div
                                               key={item.id}
-                                              className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
+                                              className="flex items-center justify-between gap-2 rounded-md px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
                                             >
                                               <span className="font-semibold">{item.label}</span>
                                               <div className="flex items-center gap-2">
@@ -8671,7 +8880,7 @@ export default function LiquiditySection({
                                 </div>
 
                                 <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                  <div className="rounded-md border border-slate-700/80 bg-slate-950/70 p-4">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                                       Liquidity
                                     </div>
@@ -8741,7 +8950,7 @@ export default function LiquiditySection({
                                     </div>
                                   </div>
 
-                                  <div className="rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                  <div className="rounded-md border border-slate-700/80 bg-slate-950/70 p-4">
                                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                                       Unclaimed fees
                                     </div>
@@ -8798,7 +9007,13 @@ export default function LiquiditySection({
                                   </div>
                                 </div>
 
-                                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-4">
+                                <div
+                                  className={`mt-4 rounded-md border p-4 ${
+                                    inRange
+                                      ? "border-emerald-500/35 bg-emerald-500/[0.05]"
+                                      : "border-rose-500/35 bg-rose-500/[0.05]"
+                                  }`}
+                                >
                                   <div className="flex items-center justify-between text-[11px] text-slate-500">
                                     <span>Price range</span>
                                     <span className={inRange ? "text-emerald-300" : "text-rose-300"}>
@@ -8880,42 +9095,56 @@ export default function LiquiditySection({
                           })()}
                         </div>
 
-                        <div className="flex flex-col items-center justify-center gap-4">
-                          <div
-                            className={`relative w-full max-w-none aspect-[3/4] rounded-2xl overflow-hidden ${
-                              hasImage ? "border border-transparent bg-transparent" : "border border-slate-800 bg-slate-950/70"
-                            }`}
-                          >
-                            {metaState.loading && (
-                              <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-                                Loading NFT...
-                              </div>
-                            )}
-                            {hasImage ? (
-                              <div className="absolute inset-0">
-                                <img
-                                  src={nftImage}
-                                  alt={nftMeta?.name || positionTitle}
-                                  className="h-full w-full object-contain"
-                                />
-                              </div>
-                            ) : (
-                              <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
-                                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.25),transparent_60%)]" />
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
-                                  <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                                    CurrentX Positions NFT
-                                  </div>
-                                  <div className="text-lg font-semibold text-slate-100">
-                                    {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
-                                  </div>
-                                  <div className="text-sm text-slate-400">
-                                    {formatFeeTier(selectedPosition.fee)}
+                        <div className="flex flex-col items-center justify-center gap-2.5">
+                          <div className="w-full flex items-center justify-between">
+                            <div className="text-[10px] uppercase tracking-[0.1em] text-slate-500">
+                              Visual Identity
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setShowV3NftCard((prev) => !prev)}
+                              className="rounded-md border border-slate-700/70 bg-slate-900/60 px-2 py-0.5 text-[10px] text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                            >
+                              {showV3NftCard ? "Hide NFT" : "Show NFT"}
+                            </button>
+                          </div>
+                          {showV3NftCard && (
+                            <div
+                              className={`relative w-full sm:w-[82%] lg:w-[72%] max-w-none aspect-[3/4] rounded-md overflow-hidden ${
+                                hasImage ? "border border-transparent bg-transparent" : "border border-slate-800 bg-slate-950/70"
+                              }`}
+                            >
+                              {metaState.loading && (
+                                <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
+                                  Loading NFT...
+                                </div>
+                              )}
+                              {hasImage ? (
+                                <div className="absolute inset-0">
+                                  <img
+                                    src={nftImage}
+                                    alt={nftMeta?.name || positionTitle}
+                                    className="h-full w-full object-contain opacity-90"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900">
+                                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.14),transparent_60%)]" />
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-center px-6">
+                                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                                      CurrentX Positions NFT
+                                    </div>
+                                    <div className="text-lg font-semibold text-slate-100">
+                                      {selectedPosition.token0Symbol}/{selectedPosition.token1Symbol}
+                                    </div>
+                                    <div className="text-sm text-slate-400">
+                                      {formatFeeTier(selectedPosition.fee)}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            )}
-                          </div>
+                              )}
+                            </div>
+                          )}
                           <div className="text-center">
                             <div className="text-[11px] text-slate-400">
                               Position #{selectedPosition.tokenId}
@@ -8935,22 +9164,22 @@ export default function LiquiditySection({
               </div>
             </div>
 
-              <div className="flex flex-col gap-4">
-                <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-950 via-slate-950 to-sky-900/30 p-4">
+              <div className="flex flex-col gap-3">
+                <div className="rounded-md border border-[#1B2433] bg-[#0b111b] p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
-                        Add Liquidity
+                      <div className="text-[11px] uppercase tracking-[0.12em] text-[#C7D2E0]">
+                        DEPOSIT
                       </div>
-                      <div className="text-xs text-slate-400">
-                        Deposit amounts to mint a new V3 position.
+                      <div className="text-xs text-slate-500">
+                        Order-style position entry
                       </div>
                     </div>
                     <div className="relative" ref={slippageMenuRef}>
                       <button
                         type="button"
                         onClick={() => setSlippageMenuOpen((open) => !open)}
-                        className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-200 hover:border-slate-500"
+                        className="flex items-center gap-2 rounded-md border border-[#1B2433] bg-[#0f1624] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-slate-200 hover:border-slate-500"
                       >
                         <span>
                           {slippageMode === "auto" ? "AUTO" : `${slippageDisplay}%`}
@@ -8970,7 +9199,7 @@ export default function LiquiditySection({
                         </svg>
                       </button>
                       <div
-                        className={`absolute right-0 mt-2 w-56 rounded-xl border border-slate-800 bg-[#140b0b] p-3 text-xs text-rose-100/80 shadow-2xl shadow-black/60 transition-all duration-200 origin-top-right ${
+                        className={`absolute right-0 mt-2 w-56 rounded-md border border-[#1B2433] bg-[#0b111b] p-3 text-xs text-slate-200 transition-all duration-200 origin-top-right ${
                           slippageMenuOpen
                             ? "opacity-100 scale-100 translate-y-0 pointer-events-auto"
                             : "opacity-0 scale-95 -translate-y-1 pointer-events-none"
@@ -8995,10 +9224,10 @@ export default function LiquiditySection({
                                   setSlippageMode(preset.mode);
                                   setSlippageMenuOpen(false);
                                 }}
-                                className={`rounded-full border px-2.5 py-1 text-[10px] uppercase tracking-wide ${
+                                className={`rounded-md border px-2 py-1 text-[10px] uppercase tracking-[0.08em] ${
                                   isActive
-                                    ? "border-rose-400/70 bg-rose-500/20 text-rose-100"
-                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                    ? "border-slate-500 bg-slate-800/70 text-slate-100"
+                                    : "border-[#1B2433] bg-[#0f1624] text-slate-300 hover:border-slate-500"
                                 }`}
                               >
                                 {preset.label}
@@ -9010,19 +9239,27 @@ export default function LiquiditySection({
                     </div>
                   </div>
 
-                  <div className="mt-4 space-y-3">
+                  <div className="mt-3 space-y-3">
                     {v3RangeMath && (
-                      <div className="rounded-2xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-[11px] text-slate-400">
+                      <div className="rounded-md border border-[#1B2433] bg-[#0f1624] px-3 py-2 text-[11px] text-slate-400">
                         {v3RangeMath.sqrtCurrentX96 <= v3RangeMath.sqrtLowerX96
-                          ? "Price below range → single-sided deposit (token0)."
+                          ? "Price below range -> single-sided deposit (token0)."
                           : v3RangeMath.sqrtCurrentX96 >= v3RangeMath.sqrtUpperX96
-                          ? "Price above range → single-sided deposit (token1)."
-                          : "Price in range → dual-sided deposit."}
+                          ? "Price above range -> single-sided deposit (token1)."
+                          : "Price in range -> dual-sided deposit."}
                       </div>
                     )}
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
-                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span>Deposit</span>
+                    <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
+                      <div className="flex items-center justify-between text-[12px] text-slate-400">
+                        <span className="text-slate-200">{v3MintDisplaySymbol0}</span>
+                        <span className="font-mono tabular-nums">
+                          Balance{" "}
+                          {walletBalancesLoading
+                            ? "Loading..."
+                            : v3MintBalance0Num !== null
+                            ? `${formatTokenBalance(v3MintBalance0Num)}`
+                            : "--"}
+                        </span>
                       </div>
                         <div className="mt-2 flex items-center justify-between gap-3">
                           <input
@@ -9033,9 +9270,9 @@ export default function LiquiditySection({
                           }}
                           placeholder="0.0"
                           disabled={v3RangeSide === "token1"}
-                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full bg-transparent border-0 border-b border-[#1B2433] pb-1 text-xl font-medium font-mono tabular-nums text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
-                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                          <div className="flex h-7 items-center justify-center gap-2 rounded-md border border-[#1B2433] bg-[#0b111b] px-2 text-xs text-slate-200">
                             {v3MintDisplayMeta0?.logo ? (
                               <img
                                 src={v3MintDisplayMeta0.logo}
@@ -9050,15 +9287,7 @@ export default function LiquiditySection({
                             <span className="leading-none">{v3MintDisplaySymbol0}</span>
                           </div>
                         </div>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-                          <span>
-                            Balance{" "}
-                            {walletBalancesLoading
-                              ? "Loading..."
-                              : v3MintBalance0Num !== null
-                              ? `${formatTokenBalance(v3MintBalance0Num)} ${v3MintDisplaySymbol0}`
-                              : "--"}
-                          </span>
+                        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-500">
                           <div className="flex items-center gap-1">
                             {v3MintQuickButtons.map((btn) => (
                               <button
@@ -9068,7 +9297,7 @@ export default function LiquiditySection({
                                 disabled={
                                   walletBalancesLoading || !v3MintHasBalance0 || !v3MintCanUseSide0
                                 }
-                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                                className="rounded-md border border-[#1B2433] bg-[#0b111b] px-2 py-0.5 text-[10px] font-medium text-slate-300 hover:text-slate-100 disabled:opacity-50"
                               >
                                 {btn.label}
                               </button>
@@ -9083,12 +9312,12 @@ export default function LiquiditySection({
                                 type="button"
                                 onClick={() => setV3MintUseEth0(false)}
                                 disabled={!v3MintCanUseSide0}
-                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${
                                   !v3MintCanUseSide0
                                     ? "border-slate-800 bg-slate-900/70 text-slate-500"
                                     : !v3MintUseEth0
-                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                    ? "border-slate-500 bg-slate-800/70 text-slate-100"
+                                    : "border-[#1B2433] bg-[#0b111b] text-slate-300 hover:text-slate-100"
                                 }`}
                               >
                                 WETH
@@ -9097,12 +9326,12 @@ export default function LiquiditySection({
                                 type="button"
                                 onClick={() => setV3MintUseEth0(true)}
                                 disabled={!v3MintCanUseSide0}
-                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${
                                   !v3MintCanUseSide0
                                     ? "border-slate-800 bg-slate-900/70 text-slate-500"
                                     : v3MintUseEth0
-                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                    ? "border-slate-500 bg-slate-800/70 text-slate-100"
+                                    : "border-[#1B2433] bg-[#0b111b] text-slate-300 hover:text-slate-100"
                                 }`}
                               >
                                 ETH
@@ -9112,9 +9341,17 @@ export default function LiquiditySection({
                         )}
                       </div>
 
-                    <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-3">
-                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span>Deposit</span>
+                    <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
+                      <div className="flex items-center justify-between text-[12px] text-slate-400">
+                        <span className="text-slate-200">{v3MintDisplaySymbol1}</span>
+                        <span className="font-mono tabular-nums">
+                          Balance{" "}
+                          {walletBalancesLoading
+                            ? "Loading..."
+                            : v3MintBalance1Num !== null
+                            ? `${formatTokenBalance(v3MintBalance1Num)}`
+                            : "--"}
+                        </span>
                       </div>
                         <div className="mt-2 flex items-center justify-between gap-3">
                           <input
@@ -9125,9 +9362,9 @@ export default function LiquiditySection({
                           }}
                           placeholder="0.0"
                           disabled={v3RangeSide === "token0"}
-                          className="w-full bg-transparent text-2xl font-semibold text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full bg-transparent border-0 border-b border-[#1B2433] pb-1 text-xl font-medium font-mono tabular-nums text-slate-100 outline-none placeholder:text-slate-600 disabled:opacity-60 disabled:cursor-not-allowed"
                           />
-                          <div className="flex h-8 items-center justify-center gap-2 rounded-full border border-slate-800 bg-slate-900/80 px-3 text-xs text-slate-100">
+                          <div className="flex h-7 items-center justify-center gap-2 rounded-md border border-[#1B2433] bg-[#0b111b] px-2 text-xs text-slate-200">
                             {v3MintDisplayMeta1?.logo ? (
                               <img
                                 src={v3MintDisplayMeta1.logo}
@@ -9142,15 +9379,7 @@ export default function LiquiditySection({
                             <span className="leading-none">{v3MintDisplaySymbol1}</span>
                           </div>
                         </div>
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-                          <span>
-                            Balance{" "}
-                            {walletBalancesLoading
-                              ? "Loading..."
-                              : v3MintBalance1Num !== null
-                              ? `${formatTokenBalance(v3MintBalance1Num)} ${v3MintDisplaySymbol1}`
-                              : "--"}
-                          </span>
+                        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-[11px] text-slate-500">
                           <div className="flex items-center gap-1">
                             {v3MintQuickButtons.map((btn) => (
                               <button
@@ -9160,7 +9389,7 @@ export default function LiquiditySection({
                                 disabled={
                                   walletBalancesLoading || !v3MintHasBalance1 || !v3MintCanUseSide1
                                 }
-                                className="rounded-full border border-slate-800 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200 hover:border-sky-400/60 disabled:opacity-50"
+                                className="rounded-md border border-[#1B2433] bg-[#0b111b] px-2 py-0.5 text-[10px] font-medium text-slate-300 hover:text-slate-100 disabled:opacity-50"
                               >
                                 {btn.label}
                               </button>
@@ -9175,12 +9404,12 @@ export default function LiquiditySection({
                                 type="button"
                                 onClick={() => setV3MintUseEth1(false)}
                                 disabled={!v3MintCanUseSide1}
-                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${
                                   !v3MintCanUseSide1
                                     ? "border-slate-800 bg-slate-900/70 text-slate-500"
                                     : !v3MintUseEth1
-                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                    ? "border-slate-500 bg-slate-800/70 text-slate-100"
+                                    : "border-[#1B2433] bg-[#0b111b] text-slate-300 hover:text-slate-100"
                                 }`}
                               >
                                 WETH
@@ -9189,12 +9418,12 @@ export default function LiquiditySection({
                                 type="button"
                                 onClick={() => setV3MintUseEth1(true)}
                                 disabled={!v3MintCanUseSide1}
-                                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${
                                   !v3MintCanUseSide1
                                     ? "border-slate-800 bg-slate-900/70 text-slate-500"
                                     : v3MintUseEth1
-                                    ? "border-sky-400/70 bg-sky-500/20 text-sky-100"
-                                    : "border-slate-800 bg-slate-950/70 text-slate-200 hover:border-slate-500"
+                                    ? "border-slate-500 bg-slate-800/70 text-slate-100"
+                                    : "border-[#1B2433] bg-[#0b111b] text-slate-300 hover:text-slate-100"
                                 }`}
                               >
                                 ETH
@@ -9209,7 +9438,7 @@ export default function LiquiditySection({
                     type="button"
                     onClick={handleV3Mint}
                     disabled={v3MintLoading || !hasV3Liquidity}
-                    className="mt-4 w-full rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 disabled:opacity-60"
+                    className="mt-3 h-9 w-full rounded-md bg-[#1E4ED8] px-4 text-sm font-medium text-white transition-colors hover:bg-[#2b5be5] disabled:opacity-60"
                   >
                     {v3MintLoading
                       ? "Creating position..."
@@ -9218,18 +9447,18 @@ export default function LiquiditySection({
                       : "Connect Wallet"}
                   </button>
 
-                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="mt-3 rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Total deposit</span>
-                      <span className="text-sm font-semibold text-slate-100">
+                      <span>Position Value</span>
+                      <span className="text-sm font-medium text-slate-100 font-mono tabular-nums">
                         {v3TotalDeposit?.value !== null && v3TotalDeposit?.value !== undefined
-                          ? `${formatPrice(v3TotalDeposit.value)} ${v3TotalDeposit.unit || v3Token1}`
-                          : "--"}
+                          ? `$${Number(v3TotalDeposit.value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          : "$--"}
                       </span>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Deposit ratio</span>
-                      <div className="flex items-center gap-3 text-sm font-semibold text-slate-100">
+                      <span>Deposit Ratio</span>
+                      <div className="flex items-center gap-3 text-sm font-medium text-slate-100 font-mono tabular-nums">
                         <div className="flex items-center gap-1">
                           {v3Token0Meta?.logo ? (
                             <img
@@ -9261,43 +9490,42 @@ export default function LiquiditySection({
                       </div>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Fees</span>
-                      <span className="text-sm font-semibold text-slate-100">
+                      <span>Fee Tier</span>
+                      <span className="text-sm font-medium text-slate-100">
                         {formatFeeTier(v3FeeTier)}
                       </span>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
                       <span>Slippage</span>
-                      <span className="text-sm font-semibold text-slate-100">
+                      <span className="text-sm font-medium text-slate-100">
                         {slippageDisplay}%
                       </span>
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="mt-3 rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
                     <div className="flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Pool balances</span>
-                      <span className="text-[10px] text-slate-600">i</span>
+                      <span>Pool Liquidity</span>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-sm font-semibold text-slate-100">
+                    <div className="mt-2 space-y-1 text-sm font-medium text-slate-100 font-mono tabular-nums">
                       <span>
                         {v3PoolBalance0Num !== null
                           ? `${formatPrice(v3PoolBalance0Num)} ${v3Token0}`
                           : `-- ${v3Token0}`}
                       </span>
-                      <span>
+                      <span className="block">
                         {v3PoolBalance1Num !== null
                           ? `${formatPrice(v3PoolBalance1Num)} ${v3Token1}`
                           : `-- ${v3Token1}`}
                       </span>
                     </div>
-                    <div className="mt-2 h-2 rounded-full bg-slate-900/60 overflow-hidden flex">
+                    <div className="mt-2 h-[3px] rounded-sm bg-slate-900/70 overflow-hidden flex">
                       <div
-                        className="h-full bg-gradient-to-r from-violet-500/80 to-sky-500/80"
+                        className="h-full bg-slate-300/75"
                         style={{ width: `${v3PoolBalanceRatio0}%` }}
                       />
                       <div
-                        className="h-full bg-emerald-400/80"
+                        className="h-full bg-slate-500/75"
                         style={{ width: `${v3PoolBalanceRatio1}%` }}
                       />
                     </div>
@@ -9307,7 +9535,7 @@ export default function LiquiditySection({
                     </div>
                   </div>
 
-                  <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/60 p-3">
+                  <div className="mt-3 rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                       Pool stats
                     </div>
@@ -9316,7 +9544,7 @@ export default function LiquiditySection({
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
                           Net APR
                         </div>
-                        <div className="text-xl font-semibold text-emerald-400">
+                        <div className="text-lg font-medium text-slate-100 font-mono tabular-nums">
                           {v3PoolDataLoading
                             ? "Loading..."
                             : v3EstimatedApr !== null && Number.isFinite(v3EstimatedApr)
@@ -9328,7 +9556,7 @@ export default function LiquiditySection({
                         <div className="text-[10px] uppercase tracking-wide text-slate-500">
                           TVL
                         </div>
-                        <div className="text-lg font-semibold text-slate-100">
+                        <div className="text-lg font-medium text-slate-100 font-mono tabular-nums">
                           {v3TvlChart?.latest !== null ? formatNumber(v3TvlChart.latest) : "--"}
                         </div>
                         <div
@@ -9349,13 +9577,13 @@ export default function LiquiditySection({
                   </div>
 
                   {v3MintError && (
-                    <div className="mt-3 rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                    <div className="mt-3 rounded-md border border-rose-400/25 bg-rose-500/5 px-3 py-2 text-xs text-rose-200/90">
                       {v3MintError}
                     </div>
                   )}
                 </div>
 
-                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+                <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-4">
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-[11px] uppercase tracking-wide text-slate-500">
                       Your Positions
@@ -9796,270 +10024,126 @@ export default function LiquiditySection({
           )}
 
           {isV2View && (
-            <>
-              <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-100">
-                      V2 Liquidity
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Create V2 positions and manage deposits/withdrawals.
-                    </div>
+            <div className="flex flex-col gap-3">
+              {!address ? (
+                <div className="rounded-xl border border-slate-800/80 px-4 py-10 text-center">
+                  <div className="text-sm text-slate-300">
+                    Connect your wallet to see LP positions.
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowTokenList(true)}
-                    className="px-4 py-2 rounded-full bg-sky-600 text-sm font-semibold text-white shadow-lg shadow-sky-500/30 w-full sm:w-auto"
-                  >
-                    Start V2 position
-                  </button>
                 </div>
-              </div>
-
-              <div className="rounded-3xl bg-slate-900/60 border border-slate-800/80 shadow-xl shadow-black/40 p-5">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-                  <div>
-                    <div className="text-sm font-semibold text-slate-100">
-                      Your V2 LP Positions
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      Wallet LP balances across available V2 pools.
-                    </div>
-                  </div>
-                  {address && (
-                    <button
-                      type="button"
-                      onClick={() => setLpRefreshTick((v) => v + 1)}
-                      className="px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-xs text-slate-200 hover:border-slate-500"
-                    >
-                      Refresh
-                    </button>
+              ) : v2LpLoading && !v2LpPositions.length ? (
+                <div className="rounded-xl border border-slate-800/80 px-4 py-10 text-center text-sm text-slate-400">
+                  Loading positions...
+                </div>
+              ) : v2LpError ? (
+                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-200">
+                  {v2LpError}
+                </div>
+              ) : v2LpPositions.length ? (
+                <>
+                  {v2LpLoading && (
+                    <div className="text-[11px] text-slate-500">Refreshing balances...</div>
                   )}
-                </div>
-
-                {!address ? (
-                  <div className="text-sm text-slate-400">
-                    Connect your wallet to see V2 LP positions.
-                  </div>
-                ) : v2LpLoading && !v2LpPositions.length ? (
-                  <div className="text-sm text-slate-400">Loading positions...</div>
-                ) : v2LpError ? (
-                  <div className="text-sm text-amber-200">{v2LpError}</div>
-                ) : v2LpPositions.length ? (
-                  <div className="space-y-3">
-                    {v2LpLoading && (
-                      <div className="text-[11px] text-slate-500">
-                        Refreshing balances...
+                  <div className="w-full overflow-x-auto">
+                    <div className="min-w-[860px]">
+                      <div className="grid grid-cols-[minmax(0,2.4fr)_1.15fr_0.9fr_1.1fr_0.8fr] items-center gap-3 px-4 py-2 text-[11px] uppercase tracking-[0.08em] text-slate-400/75">
+                        <div>Pool</div>
+                        <div className="text-right">LP Balance</div>
+                        <div className="text-right">Share</div>
+                        <div className="text-right">Value (USD)</div>
+                        <div className="text-right">Action</div>
                       </div>
-                    )}
-                    {v2LpPositions.map((pos) => {
-                      const token0 = tokenRegistry[pos.token0Symbol];
-                      const token1 = tokenRegistry[pos.token1Symbol];
-                      const sharePct =
-                        pos.lpShare !== null && pos.lpShare !== undefined
-                          ? (pos.lpShare * 100).toFixed(2)
-                          : null;
-                      const token0Address =
-                        pos.token0Address ||
-                        resolveTokenAddress(pos.token0Symbol, tokenRegistry);
-                      const token1Address =
-                        pos.token1Address ||
-                        resolveTokenAddress(pos.token1Symbol, tokenRegistry);
-                      const poolAddress = pos.pairAddress || pos.pairId || "";
-                      const v2MenuId = poolAddress || pos.id;
-                      const v2MenuOpen = v2PositionMenuOpenId === v2MenuId;
-                      const v2MenuItems = [
-                        {
-                          id: "token0",
-                          label: pos.token0Symbol,
-                          address: token0Address,
-                        },
-                        {
-                          id: "token1",
-                          label: pos.token1Symbol,
-                          address: token1Address,
-                        },
-                        {
-                          id: "pool",
-                          label: "Pool",
-                          address: poolAddress,
-                        },
-                      ];
-                      return (
-                        <div
-                          key={`${pos.id}-lp`}
-                          className="rounded-2xl border border-slate-800 bg-slate-950/60 px-4 py-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-                        >
-                          <div className="flex items-center gap-3">
-                              <div className="flex -space-x-2">
-                                {[token0, token1].map((t, idx) => (
-                                  <TokenLogo
-                                    key={idx}
-                                    token={t}
-                                    symbol={idx === 0 ? pos.token0Symbol : pos.token1Symbol}
-                                    className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900 object-contain"
-                                    placeholderClassName="h-9 w-9 rounded-full bg-slate-800 border border-slate-700 text-xs font-semibold text-white flex items-center justify-center"
-                                  />
-                                ))}
+                      <div className="divide-y divide-slate-800/80 border-y border-slate-800/80">
+                        {v2LpPositions.map((pos) => {
+                          const token0 = tokenRegistry[pos.token0Symbol];
+                          const token1 = tokenRegistry[pos.token1Symbol];
+                          const sharePct =
+                            pos.lpShare !== null && pos.lpShare !== undefined
+                              ? (pos.lpShare * 100).toFixed(2)
+                              : null;
+                          const feeLabelRaw = Number(pos.feeTier || pos.fee || 0);
+                          const poolSubLabel =
+                            Number.isFinite(feeLabelRaw) && feeLabelRaw > 0
+                              ? `v2 Â· ${formatFeeTier(feeLabelRaw)}`
+                              : "v2 Â· pool";
+
+                          return (
+                            <div
+                              key={`${pos.id}-lp`}
+                              className="grid grid-cols-[minmax(0,2.4fr)_1.15fr_0.9fr_1.1fr_0.8fr] items-center gap-3 px-4 py-3 text-sm hover:bg-white/[0.03]"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex -space-x-2">
+                                    {[token0, token1].map((t, idx) => (
+                                      <TokenLogo
+                                        key={idx}
+                                        token={t}
+                                        symbol={idx === 0 ? pos.token0Symbol : pos.token1Symbol}
+                                        className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 object-contain"
+                                        placeholderClassName="h-8 w-8 rounded-full bg-slate-800 border border-slate-700 text-[10px] font-semibold text-white flex items-center justify-center"
+                                      />
+                                    ))}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium text-slate-100">
+                                      {pos.token0Symbol} / {pos.token1Symbol}
+                                    </div>
+                                    <div className="text-[11px] text-slate-500">{poolSubLabel}</div>
+                                  </div>
+                                </div>
                               </div>
-                            <div>
-                              <div className="text-sm font-semibold text-slate-100">
-                                {pos.token0Symbol} / {pos.token1Symbol}
+                              <div className="text-right font-mono text-slate-200">
+                                {formatLpBalanceTable(pos.lpBalance)}
                               </div>
-                              <div className="text-[11px] text-slate-500">
-                                LP balance: {pos.lpBalance ? pos.lpBalance.toFixed(6) : "--"}
-                                {sharePct ? ` · Share ${sharePct}%` : ""}
+                              <div className="text-right font-mono text-slate-200">
+                                {sharePct ? `${sharePct}%` : "--"}
                               </div>
-                            </div>
-                          </div>
-                          <div className="flex flex-col sm:flex-row sm:items-center gap-3 text-right">
-                            <div className="text-sm text-slate-100">
-                              {pos.positionUsd !== null && pos.positionUsd !== undefined
-                                ? `$${formatNumber(pos.positionUsd)}`
-                                : "--"}
-                            </div>
-                            <div className="flex items-center gap-2 justify-end">
-                              <div
-                                className="relative v2-position-list-menu"
-                                onClick={(e) => e.stopPropagation()}
-                              >
+                              <div className="text-right font-medium text-slate-100">
+                                {pos.positionUsd !== null && pos.positionUsd !== undefined
+                                  ? formatUsdTableValue(pos.positionUsd)
+                                  : "--"}
+                              </div>
+                              <div className="text-right">
                                 <button
                                   type="button"
-                                  onClick={() =>
-                                    setV2PositionMenuOpenId(v2MenuOpen ? null : v2MenuId)
-                                  }
-                                  className="h-7 w-7 rounded-full border border-slate-700 bg-slate-900/70 text-slate-200 hover:border-slate-500 inline-flex items-center justify-center"
-                                  aria-haspopup="menu"
-                                  aria-expanded={v2MenuOpen}
-                                  aria-label="Open position details"
+                                  onClick={() => {
+                                    setV2PositionMenuOpenId(null);
+                                    handleOpenPoolDepositFromRow(pos);
+                                  }}
+                                  className="inline-flex items-center text-sm text-slate-300 transition-colors hover:text-slate-100"
                                 >
-                                  <svg
-                                    viewBox="0 0 20 20"
-                                    fill="none"
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="h-3.5 w-3.5 text-slate-300"
-                                  >
-                                    <circle cx="4" cy="10" r="1.5" fill="currentColor" />
-                                    <circle cx="10" cy="10" r="1.5" fill="currentColor" />
-                                    <circle cx="16" cy="10" r="1.5" fill="currentColor" />
-                                  </svg>
+                                  Manage {"->"}
                                 </button>
-                                {v2MenuOpen && (
-                                  <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-800 bg-slate-950/95 shadow-2xl shadow-black/40 p-2 z-20">
-                                    {v2MenuItems.map((item) => {
-                                      const hasAddress = Boolean(item.address);
-                                      return (
-                                        <div
-                                          key={`${pos.id}-${item.id}`}
-                                          className="flex items-center justify-between gap-2 rounded-xl px-2 py-2 text-xs text-slate-200 hover:bg-slate-900/80"
-                                        >
-                                          <span className="font-semibold">{item.label}</span>
-                                          <div className="flex items-center gap-2">
-                                            <button
-                                              type="button"
-                                              onClick={() => copyAddress(item.address)}
-                                              disabled={!hasAddress}
-                                              className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 disabled:opacity-40"
-                                              aria-label={`Copy ${item.label} address`}
-                                            >
-                                              {v3CopiedAddress === item.address ? (
-                                                <svg
-                                                  viewBox="0 0 20 20"
-                                                  fill="none"
-                                                  xmlns="http://www.w3.org/2000/svg"
-                                                  className="h-3.5 w-3.5 text-emerald-300 mx-auto"
-                                                >
-                                                  <path
-                                                    d="M5 11l3 3 7-7"
-                                                    stroke="currentColor"
-                                                    strokeWidth="1.6"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                  />
-                                                </svg>
-                                              ) : (
-                                                <svg
-                                                  viewBox="0 0 20 20"
-                                                  fill="none"
-                                                  xmlns="http://www.w3.org/2000/svg"
-                                                  className="h-3.5 w-3.5 mx-auto"
-                                                >
-                                                  <path
-                                                    d="M7 5.5C7 4.672 7.672 4 8.5 4H15.5C16.328 4 17 4.672 17 5.5V12.5C17 13.328 16.328 14 15.5 14H8.5C7.672 14 7 13.328 7 12.5V5.5Z"
-                                                    stroke="currentColor"
-                                                    strokeWidth="1.3"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                  />
-                                                  <path
-                                                    d="M5 7H5.5C6.328 7 7 7.672 7 8.5V14.5C7 15.328 6.328 16 5.5 16H4.5C3.672 16 3 15.328 3 14.5V8.5C3 7.672 3.672 7 4.5 7H5Z"
-                                                    stroke="currentColor"
-                                                    strokeWidth="1.3"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                  />
-                                                </svg>
-                                              )}
-                                            </button>
-                                            {hasAddress ? (
-                                              <a
-                                                href={`${EXPLORER_BASE_URL}/address/${item.address}`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-300 hover:border-sky-500/60 hover:text-sky-100 inline-flex items-center justify-center"
-                                                aria-label={`Open ${item.label} on explorer`}
-                                              >
-                                                <svg
-                                                  viewBox="0 0 20 20"
-                                                  fill="none"
-                                                  xmlns="http://www.w3.org/2000/svg"
-                                                  className="h-3.5 w-3.5"
-                                                >
-                                                  <path
-                                                    d="M5 13l9-9m0 0h-5m5 0v5"
-                                                    stroke="currentColor"
-                                                    strokeWidth="1.5"
-                                                    strokeLinecap="round"
-                                                    strokeLinejoin="round"
-                                                  />
-                                                </svg>
-                                              </a>
-                                            ) : (
-                                              <div className="h-7 w-7 rounded-lg border border-slate-800 bg-slate-900 text-slate-600 inline-flex items-center justify-center">
-                                                <span className="text-[10px]">--</span>
-                                              </div>
-                                            )}
-                                          </div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                )}
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setV2PositionMenuOpenId(null);
-                                  handleOpenPoolDepositFromRow(pos);
-                                }}
-                                className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                              >
-                                Manage
-                              </button>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                ) : (
-                  <div className="text-sm text-slate-400">
-                    No V2 LP positions found for this wallet.
+                  <div className="text-[11px] text-slate-400/60">
+                    Values are estimates - Updated in real time
                   </div>
-                )}
-              </div>
-            </>
+                </>
+              ) : (
+                <div className="rounded-xl border border-slate-800/80 px-4 py-12 text-center">
+                  <div className="text-sm text-slate-300">No liquidity positions found</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    Add liquidity to start earning fees
+                  </div>
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={handleAddLiquidityAction}
+                      className="h-9 rounded-lg border border-slate-700/80 bg-slate-900/80 px-3 text-xs font-medium text-slate-100 transition-colors hover:bg-slate-800/90 active:bg-slate-800"
+                    >
+                      + Add Liquidity
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -10200,7 +10284,7 @@ export default function LiquiditySection({
                   <div>
                     <div className="text-slate-100 font-semibold">
                       {searchTokenMeta?.symbol
-                        ? `${searchTokenMeta.symbol} · ${searchTokenMeta.name || "Token"}`
+                        ? `${searchTokenMeta.symbol} Â· ${searchTokenMeta.name || "Token"}`
                         : searchTokenMetaLoading
                           ? "Loading token..."
                           : "Token not listed"}
@@ -10383,7 +10467,7 @@ export default function LiquiditySection({
                         {position.token0Symbol} / {position.token1Symbol}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        Position #{position.tokenId} · Fee {formatFeeTier(position.fee)}
+                        Position #{position.tokenId} Â· Fee {formatFeeTier(position.fee)}
                       </div>
                     </div>
                     <button
@@ -10764,4 +10848,7 @@ export default function LiquiditySection({
     </div>
   );
 }
+
+
+
 

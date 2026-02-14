@@ -21,6 +21,11 @@ const pickEnvValue = (...values) => {
   }
   return "";
 };
+const parseTime = (value) => {
+  if (!value) return null;
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : null;
+};
 
 const parseAddressList = (...values) =>
   values
@@ -79,10 +84,18 @@ const getSeasonConfig = () => {
     process.env.POINTS_SEASON_ID,
     process.env.VITE_POINTS_SEASON_ID
   );
+  const seasonStartMs =
+    parseTime(process.env.POINTS_SEASON_START) ||
+    parseTime(process.env.VITE_POINTS_SEASON_START);
+  const seasonEndMs =
+    parseTime(process.env.POINTS_SEASON_END) ||
+    parseTime(process.env.VITE_POINTS_SEASON_END);
   const missing = [];
   if (!seasonId) missing.push("POINTS_SEASON_ID");
   return {
     seasonId,
+    seasonStartMs: Number.isFinite(seasonStartMs) ? seasonStartMs : null,
+    seasonEndMs: Number.isFinite(seasonEndMs) ? seasonEndMs : null,
     missing,
   };
 };
@@ -224,7 +237,12 @@ export default async function handler(req, res) {
   }
 
   const { seasonId: seasonParam, address } = req.query || {};
-  const { seasonId: configuredSeasonId, missing: missingSeasonEnv } = getSeasonConfig();
+  const {
+    seasonId: configuredSeasonId,
+    seasonStartMs,
+    seasonEndMs,
+    missing: missingSeasonEnv,
+  } = getSeasonConfig();
   let targetSeason = seasonParam || configuredSeasonId;
   if (!targetSeason) {
     try {
@@ -361,6 +379,11 @@ export default async function handler(req, res) {
 
     res.status(200).json({
       seasonId: targetSeason,
+      seasonStart: seasonStartMs,
+      seasonEnd: seasonEndMs,
+      seasonOngoing:
+        Number.isFinite(seasonStartMs) &&
+        (!Number.isFinite(seasonEndMs) || nowMs < seasonEndMs),
       address: normalized,
       exists: true,
       user: {

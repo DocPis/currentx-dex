@@ -118,6 +118,18 @@ const sanitizeAmountInput = (raw, decimals) => {
   if (fracPart.length) return `${safeInt}.${fracPart}`;
   return hasTrailingDot ? `${safeInt}.` : safeInt;
 };
+const formatOutputPreviewValue = (raw) => {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  if (!value.includes(".")) return value;
+  const [intPart, fracPartRaw = ""] = value.split(".");
+  const absInt = Math.abs(Number(intPart || "0"));
+  const maxDecimals = absInt >= 100 ? 4 : absInt >= 1 ? 5 : 6;
+  const cleanedFrac = fracPartRaw.replace(/[^0-9]/g, "");
+  const sliced = cleanedFrac.slice(0, maxDecimals);
+  if (!sliced) return intPart || "0";
+  return trimTrailingZeros(`${intPart}.${sliced}`);
+};
 const formatCompactNumber = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num)) return "--";
@@ -676,6 +688,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [swapStatus, setSwapStatus] = useState(null);
   const [swapLoading, setSwapLoading] = useState(false);
   const [swapPulse, setSwapPulse] = useState(false);
+  const [focusedAmountField, setFocusedAmountField] = useState(""); // "sell" | "buy" | ""
+  const [activeQuickPercent, setActiveQuickPercent] = useState(null);
+  const [routeRefreshFx, setRouteRefreshFx] = useState(false);
   const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, kind, expiration }
   const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
@@ -695,6 +710,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const lastQuoteOutRef = useRef(null);
   const quoteDebounceRef = useRef(null);
   const allowanceDebounceRef = useRef(null);
+  const routeRefreshTimerRef = useRef(null);
   const pendingTxHashRef = useRef(null);
   const autoRefreshTimerRef = useRef(null);
   const approvalCacheRef = useRef(new Map());
@@ -1109,6 +1125,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     const bal = effectiveBalances?.[sellToken] || 0;
     const decimals = Math.min(6, tokenRegistry[sellKey]?.decimals ?? 6);
     if (!bal) {
+      setActiveQuickPercent(null);
       setAmountIn("");
       setSwapInputMode("in");
       setQuoteError("");
@@ -1117,6 +1134,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     }
     const raw = bal * pct;
     const val = formatAmountFloor(raw, decimals);
+    setActiveQuickPercent(pct);
     setAmountIn(val || "");
     setSwapInputMode("in");
     setQuoteError("");
@@ -3394,6 +3412,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     displayRoute && displayRoute.length ? displayRoute : [displaySellSymbol, displayBuySymbol]
   ).map((label) => resolveRouteToken(label));
   const isQuoteLocked = quoteLockedUntil && quoteLockedUntil > Date.now();
+  const quoteOutDisplayValue = isExactOut ? amountOutInput : formatOutputPreviewValue(quoteOut || "");
+  const hasFullPrecisionHint =
+    !isExactOut &&
+    typeof quoteOut === "string" &&
+    quoteOut.trim().length > 0 &&
+    quoteOutDisplayValue !== quoteOut;
   const quoteSourceLabel = (() => {
     if (quoteError) return quoteError;
     if (!activeInputAmount) {
@@ -3419,6 +3443,21 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const approvalSummary = approvalTargetsForSell.length
     ? `${approvalTargetsForSell.length} approval${approvalTargetsForSell.length > 1 ? "s" : ""}`
     : "";
+  const isSellAmountFocused = focusedAmountField === "sell";
+  const isBuyAmountFocused = focusedAmountField === "buy";
+  const hasSellAmountValue = String(amountIn || "").trim().length > 0;
+  const isSellPanelActive = isSellAmountFocused || swapInputMode === "in";
+  const PRICE_IMPACT_WARN_THRESHOLD = 1;
+  const PRICE_IMPACT_DANGER_THRESHOLD = 3;
+  const hasPriceImpact = Number.isFinite(priceImpact);
+  const isPriceImpactWarning = hasPriceImpact && priceImpact > PRICE_IMPACT_WARN_THRESHOLD;
+  const priceImpactToneClass = !hasPriceImpact
+    ? "text-slate-200"
+    : priceImpact > PRICE_IMPACT_DANGER_THRESHOLD
+      ? "text-rose-300"
+      : isPriceImpactWarning
+        ? "text-amber-200"
+        : "text-slate-200";
 
   useEffect(() => {
     if (isDirectEthWeth) {
@@ -3438,6 +3477,22 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       lastQuoteSourceRef.current = "Live quote via CurrentX API (V3)";
     }
   }, [quoteMeta?.protocol, isDirectEthWeth, splitProtocolLabel]);
+
+  useEffect(() => {
+    setActiveQuickPercent(null);
+  }, [sellToken, buyToken]);
+
+  useEffect(() => {
+    if (routeRefreshTimerRef.current) {
+      clearTimeout(routeRefreshTimerRef.current);
+      routeRefreshTimerRef.current = null;
+    }
+    setRouteRefreshFx(true);
+    routeRefreshTimerRef.current = setTimeout(() => {
+      setRouteRefreshFx(false);
+      routeRefreshTimerRef.current = null;
+    }, 320);
+  }, [sellToken, buyToken, amountIn, amountOutInput, slippage, swapInputMode]);
 
   useEffect(() => {
     if (!swapStatus) return undefined;
@@ -3465,6 +3520,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     if (quoteLockTimerRef.current) clearTimeout(quoteLockTimerRef.current);
     if (quoteDebounceRef.current) clearTimeout(quoteDebounceRef.current);
     if (allowanceDebounceRef.current) clearTimeout(allowanceDebounceRef.current);
+    if (routeRefreshTimerRef.current) clearTimeout(routeRefreshTimerRef.current);
     pendingTxHashRef.current = null;
   }, []);
 
@@ -4310,10 +4366,18 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   return (
     <div className="w-full flex flex-col items-center mt-10 px-4 sm:px-0">
       <div className="w-full max-w-xl rounded-3xl bg-slate-900/80 border border-slate-800 p-4 sm:p-6 shadow-xl">
-        <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
-          <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
+        <div
+          className={`mb-4 rounded-2xl border p-4 transition-colors ${
+            isSellPanelActive
+              ? "bg-slate-900/92 border-sky-500/35"
+              : hasSellAmountValue
+                ? "bg-slate-900/88 border-sky-500/25 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.12)]"
+              : "bg-slate-900/85 border-slate-800"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2 text-[10px] text-slate-600/90">
             <span>Sell</span>
-            <span className="font-medium text-slate-300">
+            <span className="font-medium text-slate-500/85">
               Balance: {formatBalance(effectiveBalances[sellToken])} {displaySellSymbol}
             </span>
           </div>
@@ -4324,7 +4388,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 setSelectorOpen("sell");
                 setTokenSearch("");
               }}
-              className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
+              className="px-3 py-2 rounded-xl bg-slate-800/95 text-xs text-slate-50 border border-slate-600 flex items-center gap-2 shadow-[inset_0_1px_0_rgba(148,163,184,0.15),0_8px_20px_-14px_rgba(56,189,248,0.55)] min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-400/70 hover:bg-slate-800 transition"
             >
               <TokenLogo
                 token={displaySellMeta}
@@ -4333,15 +4397,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 placeholderClassName="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white"
               />
               <div className="flex flex-col items-start">
-                <span className="text-sm font-semibold">
+                <span className="text-sm font-bold text-slate-50">
                   {displaySellSymbol}
                 </span>
-                <span className="text-[10px] text-slate-400">
+                <span className="text-[10px] text-slate-600">
                   {displaySellAddress ? shortenAddress(displaySellAddress) : "Native"}
                 </span>
               </div>
               <svg
-                className="ml-auto h-3.5 w-3.5 text-slate-400"
+                className="ml-auto h-3.5 w-3.5 text-slate-500"
                 viewBox="0 0 20 20"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
@@ -4360,6 +4424,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               value={amountIn}
               onChange={(e) => {
                 const next = sanitizeAmountInput(e.target.value, sellInputDecimals);
+                if (activeQuickPercent !== null) setActiveQuickPercent(null);
                 setAmountIn(next);
                 if (swapInputMode !== "in") {
                   setSwapInputMode("in");
@@ -4367,22 +4432,38 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 if (quoteError) setQuoteError("");
                 if (swapStatus) setSwapStatus(null);
               }}
+              onFocus={() => setFocusedAmountField("sell")}
+              onBlur={() =>
+                setFocusedAmountField((prev) => (prev === "sell" ? "" : prev))
+              }
               placeholder="0.00"
-              className={`flex-1 text-right bg-transparent font-semibold text-slate-50 outline-none placeholder:text-slate-700 w-full ${amountTextClass(amountIn, "text-2xl")}`}
+              className={`flex-1 text-right rounded-xl px-2 py-1.5 bg-transparent font-semibold ${
+                hasSellAmountValue ? "text-white" : "text-slate-100"
+              } outline-none placeholder:text-slate-600/60 w-full transition-shadow ${
+                isSellAmountFocused
+                  ? "shadow-[inset_0_0_0_1px_rgba(56,189,248,0.45),inset_0_0_26px_rgba(56,189,248,0.16)]"
+                  : hasSellAmountValue
+                    ? "shadow-[inset_0_0_0_1px_rgba(56,189,248,0.33),inset_0_0_22px_rgba(56,189,248,0.12)]"
+                    : "shadow-[inset_0_0_0_1px_rgba(30,41,59,0.35)]"
+              } ${amountTextClass(amountIn, "text-[1.95rem] sm:text-[2.55rem]")}`}
             />
           </div>
-          <div className="flex justify-end gap-2 mt-3 text-[11px] sm:text-xs">
+          <div className="flex justify-end gap-2 mt-3 text-[10px] sm:text-[11px]">
             {[0.25, 0.5, 0.75, 1].map((p) => (
               <button
                 key={p}
                 type="button"
                 onClick={() => handleQuickPercent(p)}
-                className="px-2 py-1 rounded-lg border border-slate-700 bg-slate-800/60 text-slate-200 hover:border-sky-500/60 transition"
+                className={`px-2.5 py-1 rounded-lg border text-slate-200 transition-all ${
+                  activeQuickPercent === p
+                    ? "border-sky-400/80 bg-sky-500/25 text-sky-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.25),0_10px_20px_-14px_rgba(56,189,248,0.7)]"
+                    : "border-slate-700 bg-slate-800/70 hover:border-sky-400/75 hover:bg-slate-700/90 hover:-translate-y-[1px]"
+                }`}
               >
                 {Math.round(p * 100)}%
               </button>
             ))}
-            <div className="px-2 py-1 text-slate-400">
+            <div className="px-2 py-1 text-[10px] text-slate-600/85">
               {formatBalance(sellBalance)} {displaySellSymbol} available
             </div>
           </div>
@@ -4390,7 +4471,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
         <div className="flex justify-center my-2">
           <div className="relative group">
-            <div className="absolute inset-0 blur-lg bg-gradient-to-r from-sky-500/30 via-indigo-500/30 to-purple-600/30 opacity-0 group-hover:opacity-70 transition duration-500" />
+            <div className="absolute inset-0 blur-lg bg-gradient-to-r from-sky-500/35 via-cyan-400/30 to-sky-500/25 opacity-0 group-hover:opacity-80 transition duration-500" />
             <button
               onClick={() => {
                 setSwapPulse(true);
@@ -4398,7 +4479,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 setBuyToken(sellToken);
                 setTimeout(() => setSwapPulse(false), 320);
               }}
-              className="relative h-11 w-11 rounded-full border border-slate-700 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/40 hover:border-sky-500/60 transition-transform duration-300 hover:rotate-6 active:scale-95"
+              className="relative h-12 w-12 rounded-full border border-slate-500/80 bg-slate-900 flex items-center justify-center text-slate-200 text-lg shadow-md shadow-black/40 hover:border-sky-300/80 hover:scale-[1.04] hover:-translate-y-0.5 hover:shadow-[0_12px_24px_-10px_rgba(56,189,248,0.62)] transition-transform duration-300 active:scale-95"
               aria-label="Invert tokens"
             >
               <span
@@ -4412,7 +4493,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 viewBox="0 0 24 24"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 text-slate-100 transition duration-300 ease-out"
+                className="h-[22px] w-[22px] text-slate-100 transition duration-300 ease-out"
                 style={{
                   transform: swapPulse
                     ? "rotate(210deg) scale(1.1)"
@@ -4431,10 +4512,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           </div>
         </div>
 
-        <div className="mb-4 rounded-2xl bg-slate-900 border border-slate-800 p-4">
-          <div className="flex items-center justify-between mb-2 text-xs text-slate-400">
+        <div className="mb-7 rounded-2xl bg-slate-900/95 border border-sky-500/30 p-4 shadow-[0_16px_36px_-26px_rgba(56,189,248,0.6)]">
+          <div className="flex items-center justify-between mb-2 text-[10px] text-slate-600/90">
             <span>Buy</span>
-            <span className="font-medium text-slate-300">
+            <span className="font-medium text-slate-500/85">
               Balance: {formatBalance(effectiveBalances[buyToken])} {displayBuySymbol}
             </span>
           </div>
@@ -4445,7 +4526,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 setSelectorOpen("buy");
                 setTokenSearch("");
               }}
-              className="px-3 py-2 rounded-xl bg-slate-800 text-xs text-slate-100 border border-slate-700 flex items-center gap-2 shadow-inner shadow-black/30 min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-500/60 transition"
+              className="px-3 py-2 rounded-xl bg-slate-800/95 text-xs text-slate-50 border border-slate-600 flex items-center gap-2 shadow-[inset_0_1px_0_rgba(148,163,184,0.15),0_8px_20px_-14px_rgba(56,189,248,0.55)] min-w-0 w-full sm:w-auto sm:min-w-[140px] hover:border-sky-400/70 hover:bg-slate-800 transition"
             >
               <TokenLogo
                 token={displayBuyMeta}
@@ -4454,15 +4535,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 placeholderClassName="h-6 w-6 rounded-full bg-slate-700 text-[10px] font-semibold flex items-center justify-center text-white"
               />
               <div className="flex flex-col items-start">
-                <span className="text-sm font-semibold">
+                <span className="text-sm font-bold text-slate-50">
                   {displayBuySymbol}
                 </span>
-                <span className="text-[10px] text-slate-400">
+                <span className="text-[10px] text-slate-600">
                   {displayBuyAddress ? shortenAddress(displayBuyAddress) : "Native"}
                 </span>
               </div>
               <svg
-                className="ml-auto h-3.5 w-3.5 text-slate-400"
+                className="ml-auto h-3.5 w-3.5 text-slate-500"
                 viewBox="0 0 20 20"
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
@@ -4479,7 +4560,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             <div className="flex-1 text-right w-full">
               <input
                 name="swap-amount-out"
-                value={isExactOut ? amountOutInput : quoteOut || ""}
+                value={quoteOutDisplayValue}
                 onChange={(e) => {
                   const next = sanitizeAmountInput(e.target.value, buyInputDecimals);
                   setAmountOutInput(next);
@@ -4490,6 +4571,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   if (swapStatus) setSwapStatus(null);
                 }}
                 onFocus={() => {
+                  setFocusedAmountField("buy");
                   if (!isExactOut) {
                     setSwapInputMode("out");
                     if (!amountOutInput && quoteOut) {
@@ -4497,36 +4579,61 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                     }
                   }
                 }}
+                onBlur={() =>
+                  setFocusedAmountField((prev) => (prev === "buy" ? "" : prev))
+                }
                 placeholder="0.00"
-                className={`w-full text-right bg-transparent font-semibold text-slate-50 outline-none placeholder:text-slate-700 ${amountTextClass(
-                  isExactOut ? amountOutInput : quoteOut,
-                  "text-2xl sm:text-3xl"
+                title={
+                  hasFullPrecisionHint
+                    ? `Full precision: ${quoteOut || ""} ${displayBuySymbol || ""}`
+                    : undefined
+                }
+                className={`w-full text-right rounded-xl px-2 py-1.5 bg-transparent font-semibold text-slate-50 outline-none placeholder:text-slate-600/60 transition-shadow ${
+                  isBuyAmountFocused
+                    ? "shadow-[inset_0_0_0_1px_rgba(56,189,248,0.5),inset_0_0_28px_rgba(56,189,248,0.22)]"
+                    : "shadow-[inset_0_0_0_1px_rgba(56,189,248,0.22),inset_0_0_24px_rgba(56,189,248,0.1)]"
+                } ${amountTextClass(
+                  quoteOutDisplayValue,
+                  "text-[2.1rem] sm:text-[2.75rem]"
                 )}`}
               />
-              <div className="text-[11px] text-slate-500">
+              {hasFullPrecisionHint ? (
+                <div
+                  className="text-[10px] text-slate-500/80"
+                  title={`Full precision: ${quoteOut || ""} ${displayBuySymbol || ""}`}
+                >
+                  Full precision available
+                </div>
+              ) : null}
+              <div className="text-[10px] text-slate-600/85">
                 {quoteSourceLabel}
               </div>
             </div>
           </div>
         </div>
 
-        <div className="mb-3 rounded-2xl bg-slate-900/70 border border-slate-800 p-4 shadow-[0_14px_40px_-24px_rgba(56,189,248,0.6)]">
+        <div className="relative overflow-hidden mb-3 rounded-2xl bg-slate-900/70 border border-slate-800 p-4 shadow-[0_14px_40px_-24px_rgba(56,189,248,0.6)]">
+          <div
+            className={`pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-sky-400/12 to-transparent transition-opacity duration-300 ${
+              routeRefreshFx ? "opacity-100" : "opacity-0"
+            }`}
+          />
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-slate-100">
               <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
               <span className="text-sm font-semibold">Route</span>
             </div>
             <div className="flex flex-wrap items-center gap-2 text-[11px]">
-              <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+              <span className="px-2 py-0.5 rounded-full bg-slate-900/55 border border-slate-700/60 text-slate-300">
                 {routeProtocolLabel}
               </span>
               {routeModeLabel && (
-                <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/55 border border-slate-700/60 text-slate-300">
                   {routeModeLabel}
                 </span>
               )}
               {hopCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full bg-slate-900/70 border border-slate-700 text-slate-200">
+                <span className="px-2 py-0.5 rounded-full bg-slate-900/55 border border-slate-700/60 text-slate-300">
                   {hopCount} hop{hopCount > 1 ? "s" : ""}
                 </span>
               )}
@@ -4636,26 +4743,26 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </div>
           </div>
 
-          <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-[12px] text-slate-100">
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Expected</span>
-              <span className="font-semibold">
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-6 gap-2.5 text-slate-100">
+            <div className="sm:col-span-3 rounded-xl border border-slate-700/80 bg-slate-900/65 px-3 py-2.5 flex flex-col gap-1">
+              <span className="text-slate-400 text-[10px] uppercase tracking-wide">Expected</span>
+              <span className="text-[19px] sm:text-[22px] font-extrabold text-slate-50">
                 {quoteOut !== null ? formatDisplayAmount(quoteOut, displayBuySymbol) : "--"}
               </span>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Min received</span>
-              <span className="font-semibold">{minReceivedDisplay}</span>
+            <div className="sm:col-span-1 rounded-xl border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 flex flex-col gap-0.5">
+              <span className="text-slate-500 text-[10px] uppercase tracking-wide">Min received</span>
+              <span className="text-sm font-semibold text-slate-200">{minReceivedDisplay}</span>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">Price impact</span>
-              <span className="font-semibold">
+            <div className="sm:col-span-1 rounded-xl border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 flex flex-col gap-0.5">
+              <span className="text-slate-500 text-[10px] uppercase tracking-wide">Price impact</span>
+              <span className={`text-sm font-semibold ${priceImpactToneClass}`}>
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
               </span>
             </div>
-            <div className="flex flex-col gap-1">
-              <span className="text-slate-500 text-[11px]">LP fees (est.)</span>
-              <span className="font-semibold">{routeFeeUsdLabel}</span>
+            <div className="sm:col-span-1 rounded-xl border border-slate-800/75 bg-slate-950/40 px-2.5 py-1.5 flex flex-col gap-0.5">
+              <span className="text-slate-600 text-[10px] uppercase tracking-wide">LP fees (est.)</span>
+              <span className="text-xs font-medium text-slate-400">{routeFeeUsdLabel}</span>
             </div>
           </div>
 
@@ -4689,31 +4796,33 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           ) : null}
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3 mt-2">
+        <div className="flex flex-col sm:flex-row gap-3 mt-6">
           <div className="flex-1 rounded-2xl bg-slate-900 border border-slate-800 p-3 text-xs text-slate-300">
             <div className="flex items-center justify-between mb-2">
               <span className="text-slate-400">Slippage (%)</span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 {[0.1, 0.5, 1].map((p) => (
                   <button
                     key={p}
                     type="button"
                     onClick={() => setSlippage(String(p))}
-                    className={`px-2 py-1 rounded-lg text-[11px] border ${
+                    className={`px-2 py-0.5 rounded-md text-[10px] border font-medium transition ${
                       Number(slippage) === p
-                        ? "bg-sky-500/20 border-sky-500/50 text-sky-100"
-                        : "bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500"
+                        ? "bg-sky-500/35 border-sky-300/90 text-sky-50 shadow-[inset_0_0_0_1px_rgba(125,211,252,0.5),0_8px_16px_-12px_rgba(56,189,248,0.6)]"
+                        : "bg-slate-800/90 border-slate-700 text-slate-300 hover:border-sky-500/50 hover:bg-slate-700/85"
                     }`}
                   >
                     {p}%
                   </button>
                 ))}
-                <input
-                  name="swap-slippage"
-                  value={slippage}
-                  onChange={(e) => setSlippage(e.target.value)}
-                  className="w-20 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-right text-slate-100 text-sm"
-                />
+                <div className="ml-1 pl-2 border-l border-slate-700/80">
+                  <input
+                    name="swap-slippage"
+                    value={slippage}
+                    onChange={(e) => setSlippage(e.target.value)}
+                    className="w-16 px-2 py-1 rounded-md bg-slate-800/90 border border-slate-700 text-right text-slate-100 text-[12px]"
+                  />
+                </div>
               </div>
             </div>
             <div className="flex items-center justify-between text-[11px]">
@@ -4770,7 +4879,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 quoteLoading ||
                 (!isDirectEthWeth && approveNeeded && sellToken !== "ETH")
               }
-              className="w-full py-3 rounded-2xl bg-gradient-to-r from-sky-500 via-indigo-500 to-purple-600 text-sm font-semibold text-white shadow-[0_10px_40px_-15px_rgba(56,189,248,0.75)] hover:scale-[1.01] active:scale-[0.99] transition disabled:opacity-60 disabled:scale-100"
+              className="w-full py-3 rounded-2xl border border-sky-300/55 bg-gradient-to-r from-sky-500/95 via-cyan-400/92 to-indigo-500/95 bg-[length:155%_155%] bg-[position:0%_50%] text-sm font-bold text-white shadow-[0_14px_26px_-16px_rgba(56,189,248,0.55)] transition-all duration-250 hover:bg-[position:100%_50%] hover:-translate-y-[1px] hover:shadow-[0_20px_34px_-18px_rgba(56,189,248,0.64)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 active:translate-y-0 active:scale-[0.99] disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:border-slate-600 disabled:text-slate-400 disabled:shadow-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:scale-100"
             >
               <span className="inline-flex items-center gap-2 justify-center">
                 <svg

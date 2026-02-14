@@ -7,7 +7,6 @@ import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
 import Footer from "./shared/ui/Footer";
-import SeasonBanner from "./shared/ui/SeasonBanner";
 
 const TAB_ROUTES = {
   dashboard: "/dashboard",
@@ -324,10 +323,9 @@ export default function App() {
 
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-clip bg-transparent text-slate-50">
-      <SeasonBanner onClick={() => handleTabClick("points")} />
       <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute -left-28 top-20 h-72 w-72 rounded-full bg-emerald-400/10 blur-3xl" />
-        <div className="absolute right-[-8rem] top-[18rem] h-[22rem] w-[22rem] rounded-full bg-sky-500/15 blur-3xl" />
+        <div className="absolute -left-28 top-36 h-72 w-72 rounded-full bg-emerald-400/7 blur-3xl" />
+        <div className="absolute right-[-8rem] top-[24rem] h-[22rem] w-[22rem] rounded-full bg-sky-500/12 blur-3xl" />
       </div>
       {connectError && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50">
@@ -358,8 +356,8 @@ export default function App() {
       />
 
       {/* Tabs */}
-      <div className="cx-fade-up px-4 pt-6 sm:px-6">
-        <div className="mx-auto flex w-full max-w-6xl flex-wrap justify-center gap-2 rounded-3xl border border-slate-700/40 bg-slate-900/45 p-2 text-xs shadow-[0_24px_60px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:text-sm">
+      <div className="cx-fade-up border-b border-slate-800/80 bg-[#070b16] px-4 sm:px-6">
+        <div className="flex w-full flex-wrap items-center justify-center gap-x-3.5 gap-y-0 text-xs sm:text-sm">
           {[
             { id: "dashboard", label: "Dashboard" },
             { id: "swap", label: "Swap" },
@@ -381,14 +379,10 @@ export default function App() {
                 preloadSection(item.id);
                 prefetchTabData(item.id);
               }}
-              className={`cx-tab-button rounded-2xl border px-4 py-2.5 font-display text-[11px] tracking-wide transition sm:text-xs ${
+              className={`relative inline-flex py-3 font-display text-[11px] font-medium tracking-[0.005em] leading-none text-white/75 transition-colors duration-[120ms] ease-out after:absolute after:bottom-0 after:left-0 after:h-px after:w-full after:origin-center after:scale-x-0 after:bg-slate-300/80 after:transition-transform after:duration-[120ms] after:ease-out after:content-[''] sm:text-xs ${
                 tab === item.id
-                  ? "cx-tab-button-active border-sky-400/80 bg-gradient-to-r from-sky-500/20 via-cyan-400/20 to-emerald-400/15 text-sky-50 shadow-[0_10px_30px_rgba(56,189,248,0.22)]"
-                  : "border-slate-700/60 bg-slate-900/65 text-slate-300 hover:border-slate-500 hover:text-slate-100"
-              } ${
-                item.id === "points"
-                  ? "relative border-cyan-400/60 text-cyan-100 shadow-[0_0_20px_rgba(34,211,238,0.3)] hover:shadow-[0_0_26px_rgba(34,211,238,0.38)]"
-                  : ""
+                  ? "text-white after:h-[2px] after:scale-x-100 after:bg-[#7ea0b8]/80"
+                  : "hover:text-white hover:after:scale-x-100"
               }`}
             >
               {item.label}
@@ -435,7 +429,11 @@ export default function App() {
           {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
           {tab === "dashboard" && <Dashboard />}
           {tab === "points" && (
-            <PointsPage address={address} onConnect={handleConnect} />
+            <PointsPage
+              address={address}
+              onConnect={handleConnect}
+              onNavigate={(nextTab) => setTab(nextTab)}
+            />
           )}
           {tab === "farms" && (
             <Farms address={address} onConnect={handleConnect} />

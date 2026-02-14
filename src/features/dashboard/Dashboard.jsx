@@ -160,43 +160,57 @@ function LineGlowChart({
       >
         <defs>
           <linearGradient id={gradientId} x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.45" />
-            <stop offset="100%" stopColor={color} stopOpacity="0.08" />
+            <stop offset="0%" stopColor={color} stopOpacity="0.27" />
+            <stop offset="100%" stopColor={color} stopOpacity="0.045" />
           </linearGradient>
           <pattern id={`${label}-grid`} width="36" height="18" patternUnits="userSpaceOnUse">
-            <path d="M 36 0 L 0 0 0 18" fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="1" />
+            <path
+              d="M 36 0 L 0 0 0 18"
+              fill="none"
+              stroke="rgba(148,163,184,0.14)"
+              strokeWidth="1"
+            />
           </pattern>
           <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="4" result="coloredBlur" />
+            <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
             <feMerge>
               <feMergeNode in="coloredBlur" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
         </defs>
-        <rect width="100%" height="100%" fill={`url(#${label}-grid)`} opacity="0.6" />
+        <rect width="100%" height="100%" fill={`url(#${label}-grid)`} opacity="0.24" />
+        <line
+          x1="0"
+          x2={width}
+          y1={height - 1}
+          y2={height - 1}
+          stroke="rgba(148,163,184,0.18)"
+          strokeWidth="1"
+        />
         <rect
           width="100%"
           height="100%"
           fill={`url(#${gradientId})`}
-          opacity="0.25"
+          opacity="0.16"
         />
         <polygon
           fill={`url(#${gradientId})`}
           points={`${points.join(" ")} ${width},${height} 0,${height}`}
-          opacity="0.9"
+          opacity="0.65"
         />
         <polyline
           fill="none"
           stroke={color}
-          strokeWidth="3"
+          strokeWidth="2.5"
+          strokeOpacity="0.78"
           points={points.join(" ")}
           filter={`url(#${glowId})`}
         />
         {last && (
           <>
-            <circle cx={last.x} cy={last.y} r="4.5" fill={color} opacity="0.9" />
-            <circle cx={last.x} cy={last.y} r="9" fill={color} opacity="0.15" />
+            <circle cx={last.x} cy={last.y} r="4.5" fill={color} opacity="0.75" />
+            <circle cx={last.x} cy={last.y} r="9" fill={color} opacity="0.1" />
           </>
         )}
         {activePoint && (
@@ -207,7 +221,7 @@ function LineGlowChart({
               y1={0}
               y2={height}
               stroke={color}
-              strokeOpacity="0.35"
+              strokeOpacity="0.28"
               strokeDasharray="4 3"
             />
             <circle cx={activePoint.x} cy={activePoint.y} r="5" fill="#0f172a" stroke={color} strokeWidth="2" />
@@ -244,7 +258,7 @@ function LineGlowChart({
           </div>
         </div>
       )}
-      <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-500">
+      <div className="absolute inset-x-3 bottom-2 flex justify-between text-[11px] text-slate-600">
         {ticks.map((i) => (
           <span key={i}>{data[i]?.label || ""}</span>
         ))}
@@ -389,8 +403,8 @@ export default function Dashboard() {
 
 
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
+    <div className="w-full px-4 pb-10 pt-2 sm:px-6 lg:px-10 text-slate-100">
+      <div className="mb-6 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h2 className="text-2xl font-semibold text-white">Dashboard</h2>
         </div>
@@ -401,17 +415,14 @@ export default function Dashboard() {
             )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
-          <div className="flex items-center justify-between mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-6 lg:grid-cols-12 gap-6">
+        <div className="md:col-span-6 lg:col-span-6 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl shadow-black/30 p-6 sm:p-7">
+          <div className="flex items-start justify-between mb-4">
             <div>
-              <div className="text-sm text-slate-400">Protocol TVL</div>
-              <div className="text-xl font-semibold">
+              <div className="text-[11px] uppercase tracking-wide text-slate-400">Protocol TVL</div>
+              <div className="mt-2 text-[36px] leading-none font-black tracking-[-0.04em] text-white">
                 ${formatNumber(tvlHistory[0]?.tvlUsd || stats?.totalLiquidityUsd || 0)}
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-sky-400" />
             </div>
           </div>
           <div className="h-48">
@@ -422,7 +433,7 @@ export default function Dashboard() {
             ) : (
               <LineGlowChart
                 data={tvlSeriesWithToday}
-                color="#38bdf8"
+                color="#557f90"
                 label="tvl"
                 centerMax
               />
@@ -430,16 +441,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
-          <div className="flex items-center justify-between mb-3">
+        <div className="md:col-span-3 lg:col-span-3 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl shadow-black/30 p-6 sm:p-7">
+          <div className="flex items-start justify-between mb-4">
             <div>
-              <div className="text-sm text-slate-400">Protocol volume (24h)</div>
-              <div className="text-xl font-semibold">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Protocol volume (24h)</div>
+              <div className="mt-2 text-[30px] leading-none font-bold tracking-tight text-slate-100/90">
                 ${formatNumber(dailyVolumeUsd)}
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
             </div>
           </div>
           <div className="h-48">
@@ -450,7 +458,7 @@ export default function Dashboard() {
             ) : (
               <LineGlowChart
                 data={volumeSeriesWithToday}
-                color="#34d399"
+                color="#618878"
                 label="volume"
                 centerMax
               />
@@ -458,16 +466,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
-          <div className="flex items-center justify-between mb-3">
+        <div className="md:col-span-3 lg:col-span-3 rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl shadow-black/30 p-6 sm:p-7">
+          <div className="flex items-start justify-between mb-4">
             <div>
-              <div className="text-sm text-slate-400">Protocol fees (24h)</div>
-              <div className="text-xl font-semibold">
+              <div className="text-[11px] uppercase tracking-wide text-slate-500">Protocol fees (24h)</div>
+              <div className="mt-2 text-[30px] leading-none font-bold tracking-tight text-slate-100/90">
                 ${formatNumber(dailyFees)}
               </div>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
             </div>
           </div>
           <div className="h-48">
@@ -478,7 +483,7 @@ export default function Dashboard() {
             ) : (
               <LineGlowChart
                 data={feesSeries}
-                color="#f59e0b"
+                color="#9a875e"
                 label="fees"
                 centerMax
               />
@@ -487,17 +492,18 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mt-6 rounded-3xl bg-slate-900/70 border border-slate-800 shadow-xl shadow-black/30 p-4">
-        <div className="flex items-center justify-between mb-3">
+      <div className="mt-[2.625rem] rounded-3xl bg-slate-900/80 border border-slate-800 shadow-xl shadow-black/30 p-6 sm:p-7">
+        <div className="flex items-center justify-between mb-5">
           <div>
-            <div className="text-lg font-semibold text-slate-50">Top pools by TVL</div>
+            <div className="text-lg font-semibold text-slate-50">Top pools</div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-500">by TVL</div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-[11px] text-slate-400 uppercase tracking-wide">
-            <span className="h-2 w-2 rounded-full bg-sky-400 shadow-[0_0_10px_rgba(56,189,248,0.7)]" />
+          <div className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-slate-700/70 bg-slate-900/70 px-2.5 py-1 text-[10px] text-slate-300 uppercase tracking-wide">
+            <span className="h-1 w-1 rounded-full bg-sky-300/60" />
             Top 4
           </div>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-5">
           {isLoading ? (
             Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="space-y-2">
@@ -509,7 +515,8 @@ export default function Dashboard() {
               </div>
             ))
           ) : topPairs.length ? (
-            topPairs.map((pair) => {
+            topPairs.map((pair, index) => {
+              const isTopPool = index === 0;
               const width =
                 pair.share > 0
                   ? Math.min(100, Math.max(pair.share || 0, 6))
@@ -523,7 +530,14 @@ export default function Dashboard() {
               const feeLabel =
                 pair.type === "V3" && pair.feeTier ? formatFeePercent(pair.feeTier) : "";
               return (
-                <div key={pair.id} className="space-y-2">
+                <div
+                  key={pair.id}
+                  className={`group space-y-2 rounded-2xl ${
+                    isTopPool
+                      ? "border border-slate-700/80 bg-slate-900/62 px-3 py-3.5"
+                      : "border border-slate-800/60 bg-slate-900/28 px-2.5 py-2.5 hover:border-slate-700/80 hover:bg-slate-900/45 transition-colors"
+                  }`}
+                >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <div className="flex -space-x-2">
@@ -547,7 +561,7 @@ export default function Dashboard() {
                         ))}
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <div className="text-sm font-semibold text-white">
+                        <div className={`${isTopPool ? "text-base" : "text-sm"} font-semibold text-white`}>
                           {symbol0} / {symbol1}
                         </div>
                         {feeLabel ? (
@@ -560,23 +574,31 @@ export default function Dashboard() {
                         </span>
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-sky-200">
+                    <div className={`${isTopPool ? "text-lg font-bold" : "text-base font-semibold"} text-white`}>
                       {Math.round(pair.share || 0)}%
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-xs text-slate-400">
-                    <span className="text-slate-200">
+                    <span
+                      className={`${
+                        isTopPool ? "text-sm font-semibold text-slate-100" : "text-sm font-medium text-slate-200"
+                      }`}
+                    >
                       TVL: ${formatNumber(pair.tvlUsd || 0)}
                     </span>
                   </div>
-                  <div className="mt-1.5 h-3 w-full rounded-full bg-slate-800/80 overflow-hidden">
+                  <div
+                    className={`mt-1.5 w-full rounded-full bg-slate-900/90 border border-slate-800 overflow-hidden ${
+                      isTopPool ? "h-2" : "h-1.5"
+                    }`}
+                  >
                     <div
                       className="h-full rounded-full"
                       style={{
                         width: `${width}%`,
-                        background:
-                          "linear-gradient(90deg, #0e7490 0%, #0ea5e9 45%, #38bdf8 100%)",
-                        boxShadow: "0 0 18px rgba(14, 165, 233, 0.32)",
+                        background: isTopPool
+                          ? "linear-gradient(90deg, #3f5d6f 0%, #4f7287 50%, #668ea8 100%)"
+                          : "linear-gradient(90deg, #3c5869 0%, #4b6c80 50%, #6188a1 100%)",
                       }}
                     />
                   </div>

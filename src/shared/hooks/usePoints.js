@@ -316,10 +316,12 @@ export const useUserPoints = (address) => {
       const nowMs = Date.now();
       const hasFrontendSeasonConfig =
         Boolean(SEASON_ID) && Number.isFinite(SEASON_START_MS);
-      const seasonStart = Number.isFinite(SEASON_START_MS) ? SEASON_START_MS : null;
-      const seasonEnd = Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : null;
-      const seasonHasStarted = Number.isFinite(SEASON_START_MS)
-        ? nowMs >= SEASON_START_MS
+      const frontendSeasonStart = Number.isFinite(SEASON_START_MS)
+        ? SEASON_START_MS
+        : null;
+      const frontendSeasonEnd = Number.isFinite(SEASON_END_MS) ? SEASON_END_MS : null;
+      const frontendSeasonHasStarted = Number.isFinite(frontendSeasonStart)
+        ? nowMs >= frontendSeasonStart
         : true;
       const normalized = (address || "").toLowerCase();
 
@@ -355,6 +357,20 @@ export const useUserPoints = (address) => {
         }
 
         if (payload) {
+          const seasonStartResolved = toNumber(
+            payload?.seasonStart,
+            frontendSeasonStart
+          );
+          const seasonEndResolved = toNumber(payload?.seasonEnd, frontendSeasonEnd);
+          const seasonHasStartedResolved = Number.isFinite(seasonStartResolved)
+            ? nowMs >= seasonStartResolved
+            : frontendSeasonHasStarted;
+          const seasonOngoingResolved =
+            typeof payload?.seasonOngoing === "boolean"
+              ? payload.seasonOngoing
+              : Number.isFinite(seasonStartResolved)
+              ? !Number.isFinite(seasonEndResolved) || nowMs < seasonEndResolved
+              : false;
           const user = payload?.user || {};
           const seasonReward = user?.seasonReward || {};
           const volumeUsd = toNumber(user.volumeUsd) ?? 0;
@@ -366,14 +382,14 @@ export const useUserPoints = (address) => {
           const lpUsdCrxUsdm = toNumber(user.lpUsdCrxUsdm) ?? 0;
           const lpPoints = toNumber(user.lpPoints) ?? 0;
           const multiplierRaw = toNumber(user.multiplier) ?? 1;
-          const multiplier = seasonHasStarted ? multiplierRaw : 1;
+          const multiplier = seasonHasStartedResolved ? multiplierRaw : 1;
           const hasBoostLp = toBool(user.hasBoostLp);
 
           return {
             seasonId: payload?.seasonId || SEASON_ID || "",
-            seasonStart,
-            seasonEnd: seasonEnd ?? nowMs,
-            seasonOngoing: seasonStart ? SEASON_ONGOING : false,
+            seasonStart: seasonStartResolved,
+            seasonEnd: seasonEndResolved,
+            seasonOngoing: seasonOngoingResolved,
             points,
             basePoints,
             bonusPoints,
@@ -434,8 +450,8 @@ export const useUserPoints = (address) => {
       if (!hasFrontendSeasonConfig) {
         return {
           seasonId: SEASON_ID || "",
-          seasonStart,
-          seasonEnd: seasonEnd ?? nowMs,
+          seasonStart: frontendSeasonStart,
+          seasonEnd: frontendSeasonEnd,
           seasonOngoing: false,
           points: 0,
           basePoints: 0,
@@ -513,14 +529,14 @@ export const useUserPoints = (address) => {
         lpUsdTotal: lpData.lpUsd,
         lpUsdCrxEth: lpData.lpUsdCrxEth,
         lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
-        boostEnabled: seasonHasStarted,
+        boostEnabled: frontendSeasonHasStarted,
       });
 
       return {
         seasonId: SEASON_ID,
-        seasonStart,
-        seasonEnd: seasonEnd ?? nowMs,
-        seasonOngoing: seasonStart ? SEASON_ONGOING : false,
+        seasonStart: frontendSeasonStart,
+        seasonEnd: frontendSeasonEnd,
+        seasonOngoing: frontendSeasonStart ? SEASON_ONGOING : false,
         points: pointsBreakdown.totalPoints,
         basePoints: pointsBreakdown.basePoints,
         bonusPoints: pointsBreakdown.bonusPoints,
@@ -555,6 +571,10 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     enabled: Boolean(enabled),
     queryFn: async () => {
       const activeSeasonId = seasonId || SEASON_ID;
+      const toNumber = (value, fallback = null) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : fallback;
+      };
       const fetchLeaderboardPayload = async (seasonOverride) => {
         const params = new URLSearchParams();
         if (seasonOverride) params.set("seasonId", seasonOverride);
@@ -579,6 +599,12 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
         }
         return {
           seasonId: payload?.seasonId || seasonOverride || "",
+          seasonStart: toNumber(payload?.seasonStart, null),
+          seasonEnd: toNumber(payload?.seasonEnd, null),
+          seasonOngoing:
+            typeof payload?.seasonOngoing === "boolean"
+              ? payload.seasonOngoing
+              : null,
           items: Array.isArray(payload?.leaderboard) ? payload.leaderboard : [],
           updatedAt: payload?.updatedAt || null,
           summary: payload?.summary || null,
@@ -626,6 +652,12 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
     data: items,
     summary: query.data?.summary || null,
     updatedAt: query.data?.updatedAt || null,
+    seasonStart: query.data?.seasonStart ?? null,
+    seasonEnd: query.data?.seasonEnd ?? null,
+    seasonOngoing:
+      typeof query.data?.seasonOngoing === "boolean"
+        ? query.data.seasonOngoing
+        : null,
     available,
   };
 };

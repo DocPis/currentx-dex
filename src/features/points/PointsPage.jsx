@@ -1,5 +1,5 @@
 ﻿// src/features/points/PointsPage.jsx
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   SEASON_ID,
   SEASON_LABEL,
@@ -75,6 +75,48 @@ const formatDate = (value) => {
     year: "numeric",
   });
 };
+const formatSignedCompact = (value, suffix = "") => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "--";
+  const sign = num > 0 ? "+" : num < 0 ? "-" : "";
+  const body = formatCompactNumber(Math.abs(num));
+  return `${sign}${body}${suffix}`;
+};
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const formatCountdown = (msRemaining) => {
+  const totalSeconds = Math.max(0, Math.floor(msRemaining / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const hh = String(hours).padStart(2, "0");
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+};
+const hashString = (value = "") => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+const buildRowSparkline = (seedInput, pointsChange = 0, rankChange = 0) => {
+  const seed = hashString(seedInput);
+  const trend = clamp((Number(pointsChange) || 0) / 400, -0.24, 0.24);
+  const rankLift = clamp((Number(rankChange) || 0) / 50, -0.12, 0.12);
+  const base = 0.5 + trend * 0.5 + rankLift * 0.35;
+  const values = [];
+  for (let i = 0; i < 12; i += 1) {
+    const wave = Math.sin(((seed % 17) + i) * 0.82) * 0.08;
+    const jitter = (((seed >> (i % 9)) & 3) - 1.5) / 26;
+    const slope = (i / 11 - 0.5) * (trend + rankLift);
+    values.push(clamp(base + wave + jitter + slope, 0.1, 0.92));
+  }
+  return values
+    .map((value, idx) => `${idx * 4},${Math.round((1 - value) * 14) + 1}`)
+    .join(" ");
+};
 
 const Pill = ({ children, tone = "slate" }) => {
   const toneMap = {
@@ -148,8 +190,9 @@ const AccordionItem = ({ title, children }) => (
   </details>
 );
 
-export default function PointsPage({ address, onConnect }) {
+export default function PointsPage({ address, onConnect, onNavigate }) {
   const [copied, setCopied] = useState("");
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [whitelistClaimState, setWhitelistClaimState] = useState({
     loading: false,
     error: "",
@@ -169,16 +212,28 @@ export default function PointsPage({ address, onConnect }) {
   } = useUserPoints(address);
   const whitelistQuery = useWhitelistRewards(address);
 
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   const seasonTitle = String(SEASON_LABEL || SEASON_ID || "SEASON").toUpperCase();
-  const seasonEndValue = userStats?.seasonEnd ?? SEASON_END_MS;
+  const seasonStartValue =
+    userStats?.seasonStart ?? leaderboardQuery?.seasonStart ?? SEASON_START_MS;
+  const seasonEndValue =
+    userStats?.seasonEnd ?? leaderboardQuery?.seasonEnd ?? SEASON_END_MS;
   const seasonIsOngoing =
     typeof userStats?.seasonOngoing === "boolean"
       ? userStats.seasonOngoing
+      : typeof leaderboardQuery?.seasonOngoing === "boolean"
+      ? leaderboardQuery.seasonOngoing
       : SEASON_ONGOING;
-  const seasonStartLabel = "12 Feb 2026";
+  const seasonStartLabel = formatDate(seasonStartValue);
   const seasonEndLabel = seasonIsOngoing
     ? "ONGOING"
-    : formatDate(seasonEndValue);
+    : Number.isFinite(Number(seasonEndValue)) && Number(seasonEndValue) > 0
+    ? formatDate(seasonEndValue)
+    : "TBD";
   const seasonHeadline = `${seasonTitle} - ${seasonStartLabel} -> ${seasonEndLabel}`;
   const seasonFinalizationLine =
     "Points and whitelist rewards are finalized after the configured finalization window.";
@@ -201,6 +256,73 @@ export default function PointsPage({ address, onConnect }) {
       return "Leaderboard API non raggiungibile in locale (proxy verso 127.0.0.1:3000). Avvia il backend API o imposta VITE_API_PROXY_TARGET.";
     }
     return raw;
+  })();
+  const leaderboardRows = useMemo(
+    () => leaderboardQuery.data || [],
+    [leaderboardQuery.data]
+  );
+  const leaderboardStats = useMemo(() => {
+    const lpValues = [];
+    const pointDeltas = [];
+    leaderboardRows.forEach((row) => {
+      const lpUsd = Number(row?.lpUsd);
+      if (Number.isFinite(lpUsd) && lpUsd > 0) lpValues.push(lpUsd);
+      const delta = Number(row?.pointsChange24h);
+      if (Number.isFinite(delta)) pointDeltas.push(Math.abs(delta));
+    });
+    lpValues.sort((a, b) => a - b);
+    pointDeltas.sort((a, b) => a - b);
+    const lp75 = lpValues.length
+      ? lpValues[Math.min(lpValues.length - 1, Math.floor(lpValues.length * 0.75))]
+      : 0;
+    const hot75 = pointDeltas.length
+      ? pointDeltas[Math.min(pointDeltas.length - 1, Math.floor(pointDeltas.length * 0.75))]
+      : 0;
+    return {
+      whaleLpThreshold: lp75,
+      hotDeltaThreshold: hot75,
+    };
+  }, [leaderboardRows]);
+  const top100CutoffPoints = leaderboardRows.length
+    ? Number(leaderboardRows[Math.min(99, leaderboardRows.length - 1)]?.points || 0)
+    : null;
+  const userPoints = Number(userStats?.points || 0);
+  const pointsToTop100 = Number.isFinite(top100CutoffPoints)
+    ? Math.max(0, top100CutoffPoints - userPoints)
+    : null;
+  const progressToTop100Pct = Number.isFinite(top100CutoffPoints) && top100CutoffPoints > 0
+    ? clamp((userPoints / top100CutoffPoints) * 100, 0, 100)
+    : 0;
+  const userRank = Number(userStats?.rank);
+  const aboveWalletGapPoints = (() => {
+    if (Number.isFinite(userRank) && userRank > 1 && userRank <= 100) {
+      const above = leaderboardRows.find((row) => Number(row?.rank) === userRank - 1);
+      const abovePoints = Number(above?.points);
+      return Number.isFinite(abovePoints) ? Math.max(0, abovePoints - userPoints) : null;
+    }
+    if (Number.isFinite(pointsToTop100)) return pointsToTop100;
+    return null;
+  })();
+  const estimatedRewardIfEndedNowCrx = (() => {
+    const rewardSnapshot = Number(userStats?.seasonReward?.rewardSnapshotCrx);
+    if (Number.isFinite(rewardSnapshot) && rewardSnapshot > 0) return rewardSnapshot;
+    if (
+      Number.isFinite(userPoints) &&
+      userPoints > 0 &&
+      Number.isFinite(summarySeasonRewardCrx) &&
+      summarySeasonRewardCrx > 0 &&
+      Number.isFinite(summaryTotalPoints) &&
+      summaryTotalPoints > 0
+    ) {
+      return (userPoints / summaryTotalPoints) * summarySeasonRewardCrx;
+    }
+    return 0;
+  })();
+  const seasonCountdown = (() => {
+    const end = Number(seasonEndValue);
+    if (!Number.isFinite(end) || end <= 0) return null;
+    if (end <= nowMs) return "00:00:00";
+    return formatCountdown(end - nowMs);
   })();
 
   const hasBoostLp = Boolean(userStats?.hasBoostLp);
@@ -244,6 +366,15 @@ export default function PointsPage({ address, onConnect }) {
     if (!seasonReward.claimOpen) return "Claim locked";
     if ((seasonReward.claimableNowCrx || 0) <= 0) return "Nothing claimable";
     return "Claim now";
+  };
+  const handleBoostMultiplier = () => {
+    if (typeof onNavigate === "function") {
+      onNavigate("liquidity");
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.location.assign("/liquidity");
+    }
   };
 
   const handleWhitelistClaim = async () => {
@@ -388,6 +519,9 @@ export default function PointsPage({ address, onConnect }) {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-3">
               <Pill tone="sky">Season</Pill>
+              {seasonCountdown ? (
+                <Pill tone="amber">{`Countdown ${seasonCountdown}`}</Pill>
+              ) : null}
             </div>
             <div className="mt-3 text-3xl sm:text-4xl font-semibold">
               {seasonHeadline}
@@ -442,6 +576,16 @@ export default function PointsPage({ address, onConnect }) {
                 <div>Top 100 rewards require finalization complete + no wash flags + min activity.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
               </div>
+              <div className="mt-4 pt-3 border-t border-slate-800/70">
+                <div className="uppercase tracking-[0.3em] text-[10px] text-slate-500">
+                  Missions
+                </div>
+                <div className="mt-2 space-y-1 text-slate-300">
+                  <div>Swap $1k volume {"->"} +5% boost.</div>
+                  <div>Provide liquidity 3 days in a row {"->"} +10% LP multiplier.</div>
+                  <div>Trade on 2 pools {"->"} cross-pool bonus.</div>
+                </div>
+              </div>
             </div>
             {!address ? (
               <button
@@ -460,8 +604,40 @@ export default function PointsPage({ address, onConnect }) {
                 <div className="text-xs text-slate-400 mt-1">
                   {hasBoostLp ? poolBoostStatus : "Live tracking"}
                 </div>
+                <button
+                  type="button"
+                  onClick={handleBoostMultiplier}
+                  className="mt-3 px-3 py-1.5 rounded-lg border border-sky-500/40 bg-sky-500/15 text-sky-100 text-[11px] font-semibold hover:bg-sky-500/25 transition"
+                >
+                  Boost my multiplier
+                </button>
               </div>
             )}
+            {address ? (
+              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/8 p-4">
+                <div className="text-[10px] uppercase tracking-[0.3em] text-emerald-300/80">
+                  If Season Ended Now
+                </div>
+                <div className="mt-2 text-sm text-slate-100">
+                  Your estimated reward:{" "}
+                  <span className="font-semibold">
+                    {formatCrx(estimatedRewardIfEndedNowCrx)}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-300">
+                  Top 100 cutoff:{" "}
+                  {Number.isFinite(top100CutoffPoints)
+                    ? `${formatCompactNumber(top100CutoffPoints)} pts`
+                    : "--"}
+                </div>
+                <div className="mt-1 text-xs text-slate-300">
+                  You need{" "}
+                  {Number.isFinite(pointsToTop100)
+                    ? `+${formatCompactNumber(pointsToTop100)} pts`
+                    : "--"}
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -485,6 +661,38 @@ export default function PointsPage({ address, onConnect }) {
               <InfoRow label="Base points" value={formatCompactNumber(userStats?.basePoints || 0)} />
               <InfoRow label="Bonus points" value={formatCompactNumber(userStats?.bonusPoints || 0)} />
               <InfoRow label="Total" value={formatCompactNumber(userStats?.points || 0)} />
+            </div>
+            <div className="mt-5 rounded-2xl border border-slate-800/80 bg-slate-950/45 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                  Rank {Number.isFinite(userRank) ? `#${userRank}` : "#--"}
+                </div>
+                <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                  Progress to Top 100
+                </div>
+              </div>
+              <div className="mt-2 h-2.5 rounded-full bg-slate-800 overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-sky-400 to-emerald-300 transition-all"
+                  style={{ width: `${progressToTop100Pct.toFixed(1)}%` }}
+                />
+              </div>
+              <div className="mt-2 text-xs text-slate-300">
+                {progressToTop100Pct.toFixed(0)}% complete
+              </div>
+              <div className="mt-1 text-xs text-slate-300">
+                {Number.isFinite(pointsToTop100) && pointsToTop100 > 0
+                  ? `+${formatCompactNumber(pointsToTop100)} pts to enter Top 100`
+                  : "Inside Top 100 target zone"}
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                {Number.isFinite(aboveWalletGapPoints) && aboveWalletGapPoints > 0
+                  ? `Gap to wallet above: +${formatCompactNumber(aboveWalletGapPoints)} pts`
+                  : "No gap to wallet above right now"}
+              </div>
+              <div className="mt-1 text-xs text-slate-400">
+                Live estimated reward: {formatCrx(estimatedRewardIfEndedNowCrx)}
+              </div>
             </div>
           </StatCard>
 
@@ -732,7 +940,7 @@ export default function PointsPage({ address, onConnect }) {
                     <th className="text-left py-2">Rank</th>
                     <th className="text-left py-2">Wallet</th>
                     <th className="text-right py-2">Points</th>
-                    <th className="text-right py-2">Reward CRX</th>
+                    <th className="text-right py-2">Reward est.</th>
                     <th className="text-right py-2">Multiplier</th>
                     <th className="text-right py-2">Active LP USD</th>
                   </tr>
@@ -743,6 +951,32 @@ export default function PointsPage({ address, onConnect }) {
                       address && row.address?.toLowerCase() === address.toLowerCase();
                     const rankValue = Number(row.rank);
                     const displayRank = Number.isFinite(rankValue) ? rankValue : idx + 1;
+                    const rankChange24h = Number(row?.rankChange24h || 0);
+                    const pointsChange24h = Number(row?.pointsChange24h || 0);
+                    const lpUsd = Number(row?.lpUsd || 0);
+                    const isHotWallet =
+                      Math.abs(pointsChange24h) >= Math.max(1, leaderboardStats.hotDeltaThreshold);
+                    const isWhale =
+                      lpUsd > 0 && lpUsd >= Math.max(500, leaderboardStats.whaleLpThreshold);
+                    const isHighEfficiency = Number(row?.multiplier || 1) >= 2;
+                    const badges = [
+                      isHotWallet ? "HOT" : null,
+                      isWhale ? "WHALE LP" : null,
+                      isHighEfficiency ? "HIGH EFF" : null,
+                    ].filter(Boolean);
+                    const sparkline = buildRowSparkline(
+                      `${row.address || idx}:${row.points || 0}:${displayRank}`,
+                      pointsChange24h,
+                      rankChange24h
+                    );
+                    const rankArrow =
+                      rankChange24h > 0 ? "\u2191" : rankChange24h < 0 ? "\u2193" : "\u2192";
+                    const rankTone =
+                      rankChange24h > 0
+                        ? "text-emerald-300"
+                        : rankChange24h < 0
+                        ? "text-rose-300"
+                        : "text-slate-500";
                     return (
                       <tr
                         key={row.address || idx}
@@ -752,7 +986,15 @@ export default function PointsPage({ address, onConnect }) {
                             : "border-t border-slate-800/70 hover:bg-slate-900/40"
                         }
                       >
-                        <td className="py-1.5">{displayRank}</td>
+                        <td className="py-1.5">
+                          <div className="flex items-center gap-2">
+                            <span>#{displayRank}</span>
+                            <span className={`text-[11px] ${rankTone}`}>
+                              {rankArrow}
+                              {rankChange24h !== 0 ? Math.abs(rankChange24h) : ""}
+                            </span>
+                          </div>
+                        </td>
                         <td className="py-1.5">
                           <div className="flex items-center gap-2">
                             <span>{shortenAddress(row.address)}</span>
@@ -764,12 +1006,43 @@ export default function PointsPage({ address, onConnect }) {
                               {copied === row.address ? "Copied" : "Copy"}
                             </button>
                           </div>
+                          {badges.length ? (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {badges.map((badge) => (
+                                <span
+                                  key={badge}
+                                  className="px-1.5 py-0.5 rounded-full border border-slate-700/70 bg-slate-800/60 text-[10px] text-slate-300"
+                                >
+                                  {badge}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="py-1.5 text-right">
-                          {formatCompactNumber(row.points || 0)}
+                          <div className="inline-flex items-center justify-end gap-2">
+                            <span className="font-semibold">
+                              {formatCompactNumber(row.points || 0)}
+                            </span>
+                            <svg viewBox="0 0 44 16" className="h-[14px] w-[44px]">
+                              <polyline
+                                points={sparkline}
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.4"
+                                className="text-sky-300/90"
+                              />
+                            </svg>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {formatSignedCompact(pointsChange24h)}
+                          </div>
                         </td>
                         <td className="py-1.5 text-right">
                           {formatCompactNumber(row.rewardCrx || 0)}
+                          <div className="text-[11px] text-slate-500">
+                            {formatSignedCompact(row.rewardSharePct || 0, "%")}
+                          </div>
                         </td>
                         <td className="py-1.5 text-right">
                           {formatMultiplier(row.multiplier || 1)}
