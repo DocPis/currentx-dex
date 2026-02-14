@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:launchpad-api": "node scripts/launchpad-api-dev.mjs",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",

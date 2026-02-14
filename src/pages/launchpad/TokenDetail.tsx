@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { EXPLORER_BASE_URL } from "../../shared/config/web3";
 import TradeWidget from "../../components/launchpad/TradeWidget";
 import LiveBuysFeed from "../../components/launchpad/LiveBuysFeed";
+import TokenLogo from "../../components/launchpad/TokenLogo";
 import {
   useTokenActivity,
   useTokenCandles,
@@ -38,6 +39,7 @@ const buildPricePath = (candles: LaunchpadCandle[], width: number, height: numbe
 interface TokenDetailProps {
   tokenAddress: string;
   address?: string | null;
+  initialTradeSide?: "buy" | "sell";
   onConnect: () => void;
   onBack: () => void;
   onRefreshBalances?: () => Promise<void> | void;
@@ -47,6 +49,7 @@ interface TokenDetailProps {
 const TokenDetail = ({
   tokenAddress,
   address,
+  initialTradeSide,
   onConnect,
   onBack,
   onRefreshBalances,
@@ -123,6 +126,7 @@ const TokenDetail = ({
   }
 
   const isPositive = Number(token.market.change24h || 0) >= 0;
+  const tokenExplorerUrl = `${EXPLORER_BASE_URL}/token/${token.address}`;
 
   return (
     <section className="px-4 py-6 pb-44 sm:px-6 lg:pb-6">
@@ -146,9 +150,10 @@ const TokenDetail = ({
             <header className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_16px_36px_rgba(2,6,23,0.55)]">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <img
-                    src={token.logoUrl}
-                    alt={`${token.symbol} logo`}
+                  <TokenLogo
+                    address={token.address}
+                    symbol={token.symbol}
+                    logoUrl={token.logoUrl}
                     className="h-14 w-14 rounded-full border border-slate-700/70 bg-slate-900 object-cover"
                   />
                   <div>
@@ -188,16 +193,26 @@ const TokenDetail = ({
                 </div>
                 <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
                   <div className="text-slate-500">Contract</div>
-                  <button
-                    type="button"
-                    onClick={handleCopyContract}
-                    className="mt-1 inline-flex items-center gap-2 font-semibold text-sky-200 hover:text-sky-100"
-                  >
-                    {shortAddress(token.address)}
-                    <span className="text-[10px] text-slate-400">
-                      {copyState === "done" ? "copied" : copyState === "fail" ? "failed" : "copy"}
-                    </span>
-                  </button>
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyContract}
+                      className="inline-flex items-center gap-2 font-semibold text-sky-200 hover:text-sky-100"
+                    >
+                      {shortAddress(token.address)}
+                      <span className="text-[10px] text-slate-400">
+                        {copyState === "done" ? "copied" : copyState === "fail" ? "failed" : "copy"}
+                      </span>
+                    </button>
+                    <a
+                      href={tokenExplorerUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center text-[10px] font-medium text-slate-400 transition hover:text-sky-200"
+                    >
+                      blockscout
+                    </a>
+                  </div>
                 </div>
               </div>
             </header>
@@ -381,6 +396,7 @@ const TokenDetail = ({
               <TradeWidget
                 token={token}
                 address={address}
+                initialSide={initialTradeSide}
                 onConnect={onConnect}
                 onRefreshBalances={onRefreshBalances}
                 onTradeSuccess={handleTradeSuccess}
@@ -401,6 +417,7 @@ const TokenDetail = ({
         <TradeWidget
           token={token}
           address={address}
+          initialSide={initialTradeSide}
           onConnect={onConnect}
           onRefreshBalances={onRefreshBalances}
           onTradeSuccess={handleTradeSuccess}

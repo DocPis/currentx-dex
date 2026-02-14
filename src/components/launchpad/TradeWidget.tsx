@@ -4,6 +4,8 @@ import {
   EXPLORER_BASE_URL,
   PERMIT2_ADDRESS,
   TOKENS,
+  UNIV3_FACTORY_ADDRESS,
+  UNIV3_QUOTER_V2_ADDRESS,
   UNIV3_UNIVERSAL_ROUTER_ADDRESS,
   WETH_ADDRESS,
   getProvider,
@@ -11,13 +13,20 @@ import {
   getV2Quote,
   getV2QuoteWithMeta,
 } from "../../shared/config/web3";
-import { ERC20_ABI, PERMIT2_ABI, UNIV3_UNIVERSAL_ROUTER_ABI } from "../../shared/config/abis";
+import {
+  ERC20_ABI,
+  PERMIT2_ABI,
+  UNIV3_FACTORY_ABI,
+  UNIV3_QUOTER_V2_ABI,
+  UNIV3_UNIVERSAL_ROUTER_ABI,
+} from "../../shared/config/abis";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatTokenAmount, shortAddress } from "../../services/launchpad/utils";
 import UnverifiedTokenModal from "./UnverifiedTokenModal";
 
 const UR_COMMANDS = {
+  V3_SWAP_EXACT_IN: 0x00,
   V2_SWAP_EXACT_IN: 0x08,
   WRAP_ETH: 0x0b,
   UNWRAP_WETH: 0x0c,
@@ -25,6 +34,8 @@ const UR_COMMANDS = {
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
 const MAX_UINT48 = (1n << 48n) - 1n;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+const V3_FEE_TIERS = [10000, 3000, 500];
 
 const toSymbol = (address: string, token: LaunchpadTokenCard) => {
   const lower = String(address || "").toLowerCase();
@@ -38,6 +49,29 @@ const toSymbol = (address: string, token: LaunchpadTokenCard) => {
 
 const buildCommandBytes = (commands: number[]) =>
   `0x${commands.map((cmd) => Number(cmd).toString(16).padStart(2, "0")).join("")}`;
+
+const encodeV3Path = (tokens: string[], fees: number[]) => {
+  if (
+    !Array.isArray(tokens) ||
+    !Array.isArray(fees) ||
+    tokens.length !== fees.length + 1
+  ) {
+    throw new Error("Invalid V3 path.");
+  }
+  const parts: string[] = [];
+  for (let i = 0; i < fees.length; i += 1) {
+    const token = String(tokens[i] || "").toLowerCase().replace(/^0x/u, "");
+    const next = String(tokens[i + 1] || "").toLowerCase().replace(/^0x/u, "");
+    const fee = Number(fees[i]);
+    if (!token || !next || !Number.isFinite(fee)) {
+      throw new Error("Invalid V3 path.");
+    }
+    if (i === 0) parts.push(token);
+    parts.push(fee.toString(16).padStart(6, "0"));
+    parts.push(next);
+  }
+  return `0x${parts.join("")}`;
+};
 
 const parseAmount = (value: string, decimals: number) => {
   const clean = String(value || "").trim();
@@ -68,6 +102,7 @@ const readable = (amount: bigint, decimals: number) => {
 interface TradeWidgetProps {
   token: LaunchpadTokenCard;
   address?: string | null;
+  initialSide?: "buy" | "sell";
   onConnect: () => void;
   onRefreshBalances?: () => Promise<void> | void;
   onTradeSuccess?: () => void;
@@ -79,6 +114,8 @@ interface QuoteState {
   amountOut: bigint | null;
   path: string[];
   priceImpact: number | null;
+  protocol: "V2" | "V3" | null;
+  v3Fee: number | null;
 }
 
 interface TxState {
@@ -87,8 +124,15 @@ interface TxState {
   hash?: string;
 }
 
-const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSuccess }: TradeWidgetProps) => {
-  const [side, setSide] = useState<"buy" | "sell">("buy");
+const TradeWidget = ({
+  token,
+  address,
+  initialSide,
+  onConnect,
+  onRefreshBalances,
+  onTradeSuccess,
+}: TradeWidgetProps) => {
+  const [side, setSide] = useState<"buy" | "sell">(initialSide || "buy");
   const [slippage, setSlippage] = useState("1.0");
   const [amount, setAmount] = useState("");
   const [quote, setQuote] = useState<QuoteState>({
@@ -97,6 +141,8 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
     amountOut: null,
     path: [],
     priceImpact: null,
+    protocol: null,
+    v3Fee: null,
   });
   const [walletEth, setWalletEth] = useState<bigint>(0n);
   const [walletToken, setWalletToken] = useState<bigint>(0n);
@@ -105,6 +151,11 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
   const [confirmUnverifiedOpen, setConfirmUnverifiedOpen] = useState(false);
   const quoteTimerRef = useRef<number | null>(null);
 
+  useEffect(() => {
+    if (!initialSide) return;
+    setSide(initialSide);
+  }, [initialSide, token.address]);
+
   const sellAddress = side === "buy" ? WETH_ADDRESS : token.address;
   const buyAddress = side === "buy" ? token.address : WETH_ADDRESS;
   const sellDecimals = side === "buy" ? 18 : token.decimals;
@@ -112,8 +163,15 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
 
   const routeLabel = useMemo(() => {
     if (!quote.path.length) return side === "buy" ? `ETH > ${token.symbol}` : `${token.symbol} > ETH`;
-    return quote.path.map((item) => toSymbol(item, token)).join(" > ");
-  }, [quote.path, side, token]);
+    const base = quote.path.map((item) => toSymbol(item, token)).join(" > ");
+    if (quote.protocol === "V3" && Number.isFinite(Number(quote.v3Fee))) {
+      return `${base} (V3 ${(Number(quote.v3Fee) / 10000).toFixed(2)}%)`;
+    }
+    if (quote.protocol === "V2") {
+      return `${base} (V2)`;
+    }
+    return base;
+  }, [quote.path, quote.protocol, quote.v3Fee, side, token]);
 
   const slippageBps = useMemo(() => {
     const value = Number(String(slippage || "0").replace(/,/gu, "."));
@@ -170,7 +228,15 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
   const refreshQuote = useCallback(async () => {
     const parsedAmount = parseAmount(amount, sellDecimals);
     if (!parsedAmount || parsedAmount <= 0n) {
-      setQuote({ loading: false, error: "", amountOut: null, path: [], priceImpact: null });
+      setQuote({
+        loading: false,
+        error: "",
+        amountOut: null,
+        path: [],
+        priceImpact: null,
+        protocol: null,
+        v3Fee: null,
+      });
       return;
     }
 
@@ -181,6 +247,8 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
       const candidates = buildCandidatePaths();
       let bestPath: string[] = [];
       let bestOut: bigint | null = null;
+      let bestProtocol: QuoteState["protocol"] = null;
+      let bestV3Fee: number | null = null;
 
       for (const path of candidates) {
         try {
@@ -188,18 +256,52 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
           if (!bestOut || output > bestOut) {
             bestOut = output;
             bestPath = path;
+            bestProtocol = "V2";
+            bestV3Fee = null;
           }
         } catch {
           // ignore missing pools
         }
       }
 
-      if (!bestOut || !bestPath.length) {
+      if (UNIV3_FACTORY_ADDRESS && UNIV3_QUOTER_V2_ADDRESS) {
+        try {
+          const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+          const quoter = new Contract(UNIV3_QUOTER_V2_ADDRESS, UNIV3_QUOTER_V2_ABI, provider);
+          for (const fee of V3_FEE_TIERS) {
+            const poolAddress = await factory
+              .getPool(sellAddress, buyAddress, fee)
+              .catch(() => ZERO_ADDRESS);
+            if (!poolAddress || String(poolAddress).toLowerCase() === ZERO_ADDRESS) continue;
+            const params = {
+              tokenIn: sellAddress,
+              tokenOut: buyAddress,
+              amountIn: parsedAmount,
+              fee,
+              sqrtPriceLimitX96: 0,
+            };
+            const res = await quoter.quoteExactInputSingle.staticCall(params);
+            const outputRaw = res?.[0] ?? res?.amountOut ?? 0n;
+            const output = BigInt(outputRaw.toString());
+            if (output <= 0n) continue;
+            if (!bestOut || output > bestOut) {
+              bestOut = output;
+              bestPath = [sellAddress, buyAddress];
+              bestProtocol = "V3";
+              bestV3Fee = fee;
+            }
+          }
+        } catch {
+          // ignore V3 lookup failures and keep best available route
+        }
+      }
+
+      if (!bestOut || !bestPath.length || !bestProtocol) {
         throw new Error("No route with available liquidity.");
       }
 
       let priceImpact: number | null = null;
-      if (bestPath.length === 2) {
+      if (bestProtocol === "V2" && bestPath.length === 2) {
         try {
           const meta = await getV2QuoteWithMeta(provider, parsedAmount, bestPath[0], bestPath[1]);
           if (Number.isFinite(meta?.priceImpactPct)) {
@@ -216,6 +318,8 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
         amountOut: bestOut,
         path: bestPath,
         priceImpact,
+        protocol: bestProtocol,
+        v3Fee: bestV3Fee,
       });
     } catch (error) {
       setQuote({
@@ -224,9 +328,11 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
         amountOut: null,
         path: [],
         priceImpact: null,
+        protocol: null,
+        v3Fee: null,
       });
     }
-  }, [amount, buildCandidatePaths, sellDecimals]);
+  }, [amount, buildCandidatePaths, buyAddress, sellAddress, sellDecimals]);
 
   useEffect(() => {
     if (quoteTimerRef.current !== null) {
@@ -363,6 +469,7 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
       const isEthIn = side === "buy";
       const isEthOut = side === "sell";
       const payerIsUser = !isEthIn;
+      const useV3Route = quote.protocol === "V3" || Boolean(quote.v3Fee);
 
       if (isEthIn) {
         commands.push(UR_COMMANDS.WRAP_ETH);
@@ -372,13 +479,25 @@ const TradeWidget = ({ token, address, onConnect, onRefreshBalances, onTradeSucc
       }
 
       const recipient = isEthOut ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
-      commands.push(UR_COMMANDS.V2_SWAP_EXACT_IN);
-      inputs.push(
-        abi.encode(
-          ["address", "uint256", "uint256", "address[]", "bool"],
-          [recipient, parsedAmount, minOut, quote.path, payerIsUser]
-        )
-      );
+      if (useV3Route) {
+        const fee = Number(quote.v3Fee || V3_FEE_TIERS[0]);
+        const encodedPath = encodeV3Path(quote.path, [fee]);
+        commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
+        inputs.push(
+          abi.encode(
+            ["address", "uint256", "uint256", "bytes", "bool"],
+            [recipient, parsedAmount, minOut, encodedPath, payerIsUser]
+          )
+        );
+      } else {
+        commands.push(UR_COMMANDS.V2_SWAP_EXACT_IN);
+        inputs.push(
+          abi.encode(
+            ["address", "uint256", "uint256", "address[]", "bool"],
+            [recipient, parsedAmount, minOut, quote.path, payerIsUser]
+          )
+        );
+      }
 
       if (isEthOut) {
         commands.push(UR_COMMANDS.UNWRAP_WETH);

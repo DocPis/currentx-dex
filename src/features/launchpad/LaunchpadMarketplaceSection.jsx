@@ -20,28 +20,35 @@ const getStudioPath = (studioView = DEFAULT_STUDIO_VIEW) => {
 
 const parseLaunchpadPath = (path = "") => {
   const cleaned = normalizePath(path).toLowerCase();
-  if (cleaned === "/launchpad" || cleaned === "/launchpad/market") {
-    return { view: "market", tokenAddress: "", studioView: "" };
+  if (cleaned === "/launchpad/market") {
+    return { view: "market", tokenAddress: "", studioView: DEFAULT_STUDIO_VIEW, tradeIntent: null };
+  }
+  if (cleaned === "/launchpad") {
+    return { view: "market", tokenAddress: "", studioView: DEFAULT_STUDIO_VIEW, tradeIntent: null };
   }
   if (cleaned === "/launchpad/create" || cleaned === "/launchpad/legacy" || cleaned === "/launchpad/studio") {
-    return { view: "market", tokenAddress: "", studioView: "create" };
+    return { view: "legacy", tokenAddress: "", studioView: "create", tradeIntent: null };
   }
   if (cleaned === "/launchpad/my-tokens") {
-    return { view: "market", tokenAddress: "", studioView: "deployments" };
+    return { view: "legacy", tokenAddress: "", studioView: "deployments", tradeIntent: null };
   }
   if (cleaned === "/launchpad/vault") {
-    return { view: "market", tokenAddress: "", studioView: "vault" };
+    return { view: "legacy", tokenAddress: "", studioView: "vault", tradeIntent: null };
   }
   if (cleaned === "/launchpad/locker") {
-    return { view: "market", tokenAddress: "", studioView: "locker" };
+    return { view: "legacy", tokenAddress: "", studioView: "locker", tradeIntent: null };
+  }
+  const buyMatch = cleaned.match(/^\/launchpad\/(0x[a-f0-9]{40})\/buy$/u);
+  if (buyMatch?.[1]) {
+    return { view: "detail", tokenAddress: buyMatch[1], studioView: DEFAULT_STUDIO_VIEW, tradeIntent: "buy" };
   }
 
   const match = cleaned.match(/^\/launchpad\/(0x[a-f0-9]{40})$/u);
   if (match?.[1]) {
-    return { view: "detail", tokenAddress: match[1], studioView: "" };
+    return { view: "detail", tokenAddress: match[1], studioView: DEFAULT_STUDIO_VIEW, tradeIntent: null };
   }
 
-  return { view: "market", tokenAddress: "", studioView: "" };
+  return { view: "legacy", tokenAddress: "", studioView: DEFAULT_STUDIO_VIEW, tradeIntent: null };
 };
 
 export default function LaunchpadMarketplaceSection({
@@ -58,28 +65,31 @@ export default function LaunchpadMarketplaceSection({
       <TokenDetail
         tokenAddress={parsed.tokenAddress}
         address={address}
+        initialTradeSide={parsed.tradeIntent === "buy" ? "buy" : undefined}
         onConnect={onConnect}
         onRefreshBalances={onBalancesRefresh}
-        onBack={() => onNavigate?.("/launchpad")}
+        onBack={() => onNavigate?.("/launchpad/market")}
         onOpenToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}`)}
       />
     );
   }
 
-  return (
-    <>
+  if (parsed.view === "market") {
+    return (
       <LaunchpadMarket
         onOpenToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}`)}
+        onBuyToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}/buy`)}
         onOpenStudio={(studioView) => onNavigate?.(getStudioPath(studioView))}
-        activeStudioView={parsed.studioView || undefined}
       />
-      {parsed.studioView ? (
-        <LegacyLaunchpadSection
-          address={address}
-          onConnect={onConnect}
-          initialView={parsed.studioView}
-        />
-      ) : null}
-    </>
+    );
+  }
+
+  return (
+    <LegacyLaunchpadSection
+      address={address}
+      onConnect={onConnect}
+      initialView={parsed.studioView}
+      onOpenMarket={() => onNavigate?.("/launchpad/market")}
+    />
   );
 }

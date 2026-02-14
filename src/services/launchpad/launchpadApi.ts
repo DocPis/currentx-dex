@@ -17,6 +17,9 @@ import {
 const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const MOCK_FLAG = String(ENV.VITE_LAUNCHPAD_USE_MOCK || "").trim().toLowerCase();
 const FORCE_MOCK = MOCK_FLAG === "1" || MOCK_FLAG === "true" || MOCK_FLAG === "yes";
+const FALLBACK_FLAG = String(ENV.VITE_LAUNCHPAD_FALLBACK_TO_MOCK || "").trim().toLowerCase();
+const ALLOW_MOCK_FALLBACK =
+  FALLBACK_FLAG === "1" || FALLBACK_FLAG === "true" || FALLBACK_FLAG === "yes";
 const API_BASE = String(ENV.VITE_LAUNCHPAD_API_BASE || "").trim().replace(/\/+$/u, "");
 
 const buildUrl = (path: string, query: Record<string, string | number | boolean | undefined> = {}) => {
@@ -42,6 +45,7 @@ class LaunchpadApiError extends Error {
 
 const shouldFallbackToMock = (error: unknown) => {
   if (FORCE_MOCK) return true;
+  if (!ALLOW_MOCK_FALLBACK) return false;
   if (!(error instanceof LaunchpadApiError)) return true;
   if (error.status === 404 || error.status === 405 || error.status === 501) return true;
   if (error.status >= 500) return true;

@@ -25,6 +25,24 @@ const LIVE_POLL_MS = 4500;
 
 const normalizeHash = (value: string) => String(value || "").toLowerCase();
 
+const serializeWsParams = (params?: Record<string, string | number | boolean | undefined>) =>
+  JSON.stringify(
+    Object.entries(params || {})
+      .filter(([, value]) => value !== undefined && value !== null && value !== "")
+      .sort(([a], [b]) => a.localeCompare(b))
+  );
+
+const parseWsParams = (key = ""): Record<string, string | number | boolean> => {
+  if (!key) return {};
+  try {
+    const entries = JSON.parse(key) as Array<[string, string | number | boolean]>;
+    if (!Array.isArray(entries)) return {};
+    return Object.fromEntries(entries);
+  } catch {
+    return {};
+  }
+};
+
 const mergeTrades = (
   current: LaunchpadTrade[],
   incoming: LaunchpadTrade[],
@@ -39,6 +57,29 @@ const mergeTrades = (
   return Array.from(map.values())
     .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp))
     .slice(0, maxItems);
+};
+
+const normalizeTrades = (items: LaunchpadTrade[], maxItems: number) =>
+  mergeTrades([], items || [], maxItems);
+
+const areTradesEqual = (a: LaunchpadTrade[], b: LaunchpadTrade[]) => {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      normalizeHash(left?.txHash) !== normalizeHash(right?.txHash) ||
+      normalizeHash(left?.tokenAddress) !== normalizeHash(right?.tokenAddress) ||
+      String(left?.side || "") !== String(right?.side || "") ||
+      String(left?.timestamp || "") !== String(right?.timestamp || "") ||
+      Number(left?.amountUSD || 0) !== Number(right?.amountUSD || 0)
+    ) {
+      return false;
+    }
+  }
+  return true;
 };
 
 const extractTradesFromPayload = (payload: unknown): LaunchpadTrade[] => {
@@ -91,6 +132,17 @@ export const useLiveStream = ({
   const stopRef = useRef(false);
   const wsRef = useRef<WebSocket | null>(null);
   const timerRef = useRef<number | null>(null);
+  const onMessageRef = useRef<UseLiveStreamOptions["onMessage"]>(onMessage);
+  const onPollRef = useRef<UseLiveStreamOptions["onPoll"]>(onPoll);
+  const wsParamsKey = useMemo(() => serializeWsParams(wsParams), [wsParams]);
+
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
+  useEffect(() => {
+    onPollRef.current = onPoll;
+  }, [onPoll]);
 
   useEffect(() => {
     if (!enabled) {
@@ -114,7 +166,7 @@ export const useLiveStream = ({
       const tick = async () => {
         if (stopRef.current) return;
         try {
-          await onPoll?.();
+          await onPollRef.current?.();
           setLastUpdatedAt(Date.now());
           delay = Math.max(2000, Number(pollMs) || LIVE_POLL_MS);
         } catch {
@@ -139,7 +191,8 @@ export const useLiveStream = ({
     }
 
     try {
-      const connection = new WebSocket(buildWsUrl(wsUrl, wsParams));
+      const parsedParams = parseWsParams(wsParamsKey);
+      const connection = new WebSocket(buildWsUrl(wsUrl, parsedParams));
       wsRef.current = connection;
 
       connection.onopen = () => {
@@ -152,7 +205,7 @@ export const useLiveStream = ({
         if (stopRef.current) return;
         try {
           const payload = JSON.parse(String(event.data || "{}"));
-          onMessage?.(payload);
+          onMessageRef.current?.(payload);
           setLastUpdatedAt(Date.now());
         } catch {
           // ignore malformed payloads
@@ -184,7 +237,7 @@ export const useLiveStream = ({
       }
       wsRef.current = null;
     };
-  }, [enabled, onMessage, onPoll, pollMs, wsParams, wsUrl]);
+  }, [enabled, pollMs, wsParamsKey, wsUrl]);
 
   return {
     mode,
@@ -272,6 +325,19 @@ export const useLiveBuys = ({ limit = 18, enabled = true }: { limit?: number; en
   const [items, setItems] = useState<LaunchpadTrade[]>([]);
   const [updatedAt, setUpdatedAt] = useState<string>(new Date().toISOString());
   const wsUrl = getLaunchpadWsUrl();
+  const itemsRef = useRef<LaunchpadTrade[]>([]);
+
+  const applyItems = useCallback(
+    (incoming: LaunchpadTrade[], stamp?: string) => {
+      const normalized = normalizeTrades(incoming || [], limit);
+      if (areTradesEqual(itemsRef.current, normalized)) return false;
+      itemsRef.current = normalized;
+      setItems(normalized);
+      setUpdatedAt(stamp || new Date().toISOString());
+      return true;
+    },
+    [limit]
+  );
 
   const initialQuery = useQuery({
     queryKey: ["launchpad", "live-buys", limit],
@@ -283,27 +349,27 @@ export const useLiveBuys = ({ limit = 18, enabled = true }: { limit?: number; en
 
   useEffect(() => {
     if (!initialQuery.data?.items) return;
-    setItems(initialQuery.data.items.slice(0, limit));
-    setUpdatedAt(initialQuery.data.updatedAt || new Date().toISOString());
-  }, [initialQuery.data, limit]);
+    applyItems(initialQuery.data.items, initialQuery.data.updatedAt || new Date().toISOString());
+  }, [applyItems, initialQuery.data]);
 
   const refreshSnapshot = useCallback(async () => {
     const snapshot = await fetchLaunchpadActivity({ type: "buys", limit });
-    setItems(snapshot.items.slice(0, limit));
-    setUpdatedAt(snapshot.updatedAt || new Date().toISOString());
-  }, [limit]);
+    applyItems(snapshot.items, snapshot.updatedAt || new Date().toISOString());
+  }, [applyItems, limit]);
+
+  const wsParams = useMemo(() => ({ channel: "buys", limit }), [limit]);
 
   const live = useLiveStream({
     enabled,
     wsUrl,
-    wsParams: { channel: "buys", limit },
+    wsParams,
     pollMs: LIVE_POLL_MS,
     onPoll: refreshSnapshot,
     onMessage: (payload) => {
       const incoming = extractTradesFromPayload(payload).filter((trade) => trade.side === "BUY");
       if (!incoming.length) return;
-      setItems((prev) => mergeTrades(prev, incoming, limit));
-      setUpdatedAt(new Date().toISOString());
+      const merged = mergeTrades(itemsRef.current, incoming, limit);
+      applyItems(merged, new Date().toISOString());
     },
   });
 
@@ -332,6 +398,19 @@ export const useTokenActivity = ({
   const [updatedAt, setUpdatedAt] = useState<string>(new Date().toISOString());
   const wsUrl = getLaunchpadWsUrl();
   const normalizedAddress = String(tokenAddress || "").trim().toLowerCase();
+  const itemsRef = useRef<LaunchpadTrade[]>([]);
+
+  const applyItems = useCallback(
+    (incoming: LaunchpadTrade[], stamp?: string) => {
+      const normalized = normalizeTrades(incoming || [], limit);
+      if (areTradesEqual(itemsRef.current, normalized)) return false;
+      itemsRef.current = normalized;
+      setItems(normalized);
+      setUpdatedAt(stamp || new Date().toISOString());
+      return true;
+    },
+    [limit]
+  );
 
   const initialQuery = useQuery({
     queryKey: ["launchpad", "token-activity", normalizedAddress, type, limit],
@@ -344,21 +423,24 @@ export const useTokenActivity = ({
 
   useEffect(() => {
     if (!initialQuery.data?.items) return;
-    setItems(initialQuery.data.items.slice(0, limit));
-    setUpdatedAt(initialQuery.data.updatedAt || new Date().toISOString());
-  }, [initialQuery.data, limit]);
+    applyItems(initialQuery.data.items, initialQuery.data.updatedAt || new Date().toISOString());
+  }, [applyItems, initialQuery.data]);
 
   const refreshSnapshot = useCallback(async () => {
     if (!normalizedAddress) return;
     const snapshot = await fetchLaunchpadTokenActivity(normalizedAddress, { type, limit });
-    setItems(snapshot.items.slice(0, limit));
-    setUpdatedAt(snapshot.updatedAt || new Date().toISOString());
-  }, [limit, normalizedAddress, type]);
+    applyItems(snapshot.items, snapshot.updatedAt || new Date().toISOString());
+  }, [applyItems, limit, normalizedAddress, type]);
+
+  const wsParams = useMemo(
+    () => ({ channel: "token-activity", tokenAddress: normalizedAddress, type, limit }),
+    [limit, normalizedAddress, type]
+  );
 
   const live = useLiveStream({
     enabled: enabled && Boolean(normalizedAddress),
     wsUrl,
-    wsParams: { channel: "token-activity", tokenAddress: normalizedAddress, type, limit },
+    wsParams,
     pollMs: LIVE_POLL_MS,
     onPoll: refreshSnapshot,
     onMessage: (payload) => {
@@ -366,8 +448,8 @@ export const useTokenActivity = ({
         (trade) => normalizeHash(trade.tokenAddress) === normalizedAddress
       );
       if (!incoming.length) return;
-      setItems((prev) => mergeTrades(prev, incoming, limit));
-      setUpdatedAt(new Date().toISOString());
+      const merged = mergeTrades(itemsRef.current, incoming, limit);
+      applyItems(merged, new Date().toISOString());
     },
   });
 

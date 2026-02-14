@@ -2,6 +2,7 @@ import React from "react";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatUsd, shortAddress } from "../../services/launchpad/utils";
 import PriceSparkline from "./PriceSparkline";
+import TokenLogo from "./TokenLogo";
 
 interface TokenCardProps {
   token: LaunchpadTokenCard;
@@ -15,11 +16,11 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
   return (
     <article className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.5)] backdrop-blur transition hover:border-slate-600/80 hover:bg-slate-900/65">
       <div className="flex items-start gap-3">
-        <img
-          src={token.logoUrl}
-          alt={`${token.symbol} logo`}
+        <TokenLogo
+          address={token.address}
+          symbol={token.symbol}
+          logoUrl={token.logoUrl}
           className="h-11 w-11 rounded-full border border-slate-700/70 bg-slate-900 object-cover"
-          loading="lazy"
         />
         <div className="min-w-0 flex-1">
           <button
@@ -73,18 +74,11 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
         <PriceSparkline values={token.sparkline} className="h-10 w-full" />
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => onOpen?.(token)}
-          className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-500"
-        >
-          Details
-        </button>
+      <div className="mt-4">
         <button
           type="button"
           onClick={() => onBuy?.(token)}
-          className="rounded-xl border border-sky-400/70 bg-gradient-to-r from-sky-500/35 to-cyan-500/30 px-3 py-2 text-xs font-semibold text-sky-100 transition hover:brightness-110"
+          className="w-full rounded-xl border border-sky-400/70 bg-gradient-to-r from-sky-500/35 to-cyan-500/30 px-3 py-2 text-xs font-semibold text-sky-100 transition hover:brightness-110"
         >
           Buy {token.symbol}
         </button>

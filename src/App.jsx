@@ -14,7 +14,6 @@ const TAB_ROUTES = {
   swap: "/swap",
   bridge: "/bridge",
   liquidity: "/liquidity",
-  launchpad: "/launchpad",
   pools: "/pools",
   farms: "/farms",
   megavault: "/megavault",
@@ -46,6 +45,9 @@ const normalizePath = (path = "") => {
   const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
   return cleaned || "/";
 };
+
+const isLaunchpadTokenDetailPath = (path = "") =>
+  /^\/launchpad\/0x[a-f0-9]{40}(?:\/buy)?$/u.test(normalizePath(path));
 
 const getTabFromPath = (path = "") => {
   const cleaned = normalizePath(path);
@@ -87,7 +89,7 @@ export default function App() {
   );
   const [launchpadPath, setLaunchpadPath] = useState(() => {
     const currentPath = normalizePath(window?.location?.pathname);
-    return currentPath.startsWith("/launchpad") ? currentPath : "/launchpad";
+    return currentPath.startsWith("/launchpad") ? currentPath : "/launchpad/market";
   });
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
@@ -121,8 +123,8 @@ export default function App() {
     const currentPath = normalizePath(window?.location?.pathname);
     const preserveLaunchpadDetail =
       tab === "launchpad" &&
-      currentPath.startsWith("/launchpad/") &&
-      (launchpadPath || "").startsWith("/launchpad/");
+      isLaunchpadTokenDetailPath(currentPath) &&
+      isLaunchpadTokenDetailPath(launchpadPath || "");
     if (currentPath !== targetPath && !preserveLaunchpadDetail) {
       const suffix = `${window?.location?.search || ""}${window?.location?.hash || ""}`;
       window.history.pushState({}, "", `${targetPath}${suffix}`);
@@ -344,10 +346,6 @@ export default function App() {
 
   const handleTabClick = (nextTab) => {
     if (!TAB_ROUTES[nextTab]) return;
-    if (nextTab === "launchpad") {
-      navigateLaunchpad("/launchpad");
-      return;
-    }
     preloadSection(nextTab);
     prefetchTabData(nextTab);
     setTab(nextTab);
