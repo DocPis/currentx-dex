@@ -189,7 +189,7 @@ const REWARD_TYPE_OPTIONS = [
   { value: "both", label: "Both" },
 ];
 const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
-const LOCKUP_DAY_PRESETS = ["7", "30", "90", "180"];
+const LOCKUP_DAY_PRESETS = ["30", "90", "180"];
 const VESTING_DAY_PRESETS = ["30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
 const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
@@ -492,6 +492,58 @@ const trimTrailingZeros = (value) =>
     .replace(/(\.\d*?[1-9])0+$/u, "$1")
     .replace(/\.0+$/u, "");
 
+const roundDecimalString = (value, maxDecimals = 8) => {
+  const raw = String(value || "").trim();
+  if (!/^\d+(\.\d+)?$/u.test(raw)) return raw;
+  const [intPartRaw, fracPartRaw = ""] = raw.split(".");
+  const intPart = intPartRaw || "0";
+  if (!fracPartRaw) return `${intPart}.0`;
+  if (fracPartRaw.length <= maxDecimals) {
+    const trimmed = fracPartRaw.replace(/0+$/u, "");
+    return `${intPart}.${trimmed || "0"}`;
+  }
+
+  const roundedFracDigits = fracPartRaw
+    .slice(0, maxDecimals)
+    .split("")
+    .map((char) => Number(char));
+  const roundUp = Number(fracPartRaw.charAt(maxDecimals) || "0") >= 5;
+
+  if (roundUp) {
+    let carry = 1;
+    for (let index = roundedFracDigits.length - 1; index >= 0; index -= 1) {
+      const next = roundedFracDigits[index] + carry;
+      if (next >= 10) {
+        roundedFracDigits[index] = 0;
+        carry = 1;
+      } else {
+        roundedFracDigits[index] = next;
+        carry = 0;
+        break;
+      }
+    }
+    if (carry) {
+      const intDigits = intPart.split("").map((char) => Number(char));
+      for (let index = intDigits.length - 1; index >= 0; index -= 1) {
+        const next = intDigits[index] + carry;
+        if (next >= 10) {
+          intDigits[index] = 0;
+          carry = 1;
+        } else {
+          intDigits[index] = next;
+          carry = 0;
+          break;
+        }
+      }
+      if (carry) intDigits.unshift(1);
+      const nextIntPart = intDigits.join("");
+      return `${nextIntPart}.${roundedFracDigits.join("").replace(/0+$/u, "") || "0"}`;
+    }
+  }
+
+  return `${intPart}.${roundedFracDigits.join("").replace(/0+$/u, "") || "0"}`;
+};
+
 const formatEthPerToken = (value) => {
   if (!Number.isFinite(value) || value <= 0) return "--";
   if (value < 0.000000000001) return "~ < 0.000000000001 ETH/token";
@@ -525,18 +577,18 @@ const buildTokenMap = () => {
 
 const KNOWN_TOKENS = buildTokenMap();
 const PANEL_CLASS =
-  "rounded-[1.75rem] border border-slate-700/45 bg-slate-950/60 p-5 shadow-[0_22px_50px_rgba(2,6,23,0.55)] backdrop-blur-xl";
+  "rounded-2xl border border-slate-700/45 bg-slate-950/60 p-6 shadow-[0_18px_42px_rgba(2,6,23,0.5)] backdrop-blur-xl";
 const INPUT_CLASS =
-  "w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/20";
+  "w-full rounded-xl border border-slate-700/70 bg-slate-900/70 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 transition focus:border-cyan-300/70 focus:outline-none focus:ring-2 focus:ring-cyan-300/20";
 const SOFT_BUTTON_CLASS =
-  "rounded-full border border-slate-600/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50";
+  "rounded-xl border border-slate-600/70 bg-slate-900/72 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:bg-slate-800/80 hover:text-slate-50";
 const PRIMARY_BUTTON_CLASS =
-  "rounded-xl border border-emerald-300/60 bg-gradient-to-r from-emerald-400/25 to-cyan-400/20 px-3 py-2 text-xs font-semibold text-emerald-100 shadow-[0_10px_24px_rgba(16,185,129,0.2)] transition hover:brightness-110 disabled:opacity-60";
+  "rounded-xl border border-emerald-300/55 bg-gradient-to-r from-emerald-400/20 to-cyan-400/14 px-3.5 py-2.5 text-xs font-semibold text-emerald-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
 const CYAN_BUTTON_CLASS =
-  "rounded-xl border border-cyan-300/55 bg-gradient-to-r from-sky-500/20 to-cyan-400/18 px-3 py-2 text-xs font-semibold text-cyan-100 shadow-[0_10px_22px_rgba(56,189,248,0.18)] transition hover:brightness-110 disabled:opacity-60";
+  "rounded-xl border border-cyan-300/55 bg-gradient-to-r from-sky-500/18 to-cyan-400/15 px-3.5 py-2.5 text-xs font-semibold text-cyan-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
 const AMBER_BUTTON_CLASS =
-  "rounded-xl border border-amber-300/55 bg-gradient-to-r from-amber-400/20 to-orange-400/15 px-3 py-2 text-xs font-semibold text-amber-100 shadow-[0_10px_22px_rgba(251,191,36,0.14)] transition hover:brightness-110 disabled:opacity-60";
-const TONED_PANEL_CLASS = "rounded-xl border border-slate-700/60 bg-slate-900/45";
+  "rounded-xl border border-amber-300/55 bg-gradient-to-r from-amber-400/18 to-orange-400/12 px-3.5 py-2.5 text-xs font-semibold text-amber-100 transition hover:brightness-110 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500 disabled:opacity-100";
+const TONED_PANEL_CLASS = "rounded-2xl border border-slate-700/60 bg-slate-900/42";
 
 function ActionInfo({ state }) {
   if (!state?.error && !state?.hash && !state?.message) return null;
@@ -618,6 +670,69 @@ function LockIcon({ className = "h-3.5 w-3.5" }) {
     >
       <path d="M6 9V7a4 4 0 118 0v2" />
       <rect x="4.5" y="9" width="11" height="8" rx="2" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M4.5 10.5l3.2 3.2L15.5 5.9" />
+    </svg>
+  );
+}
+
+function NftTagIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M3.5 6.5a2 2 0 012-2h6.7l4.3 4.3V15a2 2 0 01-2 2h-9a2 2 0 01-2-2v-8.5z" />
+      <circle cx="7.3" cy="8.1" r="1.1" />
+    </svg>
+  );
+}
+
+function RewardIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <circle cx="10" cy="10" r="6.2" />
+      <path d="M8.1 7.9c0-.9.8-1.5 1.9-1.5 1.1 0 1.9.6 1.9 1.5s-.7 1.3-1.9 1.6c-1.2.3-1.9.7-1.9 1.6 0 .9.8 1.5 1.9 1.5 1.1 0 1.9-.6 1.9-1.5" />
+    </svg>
+  );
+}
+
+function PairIcon({ className = "h-3.5 w-3.5" }) {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M5 7h7m-7 6h7" />
+      <path d="M12 4l3 3-3 3M12 10l3 3-3 3" />
     </svg>
   );
 }
@@ -863,7 +978,8 @@ export default function LaunchpadSection({ address, onConnect }) {
   const [vaultAdvancedOpen, setVaultAdvancedOpen] = useState(false);
   const [vaultDepositFlash, setVaultDepositFlash] = useState(false);
   const [vaultTokenPickerExpanded, setVaultTokenPickerExpanded] = useState(true);
-  const [vaultShowApproveFullPrecision, setVaultShowApproveFullPrecision] = useState(false);
+  const [vaultTokenMenuOpen, setVaultTokenMenuOpen] = useState(false);
+  const [vaultRecentTokenDetails, setVaultRecentTokenDetails] = useState({});
   const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [locker, setLocker] = useState({
@@ -904,6 +1020,7 @@ export default function LaunchpadSection({ address, onConnect }) {
   const symbolInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const imageSectionRef = useRef(null);
+  const vaultTokenMenuRef = useRef(null);
   const highlightTimerRef = useRef(null);
   const cidCopiedTimerRef = useRef(null);
   const summaryCopyTimerRef = useRef(null);
@@ -1737,7 +1854,7 @@ export default function LaunchpadSection({ address, onConnect }) {
       const lockupDays = Number(parseUint(deployForm.lockupDays, "Lockup period (days)"));
       const vestingDays = Number(parseUint(deployForm.vestingDays, "Vesting period (days)"));
       if (vaultPercentageNum > 0) {
-        if (lockupDays < 7) throw new Error("Lockup period must be at least 7 days.");
+        if (lockupDays < 30) throw new Error("Lockup period must be at least 30 days.");
         if (vestingDays < lockupDays) throw new Error("Vesting period must be >= lockup period.");
       }
       if (!name) throw new Error("Token name is required.");
@@ -2199,9 +2316,14 @@ export default function LaunchpadSection({ address, onConnect }) {
         const lower = token.toLowerCase();
         if (seen.has(lower)) return null;
         seen.add(lower);
+        const name = String(item?.name || "Token");
+        const symbol = String(item?.symbol || "TOKEN").toUpperCase();
         return {
           token,
-          label: `${String(item?.name || "Token")} (${String(item?.symbol || "TOKEN").toUpperCase()})`,
+          name,
+          symbol,
+          logo: String(item?.logo || ""),
+          label: `${name} (${symbol})`,
         };
       })
       .filter(Boolean)
@@ -2223,10 +2345,127 @@ export default function LaunchpadSection({ address, onConnect }) {
   const vaultTotalLockedIsZero = vaultActiveLocksCount === 0;
   const vaultTokenInput = String(vaultForm.token || "").trim();
   const vaultTokenValid = isAddress(vaultTokenInput);
+  const vaultSelectedRecentToken = useMemo(() => {
+    if (!vaultTokenInput) return null;
+    const lower = vaultTokenInput.toLowerCase();
+    return vaultRecentTokenOptions.find((item) => String(item.token || "").toLowerCase() === lower) || null;
+  }, [vaultRecentTokenOptions, vaultTokenInput]);
   const vaultTokenBalanceLabel = useMemo(() => {
     if (!vaultTokenMeta) return "--";
     return formatAmount(vaultTokenBalance.value, Number(vaultTokenMeta.decimals || 18), 6);
   }, [vaultTokenBalance.value, vaultTokenMeta]);
+  useEffect(() => {
+    if (vaultRecentTokenOptions.length) return;
+    setVaultTokenMenuOpen(false);
+  }, [vaultRecentTokenOptions.length]);
+
+  useEffect(() => {
+    if (!vaultTokenPickerExpanded) return;
+    setVaultTokenMenuOpen(false);
+  }, [vaultTokenPickerExpanded]);
+
+  useEffect(() => {
+    if (!vaultTokenMenuOpen) return () => {};
+    const handlePointerDown = (event) => {
+      if (!vaultTokenMenuRef.current?.contains?.(event.target)) {
+        setVaultTokenMenuOpen(false);
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setVaultTokenMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [vaultTokenMenuOpen]);
+
+  useEffect(() => {
+    if (!vaultTokenMenuOpen || !vaultRecentTokenOptions.length) return () => {};
+    let cancelled = false;
+    const optionList = vaultRecentTokenOptions.filter((item) => isAddress(String(item?.token || "").trim()));
+
+    setVaultRecentTokenDetails((prev) => {
+      const next = {};
+      optionList.forEach((item) => {
+        const lower = String(item.token || "").toLowerCase();
+        const existing = prev[lower] || {};
+        next[lower] = {
+          name: existing.name || item.name || "Token",
+          symbol: existing.symbol || item.symbol || "TOKEN",
+          logo: existing.logo || item.logo || "",
+          balanceLabel: address ? existing.balanceLabel || "Loading..." : "--",
+          loading: Boolean(address),
+        };
+      });
+      return next;
+    });
+
+    if (!address) return () => {
+      cancelled = true;
+    };
+
+    const loadOptionDetails = async () => {
+      const provider = getReadOnlyProvider(false, true);
+      const details = await Promise.all(
+        optionList.map(async (item) => {
+          const token = String(item.token || "").trim();
+          const lower = token.toLowerCase();
+          try {
+            const meta = await resolveTokenMeta(token, provider).catch(() => null);
+            const symbol = String(meta?.symbol || item.symbol || "TOKEN").toUpperCase();
+            const name = String(meta?.name || item.name || "Token");
+            const logo = String(meta?.logo || item.logo || "");
+            const decimals = Number(meta?.decimals || 18);
+            const erc20 = new Contract(token, ERC20_ABI, provider);
+            const balanceRaw = await erc20.balanceOf(address).catch(() => 0n);
+            return {
+              lower,
+              value: {
+                name,
+                symbol,
+                logo,
+                loading: false,
+                balanceLabel: `${formatAmount(balanceRaw, decimals, 6)} ${symbol}`,
+              },
+            };
+          } catch {
+            return {
+              lower,
+              value: {
+                name: String(item.name || "Token"),
+                symbol: String(item.symbol || "TOKEN").toUpperCase(),
+                logo: String(item.logo || ""),
+                loading: false,
+                balanceLabel: "--",
+              },
+            };
+          }
+        })
+      );
+      if (cancelled) return;
+      setVaultRecentTokenDetails((prev) => {
+        const next = { ...prev };
+        details.forEach((entry) => {
+          if (!entry) return;
+          next[entry.lower] = {
+            ...(next[entry.lower] || {}),
+            ...entry.value,
+          };
+        });
+        return next;
+      });
+    };
+
+    loadOptionDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, resolveTokenMeta, vaultRecentTokenOptions, vaultTokenMenuOpen]);
   const vaultDepositAmountRaw = String(vaultForm.depositAmount || "").trim();
   const vaultApproveAmountRaw = useMemo(() => {
     if (!vaultTokenMeta) return "";
@@ -2244,12 +2483,6 @@ export default function LaunchpadSection({ address, onConnect }) {
       minimumFractionDigits: 0,
       maximumFractionDigits: 4,
     });
-  }, [vaultApproveAmountRaw]);
-  const vaultApproveAmountHasFullPrecision = useMemo(() => {
-    const raw = String(vaultApproveAmountRaw || "").trim();
-    if (!raw.includes(".")) return false;
-    const decimals = raw.split(".")[1] || "";
-    return decimals.length > 4;
   }, [vaultApproveAmountRaw]);
   const vaultDepositAmountWei = useMemo(() => {
     if (!vaultTokenMeta) return null;
@@ -2295,6 +2528,17 @@ export default function LaunchpadSection({ address, onConnect }) {
       (vaultMinimumLockDays > 0 ? vaultMinimumLockDays : null)
     );
   }, [vaultMinimumLockDays, vaultUnlockInSeconds, vaultUnlockIsValid]);
+  const vaultSelectedAmountPreset = useMemo(() => {
+    if (!vaultTokenMeta || !vaultDepositAmountWei || vaultDepositAmountWei <= 0n) return null;
+    const walletBalanceWei = BigInt(vaultTokenBalance.value || 0n);
+    if (walletBalanceWei <= 0n) return null;
+    if (vaultDepositAmountWei === walletBalanceWei) return "max";
+    for (const pct of [25, 50, 75]) {
+      const presetAmount = (walletBalanceWei * BigInt(pct)) / 100n;
+      if (vaultDepositAmountWei === presetAmount) return String(pct);
+    }
+    return null;
+  }, [vaultDepositAmountWei, vaultTokenBalance.value, vaultTokenMeta]);
   const vaultUnlockPreview = useMemo(() => {
     if (!vaultUnlockIsValid) return "Unlocks in -- days - -- (local time)";
     const unlockDate = new Date(vaultUnlockMs);
@@ -2373,17 +2617,21 @@ export default function LaunchpadSection({ address, onConnect }) {
     : vaultTokenValid
       ? shorten(vaultTokenInput)
       : "--";
+  const vaultSummaryAmountRounded = useMemo(
+    () => roundDecimalString(vaultDepositAmountRaw, 8),
+    [vaultDepositAmountRaw]
+  );
+  const vaultSummaryAmountValue = vaultSummaryAmountRounded;
   const vaultSummaryAmountLabel =
-    vaultDepositAmountRaw && vaultTokenMeta?.symbol
-      ? `${vaultDepositAmountRaw} ${vaultTokenMeta.symbol}`
-      : vaultDepositAmountRaw || "--";
+    vaultSummaryAmountValue && vaultTokenMeta?.symbol
+      ? `${vaultSummaryAmountValue} ${vaultTokenMeta.symbol}`
+      : vaultSummaryAmountValue || "--";
   const vaultSummaryDurationLabel =
     vaultUnlockIsValid && vaultUnlockInSeconds > 0
       ? `${Math.max(1, Math.ceil(vaultUnlockInSeconds / DAY))} days`
       : vaultMinimumLockDays > 0
         ? `min ${vaultMinimumLockDays} days`
         : "--";
-  const vaultSummaryAdminLabel = vaultAdminValid ? shorten(vaultAdminEffective) : "--";
   const vaultTokenStatus = useMemo(() => {
     if (!vaultTokenInput) return "";
     if (!vaultTokenValid) return "Invalid address";
@@ -2584,6 +2832,49 @@ export default function LaunchpadSection({ address, onConnect }) {
     : deployAttempted && missingBasicFields.length
       ? `Complete required fields: ${missingBasicFields.join(", ")}.`
       : "";
+  const lockerActiveNftCount = locker.ids.length;
+  const lockerCreatorRewardRaw = useMemo(() => {
+    try {
+      return BigInt(locker.tokenReward?.creatorReward ?? 0);
+    } catch {
+      return 0n;
+    }
+  }, [locker.tokenReward]);
+  const lockerMaxCreatorRewardRaw = useMemo(() => {
+    try {
+      return BigInt(locker.maxCreatorReward ?? 0);
+    } catch {
+      return 0n;
+    }
+  }, [locker.maxCreatorReward]);
+  const lockerCreatorRewardLabel = locker.tokenReward ? lockerCreatorRewardRaw.toLocaleString() : "--";
+  const lockerMaxCreatorRewardLabel = locker.maxCreatorReward != null ? lockerMaxCreatorRewardRaw.toLocaleString() : "--";
+  const lockerCreatorRewardPercentLabel = useMemo(() => {
+    if (!locker.tokenReward || locker.maxCreatorReward == null || lockerMaxCreatorRewardRaw <= 0n) return null;
+    const ratio = (Number(lockerCreatorRewardRaw) / Number(lockerMaxCreatorRewardRaw)) * 100;
+    if (!Number.isFinite(ratio) || ratio < 0) return null;
+    return trimTrailingZeros((ratio >= 10 ? ratio.toFixed(1) : ratio.toFixed(2)).replace(/\.0+$/u, ""));
+  }, [locker.maxCreatorReward, locker.tokenReward, lockerCreatorRewardRaw, lockerMaxCreatorRewardRaw]);
+  const lockerCreatorRewardMeta = locker.tokenReward
+    ? lockerCreatorRewardPercentLabel != null
+      ? `${lockerCreatorRewardPercentLabel}% of max`
+      : locker.maxCreatorReward != null
+        ? `Max ${lockerMaxCreatorRewardLabel}`
+        : "Configured share"
+    : "No reward data";
+  const lockerPairSymbol0 = String(locker.tokenReward?.token0Meta?.symbol || "TOKEN0");
+  const lockerPairSymbol1 = String(locker.tokenReward?.token1Meta?.symbol || "TOKEN1");
+  const lockerPairLabel =
+    locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? `${lockerPairSymbol0} / ${lockerPairSymbol1}` : "--";
+  const lockerFeeTierLabel = locker.tokenReward?.fee ? formatFeeTierPercent(locker.tokenReward.fee) : "--";
+  const lockerClaimableNow = Boolean(locker.selectedId) && lockerCreatorRewardRaw > 0n;
+  const lockerClaimableSummary = lockerClaimableNow ? `${lockerCreatorRewardLabel} share pts` : "0 share pts";
+  const lockerCollectDisabled = lockerAction.loadingKey === "collect" || !locker.selectedId || !lockerClaimableNow;
+  const lockerCollectHelper = !locker.selectedId
+    ? "Select an NFT ID to enable collection."
+    : lockerClaimableNow
+      ? `Available to claim: ${lockerClaimableSummary}`
+      : "Available to claim: 0 share pts.";
   const toggleSection = useCallback((sectionKey) => {
     setOpenSections((prev) => ({ ...prev, [sectionKey]: !prev[sectionKey] }));
   }, []);
@@ -2764,20 +3055,20 @@ export default function LaunchpadSection({ address, onConnect }) {
   );
 
   return (
-    <section className="w-full px-4 py-8 text-slate-100 sm:px-6 lg:px-10">
-      <div className="cx-fade-up mb-6 rounded-[2rem] border border-slate-700/45 bg-slate-950/55 p-5 shadow-[0_24px_60px_rgba(2,6,23,0.58)] backdrop-blur-xl">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <section className="w-full px-4 py-7 text-slate-100 sm:px-6 lg:px-10">
+      <div className="cx-fade-up mb-8 rounded-[1.75rem] border border-slate-700/45 bg-slate-950/55 p-4 shadow-[0_20px_48px_rgba(2,6,23,0.52)] backdrop-blur-xl">
+        <div className="flex flex-col gap-2.5 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="mb-2 inline-flex rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100/90">
+            <div className="mb-1.5 inline-flex rounded-full border border-cyan-300/30 bg-cyan-400/6 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-100/75">
               Token Studio
             </div>
-            <h2 className="font-display text-3xl font-semibold text-white sm:text-4xl">Launchpad</h2>
-            <p className="mt-1 max-w-2xl text-sm text-slate-300/80">
+            <h2 className="font-display text-3xl font-semibold text-white sm:text-[2.7rem]">Launchpad</h2>
+            <p className="mt-1 max-w-xl text-sm text-slate-300/80">
               Deploy token + create V3 pool (requires fixed {FIXED_STARTING_MARKET_CAP_ETH} ETH preset), then manage
               CurrentX Vault and LpLockerv2 extensions.
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-xl border border-slate-600/65 bg-slate-900/62 px-2 py-1.5">
             <button
               type="button"
               onClick={() => {
@@ -2795,12 +3086,12 @@ export default function LaunchpadSection({ address, onConnect }) {
               <button
                 type="button"
                 onClick={onConnect}
-                className="rounded-full border border-sky-300/65 bg-gradient-to-r from-sky-500/90 to-cyan-400/90 px-3 py-1.5 text-xs font-semibold text-white shadow-[0_10px_24px_rgba(56,189,248,0.35)] transition hover:brightness-110"
+                className="rounded-xl border border-sky-300/60 bg-gradient-to-r from-sky-500/80 to-cyan-400/80 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110"
               >
                 Connect wallet
               </button>
             ) : (
-              <span className="rounded-full border border-emerald-300/50 bg-emerald-400/15 px-3 py-1.5 text-xs font-semibold text-emerald-100">
+              <span className="rounded-xl border border-emerald-300/50 bg-emerald-400/12 px-3 py-1.5 text-xs font-semibold text-emerald-100">
                 {shorten(address)}
               </span>
             )}
@@ -2816,18 +3107,18 @@ export default function LaunchpadSection({ address, onConnect }) {
             onClick={() => setActiveView(view.id)}
             className={`cx-fade-up cx-tab-button rounded-2xl border px-4 py-3 text-left transition ${
               activeView === view.id
-                ? "cx-tab-button-active border-cyan-300/60 bg-gradient-to-br from-sky-500/20 via-cyan-400/18 to-emerald-400/14 text-cyan-50 shadow-[0_12px_28px_rgba(56,189,248,0.22)]"
-                : "border-slate-700/60 bg-slate-950/45 text-slate-200 hover:border-slate-500 hover:bg-slate-900/60"
+                ? "cx-tab-button-active border-cyan-300/75 bg-slate-800/78 text-cyan-50 shadow-[0_7px_18px_rgba(34,211,238,0.14)]"
+                : "border-slate-700/65 bg-slate-950/42 text-slate-300/85 hover:border-cyan-300/45 hover:bg-slate-900/70 hover:text-slate-100"
             }`}
             style={{ animationDelay: `${80 + index * 55}ms` }}
           >
             <div className="font-display text-sm font-semibold">{view.label}</div>
-            <div className="mt-1 text-xs text-slate-300/70">{view.hint}</div>
+            <div className={`mt-1 text-xs ${activeView === view.id ? "text-cyan-100/90" : "text-slate-400/78"}`}>{view.hint}</div>
           </button>
         ))}
       </div>
 
-      <div className={`mt-6 ${activeView === "create" || activeView === "deployments" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+      <div className={`mt-8 ${activeView === "create" || activeView === "deployments" ? "grid gap-8 xl:grid-cols-1" : "hidden"}`}>
         <div className={`${PANEL_CLASS} ${activeView === "create" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <div>
@@ -3315,11 +3606,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                         LOCKUP_DAY_PRESETS.includes(String(deployForm.lockupDays)) ? String(deployForm.lockupDays) : ""
                       }
                       onChange={(value) => setDeployForm((prev) => ({ ...prev, lockupDays: value }))}
-                      columns={4}
+                      columns={3}
                       options={LOCKUP_DAY_PRESETS.map((value) => ({ value, label: `${value} days` }))}
                     />
                     <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-                      Vesting must be &gt;= lockup. Lockup minimum is 7 days.
+                      Vesting must be &gt;= lockup. Lockup minimum is 30 days.
                     </div>
 
                     <div className="space-y-1">
@@ -3785,7 +4076,7 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
       </div>
 
-      <div className={`mt-6 ${activeView === "vault" || activeView === "locker" ? "grid gap-6 xl:grid-cols-1" : "hidden"}`}>
+      <div className={`mt-8 ${activeView === "vault" || activeView === "locker" ? "grid gap-8 xl:grid-cols-1" : "hidden"}`}>
         <div className={`${PANEL_CLASS} ${activeView === "vault" ? "cx-panel-enter" : "hidden"}`}>
           <div className="flex items-start justify-between">
             <div>
@@ -3823,20 +4114,22 @@ export default function LaunchpadSection({ address, onConnect }) {
             </div>
           </div>
 
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <div className="rounded-2xl bg-slate-900/35 px-3 py-2.5 ring-1 ring-white/5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400/80">Active locks</div>
-              <div className="mt-1.5 text-lg font-semibold leading-none text-slate-100">
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl border border-slate-700/55 bg-slate-900/40 px-4 py-4 ring-1 ring-white/5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400/80">Active Locks</div>
+              <div className="mt-2 text-3xl font-semibold leading-none text-slate-100">
                 {vaultLocks.loading ? "..." : String(vaultActiveLocksCount)}
               </div>
+              <div className="mt-1 text-[11px] text-slate-400/75">Across this wallet.</div>
             </div>
-            <div className="rounded-2xl bg-slate-900/35 px-3 py-2.5 ring-1 ring-white/5">
-              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400/80">Total locked</div>
-              <div className="mt-1.5 text-lg font-semibold leading-none text-slate-100">
+            <div className="rounded-2xl border border-slate-700/55 bg-slate-900/40 px-4 py-4 ring-1 ring-white/5">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400/80">Total Locked</div>
+              <div className="mt-2 text-3xl font-semibold leading-none text-slate-100">
                 {vaultLocks.loading ? "..." : vaultTotalLockedLabel}
               </div>
+              <div className="mt-1 text-[11px] text-slate-400/75">Current vault balance.</div>
               {vaultTotalLockedIsZero && !vaultLocks.loading ? (
-                <div className="mt-1 text-[11px] text-slate-400/75">Lock tokens to start vesting.</div>
+                <div className="mt-1 text-[11px] text-slate-500/75">Lock tokens to start vesting.</div>
               ) : null}
             </div>
           </div>
@@ -3848,7 +4141,7 @@ export default function LaunchpadSection({ address, onConnect }) {
               </div>
             ) : null}
 
-            <div className={`${TONED_PANEL_CLASS} p-3`}>
+            <div className={`${TONED_PANEL_CLASS} p-4`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Active locks</div>
@@ -3873,20 +4166,21 @@ export default function LaunchpadSection({ address, onConnect }) {
                     <div className="mt-3 text-sm text-slate-300/75">Connect wallet to load active locks.</div>
                   ) : null}
                   {!vaultLocks.loading && address && vaultLocks.items.length === 0 ? (
-                    <div className="mt-3 rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-3">
-                      <div className="text-sm font-semibold text-slate-100">No active locks yet</div>
-                      <div className="mt-1 text-xs text-slate-300/80">
-                        Create vesting locks to control unlock timing and keep distribution predictable.
+                    <div className="mt-3 rounded-2xl border border-slate-700/55 bg-slate-900/35 px-4 py-4 text-center">
+                      <div className="mx-auto inline-flex h-14 w-14 items-center justify-center rounded-full border border-slate-600/70 bg-slate-950/70 text-slate-300/85">
+                        <LockIcon className="h-6 w-6" />
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-400/85">
+                      <div className="mt-2 text-sm font-semibold text-slate-100">No active locks yet</div>
+                      <div className="mt-1 text-xs text-slate-300/78">Your created locks will appear here.</div>
+                      <div className="mt-1 text-[11px] text-slate-400/80">
                         Minimum lock: {vaultMinimumLockDays > 0 ? `${vaultMinimumLockDays} days` : "--"}
                       </div>
                       <button
                         type="button"
                         onClick={handleVaultJumpToDeposit}
-                        className="mt-2 rounded-lg border border-cyan-300/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-500/15"
+                        className="mt-3 rounded-lg border border-cyan-300/50 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/70 hover:bg-cyan-500/15"
                       >
-                        Create your first lock
+                        Create first lock
                       </button>
                     </div>
                   ) : null}
@@ -3955,42 +4249,60 @@ export default function LaunchpadSection({ address, onConnect }) {
 
             <div
               ref={vaultDepositFormRef}
-              className={`${TONED_PANEL_CLASS} p-3 transition ${
+              className={`${TONED_PANEL_CLASS} border-slate-600/75 bg-gradient-to-b from-slate-900/58 to-slate-900/46 p-6 shadow-[0_14px_30px_rgba(2,6,23,0.34)] transition ${
                 vaultDepositFlash ? "ring-2 ring-cyan-300/40 shadow-[0_0_0_2px_rgba(34,211,238,0.1)]" : ""
               }`}
             >
-              <div className="text-sm font-semibold text-slate-100">Create lock</div>
+              <div className="text-base font-semibold text-slate-100">Create lock</div>
               <div className="mt-1 text-xs text-slate-300/75">Lock a token amount until a future unlock date.</div>
 
-              <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
-                <div className="space-y-3">
-                <div className="rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-                    <span
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 ${
-                        vaultApproveStepDone
-                          ? "border-emerald-300/50 bg-emerald-500/12 text-emerald-100"
-                          : "border-cyan-300/50 bg-cyan-500/12 text-cyan-100"
-                      }`}
-                    >
-                      (1) {vaultApproveStepDone ? "Approved" : "Approve"}
-                    </span>
-                    <span className="text-slate-500/80">-&gt;</span>
-                    <span
-                      className={`inline-flex items-center rounded-full border px-2 py-0.5 ${
-                        vaultApproveStepDone
-                          ? "border-cyan-300/50 bg-cyan-500/18 text-cyan-100"
-                          : "border-slate-600/70 bg-slate-900/60 text-slate-300"
-                      }`}
-                    >
-                      {vaultApproveStepDone ? "(2) Create lock (Active)" : "(2) Create lock"}
-                    </span>
+              <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="space-y-4">
+                <div className="rounded-2xl border border-slate-700/55 bg-slate-900/35 px-4 py-3">
+                  <div className="relative">
+                    <div className="pointer-events-none absolute left-[22%] right-[22%] top-4 h-px bg-slate-700/70" />
+                    <div className="relative z-10 grid grid-cols-2 gap-3">
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
+                            vaultApproveStepDone
+                              ? "border-emerald-300/60 bg-emerald-500/18 text-emerald-100"
+                              : "border-cyan-300/70 bg-cyan-500/18 text-cyan-100 shadow-[0_0_0_4px_rgba(34,211,238,0.08)]"
+                          }`}
+                        >
+                          {vaultApproveStepDone ? <CheckIcon className="h-4 w-4" /> : "1"}
+                        </span>
+                        <div className="min-w-0">
+                          <div className={`text-xs font-semibold uppercase tracking-[0.08em] ${vaultApproveStepDone ? "text-emerald-100" : "text-cyan-100"}`}>
+                            Approve
+                          </div>
+                          <div className="text-[11px] text-slate-400/85">{vaultApproveStepDone ? "Completed" : "Required"}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={`inline-flex h-8 w-8 items-center justify-center rounded-full border text-sm font-semibold ${
+                            vaultApproveStepDone
+                              ? "border-cyan-300/65 bg-cyan-500/16 text-cyan-100"
+                              : "border-slate-700/55 bg-slate-900/65 text-slate-400/85"
+                          }`}
+                        >
+                          2
+                        </span>
+                        <div className="min-w-0">
+                          <div className={`text-xs font-semibold uppercase tracking-[0.08em] ${vaultApproveStepDone ? "text-cyan-100" : "text-slate-300/75"}`}>
+                            Create Lock
+                          </div>
+                          <div className="text-[11px] text-slate-400/85">{vaultApproveStepDone ? "Active" : "Waiting approval"}</div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-3 rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <label className="text-xs font-medium tracking-wide text-slate-300/85">Token</label>
+                    <label className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-300/90">Token</label>
                     <span className="inline-flex items-center gap-2">
                       {vaultTokenStatus ? (
                         <span
@@ -4008,7 +4320,10 @@ export default function LaunchpadSection({ address, onConnect }) {
                       {vaultTokenValid && !vaultTokenPickerExpanded ? (
                         <button
                           type="button"
-                          onClick={() => setVaultTokenPickerExpanded(true)}
+                          onClick={() => {
+                            setVaultTokenMenuOpen(false);
+                            setVaultTokenPickerExpanded(true);
+                          }}
                           className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
                         >
                           Change
@@ -4020,41 +4335,120 @@ export default function LaunchpadSection({ address, onConnect }) {
                     <input
                       value={vaultForm.token}
                       onChange={(e) => {
+                        setVaultTokenMenuOpen(false);
                         setVaultTokenPickerExpanded(true);
                         setVaultForm((prev) => ({ ...prev, token: e.target.value.trim() }));
                       }}
-                      placeholder="Search name / paste address"
-                      className={`${INPUT_CLASS} ${vaultTokenValid ? "py-1.5 text-xs" : ""}`}
+                      placeholder="Token symbol or 0x address"
+                      className={`${INPUT_CLASS} h-11 focus:border-cyan-300/90 focus:ring-cyan-300/30`}
                     />
                   ) : null}
                   {!vaultTokenValid && vaultTokenInput ? (
                     <div className="text-[11px] text-rose-100">Invalid address.</div>
                   ) : null}
                   {vaultRecentTokenOptions.length ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-slate-400/80">My tokens</span>
-                      <select
-                        value=""
-                        onChange={(e) => {
-                          const token = String(e.target.value || "").trim();
-                          if (!token) return;
-                          setVaultTokenPickerExpanded(true);
-                          setVaultForm((prev) => ({ ...prev, token }));
-                        }}
-                        className="min-w-0 flex-1 rounded-lg border border-slate-700/60 bg-slate-900/70 px-2 py-1 text-xs text-slate-200"
-                      >
-                        <option value="">Recent / My tokens</option>
-                        {vaultRecentTokenOptions.map((item) => (
-                          <option key={`vault-token-option-${item.token}`} value={item.token}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="space-y-2">
+                      <span className="text-[11px] text-slate-400/85">My tokens</span>
+                      <div className="relative w-full" ref={vaultTokenMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setVaultTokenMenuOpen((prev) => !prev)}
+                          className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left text-xs transition-colors duration-150 ${
+                            vaultTokenMenuOpen
+                              ? "border-cyan-300/60 bg-slate-900/85 text-slate-100 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]"
+                              : "border-slate-700/60 bg-slate-900/70 text-slate-200 hover:border-slate-500/75 hover:bg-slate-900/80 hover:text-slate-100"
+                          }`}
+                          aria-haspopup="listbox"
+                          aria-expanded={vaultTokenMenuOpen}
+                        >
+                          {vaultSelectedRecentToken ? (
+                            <span className="min-w-0 flex items-center gap-1.5">
+                              <span className="shrink-0 text-[13px] font-semibold text-slate-100">{vaultSelectedRecentToken.symbol}</span>
+                              <span className="shrink-0 text-slate-500/75">-</span>
+                              <span className="min-w-0 truncate font-mono text-[11px] text-slate-400/85">
+                                {shorten(vaultSelectedRecentToken.token)}
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="truncate text-slate-300/90">Recent / My tokens</span>
+                          )}
+                          <ChevronIcon open={vaultTokenMenuOpen} />
+                        </button>
+                        <div
+                          className={`absolute left-0 right-0 top-[calc(100%+0.35rem)] z-40 origin-top rounded-xl border border-slate-700/65 bg-slate-950/95 shadow-[0_22px_42px_rgba(2,6,23,0.5)] transition-all duration-150 ${
+                            vaultTokenMenuOpen ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none -translate-y-1 opacity-0"
+                          }`}
+                        >
+                          <div className="border-b border-slate-700/55 px-3 py-1.5">
+                            <div className="text-[9px] font-medium uppercase tracking-[0.14em] text-slate-500/70">Recent / My tokens</div>
+                          </div>
+                          <div
+                            role="listbox"
+                            className="max-h-64 overflow-y-auto px-1 py-1.5 [scrollbar-width:thin] [scrollbar-color:rgba(100,116,139,0.82)_rgba(2,6,23,0.4)] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-[rgba(2,6,23,0.35)] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[rgba(100,116,139,0.78)] hover:[&::-webkit-scrollbar-thumb]:bg-[rgba(148,163,184,0.84)]"
+                          >
+                            {vaultRecentTokenOptions.map((item) => {
+                              const token = String(item.token || "");
+                              const lower = token.toLowerCase();
+                              const option = vaultRecentTokenDetails[lower] || {};
+                              const isSelected = lower === String(vaultTokenInput || "").toLowerCase();
+                              const optionSymbol = String(option.symbol || item.symbol || "TOKEN").toUpperCase();
+                              const optionName = String(option.name || item.name || "Token");
+                              const optionLogo = String(option.logo || item.logo || "");
+                              const optionBalance = option.loading ? "Loading..." : option.balanceLabel || "--";
+                              return (
+                                <button
+                                  key={`vault-token-option-${item.token}`}
+                                  type="button"
+                                  onClick={() => {
+                                    setVaultTokenMenuOpen(false);
+                                    setVaultTokenPickerExpanded(true);
+                                    setVaultForm((prev) => ({ ...prev, token }));
+                                  }}
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  className={`grid w-full min-h-[104px] grid-cols-[2rem_minmax(0,1fr)_auto] grid-rows-[auto_auto_auto] items-start gap-x-2.5 gap-y-1.5 border-l px-3 py-3.5 text-left transition-colors duration-150 ${
+                                    isSelected
+                                      ? "border-l-cyan-300/55 bg-slate-800/70 text-slate-100"
+                                      : "border-l-transparent text-slate-300/92 hover:border-l-slate-500/60 hover:bg-slate-800/60 hover:text-slate-100"
+                                  }`}
+                                >
+                                  <div className="col-start-1 row-span-3 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/72">
+                                    {optionLogo ? (
+                                      <img src={optionLogo} alt={`${optionSymbol} logo`} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <span className="text-[10px] font-semibold text-slate-200">{optionSymbol.slice(0, 2)}</span>
+                                    )}
+                                  </div>
+                                  <div className="col-start-2 row-start-1 min-w-0 flex items-center gap-1.5">
+                                    <span className="truncate text-[13px] font-semibold leading-tight text-slate-100">{optionSymbol}</span>
+                                    <span className="truncate text-[11px] leading-tight text-slate-300/86">{optionName}</span>
+                                  </div>
+                                  <div className="col-start-2 row-start-2 min-w-0 truncate font-mono text-[10px] leading-normal text-slate-400/85">{token}</div>
+                                  <div className="col-start-2 row-start-3 min-w-0 truncate text-[11px] leading-normal text-slate-300/88">
+                                    Wallet balance: <span className="font-semibold text-slate-100">{optionBalance}</span>
+                                  </div>
+                                  <div className="col-start-3 row-start-1 shrink-0 self-start pt-0.5">
+                                    <span
+                                      className={`inline-flex rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em] leading-tight ${
+                                        isSelected
+                                          ? "border-cyan-300/55 bg-cyan-500/15 text-cyan-100"
+                                          : "border-slate-600/70 bg-slate-900/60 text-slate-300/85"
+                                      }`}
+                                    >
+                                      {isSelected ? "Selected" : "My token"}
+                                    </span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : null}
-                  {vaultTokenValid ? (
-                    <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-2">
-                      <div className="flex min-w-0 items-center gap-2">
+                  {vaultTokenValid && !vaultTokenMenuOpen ? (
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                      <div className="flex min-w-0 items-start gap-2">
                         <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
                           {vaultTokenMeta?.logo ? (
                             <img src={vaultTokenMeta.logo} alt={`${vaultTokenMeta.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
@@ -4067,47 +4461,60 @@ export default function LaunchpadSection({ address, onConnect }) {
                           )}
                         </div>
                         <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-slate-100">
-                            {vaultTokenMeta ? `${vaultTokenMeta.name} (${vaultTokenMeta.symbol})` : shorten(vaultTokenInput)}
+                          <div className="flex items-center gap-1.5">
+                            <div className="truncate text-[15px] font-semibold text-slate-100">
+                              {vaultTokenMeta ? vaultTokenMeta.name : shorten(vaultTokenInput)}
+                            </div>
+                            {vaultTokenMeta?.symbol ? (
+                              <span className="inline-flex rounded-md border border-cyan-300/40 bg-cyan-500/12 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-100">
+                                {vaultTokenMeta.symbol}
+                              </span>
+                            ) : null}
                           </div>
                           <div className="text-[11px] text-slate-400/80">
                             {vaultTokenMeta ? `${vaultTokenMeta.decimals} decimals - ${shorten(vaultTokenInput)}` : "Resolving token metadata..."}
                           </div>
+                          <div className="mt-1 text-[11px] text-slate-300/88">
+                            Wallet balance: <span className="font-semibold text-slate-100">{vaultTokenBalance.loading ? "..." : vaultTokenBalanceLabel}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleVaultSetMaxDeposit}
+                            disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
+                            className="mt-1 inline-flex text-[10px] font-semibold text-cyan-200/90 transition-colors duration-150 hover:text-cyan-100 disabled:opacity-60"
+                          >
+                            Use balance
+                          </button>
                         </div>
-                      </div>
-                      <div className="text-right text-xs">
-                        <div className="text-slate-400/80">Balance</div>
-                        <div className="font-semibold text-slate-100">
-                          {vaultTokenBalance.loading ? "..." : vaultTokenBalanceLabel}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleVaultSetMaxDeposit}
-                          disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
-                          className="mt-1 text-[10px] font-semibold text-cyan-200/90 transition hover:text-cyan-100 disabled:opacity-60"
-                        >
-                          Use balance
-                        </button>
                       </div>
                     </div>
                   ) : null}
                 </div>
 
-                <div className="space-y-3 rounded-xl border border-slate-700/60 bg-slate-900/35 p-3">
+                <div
+                  className={`space-y-3 rounded-2xl border p-4 transition ${
+                    vaultApproveStepDone
+                      ? "border-slate-700/55 bg-slate-900/30 opacity-80"
+                      : "border-cyan-300/60 bg-cyan-500/[0.06]"
+                  }`}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Step 1 - Approve</div>
-                      <div className="text-[11px] text-slate-400/80">
-                        {vaultApproveStepDone ? "Allowance is ready for deposit." : "Approve token spending before deposit."}
+                      <div className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-[0.08em] text-slate-100">
+                        {vaultApproveStepDone ? <CheckIcon className="h-3.5 w-3.5 text-emerald-100" /> : null}
+                        Step 1 - Approve
                       </div>
+                        <div className="text-[11px] text-slate-200/85">
+                          {vaultApproveStepDone ? "Allowance is ready for deposit." : "Approve token spending before deposit."}
+                        </div>
                     </div>
                     <div className="flex items-center gap-2">
                       {vaultApproveStepDone ? (
                         <span className="inline-flex h-5 items-center rounded-full border border-emerald-300/50 bg-emerald-500/12 px-2 text-[10px] font-semibold text-emerald-100">
-                          Approved ✓
+                          Completed
                         </span>
                       ) : (
-                        <span className="inline-flex h-5 items-center rounded-full border border-slate-600/70 bg-slate-900/60 px-2 text-[10px] font-semibold text-slate-300">
+                        <span className="inline-flex h-5 items-center rounded-full border border-cyan-300/50 bg-cyan-500/14 px-2 text-[10px] font-semibold text-cyan-100">
                           Required
                         </span>
                       )}
@@ -4118,6 +4525,16 @@ export default function LaunchpadSection({ address, onConnect }) {
                       ) : null}
                     </div>
                   </div>
+                  {!vaultApproveStepDone ? (
+                    <button
+                      type="button"
+                      onClick={handleVaultApprove}
+                      disabled={vaultApproveDisabled}
+                      className="w-full rounded-xl border border-cyan-300/65 bg-cyan-500/18 px-3 py-2.5 text-sm font-semibold text-cyan-50 transition hover:bg-cyan-500/24 disabled:cursor-not-allowed disabled:border-slate-700/70 disabled:bg-slate-900/70 disabled:text-slate-500"
+                    >
+                      {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve"}
+                    </button>
+                  ) : null}
 
                   {vaultApproveStepDone && !vaultApproveAdvanced ? (
                     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-300/45 bg-emerald-500/10 px-2.5 py-2">
@@ -4136,7 +4553,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                     <>
                       {!vaultApproveAdvanced ? (
                         <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-700/55 bg-slate-950/45 px-2.5 py-2">
-                          <span className="text-[11px] text-slate-300/85">Approve amount = Amount to lock.</span>
+                          <span className="text-[11px] text-slate-200/95">Approve amount = Amount to lock.</span>
                           <button
                             type="button"
                             onClick={() => setVaultApproveAdvanced(true)}
@@ -4200,21 +4617,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                         <div className="text-[10px] uppercase tracking-wide text-slate-400/80">Approval target</div>
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="text-sm font-semibold text-slate-100">{vaultApprovalTargetLine}</div>
-                          {vaultApproveAmountHasFullPrecision ? (
-                            <button
-                              type="button"
-                              onClick={() => setVaultShowApproveFullPrecision((prev) => !prev)}
-                              className="text-[11px] font-semibold text-cyan-200/90 transition hover:text-cyan-100"
-                            >
-                              {vaultShowApproveFullPrecision ? "Hide full precision" : "Show full precision"}
-                            </button>
-                          ) : null}
                         </div>
-                        {vaultShowApproveFullPrecision && vaultApproveAmountRaw ? (
-                          <div className="font-mono text-[11px] text-slate-300/80">
-                            {vaultApproveAmountRaw} {vaultTokenMeta?.symbol || ""}
-                          </div>
-                        ) : null}
                       </div>
 
                     </>
@@ -4222,42 +4625,48 @@ export default function LaunchpadSection({ address, onConnect }) {
                 </div>
 
                 <div
-                  className={`space-y-3 rounded-xl border p-3 ${
+                  className={`space-y-3 rounded-2xl border p-4 ${
                     vaultApproveStepDone
-                      ? "border-cyan-300/40 bg-cyan-500/5 shadow-[0_0_0_1px_rgba(34,211,238,0.15)]"
-                      : "border-slate-700/60 bg-slate-900/35 opacity-85"
+                      ? "border-cyan-300/55 bg-cyan-500/8 shadow-[0_0_0_1px_rgba(34,211,238,0.14)]"
+                      : "border-slate-700/50 bg-slate-900/30 opacity-85"
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-200">Step 2 - Create lock</div>
+                    <div className={`text-xs font-semibold uppercase tracking-wide ${vaultApproveStepDone ? "text-cyan-100" : "text-slate-300/90"}`}>
+                      Step 2 - Create lock
+                    </div>
                     <span
                       className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
                         vaultApproveStepDone
                           ? "border-cyan-300/50 bg-cyan-500/12 text-cyan-100"
-                          : "border-slate-600/70 bg-slate-900/60 text-slate-300"
+                          : "border-slate-700/60 bg-slate-900/70 text-slate-300/75"
                       }`}
                     >
                       {vaultApproveStepDone ? "Active" : "Waiting approval"}
                     </span>
                   </div>
                   {!vaultApproveStepDone ? (
-                    <div className="text-[11px] text-slate-400/85">Step 2 is blocked until Step 1 approval is completed.</div>
+                    <div className="text-[11px] text-slate-200/80">Step 2 is blocked until Step 1 approval is completed.</div>
                   ) : null}
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <input
                       value={vaultForm.depositAmount}
                       onChange={(e) => setVaultForm((prev) => ({ ...prev, depositAmount: e.target.value }))}
                       placeholder="Amount to lock"
-                      className={INPUT_CLASS}
+                      className={`${INPUT_CLASS} h-12 text-base font-semibold`}
                     />
-                    <div className="flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                       {[25, 50, 75].map((pct) => (
                         <button
                           key={`vault-amount-${pct}`}
                           type="button"
                           onClick={() => handleVaultAmountPreset(pct)}
                           disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
-                          className="rounded-full border border-slate-600/70 bg-slate-900/70 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50 disabled:opacity-60"
+                          className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-60 ${
+                            vaultSelectedAmountPreset === String(pct)
+                              ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
+                              : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-400 hover:text-slate-100"
+                          }`}
                         >
                           {pct}%
                         </button>
@@ -4266,7 +4675,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                         type="button"
                         onClick={handleVaultSetMaxDeposit}
                         disabled={!vaultTokenMeta || vaultTokenBalance.loading || vaultTokenBalance.value <= 0n}
-                        className="rounded-full border border-slate-600/70 bg-slate-900/70 px-2.5 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-50 disabled:opacity-60"
+                        className={`rounded-full border px-2.5 py-0.5 text-[10px] font-semibold transition disabled:opacity-60 ${
+                          vaultSelectedAmountPreset === "max"
+                            ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
+                            : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-400 hover:text-slate-100"
+                        }`}
                       >
                         Max
                       </button>
@@ -4276,7 +4689,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                     </div>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-3 pt-1">
                     <div className="flex items-center justify-between gap-2">
                       <label className="text-xs font-medium tracking-wide text-slate-300/85">Unlock date</label>
                       <span className="rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[10px] font-semibold text-slate-200">
@@ -4301,7 +4714,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                           onClick={() => handleVaultUnlockPreset(days)}
                           className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
                             vaultSelectedUnlockPreset === days
-                              ? "border-cyan-300/55 bg-cyan-500/18 text-cyan-100"
+                              ? "border-cyan-300/70 bg-cyan-500/24 text-cyan-100 shadow-[0_0_0_1px_rgba(34,211,238,0.2)]"
                               : "border-slate-600/70 bg-slate-900/70 text-slate-200 hover:border-slate-400 hover:text-slate-50"
                           }`}
                         >
@@ -4309,7 +4722,7 @@ export default function LaunchpadSection({ address, onConnect }) {
                         </button>
                       ))}
                     </div>
-                    <div className="text-[12px] font-semibold text-slate-200">{vaultUnlockPreview}</div>
+                    <div className="text-[11px] font-medium text-slate-200/80">{vaultUnlockPreview}</div>
                     {!vaultUnlockMeetsMinimum && vaultUnlockIsValid ? (
                       <div className="text-[11px] text-rose-100">
                         Minimum lock is {vaultMinimumLockDays} days from now.
@@ -4318,25 +4731,38 @@ export default function LaunchpadSection({ address, onConnect }) {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate-700/60 bg-slate-900/35 p-3">
-                  <div className="mb-2 rounded-lg border border-slate-700/60 bg-slate-950/55 px-3 py-2 text-xs text-slate-200">
-                    <div className="flex items-center gap-1.5">
-                      <span>Admin: connected wallet</span>
-                      <span className="font-mono text-slate-100">{shorten(vaultAdminEffective || "") || "--"}</span>
+                <div className="rounded-2xl border border-slate-700/45 bg-slate-900/25 p-3">
+                  <div className="mb-2 rounded-lg border border-slate-700/55 bg-slate-950/45 px-3 py-2 text-xs text-slate-200">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-medium text-slate-400/75">Admin wallet</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-slate-100">{shorten(vaultAdminEffective || "") || "--"}</span>
+                        {vaultAdminValid ? (
+                          <button
+                            type="button"
+                            title={copiedSummaryKey === "vault-admin-inline" ? "Copied" : "Copy admin"}
+                            onClick={() => handleCopySummaryValue("vault-admin-inline", vaultAdminEffective)}
+                            className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-slate-600/70 bg-slate-900/70 text-slate-300/80 transition hover:border-cyan-300/55 hover:bg-slate-800/85 hover:text-cyan-100"
+                          >
+                            <CopyIcon className="h-3 w-3" />
+                            <span className="sr-only">Copy admin</span>
+                          </button>
+                        ) : null}
+                      </span>
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setVaultAdvancedOpen((prev) => !prev)}
-                    className="flex w-full items-center justify-between gap-2 text-left"
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition hover:bg-slate-900/35"
                   >
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-200">Advanced</span>
-                    <span className="text-[11px] font-semibold text-cyan-200/90">{vaultAdvancedOpen ? "Collapse" : "Expand"}</span>
+                    <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-300/90">Advanced</span>
+                    <span className="text-[11px] font-semibold text-slate-400/90">{vaultAdvancedOpen ? "Collapse" : "Expand"}</span>
                   </button>
 
                   {vaultAdvancedOpen ? (
-                    <div className="mt-2 space-y-2">
-                      <div className="text-[11px] text-slate-300/80">Advanced approval and custom admin wallet controls.</div>
+                    <div className="mt-3 space-y-2 border-t border-slate-700/45 pt-3">
+                      <div className="text-[11px] text-slate-300/75">Advanced approval and custom admin wallet controls.</div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium tracking-wide text-slate-300/85">Admin wallet</span>
                         <label className="inline-flex items-center gap-2 text-[11px] text-slate-300/85">
@@ -4378,33 +4804,46 @@ export default function LaunchpadSection({ address, onConnect }) {
 
                 </div>
 
-                <div className="space-y-3 xl:sticky xl:top-[92px] xl:self-start">
-                <div className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/35 p-3 text-xs">
-                  <div className="font-semibold uppercase tracking-wide text-slate-200">Summary</div>
-                  <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 text-slate-200">
-                    <span className="text-slate-400/80">Token</span>
-                    <span className="truncate text-right font-semibold text-slate-100">{vaultSummaryTokenLabel}</span>
-
-                    <span className="text-slate-400/80">Amount</span>
-                    <span className="text-right font-semibold text-slate-100">{vaultSummaryAmountLabel}</span>
-
-                    <span className="text-slate-400/80">Duration</span>
-                    <span className="text-right font-semibold text-slate-100">{vaultSummaryDurationLabel}</span>
-
-                    <span className="text-slate-400/80">Unlock</span>
-                    <span className="text-right font-semibold text-slate-100">
-                      {vaultUnlockIsValid ? vaultUnlockPreview.replace("Unlocks in ", "") : "--"}
-                    </span>
-
-                    <span className="text-slate-400/80">Admin</span>
-                    <span className="text-right font-mono font-semibold text-slate-100">{vaultSummaryAdminLabel}</span>
+                <div className="space-y-4 xl:sticky xl:top-[92px] xl:self-start">
+                <div className="space-y-4 rounded-2xl border border-slate-700/60 bg-slate-900/40 p-4 text-xs">
+                  <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-400/70">Summary</div>
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-300/90">Token &amp; Amount</div>
+                      <div className="mt-1 truncate text-sm font-semibold text-slate-100">{vaultSummaryTokenLabel}</div>
+                      <div className="mt-1 text-2xl font-semibold leading-none text-slate-100">{vaultSummaryAmountLabel}</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">Duration</div>
+                      <div className="mt-1 text-lg font-semibold text-slate-100">{vaultSummaryDurationLabel}</div>
+                      <div className="mt-1 text-[11px] text-slate-300/78">
+                        Unlock: {vaultUnlockIsValid ? vaultUnlockPreview.replace("Unlocks in ", "") : "--"}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-slate-700/55 bg-slate-950/55 p-3.5">
+                      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">Admin</div>
+                      <div className="mt-1 flex items-center justify-between gap-2">
+                        <span className="min-w-0 truncate font-mono text-[12px] text-slate-100">{vaultAdminValid ? vaultAdminEffective : "--"}</span>
+                        {vaultAdminValid ? (
+                          <button
+                            type="button"
+                            title={copiedSummaryKey === "vault-admin" ? "Copied" : "Copy admin"}
+                            onClick={() => handleCopySummaryValue("vault-admin", vaultAdminEffective)}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-600/70 bg-slate-900/70 text-slate-300/80 transition hover:border-cyan-300/55 hover:bg-slate-800/85 hover:text-cyan-100 hover:shadow-[0_0_0_1px_rgba(34,211,238,0.18)]"
+                          >
+                            <CopyIcon className="h-3.5 w-3.5" />
+                            <span className="sr-only">Copy admin</span>
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                   <div
-                    className={`rounded-lg border px-2.5 py-1.5 text-[11px] ${
+                    className={`rounded-lg border-[0.5px] px-2.5 py-1.5 text-[11px] ${
                       vaultPrimaryHintTone === "error"
                         ? "border-rose-300/55 bg-rose-500/12 text-rose-100"
                         : vaultPrimaryHintTone === "warn"
-                          ? "border-amber-400/45 bg-amber-500/10 text-amber-100"
+                          ? "border-amber-300/30 bg-amber-500/[0.06] text-amber-100/80"
                           : "border-emerald-300/45 bg-emerald-500/10 text-emerald-100"
                     }`}
                   >
@@ -4426,7 +4865,11 @@ export default function LaunchpadSection({ address, onConnect }) {
                     type="button"
                     onClick={vaultPrimaryAction === "approve" ? handleVaultApprove : handleVaultDeposit}
                     disabled={vaultPrimaryDisabled}
-                    className={`${PRIMARY_BUTTON_CLASS} w-full`}
+                    className={`w-full rounded-xl border px-4 py-[22px] text-[15px] font-black leading-none transition duration-200 ${
+                      vaultPrimaryDisabled
+                        ? "cursor-not-allowed border-slate-700/70 bg-slate-900/70 text-slate-500 opacity-50"
+                        : "border-cyan-300/65 bg-gradient-to-r from-cyan-500/24 to-emerald-400/20 text-cyan-50 shadow-[0_12px_24px_rgba(34,211,238,0.16)] hover:border-cyan-200/80 hover:shadow-[0_14px_28px_rgba(34,211,238,0.2)] hover:brightness-110"
+                    }`}
                   >
                     {vaultPrimaryLabel}
                   </button>
@@ -4439,10 +4882,20 @@ export default function LaunchpadSection({ address, onConnect }) {
         </div>
 
         <div className={`${PANEL_CLASS} ${activeView === "locker" ? "cx-panel-enter" : "hidden"}`}>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div>
-              <div className="font-display text-lg font-semibold">LpLockerv2</div>
-              <div className="text-xs text-slate-300/70">LP pair for selected NFT ID + collect fees.</div>
+              <div className="font-display text-xl font-semibold text-slate-100">LpLockerv2</div>
+              <div className="mt-1 text-sm text-slate-300/75">LP pair for selected NFT ID + collect fees.</div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/65">Total claimable</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-100">{lockerClaimableSummary}</div>
+                </div>
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2.5">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/65">Active NFTs</div>
+                  <div className="mt-1 text-lg font-semibold text-slate-100">{lockerActiveNftCount}</div>
+                </div>
+              </div>
             </div>
             <button
               type="button"
@@ -4454,98 +4907,170 @@ export default function LaunchpadSection({ address, onConnect }) {
           </div>
 
           {locker.error ? (
-            <div className="mt-2 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
+            <div className="mt-3 rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">{locker.error}</div>
           ) : null}
 
-          <div className="mt-3 space-y-3">
-            <select
-              value={locker.selectedId}
-              onChange={(e) => setLocker((prev) => ({ ...prev, selectedId: e.target.value }))}
-              className={INPUT_CLASS}
-            >
-              {!locker.ids.length ? <option value="">No LP token IDs</option> : null}
-              {locker.ids.map((tokenId) => (
-                <option key={tokenId} value={tokenId}>
-                  {tokenId}
-                </option>
-              ))}
-            </select>
-
-            <div className={`${TONED_PANEL_CLASS} space-y-1 px-3 py-2 text-xs text-slate-200`}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-300/80">NFT ID</span>
-                <span className="font-mono text-slate-100">{locker.selectedId || "--"}</span>
-              </div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-300/80">Creator reward</span>
-                <span className="font-semibold text-slate-100">
-                  {locker.tokenReward ? String(locker.tokenReward.creatorReward) : "--"}
-                </span>
-              </div>
-              <div className="pt-1 text-slate-300/80">LP pair</div>
-              {locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? (
-                <div className="flex items-center gap-2 rounded-lg border border-slate-700/60 bg-slate-900/40 px-2 py-2">
-                  <div className="inline-flex items-center gap-1.5">
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                      {locker.tokenReward?.token0Meta?.logo ? (
-                        <img
-                          src={locker.tokenReward.token0Meta.logo}
-                          alt={`${locker.tokenReward?.token0Meta?.symbol || "TOKEN0"} logo`}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-[10px] font-semibold text-slate-200">
-                          {String(locker.tokenReward?.token0Meta?.symbol || "T0")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs font-semibold text-slate-100">
-                      {locker.tokenReward?.token0Meta?.symbol || "TOKEN0"}
-                    </span>
-                  </div>
-                  <span className="text-slate-400/80">/</span>
-                  <div className="inline-flex items-center gap-1.5">
-                    <div className="flex h-7 w-7 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                      {locker.tokenReward?.token1Meta?.logo ? (
-                        <img
-                          src={locker.tokenReward.token1Meta.logo}
-                          alt={`${locker.tokenReward?.token1Meta?.symbol || "TOKEN1"} logo`}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <span className="text-[10px] font-semibold text-slate-200">
-                          {String(locker.tokenReward?.token1Meta?.symbol || "T1")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <span className="text-xs font-semibold text-slate-100">
-                      {locker.tokenReward?.token1Meta?.symbol || "TOKEN1"}
-                    </span>
-                  </div>
-                  <span className="ml-auto rounded-full border border-slate-600/70 bg-slate-900/70 px-2 py-0.5 text-[11px] text-slate-200">
-                    {locker.tokenReward?.fee ? `Fee ${formatFeeTierPercent(locker.tokenReward.fee)}` : "Fee --"}
-                  </span>
-                </div>
-              ) : (
-                <div className="text-xs text-slate-300/75">Pair details unavailable for this NFT ID.</div>
-              )}
+          {locker.loading ? (
+            <div className="mt-6 rounded-2xl border border-slate-700/60 bg-slate-900/35 px-4 py-4 text-sm text-slate-300/80">
+              Loading LP NFTs...
             </div>
-
-            <div className="flex justify-end">
+          ) : !locker.ids.length ? (
+            <div className="mt-6 rounded-2xl border border-slate-700/60 bg-slate-900/35 px-4 py-7 text-center">
+              <div className="mx-auto inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-700/70 bg-slate-900/70 text-slate-300/90">
+                <NftTagIcon className="h-5 w-5" />
+              </div>
+              <div className="mt-3 text-base font-semibold text-slate-100">No LP positions found</div>
+              <div className="mt-1 text-sm text-slate-300/75">
+                Provide liquidity to mint an LP NFT, then return here to manage fee rewards.
+              </div>
               <button
                 type="button"
-                onClick={handleCollectLocker}
-                disabled={lockerAction.loadingKey === "collect" || !locker.selectedId}
-                className={CYAN_BUTTON_CLASS}
+                onClick={() => setActiveView("create")}
+                className="mt-4 rounded-xl border border-slate-600/70 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 transition hover:border-slate-400 hover:text-slate-100"
               >
-                {lockerAction.loadingKey === "collect" ? "Collecting..." : "Collect rewards"}
+                Provide liquidity
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="mt-6 space-y-8">
+              <div className="space-y-2">
+                <label className="text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-300/85">NFT ID Selector</label>
+                <select
+                  value={locker.selectedId}
+                  onChange={(e) => setLocker((prev) => ({ ...prev, selectedId: e.target.value }))}
+                  className={`${INPUT_CLASS} h-11`}
+                >
+                  {!locker.ids.length ? <option value="">No LP token IDs</option> : null}
+                  {locker.ids.map((tokenId) => (
+                    <option key={tokenId} value={tokenId}>
+                      NFT #{tokenId}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-1">
+                  <span className="inline-flex items-center rounded-full border border-cyan-300/45 bg-cyan-500/12 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+                    NFT ID #{locker.selectedId || "--"}
+                  </span>
+                  <span
+                    className={`inline-flex items-center rounded-full border px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-[0.08em] leading-tight ${
+                      lockerClaimableNow
+                        ? "border-emerald-300/35 bg-emerald-500/[0.08] text-emerald-100/90"
+                        : "border-slate-600/70 bg-slate-900/70 text-slate-300/80"
+                    }`}
+                  >
+                    {lockerClaimableNow ? "Claimable" : "No rewards"}
+                  </span>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <NftTagIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">NFT ID</div>
+                    <div className="mt-1 font-mono text-sm font-semibold text-slate-100">#{locker.selectedId || "--"}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <RewardIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/70">Creator Reward</div>
+                    <div className="mt-1 text-[2rem] font-black leading-tight text-white">{lockerCreatorRewardLabel}</div>
+                    <div className="mt-0.5 text-[10px] text-slate-400/50">{lockerCreatorRewardMeta}</div>
+                  </div>
+                  <div className="rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-600/70 bg-slate-900/70 text-slate-200">
+                      <PairIcon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400/80">LP Pair</div>
+                    <div className="mt-1 text-sm font-semibold text-slate-100">{lockerPairLabel}</div>
+                    <div className="text-[11px] text-slate-300/75">Fee: {lockerFeeTierLabel}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/35 p-4">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400/80">LP Pair</div>
+                {locker.tokenReward?.token0Meta || locker.tokenReward?.token1Meta ? (
+                  <div className="mt-2 flex items-center gap-3 rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-3">
+                    <div className="inline-flex items-center gap-2">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                        {locker.tokenReward?.token0Meta?.logo ? (
+                          <img
+                            src={locker.tokenReward.token0Meta.logo}
+                            alt={`${locker.tokenReward?.token0Meta?.symbol || "TOKEN0"} logo`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-[10px] font-semibold text-slate-200">
+                            {String(locker.tokenReward?.token0Meta?.symbol || "T0")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {locker.tokenReward?.token0Meta?.symbol || "TOKEN0"}
+                      </span>
+                    </div>
+                    <span className="text-lg font-semibold text-slate-100">/</span>
+                    <div className="inline-flex items-center gap-2">
+                      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
+                        {locker.tokenReward?.token1Meta?.logo ? (
+                          <img
+                            src={locker.tokenReward.token1Meta.logo}
+                            alt={`${locker.tokenReward?.token1Meta?.symbol || "TOKEN1"} logo`}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-[10px] font-semibold text-slate-200">
+                            {String(locker.tokenReward?.token1Meta?.symbol || "T1")
+                              .slice(0, 2)
+                              .toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-semibold text-slate-100">
+                        {locker.tokenReward?.token1Meta?.symbol || "TOKEN1"}
+                      </span>
+                    </div>
+                    <span className="ml-auto inline-flex h-7 items-center self-center rounded-full border border-cyan-300/45 bg-cyan-500/12 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-cyan-100">
+                      Fee {lockerFeeTierLabel}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-slate-300/75">Pair details unavailable for this NFT ID.</div>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-900/40 p-4">
+                <div
+                  className={`rounded-lg border px-3 py-1 text-[11px] font-semibold ${
+                    lockerClaimableNow
+                      ? "border-emerald-300/30 bg-emerald-500/[0.06] text-emerald-100"
+                      : "border-slate-700/70 bg-slate-950/45 text-slate-300/78"
+                  }`}
+                >
+                  {lockerCollectHelper}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCollectLocker}
+                  disabled={lockerCollectDisabled}
+                  className={`mt-4 w-full rounded-xl border px-4 py-5 text-[15px] font-black transition duration-200 ${
+                    lockerCollectDisabled
+                      ? "cursor-not-allowed border-slate-700/70 bg-slate-900/70 text-slate-500 opacity-50"
+                      : "border-cyan-300/65 bg-gradient-to-r from-cyan-500/24 to-emerald-400/20 text-cyan-50 shadow-[0_12px_24px_rgba(34,211,238,0.16)] hover:border-cyan-200/80 hover:shadow-[0_20px_38px_rgba(34,211,238,0.3)] hover:brightness-110"
+                  }`}
+                >
+                  {lockerAction.loadingKey === "collect" ? "Collecting..." : "Collect rewards"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <ActionInfo state={lockerAction} />
         </div>

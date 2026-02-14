@@ -21,6 +21,19 @@ const TAB_ROUTES = {
   megavault: "/megavault",
 };
 
+const NAV_TABS = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "swap", label: "Swap" },
+  { id: "liquidity", label: "Liquidity" },
+  { id: "pools", label: "Pools" },
+  { id: "points", label: "Points" },
+  { id: "farms", label: "Farms" },
+  { id: "megavault", label: "MegaVault" },
+  { id: "bridge", label: "Bridge" },
+];
+
+const URL_ONLY_TABS = new Set(["launchpad"]);
+
 const SECTION_LOADERS = {
   dashboard: () => import("./features/dashboard/Dashboard"),
   points: () => import("./features/points/PointsPage"),
@@ -325,7 +338,7 @@ export default function App() {
 
     const handle = idle(() => {
       Object.keys(SECTION_LOADERS).forEach((key) => {
-        if (key !== tab) preloadSection(key);
+        if (key !== tab && !URL_ONLY_TABS.has(key)) preloadSection(key);
       });
       ["swap", "liquidity", "pools"].forEach((key) => {
         if (key !== tab) prefetchTabData(key);
@@ -369,7 +382,9 @@ export default function App() {
     setTab("liquidity");
   };
 
-  const handleTabClick = (nextTab) => {
+  const handleTabClick = (nextTab, { allowUrlOnly = false } = {}) => {
+    if (!TAB_ROUTES[nextTab]) return;
+    if (!allowUrlOnly && URL_ONLY_TABS.has(nextTab)) return;
     preloadSection(nextTab);
     prefetchTabData(nextTab);
     setTab(nextTab);
@@ -413,16 +428,7 @@ export default function App() {
       {/* Tabs */}
       <div className="cx-fade-up px-4 pt-6 sm:px-6">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap justify-center gap-2 rounded-3xl border border-slate-700/40 bg-slate-900/45 p-2 text-xs shadow-[0_24px_60px_rgba(2,6,23,0.55)] backdrop-blur-xl sm:text-sm">
-          {[
-            { id: "dashboard", label: "Dashboard" },
-            { id: "swap", label: "Swap" },
-            { id: "liquidity", label: "Liquidity" },
-            { id: "pools", label: "Pools" },
-            { id: "points", label: "Points" },
-            { id: "farms", label: "Farms" },
-            { id: "megavault", label: "MegaVault" },
-            { id: "bridge", label: "Bridge" },
-          ].map((item) => (
+          {NAV_TABS.map((item) => (
             <button
               key={item.id}
               onClick={() => handleTabClick(item.id)}
