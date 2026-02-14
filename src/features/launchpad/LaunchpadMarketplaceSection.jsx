@@ -21,27 +21,27 @@ const getStudioPath = (studioView = DEFAULT_STUDIO_VIEW) => {
 const parseLaunchpadPath = (path = "") => {
   const cleaned = normalizePath(path).toLowerCase();
   if (cleaned === "/launchpad" || cleaned === "/launchpad/market") {
-    return { view: "market", tokenAddress: "", studioView: DEFAULT_STUDIO_VIEW };
+    return { view: "market", tokenAddress: "", studioView: "" };
   }
   if (cleaned === "/launchpad/create" || cleaned === "/launchpad/legacy" || cleaned === "/launchpad/studio") {
-    return { view: "legacy", tokenAddress: "", studioView: "create" };
+    return { view: "market", tokenAddress: "", studioView: "create" };
   }
   if (cleaned === "/launchpad/my-tokens") {
-    return { view: "legacy", tokenAddress: "", studioView: "deployments" };
+    return { view: "market", tokenAddress: "", studioView: "deployments" };
   }
   if (cleaned === "/launchpad/vault") {
-    return { view: "legacy", tokenAddress: "", studioView: "vault" };
+    return { view: "market", tokenAddress: "", studioView: "vault" };
   }
   if (cleaned === "/launchpad/locker") {
-    return { view: "legacy", tokenAddress: "", studioView: "locker" };
+    return { view: "market", tokenAddress: "", studioView: "locker" };
   }
 
   const match = cleaned.match(/^\/launchpad\/(0x[a-f0-9]{40})$/u);
   if (match?.[1]) {
-    return { view: "detail", tokenAddress: match[1], studioView: DEFAULT_STUDIO_VIEW };
+    return { view: "detail", tokenAddress: match[1], studioView: "" };
   }
 
-  return { view: "market", tokenAddress: "", studioView: DEFAULT_STUDIO_VIEW };
+  return { view: "market", tokenAddress: "", studioView: "" };
 };
 
 export default function LaunchpadMarketplaceSection({
@@ -52,16 +52,6 @@ export default function LaunchpadMarketplaceSection({
   onNavigate,
 }) {
   const parsed = useMemo(() => parseLaunchpadPath(routePath), [routePath]);
-
-  if (parsed.view === "legacy") {
-    return (
-      <LegacyLaunchpadSection
-        address={address}
-        onConnect={onConnect}
-        initialView={parsed.studioView}
-      />
-    );
-  }
 
   if (parsed.view === "detail") {
     return (
@@ -77,9 +67,19 @@ export default function LaunchpadMarketplaceSection({
   }
 
   return (
-    <LaunchpadMarket
-      onOpenToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}`)}
-      onOpenStudio={(studioView) => onNavigate?.(getStudioPath(studioView))}
-    />
+    <>
+      <LaunchpadMarket
+        onOpenToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}`)}
+        onOpenStudio={(studioView) => onNavigate?.(getStudioPath(studioView))}
+        activeStudioView={parsed.studioView || undefined}
+      />
+      {parsed.studioView ? (
+        <LegacyLaunchpadSection
+          address={address}
+          onConnect={onConnect}
+          initialView={parsed.studioView}
+        />
+      ) : null}
+    </>
   );
 }

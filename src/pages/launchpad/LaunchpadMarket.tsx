@@ -15,6 +15,7 @@ type StudioView = "create" | "deployments" | "vault" | "locker";
 interface LaunchpadMarketProps {
   onOpenToken: (tokenAddress: string) => void;
   onOpenStudio?: (view: StudioView) => void;
+  activeStudioView?: StudioView;
 }
 
 const studioItems: Array<{ id: StudioView; label: string; hint: string }> = [
@@ -24,7 +25,7 @@ const studioItems: Array<{ id: StudioView; label: string; hint: string }> = [
   { id: "locker", label: "Locker", hint: "LP pair + collect fees" },
 ];
 
-const LaunchpadMarket = ({ onOpenToken, onOpenStudio }: LaunchpadMarketProps) => {
+const LaunchpadMarket = ({ onOpenToken, onOpenStudio, activeStudioView }: LaunchpadMarketProps) => {
   const [query, setQuery] = useState("");
   const [activeFilters, setActiveFilters] = useState<LaunchpadFilter[]>([]);
   const [sort, setSort] = useState<LaunchpadSort>("mcap");
@@ -131,7 +132,7 @@ const LaunchpadMarket = ({ onOpenToken, onOpenStudio }: LaunchpadMarketProps) =>
               onClick={() => onOpenStudio?.("create")}
               className="inline-flex items-center rounded-full border border-cyan-400/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-200 transition hover:border-cyan-300 hover:bg-cyan-500/20"
             >
-              Open studio
+              {activeStudioView ? "Studio open" : "Open studio"}
             </button>
           </div>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -140,7 +141,12 @@ const LaunchpadMarket = ({ onOpenToken, onOpenStudio }: LaunchpadMarketProps) =>
                 key={item.id}
                 type="button"
                 onClick={() => onOpenStudio?.(item.id)}
-                className="rounded-2xl border border-slate-800/80 bg-slate-950/65 px-4 py-3 text-left transition hover:border-cyan-300/45 hover:bg-slate-900/80"
+                className={`rounded-2xl border bg-slate-950/65 px-4 py-3 text-left transition hover:border-cyan-300/45 hover:bg-slate-900/80 ${
+                  activeStudioView === item.id
+                    ? "border-cyan-300/55 bg-cyan-500/10"
+                    : "border-slate-800/80"
+                }`}
+                aria-pressed={activeStudioView === item.id}
               >
                 <div className="font-display text-base font-semibold text-slate-100">{item.label}</div>
                 <div className="mt-1 text-xs text-slate-400">{item.hint}</div>
