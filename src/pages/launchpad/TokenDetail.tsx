@@ -20,16 +20,17 @@ const ACTIVITY_TABS = [
 
 const buildPricePath = (candles: LaunchpadCandle[], width: number, height: number) => {
   if (!candles.length) return "";
-  const closes = candles.map((item) => item.close);
+  const closes = candles.map((item) => item.close).filter((v) => Number.isFinite(v) && v > 0);
+  if (!closes.length) return "";
   const min = Math.min(...closes);
   const max = Math.max(...closes);
-  const range = Math.max(max - min, 1e-9);
-  // When we only have 1 candle (e.g. 2 swaps in the same hour), draw a flat line
-  // so the user doesn't think the chart failed to load.
-  if (candles.length === 1) {
-    const y = height - ((candles[0].close - min) / range) * height;
+  const rawRange = max - min;
+  // If all candles have the same close, draw a flat line in the middle (instead of hugging the bottom edge).
+  if (rawRange <= 0) {
+    const y = height / 2;
     return `M0,${y.toFixed(2)} L${width.toFixed(2)},${y.toFixed(2)}`;
   }
+  const range = rawRange;
 
   const stepX = width / Math.max(1, candles.length - 1);
   return candles
