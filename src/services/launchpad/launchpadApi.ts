@@ -20,7 +20,33 @@ const FORCE_MOCK = MOCK_FLAG === "1" || MOCK_FLAG === "true" || MOCK_FLAG === "y
 const FALLBACK_FLAG = String(ENV.VITE_LAUNCHPAD_FALLBACK_TO_MOCK || "").trim().toLowerCase();
 const ALLOW_MOCK_FALLBACK =
   FALLBACK_FLAG === "1" || FALLBACK_FLAG === "true" || FALLBACK_FLAG === "yes";
-const API_BASE = String(ENV.VITE_LAUNCHPAD_API_BASE || "").trim().replace(/\/+$/u, "");
+const RAW_API_BASE = String(ENV.VITE_LAUNCHPAD_API_BASE || "").trim().replace(/\/+$/u, "");
+const MODE = String(ENV.MODE || "").trim().toLowerCase();
+// In local dev/test we keep the old behavior (mock by default unless API_BASE is configured).
+// In production/staging builds we assume a same-origin backend at /api/launchpad/*.
+const IS_DEV_MODE = MODE === "development" || MODE === "test";
+
+const isLocalHostname = (hostname: string) => {
+  const value = String(hostname || "").trim().toLowerCase();
+  return value === "localhost" || value === "127.0.0.1" || value === "0.0.0.0";
+};
+
+const hostFromUrl = (url: string) => {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+};
+
+// Prevent accidentally shipping a build that calls a localhost API from a public domain.
+const RAW_API_BASE_HOST = hostFromUrl(RAW_API_BASE);
+const SHOULD_IGNORE_RAW_API_BASE =
+  Boolean(RAW_API_BASE_HOST) &&
+  isLocalHostname(RAW_API_BASE_HOST) &&
+  typeof window !== "undefined" &&
+  !isLocalHostname(window.location.hostname);
+const API_BASE = SHOULD_IGNORE_RAW_API_BASE ? "" : RAW_API_BASE;
 
 const buildUrl = (path: string, query: Record<string, string | number | boolean | undefined> = {}) => {
   const params = new URLSearchParams();
@@ -72,7 +98,11 @@ const fetchJson = async <T>(url: string, signal?: AbortSignal): Promise<T> => {
   }
 };
 
-const useRealApi = () => Boolean(API_BASE) && !FORCE_MOCK;
+const useRealApi = () => {
+  if (FORCE_MOCK) return false;
+  if (API_BASE) return true;
+  return !IS_DEV_MODE;
+};
 
 const withFallback = async <T>(
   runReal: () => Promise<T>,
