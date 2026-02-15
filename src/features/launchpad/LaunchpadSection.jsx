@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, formatUnits, id, isAddress, parseEther, parseUnits } from "ethers";
+import { Contract, Interface, formatUnits, id, isAddress, parseEther, parseUnits } from "ethers";
 import {
   CURRENTX_ADDRESS,
   CURRENTX_VAULT_ADDRESS,
@@ -270,12 +270,102 @@ const formatRemainingFromUnix = (unix) => {
   return `${minutes}m`;
 };
 
+const CURRENTX_INTERFACE = new Interface(CURRENTX_ABI);
+const HEX_REVERT_DATA = /^0x[0-9a-fA-F]{8,}$/u;
+
+const collectErrorMessages = (error) => {
+  const out = [];
+  const queue = [error];
+  const seen = new Set();
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) continue;
+    if (typeof current === "string") {
+      const value = current.trim();
+      if (value) out.push(value);
+      continue;
+    }
+    if (typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    ["shortMessage", "reason", "message"].forEach((key) => {
+      const value = current?.[key];
+      if (typeof value === "string" && value.trim()) out.push(value.trim());
+    });
+
+    ["error", "cause", "info", "data", "originalError"].forEach((key) => {
+      const value = current?.[key];
+      if (!value) return;
+      if (typeof value === "string") {
+        const clean = value.trim();
+        if (clean) out.push(clean);
+        return;
+      }
+      if (typeof value === "object") queue.push(value);
+    });
+  }
+  return Array.from(new Set(out));
+};
+
+const extractRevertData = (error) => {
+  const queue = [error];
+  const seen = new Set();
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    const directCandidates = [
+      current?.data,
+      current?.error?.data,
+      current?.error?.error?.data,
+      current?.info?.data,
+      current?.info?.error?.data,
+      current?.originalError?.data,
+      current?.revert?.data,
+      current?.result,
+    ];
+    for (const candidate of directCandidates) {
+      if (typeof candidate === "string" && HEX_REVERT_DATA.test(candidate)) {
+        return candidate;
+      }
+      if (candidate && typeof candidate === "object") queue.push(candidate);
+    }
+
+    Object.values(current).forEach((value) => {
+      if (value && typeof value === "object") queue.push(value);
+    });
+  }
+  return "";
+};
+
+const decodeCurrentxRevert = (revertData) => {
+  if (!revertData) return "";
+  try {
+    const parsed = CURRENTX_INTERFACE.parseError(revertData);
+    if (!parsed?.name) return "";
+    const args = Array.from(parsed.args || [])
+      .map((value) => (typeof value === "bigint" ? value.toString() : String(value)))
+      .slice(0, 4);
+    const argsText = args.length ? ` (${args.join(", ")})` : "";
+    return `Contract reverted with ${parsed.name}${argsText}.`;
+  } catch {
+    return "";
+  }
+};
+
 const errMsg = (error, fallback) => {
-  const raw = error?.shortMessage || error?.reason || error?.message || "";
-  const lower = String(raw).toLowerCase();
+  const messages = collectErrorMessages(error);
+  const raw = messages[0] || "";
+  const lower = messages.join(" ").toLowerCase();
   const code =
     error?.code ?? error?.info?.error?.code ?? error?.error?.code ?? error?.data?.code ?? null;
   if (code === 4001 || code === "ACTION_REJECTED") return "Transaction rejected in wallet.";
+  if (lower.includes("wrong network in wallet")) return raw;
+  const decodedRevert = decodeCurrentxRevert(extractRevertData(error));
+  if (decodedRevert) return decodedRevert;
   if (lower.includes("insufficient funds")) return "Insufficient ETH for value + gas.";
   if (lower.includes("missing revert data")) {
     return "Contract call failed without revert data. Check wallet network, vault minimum duration, reward config, and creator buy settings.";
@@ -1464,7 +1554,15 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const signerNetwork = await provider.getNetwork();
       const signerChainId = Number(signerNetwork?.chainId || 0);
       if (defaultChainId > 0 && signerChainId !== defaultChainId) {
-        throw new Error(`Wrong network in wallet. Switch to ${NETWORK_NAME} (chain ${defaultChainId}).`);
+        throw new Error(
+          `Wrong network in wallet. Switch to ${NETWORK_NAME} (chain ${defaultChainId}). Detected chain: ${signerChainId || "unknown"}.`
+        );
+      }
+      const currentxCode = await provider.getCode(contracts.currentx);
+      if (!currentxCode || currentxCode === "0x") {
+        throw new Error(
+          `CurrentX contract not found at ${contracts.currentx} on ${NETWORK_NAME}. Check VITE_CURRENTX_ADDRESS and wallet network.`
+        );
       }
       const signer = await provider.getSigner();
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
@@ -1644,6 +1742,16 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       };
 
       const overrides = txValue > 0n ? { value: txValue } : {};
+      setDeployAction({ loading: true, error: "", hash: "", message: "Simulating deployment..." });
+      if (deployForm.useCustomTeamRewardRecipient) {
+        await currentx.deployTokenWithCustomTeamRewardRecipient.staticCall(
+          deploymentConfig,
+          teamRewardRecipient,
+          overrides
+        );
+      } else {
+        await currentx.deployToken.staticCall(deploymentConfig, overrides);
+      }
       setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
       const tx = deployForm.useCustomTeamRewardRecipient
         ? await currentx.deployTokenWithCustomTeamRewardRecipient(
@@ -1685,6 +1793,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setDeployAction({ loading: false, error: "", hash: receipt.hash || tx.hash || "", message: "Token deployed." });
       await Promise.all([refreshDeployments(), refreshLocker()]);
     } catch (error) {
+      console.error("[launchpad][deploy] failed", error);
       setDeployAction({ loading: false, error: errMsg(error, "Deploy failed."), hash: "", message: "" });
     }
   };
@@ -1885,8 +1994,8 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const value = Number.parseFloat(creatorBuyRawInput || "0");
     return Number.isFinite(value) ? value : 0;
   }, [creatorBuyRawInput]);
-  const creatorBuyEnabled = openSections.buy;
-  const creatorBuyConfigured = creatorBuyEnabled && creatorBuyAmount > 0;
+  const creatorBuyConfigured = creatorBuyAmount > 0;
+  const creatorBuyEnabled = openSections.buy || creatorBuyConfigured;
   const startingTickPreview = useMemo(() => {
     try {
       return computeTickFromMarketCapEth({
@@ -1923,7 +2032,11 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   const vaultStatusSummary = vaultEnabled
     ? `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${deployForm.vestingDays || "0"}d vest`
     : "Disabled";
-  const creatorBuyStatusLabel = creatorBuyEnabled ? (creatorBuyConfigured ? "Configured" : "Not configured") : "Disabled";
+  const creatorBuyStatusLabel = creatorBuyConfigured
+    ? "Configured"
+    : creatorBuyEnabled
+      ? "Not configured"
+      : "Disabled";
   const creatorBuyStatusSummary = creatorBuyEnabled ? `${creatorBuyAmountLabel} ETH` : "Disabled";
   const creatorBuyStatusTone = creatorBuyConfigured ? "good" : creatorBuyEnabled ? "warn" : "neutral";
   const rewardsSummaryLine = `${rewardTypeLabel} • ${allocatedRewardsLabel}% • ${rewardRecipientCount} recipient${
