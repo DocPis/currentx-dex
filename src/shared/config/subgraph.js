@@ -41,6 +41,7 @@ if (!SUBGRAPH_V3_API_KEY) {
 
 const parseUrlList = (...values) =>
   values
+    .flatMap((value) => (Array.isArray(value) ? value : [value]))
     .flatMap((value) => String(value || "").split(","))
     .map((value) => value.trim())
     .filter(Boolean);
@@ -83,12 +84,19 @@ const prioritizeSubgraphUrls = (urls = []) => {
 };
 
 const buildSubgraphEndpoints = (primaryUrl, primaryApiKey, fallbackUrls = []) => {
-  const normalizedPrimary = String(primaryUrl || "").trim();
-  const urls = prioritizeSubgraphUrls(dedupeUrls([normalizedPrimary, ...fallbackUrls]));
+  // Allow comma-separated primary urls (first is primary, rest are implicit fallbacks).
+  const primaryUrls = parseUrlList(primaryUrl);
+  const normalizedPrimary = primaryUrls[0] || "";
+  const implicitFallbacks = primaryUrls.slice(1);
+  const urls = prioritizeSubgraphUrls(
+    dedupeUrls([normalizedPrimary, ...implicitFallbacks, ...(fallbackUrls || [])])
+  );
+
+  const apiKey = String(primaryApiKey || "").trim();
   return urls.map((url) => ({
     url,
     // Only attach API keys to endpoints that require auth (avoid forcing auth headers on public endpoints).
-    apiKey: endpointRequiresApiKey(url) ? String(primaryApiKey || "").trim() : "",
+    apiKey: endpointRequiresApiKey(url) ? apiKey : "",
   }));
 };
 
@@ -1309,7 +1317,9 @@ async function fetchTokenPricesV2(addresses = []) {
       message.includes("Cannot query field \"tokens\"") ||
       message.includes("Type `Query` has no field `tokens`");
     if (noTokensField) return {};
-    throw err;
+    // If the V2 subgraph is unavailable (indexer/rate/CORS/etc), allow callers to
+    // fall back to V3 pricing instead of failing hard.
+    return {};
   }
 }
 

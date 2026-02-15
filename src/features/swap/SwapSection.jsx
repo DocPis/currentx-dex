@@ -35,6 +35,7 @@ import { multicall } from "../../shared/services/multicall";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import { fetchTokenPrices } from "../../shared/config/subgraph";
 import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
+import { applyTokenAliases } from "../../shared/config/tokens";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB"];
 const MAX_ROUTE_CANDIDATES = 12;
@@ -623,7 +624,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         logo: customLogo || base?.logo || DEFAULT_TOKEN_LOGO,
       };
     });
-    return out;
+    return applyTokenAliases(out);
   }, [customTokens]);
   useEffect(() => {
     const sync = () => {
@@ -4776,7 +4777,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </div>
           </div>
 
-          <div className="mt-2 relative group">
+          <div className="mt-2 relative group focus:outline-none" tabIndex={0}>
             <div className="flex flex-wrap items-center gap-2 text-[12px] text-slate-200">
               {activeRouteTokens.map((token, idx) => (
                 <React.Fragment key={`${token.symbol || "token"}-${idx}`}>
@@ -4794,87 +4795,89 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 </React.Fragment>
               ))}
             </div>
-            <div
-              className="absolute left-0 top-full mt-2 w-full max-w-[420px] rounded-2xl border border-slate-800 bg-slate-950/95 p-3 shadow-2xl shadow-black/50 opacity-0 translate-y-1 pointer-events-none transition duration-200 group-hover:opacity-100 group-hover:translate-y-0 z-20"
-              role="tooltip"
-            >
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">
-                Full route
-              </div>
-              {routeSegments.length ? (
-                <div className="mt-2 space-y-2">
-                  {routeSegments.map((segment, segIdx) => (
-                    <div
-                      key={`route-seg-${segIdx}`}
-                      className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2"
-                    >
-                      <div className="flex items-center justify-between text-[10px] text-slate-400">
-                        <span>{segment.protocol}</span>
-                        {quoteMeta?.protocol === "SPLIT" && (
-                          <span>{Math.round(segment.sharePct || 0)}%</span>
-                        )}
-                      </div>
-                      <div className="mt-2 space-y-1">
-                        {segment.hops.map((hop, hopIdx) => (
-                          <div
-                            key={`route-hop-${segIdx}-${hopIdx}`}
-                            className="flex items-center gap-3 text-xs text-slate-200"
-                          >
-                            <div className="flex items-center gap-2">
-                              <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
-                                {hop.from?.meta?.logo ? (
-                                  <img
-                                    src={hop.from.meta.logo}
-                                    alt={`${hop.from?.symbol || "Token"} logo`}
-                                    className="h-full w-full object-contain"
-                                  />
-                                ) : (
-                                  <span className="text-[8px] font-semibold text-slate-300">
-                                    {(hop.from?.symbol || "TKN").slice(0, 2)}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-[11px] font-semibold text-slate-100">
-                                {hop.from?.symbol || "Token"}
-                              </span>
-                            </div>
-                            <div className="flex-1 flex items-center gap-2 min-w-[72px]">
-                              <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
-                              <span className="px-2 py-0.5 rounded-full border border-slate-700 bg-slate-950/80 text-[10px] text-slate-300 whitespace-nowrap">
-                                {hop.protocol === "V3" ? formatV3Fee(hop.fee) : "V2"}
-                              </span>
-                              <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[11px] font-semibold text-slate-100">
-                                {hop.to?.symbol || "Token"}
-                              </span>
-                              <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
-                                {hop.to?.meta?.logo ? (
-                                  <img
-                                    src={hop.to.meta.logo}
-                                    alt={`${hop.to?.symbol || "Token"} logo`}
-                                    className="h-full w-full object-contain"
-                                  />
-                                ) : (
-                                  <span className="text-[8px] font-semibold text-slate-300">
-                                    {(hop.to?.symbol || "TKN").slice(0, 2)}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
+            <div className="hidden pt-2 group-hover:block group-focus-within:block">
+              <div
+                className="w-full max-w-[420px] rounded-2xl border border-slate-800 bg-slate-950/95 p-3 shadow-2xl shadow-black/50"
+                role="tooltip"
+              >
+                <div className="text-[10px] uppercase tracking-wide text-slate-400">
+                  Full route
                 </div>
-              ) : (
-                <div className="mt-2 text-xs text-slate-500">No route data.</div>
-              )}
-              <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
-                <span>Estimated LP fees</span>
-                <span className="text-slate-200">{routeFeeUsdLabel}</span>
+                {routeSegments.length ? (
+                  <div className="mt-2 space-y-2">
+                    {routeSegments.map((segment, segIdx) => (
+                      <div
+                        key={`route-seg-${segIdx}`}
+                        className="rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2"
+                      >
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span>{segment.protocol}</span>
+                          {quoteMeta?.protocol === "SPLIT" && (
+                            <span>{Math.round(segment.sharePct || 0)}%</span>
+                          )}
+                        </div>
+                        <div className="mt-2 space-y-1">
+                          {segment.hops.map((hop, hopIdx) => (
+                            <div
+                              key={`route-hop-${segIdx}-${hopIdx}`}
+                              className="flex items-center gap-3 text-xs text-slate-200"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
+                                  {hop.from?.meta?.logo ? (
+                                    <img
+                                      src={hop.from.meta.logo}
+                                      alt={`${hop.from?.symbol || "Token"} logo`}
+                                      className="h-full w-full object-contain"
+                                    />
+                                  ) : (
+                                    <span className="text-[8px] font-semibold text-slate-300">
+                                      {(hop.from?.symbol || "TKN").slice(0, 2)}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[11px] font-semibold text-slate-100">
+                                  {hop.from?.symbol || "Token"}
+                                </span>
+                              </div>
+                              <div className="flex-1 flex items-center gap-2 min-w-[72px]">
+                                <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
+                                <span className="px-2 py-0.5 rounded-full border border-slate-700 bg-slate-950/80 text-[10px] text-slate-300 whitespace-nowrap">
+                                  {hop.protocol === "V3" ? formatV3Fee(hop.fee) : "V2"}
+                                </span>
+                                <div className="h-px flex-1 border-t border-dashed border-slate-600/70" />
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-semibold text-slate-100">
+                                  {hop.to?.symbol || "Token"}
+                                </span>
+                                <div className="h-5 w-5 rounded-full border border-slate-700 bg-slate-950/80 overflow-hidden flex items-center justify-center">
+                                  {hop.to?.meta?.logo ? (
+                                    <img
+                                      src={hop.to.meta.logo}
+                                      alt={`${hop.to?.symbol || "Token"} logo`}
+                                      className="h-full w-full object-contain"
+                                    />
+                                  ) : (
+                                    <span className="text-[8px] font-semibold text-slate-300">
+                                      {(hop.to?.symbol || "TKN").slice(0, 2)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-xs text-slate-500">No route data.</div>
+                )}
+                <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400">
+                  <span>Estimated LP fees</span>
+                  <span className="text-slate-200">{routeFeeUsdLabel}</span>
+                </div>
               </div>
             </div>
           </div>

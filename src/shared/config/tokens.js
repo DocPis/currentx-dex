@@ -34,6 +34,30 @@ import {
   MEGA_TOKEN_ADDRESS,
 } from "./addresses";
 
+export const applyTokenAliases = (registry = {}) => {
+  if (!registry || typeof registry !== "object") return registry;
+  Object.entries(registry).forEach(([, token]) => {
+    if (!token || typeof token !== "object") return;
+    const aliases = [token.symbol, token.displaySymbol].filter(Boolean);
+    aliases.forEach((alias) => {
+      if (typeof alias !== "string") return;
+      const key = alias.trim();
+      if (!key) return;
+      if (Object.prototype.hasOwnProperty.call(registry, key)) return;
+      try {
+        Object.defineProperty(registry, key, {
+          value: token,
+          enumerable: false,
+          configurable: true,
+        });
+      } catch {
+        // ignore define errors
+      }
+    });
+  });
+  return registry;
+};
+
 const RAW_TOKENS = {
   ETH: {
     symbol: "ETH",
@@ -203,7 +227,7 @@ const buildTokens = () => {
       out[key] = token;
     }
   });
-  return out;
+  return applyTokenAliases(out);
 };
 
 // Token registry used across swaps/liquidity; filtered per-network by presence of an address.

@@ -24,6 +24,7 @@ import {
   UNIV3_FACTORY_ADDRESS,
   UNIV3_POSITION_MANAGER_ADDRESS,
 } from "../../shared/config/web3";
+import { applyTokenAliases } from "../../shared/config/tokens";
 import {
   ERC20_ABI,
   UNIV2_FACTORY_ABI,
@@ -1217,7 +1218,7 @@ export default function LiquiditySection({
       };
     });
 
-    return out;
+    return applyTokenAliases(out);
   }, [customTokens, onchainTokens]);
   const tokenDecimalsCache = useRef({});
   const slippageBps = useMemo(() => clampBps(slippageInput), [slippageInput]);
