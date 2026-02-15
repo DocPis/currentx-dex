@@ -1577,6 +1577,18 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       }
       const signer = await provider.getSigner();
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
+      if (isAddress(contracts.locker)) {
+        const lockerContract = new Contract(contracts.locker, LP_LOCKER_V2_ABI, provider);
+        const lockerFactory = String(await lockerContract.factory().catch(() => "")).trim();
+        if (
+          isAddress(lockerFactory) &&
+          lockerFactory.toLowerCase() !== String(contracts.currentx).toLowerCase()
+        ) {
+          throw new Error(
+            `CurrentX address mismatch with Locker factory. Expected ${lockerFactory}, found ${contracts.currentx}. Update VITE_CURRENTX_ADDRESS and restart the app.`
+          );
+        }
+      }
       if (originatingChainId !== BigInt(signerChainId || 0)) {
         throw new Error(
           `Originating chain id mismatch. Set ${originatingChainIdRaw} to ${signerChainId || defaultChainId} for ${NETWORK_NAME}.`
