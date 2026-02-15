@@ -20,6 +20,9 @@ const FORCE_MOCK = MOCK_FLAG === "1" || MOCK_FLAG === "true" || MOCK_FLAG === "y
 const FALLBACK_FLAG = String(ENV.VITE_LAUNCHPAD_FALLBACK_TO_MOCK || "").trim().toLowerCase();
 const ALLOW_MOCK_FALLBACK =
   FALLBACK_FLAG === "1" || FALLBACK_FLAG === "true" || FALLBACK_FLAG === "yes";
+const WS_FLAG = String(ENV.VITE_LAUNCHPAD_WS_ENABLED || "").trim().toLowerCase();
+// WS is opt-in until a backend actually supports `/api/launchpad/ws`.
+const WS_ENABLED = WS_FLAG === "1" || WS_FLAG === "true" || WS_FLAG === "yes";
 const RAW_API_BASE = String(ENV.VITE_LAUNCHPAD_API_BASE || "").trim().replace(/\/+$/u, "");
 const MODE = String(ENV.MODE || "").trim().toLowerCase();
 // In local dev/test we keep the old behavior (mock by default unless API_BASE is configured).
@@ -91,10 +94,39 @@ const fetchJson = async <T>(url: string, signal?: AbortSignal): Promise<T> => {
     throw new LaunchpadApiError(`Launchpad API request failed (${response.status})`, response.status);
   }
 
+  const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+  let body = "";
   try {
-    return (await response.json()) as T;
+    body = await response.text();
   } catch {
-    throw new LaunchpadApiError("Launchpad API returned invalid JSON", response.status);
+    body = "";
+  }
+
+  const normalized = String(body || "").trim().replace(/^\uFEFF/u, "");
+  if (!normalized) {
+    throw new LaunchpadApiError("Launchpad API returned an empty response body", response.status);
+  }
+
+  try {
+    return JSON.parse(normalized) as T;
+  } catch {
+    const snippet = normalized.replace(/\s+/gu, " ").slice(0, 220);
+    const looksLikeHtml =
+      contentType.includes("text/html") ||
+      /^<!doctype html>/iu.test(normalized) ||
+      /^<html/iu.test(normalized) ||
+      /^<head/iu.test(normalized);
+
+    const hint = looksLikeHtml
+      ? " (received HTML; check VITE_LAUNCHPAD_API_BASE / local API server)"
+      : contentType
+        ? ` (content-type: ${contentType})`
+        : "";
+
+    throw new LaunchpadApiError(
+      `Launchpad API returned invalid JSON${hint}${snippet ? `. Body starts with: ${snippet}` : ""}`,
+      response.status
+    );
   }
 };
 
@@ -166,11 +198,21 @@ export const fetchLaunchpadTokenDetail = async (
       try {
         return await fetchJson<LaunchpadTokenCard>(primaryUrl, signal);
       } catch (error) {
+        const shouldTryQueryFallback = (err: unknown) => {
+          if (!(err instanceof LaunchpadApiError)) return false;
+          if ([400, 404, 405].includes(err.status)) return true;
+          const msg = String(err.message || "").toLowerCase();
+          // Some hosts return 200 + HTML for missing dynamic routes (SPA fallback),
+          // which surfaces as a JSON parse error on the client.
+          if (msg.includes("invalid json") || msg.includes("received html")) return true;
+          return false;
+        };
+
         // Map 404s to `null` (token genuinely missing) instead of treating them as hard errors.
         if (error instanceof LaunchpadApiError && error.status === 404) return null;
 
         // If the dynamic route isn't available (or doesn't pass the param), retry via query string.
-        if (error instanceof LaunchpadApiError && [400, 404, 405].includes(error.status)) {
+        if (shouldTryQueryFallback(error)) {
           const fallbackUrl = buildUrl("/api/launchpad/tokens", { address: tokenAddress });
           try {
             return await fetchJson<LaunchpadTokenCard>(fallbackUrl, signal);
@@ -200,8 +242,27 @@ export const fetchLaunchpadTokenCandles = async (
     async () => {
       // TODO(backend): implement GET /api/launchpad/tokens/:address/candles?tf=
       const url = buildUrl(`/api/launchpad/tokens/${tokenAddress}/candles`, { tf: timeframe });
-      const payload = await fetchJson<{ items: LaunchpadCandle[] } | LaunchpadCandle[]>(url, signal);
-      return Array.isArray(payload) ? payload : payload.items || [];
+      try {
+        const payload = await fetchJson<{ items: LaunchpadCandle[] } | LaunchpadCandle[]>(url, signal);
+        return Array.isArray(payload) ? payload : payload.items || [];
+      } catch (error) {
+        const shouldTryFallback = (err: unknown) => {
+          if (!(err instanceof LaunchpadApiError)) return false;
+          if ([400, 404, 405].includes(err.status)) return true;
+          const msg = String(err.message || "").toLowerCase();
+          if (msg.includes("invalid json") || msg.includes("received html")) return true;
+          return false;
+        };
+
+        // Fallback: GET /api/launchpad/candles?tokenAddress=...&tf=...
+        if (shouldTryFallback(error)) {
+          const fallbackUrl = buildUrl("/api/launchpad/candles", { tokenAddress, tf: timeframe });
+          const payload = await fetchJson<{ items: LaunchpadCandle[] } | LaunchpadCandle[]>(fallbackUrl, signal);
+          return Array.isArray(payload) ? payload : payload.items || [];
+        }
+
+        throw error;
+      }
     },
     () => getMockLaunchpadCandles(tokenAddress, timeframe)
   );
@@ -238,7 +299,25 @@ export const fetchLaunchpadTokenActivity = async (
     async () => {
       // TODO(backend): implement GET /api/launchpad/tokens/:address/activity?limit=&type=
       const url = buildUrl(`/api/launchpad/tokens/${tokenAddress}/activity`, { type, limit });
-      return fetchJson<LaunchpadActivityResponse>(url, signal);
+      try {
+        return await fetchJson<LaunchpadActivityResponse>(url, signal);
+      } catch (error) {
+        const shouldTryFallback = (err: unknown) => {
+          if (!(err instanceof LaunchpadApiError)) return false;
+          if ([400, 404, 405].includes(err.status)) return true;
+          const msg = String(err.message || "").toLowerCase();
+          if (msg.includes("invalid json") || msg.includes("received html")) return true;
+          return false;
+        };
+
+        // Fallback: GET /api/launchpad/activity?tokenAddress=...&type=&limit=
+        if (shouldTryFallback(error)) {
+          const fallbackUrl = buildUrl("/api/launchpad/activity", { tokenAddress, type, limit });
+          return await fetchJson<LaunchpadActivityResponse>(fallbackUrl, signal);
+        }
+
+        throw error;
+      }
     },
     () => getMockLaunchpadTokenActivity(tokenAddress, { type, limit })
   );
@@ -252,6 +331,7 @@ const deriveWsFromApiBase = () => {
 };
 
 export const getLaunchpadWsUrl = () => {
+  if (!WS_ENABLED) return "";
   const explicit = String(ENV.VITE_LAUNCHPAD_WS_URL || "").trim();
   if (explicit) return explicit;
   const derived = deriveWsFromApiBase();

@@ -559,7 +559,7 @@ const friendlySwapError = (e) => {
     return "Swap simulation failed (no revert data). Try a smaller size, a different route, or a higher slippage.";
   }
   if (lower.includes("permit2") && lower.includes("allowance")) {
-    return "Approval missing or expired. Click Approve, then retry the swap.";
+    return "Approval missing or expired. Click Swap now to continue.";
   }
   if (lower.includes("transfer helper")) {
     return "Token transfer failed. Check allowance and balance, then retry.";
@@ -693,7 +693,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const [activeQuickPercent, setActiveQuickPercent] = useState(null);
   const [routeRefreshFx, setRouteRefreshFx] = useState(false);
   const [approvalTargets, setApprovalTargets] = useState([]); // { symbol, address, desiredAllowance, spender, kind, expiration }
-  const [approveLoading, setApproveLoading] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(null); // "sell" | "buy" | null
   const [tokenSearch, setTokenSearch] = useState("");
   const [customTokenAddError, setCustomTokenAddError] = useState("");
@@ -935,9 +934,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     () => approvalTargets.filter((t) => t.symbol === sellToken),
     [approvalTargets, sellToken]
   );
-  const approvalTarget = approvalTargetsForSell[0] || null;
   const approveNeeded = approvalTargetsForSell.length > 0;
-  const approvalButtonLabel = "Approve";
 
   const [walletFlow, setWalletFlow] = useState({
     open: false,
@@ -3563,164 +3560,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     pendingTxHashRef.current = null;
   }, []);
 
-  const handleApprove = async () => {
-    if (!approvalTargets.length) return;
-    const pending = approvalTargets.filter((t) => t.symbol === sellToken);
-    if (!pending.length) return;
-    if (!isChainMatch) {
-      setSwapStatus({
-        variant: "error",
-        message: "Switch wallet to the selected network before approving.",
-      });
-      return;
-    }
-    let provider;
-    let activeWalletFlowStepId = null;
-    try {
-      setApproveLoading(true);
-      setSwapStatus(null);
-      provider = await getProvider();
-      const signer = await provider.getSigner();
-      const ordered = [...pending].sort((a, b) => {
-        const aScore = a.kind === "erc20" ? 0 : 1;
-        const bScore = b.kind === "erc20" ? 0 : 1;
-        return aScore - bScore;
-      });
-
-      const needsErc20 = ordered.some((t) => t.kind === "erc20");
-      const needsPermit2 = ordered.some((t) => t.kind === "permit2");
-      setWalletFlow({
-        open: true,
-        lastError: "",
-        steps: [
-          {
-            id: "erc20",
-            label: `Approve ${displaySellSymbol}`,
-            status: needsErc20 ? "active" : "done",
-          },
-          {
-            id: "permit2",
-            label: "Approve Permit2",
-            status: needsPermit2 ? (needsErc20 ? "pending" : "active") : "done",
-          },
-          {
-            id: "swap",
-            label: "Confirm swap in wallet",
-            status: "pending",
-          },
-        ],
-      });
-      for (let i = 0; i < ordered.length; i += 1) {
-        const target = ordered[i];
-        const stepId = target.kind === "permit2" ? "permit2" : "erc20";
-        activeWalletFlowStepId = stepId;
-        setWalletFlowStepStatus(stepId, "active");
-        setSwapStatus({
-          variant: "pending",
-          message: `Approving ${target.symbol || sellToken}...`,
-        });
-        let tx;
-        if (target.kind === "permit2") {
-          const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-          const spender = target.spender || UNIV3_UNIVERSAL_ROUTER_ADDRESS;
-          const expiration =
-            typeof target.expiration === "bigint" ? target.expiration : MAX_UINT48;
-          tx = await permit2.approve(
-            target.address,
-            spender,
-            target.desiredAllowance,
-            expiration
-          );
-        } else {
-          const token = new Contract(target.address, ERC20_ABI, signer);
-          const spender = target.spender || PERMIT2_ADDRESS;
-          tx = await token.approve(spender, target.desiredAllowance);
-        }
-        const receipt = await tx.wait();
-        if (receipt?.status === 0 || receipt?.status === 0n) {
-          throw new Error("Approval failed");
-        }
-        setCachedApproval(target);
-        setWalletFlowStepStatus(stepId, "done");
-        activeWalletFlowStepId = null;
-        activateNextPendingWalletFlowStep(["erc20", "permit2"]);
-      }
-      setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
-      setSwapStatus({
-        variant: "success",
-        message: `Approval updated for ${sellToken}.`,
-      });
-      setLiveRouteTick((t) => t + 1);
-    } catch (e) {
-      const txHash = extractTxHash(e);
-      if (txHash) {
-        const receipt = await tryFetchReceipt(txHash, provider);
-        const status = receipt?.status;
-        const normalized = typeof status === "bigint" ? Number(status) : status;
-        const symbol = approvalTarget?.symbol || sellToken || "token";
-        if (normalized === 1) {
-          if (activeWalletFlowStepId) {
-            setWalletFlowStepStatus(activeWalletFlowStepId, "done");
-            activeWalletFlowStepId = null;
-            activateNextPendingWalletFlowStep(["erc20", "permit2"]);
-          }
-          setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
-          setSwapStatus({
-            variant: "success",
-            hash: txHash,
-            message: `Approval confirmed for ${symbol}.`,
-          });
-          return;
-        }
-        if (normalized === 0) {
-          if (activeWalletFlowStepId) {
-            setWalletFlowStepStatus(activeWalletFlowStepId, "error");
-          }
-          setWalletFlow((prev) => ({
-            ...prev,
-            lastError: friendlySwapError(e) || "Approve failed",
-          }));
-          setSwapStatus({
-            variant: "error",
-            hash: txHash,
-            message: friendlySwapError(e) || "Approve failed",
-          });
-          return;
-        }
-        setSwapStatus({
-          variant: "pending",
-          hash: txHash,
-          message: "Approval submitted. Waiting for confirmation.",
-        });
-        return;
-      }
-      const userRejected =
-        e?.code === 4001 ||
-        e?.code === "ACTION_REJECTED" ||
-        (e?.message || "").toLowerCase().includes("user denied");
-      if (activeWalletFlowStepId) {
-        setWalletFlowStepStatus(activeWalletFlowStepId, "error");
-      }
-      setWalletFlow((prev) => ({
-        ...prev,
-        lastError: userRejected
-          ? "Approval was rejected in wallet."
-          : friendlySwapError(e) || "Approve failed",
-      }));
-      setSwapStatus({
-        variant: "error",
-        message: userRejected
-          ? "Approval was rejected in wallet."
-          : friendlySwapError(e) || "Approve failed",
-      });
-    } finally {
-      setApproveLoading(false);
-    }
-  };
-
   const handleSwap = async () => {
     let provider;
     let walletFlowSwapStarted = false;
+    let walletFlowOpenForAction = walletFlow.open;
     try {
       setSwapStatus(null);
       setExecutionProof(null);
@@ -3785,36 +3628,198 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         throw new Error("Invalid amount format. Use dot for decimals.");
       }
 
-      if (sellToken !== "ETH" && !isDirectEthWeth) {
+      if (
+        sellToken !== "ETH" &&
+        !isDirectEthWeth &&
+        (routeProtocol === "V2" || routeProtocol === "V3" || routeProtocol === "SPLIT")
+      ) {
+        if (!sellAddress) {
+          throw new Error("Select tokens with valid addresses.");
+        }
+
         const token = new Contract(sellAddress, ERC20_ABI, signer);
-        const checkErc20Allowance = async (spender) => {
-          const allowance = await token.allowance(user, spender);
-          if (allowance < amountWei) {
-            throw new Error(`Approval required for ${sellToken}. Please approve and retry.`);
-          }
-        };
         const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-        const checkPermit2Allowance = async (spender) => {
-          const res = await permit2.allowance(user, sellAddress, spender);
+        const now = BigInt(Math.floor(Date.now() / 1000));
+
+        const cachedErc20 = getCachedApproval("erc20", sellAddress, PERMIT2_ADDRESS);
+        let hasErc20Allowance = Boolean(cachedErc20 && cachedErc20.amount >= amountWei);
+        if (!hasErc20Allowance) {
+          const allowance = await token.allowance(user, PERMIT2_ADDRESS);
+          if (allowance >= amountWei) {
+            setCachedApproval({
+              symbol: sellToken,
+              address: sellAddress,
+              desiredAllowance: allowance,
+              spender: PERMIT2_ADDRESS,
+              kind: "erc20",
+            });
+            hasErc20Allowance = true;
+          }
+        }
+
+        const cachedPermit2 = getCachedApproval(
+          "permit2",
+          sellAddress,
+          UNIV3_UNIVERSAL_ROUTER_ADDRESS
+        );
+        let hasPermit2Allowance = false;
+        if (cachedPermit2) {
+          const expired = !cachedPermit2.expiration || cachedPermit2.expiration < now;
+          hasPermit2Allowance = !expired && cachedPermit2.amount >= amountWei;
+        }
+        if (!hasPermit2Allowance) {
+          const res = await permit2.allowance(user, sellAddress, UNIV3_UNIVERSAL_ROUTER_ADDRESS);
           const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
           const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
           const allowance =
-            typeof allowanceRaw === "bigint"
-              ? allowanceRaw
-              : BigInt(allowanceRaw || 0);
+            typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw || 0);
           const expiration =
-            typeof expirationRaw === "bigint"
-              ? expirationRaw
-              : BigInt(expirationRaw || 0);
-          const now = BigInt(Math.floor(Date.now() / 1000));
+            typeof expirationRaw === "bigint" ? expirationRaw : BigInt(expirationRaw || 0);
           const expired = !expiration || expiration < now;
-          if (allowance < amountWei || expired) {
-            throw new Error(`Approval required for ${sellToken}. Please approve and retry.`);
+          if (!expired && allowance >= amountWei) {
+            setCachedApproval({
+              symbol: sellToken,
+              address: sellAddress,
+              desiredAllowance: allowance,
+              spender: UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+              kind: "permit2",
+              expiration,
+            });
+            hasPermit2Allowance = true;
           }
-        };
-        if (routeProtocol === "V2" || routeProtocol === "V3" || routeProtocol === "SPLIT") {
-          await checkErc20Allowance(PERMIT2_ADDRESS);
-          await checkPermit2Allowance(UNIV3_UNIVERSAL_ROUTER_ADDRESS);
+        }
+
+        const needsErc20 = !hasErc20Allowance;
+        const needsPermit2 = !hasPermit2Allowance;
+        if (needsErc20 || needsPermit2) {
+          walletFlowOpenForAction = true;
+
+          const ordered = [];
+          if (needsErc20) {
+            ordered.push({
+              symbol: sellToken,
+              address: sellAddress,
+              desiredAllowance: MAX_UINT256,
+              spender: PERMIT2_ADDRESS,
+              kind: "erc20",
+            });
+          }
+          if (needsPermit2) {
+            ordered.push({
+              symbol: sellToken,
+              address: sellAddress,
+              desiredAllowance: MAX_UINT160,
+              spender: UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+              kind: "permit2",
+              expiration: MAX_UINT48,
+            });
+          }
+
+          const needsErc20Step = ordered.some((t) => t.kind === "erc20");
+          const needsPermit2Step = ordered.some((t) => t.kind === "permit2");
+          setWalletFlow({
+            open: true,
+            lastError: "",
+            steps: [
+              {
+                id: "erc20",
+                label: `Approve ${displaySellSymbol}`,
+                status: needsErc20Step ? "active" : "done",
+              },
+              {
+                id: "permit2",
+                label: "Approve Permit2",
+                status: needsPermit2Step ? (needsErc20Step ? "pending" : "active") : "done",
+              },
+              {
+                id: "swap",
+                label: "Confirm swap in wallet",
+                status: "pending",
+              },
+            ],
+          });
+
+          let activeWalletFlowStepId = null;
+          const runTargets = [...ordered].sort((a, b) => {
+            const aScore = a.kind === "erc20" ? 0 : 1;
+            const bScore = b.kind === "erc20" ? 0 : 1;
+            return aScore - bScore;
+          });
+
+          for (let i = 0; i < runTargets.length; i += 1) {
+            const target = runTargets[i];
+            const stepId = target.kind === "permit2" ? "permit2" : "erc20";
+            activeWalletFlowStepId = stepId;
+            setWalletFlowStepStatus(stepId, "active");
+            setSwapStatus({
+              variant: "pending",
+              message: `Approving ${target.symbol || sellToken}...`,
+            });
+            try {
+              let tx;
+              if (target.kind === "permit2") {
+                const spender = target.spender || UNIV3_UNIVERSAL_ROUTER_ADDRESS;
+                const expiration =
+                  typeof target.expiration === "bigint" ? target.expiration : MAX_UINT48;
+                tx = await permit2.approve(target.address, spender, target.desiredAllowance, expiration);
+              } else {
+                const spender = target.spender || PERMIT2_ADDRESS;
+                tx = await token.approve(spender, target.desiredAllowance);
+              }
+              const receipt = await tx.wait();
+              if (receipt?.status === 0 || receipt?.status === 0n) {
+                throw new Error("Approval failed");
+              }
+              setCachedApproval(target);
+              setWalletFlowStepStatus(stepId, "done");
+              activeWalletFlowStepId = null;
+              activateNextPendingWalletFlowStep(["erc20", "permit2"]);
+            } catch (e) {
+              const txHash = extractTxHash(e);
+              if (txHash) {
+                const receipt = await tryFetchReceipt(txHash, provider);
+                const status = receipt?.status;
+                const normalized = typeof status === "bigint" ? Number(status) : status;
+                if (normalized === 1) {
+                  setCachedApproval(target);
+                  setWalletFlowStepStatus(stepId, "done");
+                  activeWalletFlowStepId = null;
+                  activateNextPendingWalletFlowStep(["erc20", "permit2"]);
+                  continue;
+                }
+                if (normalized === 0) {
+                  setWalletFlowStepStatus(stepId, "error");
+                  const message = friendlySwapError(e) || "Approval failed";
+                  setWalletFlow((prev) => ({ ...prev, lastError: message }));
+                  setSwapStatus({ variant: "error", hash: txHash, message });
+                  return;
+                }
+                setSwapStatus({
+                  variant: "pending",
+                  hash: txHash,
+                  message: "Approval submitted. Waiting for confirmation.",
+                });
+                return;
+              }
+
+              const userRejected =
+                e?.code === 4001 ||
+                e?.code === "ACTION_REJECTED" ||
+                (e?.message || "").toLowerCase().includes("user denied");
+              if (activeWalletFlowStepId) {
+                setWalletFlowStepStatus(activeWalletFlowStepId, "error");
+              }
+              const message = userRejected
+                ? "Approval was rejected in wallet."
+                : friendlySwapError(e) || "Approval failed";
+              setWalletFlow((prev) => ({ ...prev, lastError: message }));
+              setSwapStatus({ variant: "error", message });
+              return;
+            }
+          }
+
+          // Best-effort UI sync: clear any stale quote-derived target list for this token.
+          setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
         }
       }
 
@@ -3959,7 +3964,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         // Some RPCs reject gas estimation; fall back to a safe manual limit if needed.
         const fallbackGas = 200000n;
         let tx;
-        if (walletFlow.open) {
+        if (walletFlowOpenForAction) {
           walletFlowSwapStarted = true;
           setWalletFlowStepStatus("swap", "active");
         }
@@ -4098,7 +4103,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
         const commandBytes = buildCommandBytes(commands);
         const callOpts = isEthIn ? { value: amountWei } : {};
-        if (walletFlow.open) {
+        if (walletFlowOpenForAction) {
           walletFlowSwapStarted = true;
           setWalletFlowStepStatus("swap", "active");
         }
@@ -4224,7 +4229,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
         const commandBytes = buildCommandBytes(commands);
         const callOpts = isEthIn ? { value: amountWei } : {};
-        if (walletFlow.open) {
+        if (walletFlowOpenForAction) {
           walletFlowSwapStarted = true;
           setWalletFlowStepStatus("swap", "active");
         }
@@ -4364,7 +4369,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
       const commandBytes = buildCommandBytes(commands);
       const callOpts = sellToken === "ETH" ? { value: amountWei } : {};
-      if (walletFlow.open) {
+      if (walletFlowOpenForAction) {
         walletFlowSwapStarted = true;
         setWalletFlowStepStatus("swap", "active");
       }
@@ -4446,7 +4451,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const status = receipt?.status;
         const normalized = typeof status === "bigint" ? Number(status) : status;
         if (normalized === 1) {
-          if (walletFlow.open) {
+          if (walletFlowOpenForAction) {
             setWalletFlowStepStatus("swap", "done");
             setTimeout(closeWalletFlow, 900);
           }
@@ -4460,7 +4465,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           return;
         }
         if (normalized === 0) {
-          if (walletFlow.open) {
+          if (walletFlowOpenForAction) {
             setWalletFlowStepStatus("swap", "error");
             setWalletFlow((prev) => ({
               ...prev,
@@ -4998,24 +5003,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 </div>
               </div>
             ) : null}
-            {!isDirectEthWeth &&
-            approveNeeded &&
-            approvalTarget?.symbol === sellToken &&
-            sellToken !== "ETH" ? (
-              <button
-                onClick={handleApprove}
-                disabled={approveLoading || quoteLoading}
-                className="w-full py-3 rounded-2xl bg-slate-800 border border-slate-700 text-sm font-semibold text-white hover:border-sky-500/60 transition disabled:opacity-60"
-              >
-                {approveLoading ? "Approving..." : approvalButtonLabel}
-              </button>
-            ) : null}
             <button
               onClick={handleSwap}
               disabled={
                 swapLoading ||
-                quoteLoading ||
-                (!isDirectEthWeth && approveNeeded && sellToken !== "ETH")
+                quoteLoading
               }
               className="w-full py-3 rounded-2xl border border-sky-300/55 bg-gradient-to-r from-sky-500/95 via-cyan-400/92 to-indigo-500/95 bg-[length:155%_155%] bg-[position:0%_50%] text-sm font-bold text-white shadow-[0_14px_26px_-16px_rgba(56,189,248,0.55)] transition-all duration-250 hover:bg-[position:100%_50%] hover:-translate-y-[1px] hover:shadow-[0_20px_34px_-18px_rgba(56,189,248,0.64)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200/80 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 active:translate-y-0 active:scale-[0.99] disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:border-slate-600 disabled:text-slate-400 disabled:shadow-none disabled:translate-y-0 disabled:cursor-not-allowed disabled:scale-100"
             >

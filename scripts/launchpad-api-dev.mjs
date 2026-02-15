@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import tokensHandler from "../api/launchpad/tokens.js";
 import activityHandler from "../api/launchpad/activity.js";
+import candlesHandler from "../api/launchpad/candles.js";
 import tokenDetailHandler from "../api/launchpad/tokens/[address].js";
 import tokenCandlesHandler from "../api/launchpad/tokens/[address]/candles.js";
 import tokenActivityHandler from "../api/launchpad/tokens/[address]/activity.js";
@@ -52,6 +53,7 @@ loadEnvFile(".env.local");
 const parseRoute = (pathname = "") => {
   if (pathname === "/api/launchpad/tokens") return { type: "tokens" };
   if (pathname === "/api/launchpad/activity") return { type: "activity" };
+  if (pathname === "/api/launchpad/candles") return { type: "candles" };
   if (pathname === "/api/launchpad/ws") return { type: "ws" };
 
   const parts = String(pathname || "")
@@ -135,6 +137,10 @@ const dispatch = async (route, req, res) => {
   }
   if (route.type === "activity") {
     await activityHandler(req, res);
+    return;
+  }
+  if (route.type === "candles") {
+    await candlesHandler(req, res);
     return;
   }
   if (route.type === "token-detail") {
