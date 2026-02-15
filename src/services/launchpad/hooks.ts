@@ -463,15 +463,6 @@ export const useTokenActivity = ({
   };
 };
 
-export const useLaunchpadRiskFlag = (token?: LaunchpadTokenCard | null) => {
-  if (!token) return { needsWarning: false, warningText: "" };
-  if (token.verified) return { needsWarning: false, warningText: "" };
-  return {
-    needsWarning: true,
-    warningText: "Unverified token. Extra confirmation is required before buying.",
-  };
-};
-
 export const useHasLaunchpadBackend = () => !isLaunchpadUsingMock();
 
 export type { LaunchpadCandle, LaunchpadTokenCard };

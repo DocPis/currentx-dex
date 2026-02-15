@@ -17,7 +17,6 @@ const BASE_TOKEN = (overrides: Partial<LaunchpadTokenCard>): LaunchpadTokenCard 
   logoUrl: "https://example.com/logo.png",
   createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
   creator: "0x0000000000000000000000000000000000000002",
-  verified: false,
   tags: ["utility"],
   buysPerMinute: 2,
   sparkline: [1, 2, 3],
@@ -50,10 +49,9 @@ describe("launchpad token filtering/sorting", () => {
   const tokens: LaunchpadTokenCard[] = [
     BASE_TOKEN({
       address: "0x0000000000000000000000000000000000000003",
-      name: "Verified One",
-      symbol: "VER1",
-      verified: true,
-      tags: ["meme", "verified"],
+      name: "Alpha One",
+      symbol: "ALP1",
+      tags: ["meme", "bluechip"],
       buysPerMinute: 20,
       market: {
         priceUSD: 1,
@@ -100,14 +98,10 @@ describe("launchpad token filtering/sorting", () => {
     }),
   ];
 
-  it("filters by search and verified flag", () => {
+  it("filters by search", () => {
     const bySearch = filterTokens(tokens, "rocket", []);
     expect(bySearch).toHaveLength(1);
     expect(bySearch[0].symbol).toBe("MEME");
-
-    const verifiedOnly = filterTokens(tokens, "", ["verified"]);
-    expect(verifiedOnly).toHaveLength(1);
-    expect(verifiedOnly[0].symbol).toBe("VER1");
   });
 
   it("filters by tags and sorts by market cap", () => {
@@ -115,6 +109,6 @@ describe("launchpad token filtering/sorting", () => {
     expect(memeOnly).toHaveLength(2);
 
     const sorted = sortTokens(memeOnly, "mcap");
-    expect(sorted[0].symbol).toBe("VER1");
+    expect(sorted[0].symbol).toBe("ALP1");
   });
 });

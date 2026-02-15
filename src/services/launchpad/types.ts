@@ -8,7 +8,6 @@ export interface LaunchpadToken {
   logoUrl: string;
   createdAt: string;
   creator: string;
-  verified: boolean;
   tags: string[];
 }
 
@@ -69,7 +68,6 @@ export type LaunchpadFilter =
   | "top-mcap"
   | "top-volume"
   | "top-gainers"
-  | "verified"
   | string;
 
 export type LaunchpadSort =

@@ -6,7 +6,6 @@ export const LAUNCHPAD_FILTER_OPTIONS: Array<{ id: LaunchpadFilter; label: strin
   { id: "top-mcap", label: "Top Market Cap" },
   { id: "top-volume", label: "Top Volume 24h" },
   { id: "top-gainers", label: "Top Gainers" },
-  { id: "verified", label: "Verified only" },
 ];
 
 export const LAUNCHPAD_SORT_OPTIONS: Array<{ id: LaunchpadSort; label: string }> = [
@@ -139,14 +138,13 @@ export const filterTokens = (
 
     for (const rawFilter of filters) {
       const filter = String(rawFilter || "").toLowerCase();
-      if (filter === "verified" && !item.verified) return false;
       if (filter === "new" && !isNewToken(item)) return false;
       if (filter === "trending" && (item.buysPerMinute || 0) < buysThreshold) return false;
       if (filter === "top-mcap" && (item.market?.mcapUSD || 0) < mcapThreshold) return false;
       if (filter === "top-volume" && (item.market?.volume24hUSD || 0) < volumeThreshold) return false;
       if (filter === "top-gainers" && (item.market?.change24h || 0) < gainersThreshold) return false;
       if (
-        !["verified", "new", "trending", "top-mcap", "top-volume", "top-gainers"].includes(filter) &&
+        !["new", "trending", "top-mcap", "top-volume", "top-gainers"].includes(filter) &&
         !(item.tags || []).map((tag) => String(tag).toLowerCase()).includes(filter)
       ) {
         return false;

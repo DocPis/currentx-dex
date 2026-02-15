@@ -37,7 +37,7 @@ const LOGOS = [
 ];
 
 const TOKEN_BLUEPRINTS: Array<
-  Pick<LaunchpadTokenCard, "name" | "symbol" | "verified" | "tags" | "description" | "website" | "socials"> & {
+  Pick<LaunchpadTokenCard, "name" | "symbol" | "tags" | "description" | "website" | "socials"> & {
     volatility: number;
     liquidityUSD: number;
     volume24hUSD: number;
@@ -51,7 +51,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "CurrentX Pepe",
     symbol: "CPEPE",
-    verified: true,
     tags: ["meme", "animal"],
     volatility: 0.08,
     liquidityUSD: 410000,
@@ -71,7 +70,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "ZeroLatency Dog",
     symbol: "ZDOG",
-    verified: false,
     tags: ["meme", "dog"],
     volatility: 0.11,
     liquidityUSD: 95000,
@@ -87,7 +85,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Mega Shark",
     symbol: "MSHARK",
-    verified: true,
     tags: ["gaming", "nft"],
     volatility: 0.04,
     liquidityUSD: 720000,
@@ -103,7 +100,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Turbo Chad",
     symbol: "TCHAD",
-    verified: false,
     tags: ["meme", "culture"],
     volatility: 0.13,
     liquidityUSD: 62000,
@@ -119,7 +115,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Stable Orbit",
     symbol: "SORB",
-    verified: true,
     tags: ["defi", "stable"],
     volatility: 0.01,
     liquidityUSD: 1480000,
@@ -135,7 +130,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Vault Rune",
     symbol: "VRUNE",
-    verified: true,
     tags: ["defi", "vault"],
     volatility: 0.03,
     liquidityUSD: 530000,
@@ -151,7 +145,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Bridge Fox",
     symbol: "BFOX",
-    verified: false,
     tags: ["bridge", "community"],
     volatility: 0.09,
     liquidityUSD: 86000,
@@ -167,7 +160,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Yield Ember",
     symbol: "YEMB",
-    verified: true,
     tags: ["yield", "farms"],
     volatility: 0.02,
     liquidityUSD: 930000,
@@ -183,7 +175,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Luna Coder",
     symbol: "LCODE",
-    verified: false,
     tags: ["ai", "community"],
     volatility: 0.12,
     liquidityUSD: 45000,
@@ -199,7 +190,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Neon Wasp",
     symbol: "NWSP",
-    verified: false,
     tags: ["meme", "new"],
     volatility: 0.14,
     liquidityUSD: 38000,
@@ -215,7 +205,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Order Sigma",
     symbol: "OSIG",
-    verified: true,
     tags: ["defi", "infrastructure"],
     volatility: 0.015,
     liquidityUSD: 1650000,
@@ -231,7 +220,6 @@ const TOKEN_BLUEPRINTS: Array<
   {
     name: "Pulse Golem",
     symbol: "PGOL",
-    verified: false,
     tags: ["gaming", "meme"],
     volatility: 0.1,
     liquidityUSD: 57000,
@@ -285,7 +273,6 @@ const TOKENS: LaunchpadTokenCard[] = TOKEN_BLUEPRINTS.map((blueprint, index) => 
     logoUrl: LOGOS[index % LOGOS.length],
     createdAt,
     creator: BUYER_ADDRESSES[index % BUYER_ADDRESSES.length],
-    verified: blueprint.verified,
     tags: blueprint.tags,
     description: blueprint.description,
     website: blueprint.website,

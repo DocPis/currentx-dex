@@ -23,7 +23,6 @@ import {
 import { getRealtimeClient } from "../../shared/services/realtime";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatTokenAmount, shortAddress } from "../../services/launchpad/utils";
-import UnverifiedTokenModal from "./UnverifiedTokenModal";
 
 const UR_COMMANDS = {
   V3_SWAP_EXACT_IN: 0x00,
@@ -148,7 +147,6 @@ const TradeWidget = ({
   const [walletToken, setWalletToken] = useState<bigint>(0n);
   const [tx, setTx] = useState<TxState>({ stage: "idle", message: "" });
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [confirmUnverifiedOpen, setConfirmUnverifiedOpen] = useState(false);
   const quoteTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -399,14 +397,9 @@ const TradeWidget = ({
     return unsubscribe;
   };
 
-  const runTrade = async (skipUnverifiedCheck = false) => {
+  const runTrade = async () => {
     if (!isConnected || !address) {
       onConnect();
-      return;
-    }
-
-    if (!token.verified && side === "buy" && !skipUnverifiedCheck) {
-      setConfirmUnverifiedOpen(true);
       return;
     }
 
@@ -664,17 +657,6 @@ const TradeWidget = ({
           </div>
         )}
       </div>
-
-      <UnverifiedTokenModal
-        open={confirmUnverifiedOpen}
-        tokenSymbol={token.symbol}
-        onCancel={() => setConfirmUnverifiedOpen(false)}
-        onConfirm={() => {
-          setConfirmUnverifiedOpen(false);
-          void runTrade(true);
-        }}
-        loading={submitLoading}
-      />
     </div>
   );
 };

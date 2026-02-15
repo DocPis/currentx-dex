@@ -1213,7 +1213,7 @@ function V3StakerList({ address, onConnect }) {
                       }`}
                     >
                       {createMeta.poolMeta.isValid
-                        ? "Pool verified"
+                        ? "Pool found"
                         : "Pool not found in factory"}
                     </span>
                   )}

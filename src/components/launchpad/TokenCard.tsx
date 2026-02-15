@@ -29,11 +29,6 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
             className="flex items-center gap-2 text-left"
           >
             <span className="font-display text-sm font-semibold text-slate-100">{token.name}</span>
-            {token.verified && (
-              <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                Verified
-              </span>
-            )}
           </button>
           <div className="mt-1 text-xs text-slate-400">
             ${token.symbol} - {shortAddress(token.address)}

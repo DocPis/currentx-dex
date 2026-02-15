@@ -13,7 +13,6 @@ const TOKENS: LaunchpadTokenCard[] = [
     logoUrl: "https://example.com/alpha.png",
     createdAt: new Date().toISOString(),
     creator: "0x0000000000000000000000000000000000000011",
-    verified: true,
     tags: ["meme"],
     buysPerMinute: 12,
     sparkline: [1, 2, 1.8],
@@ -35,7 +34,6 @@ const TOKENS: LaunchpadTokenCard[] = [
     logoUrl: "https://example.com/beta.png",
     createdAt: new Date().toISOString(),
     creator: "0x0000000000000000000000000000000000000012",
-    verified: false,
     tags: ["gaming"],
     buysPerMinute: 7,
     sparkline: [1, 0.9, 1.1],
@@ -59,9 +57,13 @@ vi.mock("../../../services/launchpad/hooks", () => ({
       return `${token.name} ${token.symbol} ${token.address}`.toLowerCase().includes(query);
     });
 
-    if (filters.includes("verified")) {
-      filtered = filtered.filter((token) => token.verified);
-    }
+    filters.forEach((raw) => {
+      const f = String(raw || "").toLowerCase();
+      if (!f) return;
+      filtered = filtered.filter((token) =>
+        (token.tags || []).map((tag) => String(tag).toLowerCase()).includes(f)
+      );
+    });
 
     return {
       items: filtered,
@@ -79,13 +81,13 @@ vi.mock("../../../services/launchpad/hooks", () => ({
 }));
 
 describe("LaunchpadMarket", () => {
-  it("renders list and updates when verified filter is toggled", () => {
+  it("renders list and updates when a tag filter is toggled", () => {
     render(<LaunchpadMarket onOpenToken={vi.fn()} />);
 
     expect(screen.getByText("Alpha Token")).toBeInTheDocument();
     expect(screen.getByText("Beta Token")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Verified only" }));
+    fireEvent.click(screen.getByRole("button", { name: /meme/i }));
 
     expect(screen.getByText("Alpha Token")).toBeInTheDocument();
     expect(screen.queryByText("Beta Token")).not.toBeInTheDocument();

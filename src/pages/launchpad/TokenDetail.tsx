@@ -7,7 +7,6 @@ import {
   useTokenActivity,
   useTokenCandles,
   useTokenDetail,
-  useLaunchpadRiskFlag,
 } from "../../services/launchpad/hooks";
 import type { LaunchpadCandle } from "../../services/launchpad/types";
 import { formatPercent, formatUsd, shortAddress, toTimeAgo } from "../../services/launchpad/utils";
@@ -75,7 +74,6 @@ const TokenDetail = ({
     type: activityTab,
     enabled: Boolean(tokenAddress),
   });
-  const risk = useLaunchpadRiskFlag(token);
 
   const pricePath = useMemo(() => buildPricePath(candles, 860, 280), [candles]);
   const volumeMax = useMemo(() => {
@@ -180,12 +178,6 @@ const TokenDetail = ({
           Back to Launchpad
         </button>
 
-        {risk.needsWarning && (
-          <div className="rounded-2xl border border-amber-400/45 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-            {risk.warningText}
-          </div>
-        )}
-
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
           <div className="space-y-4">
             <header className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_16px_36px_rgba(2,6,23,0.55)]">
@@ -198,14 +190,7 @@ const TokenDetail = ({
                     className="h-14 w-14 rounded-full border border-slate-700/70 bg-slate-900 object-cover"
                   />
                   <div>
-                    <div className="flex items-center gap-2">
-                      <h1 className="font-display text-xl font-semibold text-slate-100">{token.name}</h1>
-                      {token.verified && (
-                        <span className="rounded-full border border-emerald-400/35 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                          Verified
-                        </span>
-                      )}
-                    </div>
+                    <h1 className="font-display text-xl font-semibold text-slate-100">{token.name}</h1>
                     <div className="mt-1 text-sm text-slate-400">${token.symbol}</div>
                   </div>
                 </div>
