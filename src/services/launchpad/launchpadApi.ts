@@ -158,9 +158,30 @@ export const fetchLaunchpadTokenDetail = async (
 
   return withFallback(
     async () => {
-      // TODO(backend): implement GET /api/launchpad/tokens/:address
-      const url = buildUrl(`/api/launchpad/tokens/${tokenAddress}`);
-      return fetchJson<LaunchpadTokenCard>(url, signal);
+      // Primary: GET /api/launchpad/tokens/:address
+      // Fallback: GET /api/launchpad/tokens?address=0x...
+      //
+      // Some hosts/proxies don't support dynamic function routes reliably; this keeps the UI working.
+      const primaryUrl = buildUrl(`/api/launchpad/tokens/${tokenAddress}`);
+      try {
+        return await fetchJson<LaunchpadTokenCard>(primaryUrl, signal);
+      } catch (error) {
+        // Map 404s to `null` (token genuinely missing) instead of treating them as hard errors.
+        if (error instanceof LaunchpadApiError && error.status === 404) return null;
+
+        // If the dynamic route isn't available (or doesn't pass the param), retry via query string.
+        if (error instanceof LaunchpadApiError && [400, 404, 405].includes(error.status)) {
+          const fallbackUrl = buildUrl("/api/launchpad/tokens", { address: tokenAddress });
+          try {
+            return await fetchJson<LaunchpadTokenCard>(fallbackUrl, signal);
+          } catch (fallbackError) {
+            if (fallbackError instanceof LaunchpadApiError && fallbackError.status === 404) return null;
+            throw fallbackError;
+          }
+        }
+
+        throw error;
+      }
     },
     () => getMockLaunchpadTokenDetail(tokenAddress)
   );

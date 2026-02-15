@@ -108,6 +108,41 @@ const TokenDetail = ({
     );
   }
 
+  if (tokenQuery.isError) {
+    const err = tokenQuery.error as unknown as { message?: string; status?: number } | null;
+    const status = Number.isFinite(Number(err?.status)) ? Number(err?.status) : null;
+    const message = String(err?.message || "Failed to load token details.");
+
+    return (
+      <section className="px-4 py-6 sm:px-6">
+        <div className="mx-auto max-w-3xl space-y-3 rounded-2xl border border-slate-800/80 bg-slate-950/55 p-5 text-sm text-slate-200">
+          <div className="font-display text-base font-semibold">Unable to load token</div>
+          <div className="text-xs text-slate-400 break-words">
+            {status ? `HTTP ${status}: ` : ""}
+            {message}
+          </div>
+          <div className="text-[11px] text-slate-500 break-words">Token: {tokenAddress}</div>
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => tokenQuery.refetch()}
+              className="rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-200"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-xs font-semibold text-slate-200"
+            >
+              Back to launchpad
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   if (!token) {
     return (
       <section className="px-4 py-6 sm:px-6">

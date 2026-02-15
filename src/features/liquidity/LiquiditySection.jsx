@@ -16,7 +16,6 @@ import {
   EXPLORER_BASE_URL,
   NETWORK_NAME,
   DEFAULT_TOKEN_LOGO,
-  BTCB_ADDRESS,
   SUSDE_ADDRESS,
   EZETH_ADDRESS,
   WSTETH_ADDRESS,
@@ -91,9 +90,9 @@ const getV3RangeDays = (timeframe) => {
   }
 };
 
-const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["BTC.B", "BTCB", "SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
+const LIQUIDITY_BLOCKED_SYMBOLS = new Set(["SUSDE", "EZETH", "WSTETH", "STCUSD", "USDE"]);
 const LIQUIDITY_BLOCKED_ADDRESSES = new Set(
-  [BTCB_ADDRESS, SUSDE_ADDRESS, EZETH_ADDRESS, WSTETH_ADDRESS, STCUSD_ADDRESS, USDE_ADDRESS]
+  [SUSDE_ADDRESS, EZETH_ADDRESS, WSTETH_ADDRESS, STCUSD_ADDRESS, USDE_ADDRESS]
     .filter(Boolean)
     .map((addr) => addr.toLowerCase())
 );
@@ -5530,7 +5529,7 @@ export default function LiquiditySection({
         signer
       );
 
-      let poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
+      const poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
       let needsInit = !poolAddress || poolAddress === ZERO_ADDRESS;
       if (!needsInit) {
         try {
@@ -5543,6 +5542,10 @@ export default function LiquiditySection({
           // If we cannot read slot0, skip init and let mint fail with a clearer error.
         }
       }
+
+      // If the pool needs initialization, we will batch pool creation/init + mint into a single tx via multicall.
+      // This avoids requiring users to sign two transactions for a brand new pool.
+      let sqrtPriceX96ForInit = null;
       if (needsInit) {
         const meta0 = findTokenMetaByAddress(token0Addr);
         const meta1 = findTokenMetaByAddress(token1Addr);
@@ -5569,14 +5572,7 @@ export default function LiquiditySection({
         if (!sqrtPriceX96) {
           throw new Error("Set a valid starting price or deposit amounts to initialize the pool.");
         }
-        const initTx = await manager.createAndInitializePoolIfNecessary(
-          token0Addr,
-          token1Addr,
-          fee,
-          sqrtPriceX96
-        );
-        await initTx.wait();
-        poolAddress = await factory.getPool(token0Addr, token1Addr, fee);
+        sqrtPriceX96ForInit = sqrtPriceX96;
       }
 
       if (!token0IsEth && amount0Desired > 0n) {
@@ -5613,7 +5609,32 @@ export default function LiquiditySection({
       };
       const ethValue =
         (token0IsEth ? amount0Desired : 0n) + (token1IsEth ? amount1Desired : 0n);
-      const tx = await manager.mint(params, ethValue > 0n ? { value: ethValue } : {});
+
+      // Use multicall for:
+      // - New/uninitialized pools: create+initialize+mint in one tx
+      // - ETH payments: ensure any unused ETH is refunded via refundETH()
+      let tx;
+      if (needsInit || ethValue > 0n) {
+        const iface = manager.interface;
+        const data = [];
+        if (needsInit) {
+          data.push(
+            iface.encodeFunctionData("createAndInitializePoolIfNecessary", [
+              token0Addr,
+              token1Addr,
+              fee,
+              sqrtPriceX96ForInit,
+            ])
+          );
+        }
+        data.push(iface.encodeFunctionData("mint", [params]));
+        if (ethValue > 0n) {
+          data.push(iface.encodeFunctionData("refundETH", []));
+        }
+        tx = await manager.multicall(data, ethValue > 0n ? { value: ethValue } : {});
+      } else {
+        tx = await manager.mint(params);
+      }
       const receipt = await tx.wait();
       setActionStatus({
         variant: "success",

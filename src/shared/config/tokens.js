@@ -169,7 +169,6 @@ const RAW_TOKENS = {
     address: BTCB_ADDRESS,
     decimals: 8,
     logo: btcbLogo,
-    hidden: true,
   },
   WUSD: {
     symbol: "WUSD",
