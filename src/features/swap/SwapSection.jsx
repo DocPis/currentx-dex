@@ -36,7 +36,7 @@ import { getRealtimeClient } from "../../shared/services/realtime";
 import { fetchTokenPrices } from "../../shared/config/subgraph";
 import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB"];
 const MAX_ROUTE_CANDIDATES = 12;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
