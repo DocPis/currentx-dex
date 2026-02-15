@@ -24,6 +24,7 @@ const MAX_ONCHAIN_POSITIONS = 50;
 const MAX_AGE_LOGS = 12;
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
@@ -67,28 +68,6 @@ const dedupeUrls = (urls = []) => {
     out.push(normalized);
   });
   return out;
-};
-
-const isFallbackSubgraphProvider = (url = "") => {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return hostname.includes("thegraph.com");
-  } catch {
-    return false;
-  }
-};
-
-const prioritizeSubgraphUrls = (urls = []) => {
-  const primary = [];
-  const fallback = [];
-  urls.forEach((url) => {
-    if (isFallbackSubgraphProvider(url)) {
-      fallback.push(url);
-      return;
-    }
-    primary.push(url);
-  });
-  return [...primary, ...fallback];
 };
 
 const pickEnvValue = (...values) => {
@@ -321,7 +300,7 @@ const getSubgraphConfig = () => {
     process.env.VITE_UNIV2_SUBGRAPH_FALLBACKS,
     DEFAULT_V2_FALLBACK_SUBGRAPHS.join(",")
   );
-  const v2Urls = prioritizeSubgraphUrls(dedupeUrls([...v2Primary, ...v2Fallback]));
+  const v2Urls = dedupeUrls([...v2Primary, ...v2Fallback]);
 
   const v3Primary = parseSubgraphUrls(
     process.env.POINTS_UNIV3_SUBGRAPH_URL,
@@ -334,7 +313,7 @@ const getSubgraphConfig = () => {
     process.env.VITE_UNIV3_SUBGRAPH_FALLBACKS,
     DEFAULT_V3_FALLBACK_SUBGRAPHS.join(",")
   );
-  const v3Urls = prioritizeSubgraphUrls(dedupeUrls([...v3Primary, ...v3Fallback]));
+  const v3Urls = dedupeUrls([...v3Primary, ...v3Fallback]);
 
   return {
     // First URL is preferred; subsequent URLs are runtime fallback endpoints.
@@ -377,7 +356,7 @@ const buildHeaders = (apiKey) => {
 };
 
 const postGraph = async (url, apiKey, query, variables) => {
-  const urls = prioritizeSubgraphUrls(dedupeUrls(parseSubgraphUrls(url)));
+  const urls = dedupeUrls(parseSubgraphUrls(url));
   if (!urls.length) {
     throw new Error("Subgraph URL not configured");
   }

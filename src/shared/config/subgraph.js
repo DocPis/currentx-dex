@@ -19,6 +19,7 @@ const SUBGRAPH_PROXY =
   ).trim();
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
@@ -61,36 +62,12 @@ const dedupeUrls = (urls = []) => {
 const endpointRequiresApiKey = (url = "") =>
   url.includes("thegraph.com") || url.includes("gateway");
 
-const isFallbackProviderUrl = (url = "") => {
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return hostname.includes("thegraph.com");
-  } catch {
-    return false;
-  }
-};
-
-const prioritizeSubgraphUrls = (urls = []) => {
-  const primary = [];
-  const fallback = [];
-  urls.forEach((url) => {
-    if (isFallbackProviderUrl(url)) {
-      fallback.push(url);
-      return;
-    }
-    primary.push(url);
-  });
-  return [...primary, ...fallback];
-};
-
 const buildSubgraphEndpoints = (primaryUrl, primaryApiKey, fallbackUrls = []) => {
   // Allow comma-separated primary urls (first is primary, rest are implicit fallbacks).
   const primaryUrls = parseUrlList(primaryUrl);
   const normalizedPrimary = primaryUrls[0] || "";
   const implicitFallbacks = primaryUrls.slice(1);
-  const urls = prioritizeSubgraphUrls(
-    dedupeUrls([normalizedPrimary, ...implicitFallbacks, ...(fallbackUrls || [])])
-  );
+  const urls = dedupeUrls([normalizedPrimary, ...implicitFallbacks, ...(fallbackUrls || [])]);
 
   const apiKey = String(primaryApiKey || "").trim();
   return urls.map((url) => ({
