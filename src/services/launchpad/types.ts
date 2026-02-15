@@ -43,6 +43,8 @@ export interface LaunchpadTokenCard extends LaunchpadToken {
 export interface LaunchpadTrade {
   txHash: string;
   tokenAddress: string;
+  tokenName?: string;
+  tokenSymbol?: string;
   side: LaunchpadTradeSide;
   amountIn: string;
   amountOut: string;

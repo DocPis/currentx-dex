@@ -14,6 +14,8 @@ const ERC20_META_ABI = [
   "function symbol() view returns (string)",
   "function decimals() view returns (uint8)",
   "function totalSupply() view returns (uint256)",
+  // CurrentXToken uses imageUrl(); some earlier iterations used image().
+  "function imageUrl() view returns (string)",
   "function image() view returns (string)",
   "function metadata() view returns (string)",
   "function context() view returns (string)",
@@ -32,6 +34,17 @@ const toNumber = (v, fallback = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 };
+const toBigInt = (v, fallback = 0n) => {
+  try {
+    const raw = String(v ?? "").trim();
+    if (!raw) return fallback;
+    return BigInt(raw);
+  } catch {
+    return fallback;
+  }
+};
+const ADDRESS_RE = /^0x[a-f0-9]{40}$/iu;
+const isAddressLike = (v) => ADDRESS_RE.test(String(v || "").trim());
 const csv = (v) =>
   String(v || "")
     .split(",")
@@ -123,9 +136,18 @@ const getStore = () => {
     globalThis[k] = {
       snapshot: { ts: 0, value: null },
       meta: new Map(),
+      verify: new Map(),
+      blockscout: new Map(),
+      deployments: new Map(),
+      lockerMeta: new Map(),
       provider: null,
     };
   }
+  // Allow upgrading an already-initialized singleton without restarting the process.
+  if (!globalThis[k].verify) globalThis[k].verify = new Map();
+  if (!globalThis[k].blockscout) globalThis[k].blockscout = new Map();
+  if (!globalThis[k].deployments) globalThis[k].deployments = new Map();
+  if (!globalThis[k].lockerMeta) globalThis[k].lockerMeta = new Map();
   return globalThis[k];
 };
 
@@ -194,6 +216,400 @@ const parseBoolean = (value, fallback = false) => {
   return fallback;
 };
 
+const VERIFY_FALSE_TTL_MS = 5 * 60 * 1000; // 5m
+const VERIFY_TRUE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const VERIFY_TTL_MS = 15 * 60 * 1000; // default fallback (used when entry has no custom ttl)
+const BLOCKSCOUT_TTL_MS = 30 * 60 * 1000; // 30m
+const DEPLOYMENTS_TTL_MS = 10 * 60 * 1000; // 10m
+const HOLDERS_TTL_MS = 5 * 60 * 1000; // 5m
+
+const AUTO_VERIFY_ENABLED = parseBoolean(
+  process.env.LAUNCHPAD_AUTO_VERIFY || process.env.VITE_LAUNCHPAD_AUTO_VERIFY,
+  true
+);
+const AUTO_VERIFY_MAX_PER_SNAPSHOT = Math.max(
+  0,
+  Math.min(60, toNumber(process.env.LAUNCHPAD_AUTO_VERIFY_MAX_PER_SNAPSHOT, 12))
+);
+
+const EXTRA_VERIFIED = new Set(
+  dedupe([
+    ...csv(process.env.LAUNCHPAD_VERIFIED_TOKENS),
+    ...csv(process.env.VITE_LAUNCHPAD_VERIFIED_TOKENS),
+  ])
+    .map((x) => toLower(x))
+    .filter((x) => isAddressLike(x))
+);
+const isManuallyVerified = (address) => {
+  const key = toLower(address);
+  return KNOWN_VERIFIED.has(key) || EXTRA_VERIFIED.has(key);
+};
+
+const normalizeBaseUrl = (url) => String(url || "").trim().replace(/\/+$/u, "");
+
+const getExplorerBase = () => {
+  const list = [
+    process.env.LAUNCHPAD_EXPLORER_BASE,
+    process.env.EXPLORER_BASE_URL,
+    process.env.VITE_EXPLORER_BASE,
+    process.env.VITE_MEGAETH_EXPLORER,
+    "https://megaeth.blockscout.com",
+  ];
+  for (const item of list) {
+    const normalized = normalizeBaseUrl(item);
+    if (normalized) return normalized;
+  }
+  return "https://megaeth.blockscout.com";
+};
+
+const getCurrentxAddress = () => {
+  const list = [
+    process.env.LAUNCHPAD_CURRENTX_ADDRESS,
+    process.env.CURRENTX_ADDRESS,
+    process.env.VITE_CURRENTX_ADDRESS,
+  ];
+  for (const item of list) {
+    const normalized = toLower(item).trim();
+    if (isAddressLike(normalized)) return normalized;
+  }
+  return "0xb1dfc63cbe9305fa6a8fe97b4c72241148e451d1";
+};
+
+const getVaultAddress = () => {
+  const list = [
+    process.env.LAUNCHPAD_VAULT_ADDRESS,
+    process.env.CURRENTX_VAULT_ADDRESS,
+    process.env.VITE_CURRENTX_VAULT_ADDRESS,
+  ];
+  for (const item of list) {
+    const normalized = toLower(item).trim();
+    if (isAddressLike(normalized)) return normalized;
+  }
+  return "0x61186f1a227c1225a3660628c728d6943c836feb";
+};
+
+const getDefaultLockerAddress = () => {
+  const list = [
+    process.env.LAUNCHPAD_LP_LOCKER_ADDRESS,
+    process.env.LP_LOCKER_V2_ADDRESS,
+    process.env.VITE_LP_LOCKER_V2_ADDRESS,
+  ];
+  for (const item of list) {
+    const normalized = toLower(item).trim();
+    if (isAddressLike(normalized)) return normalized;
+  }
+  return "0xc43b8a818c9dad3c3f04230c4033131fe040408f";
+};
+
+const fetchJson = async (url, { timeoutMs = 8_000 } = {}) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs) || 8_000));
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const cacheGet = (map, key, ttlMs) => {
+  const hit = map.get(key);
+  if (!hit) return null;
+  const storedTtl = toNumber(hit.ttlMs, 0);
+  const effectiveTtl = storedTtl > 0 ? storedTtl : Math.max(1, Number(ttlMs) || 0);
+  if (Date.now() - toNumber(hit.ts, 0) < effectiveTtl) return hit.value;
+  return null;
+};
+
+const cacheSet = (map, key, value, ttlMs) => {
+  const entry = { ts: Date.now(), value };
+  const ttl = toNumber(ttlMs, 0);
+  if (ttl > 0) entry.ttlMs = ttl;
+  map.set(key, entry);
+  return value;
+};
+
+const parseBlockscoutSource = (payload) => {
+  const row = payload?.result?.[0] || null;
+  const sourceCode = String(row?.SourceCode || "").trim();
+  const abiRaw = String(row?.ABI || "").trim();
+  const impl = String(row?.ImplementationAddress || row?.Implementation || "").trim();
+  let abi = null;
+  try {
+    const parsed = JSON.parse(abiRaw);
+    if (Array.isArray(parsed)) abi = parsed;
+  } catch {
+    abi = null;
+  }
+  const proxyRaw = String(row?.IsProxy ?? "").trim().toLowerCase();
+  const isProxy =
+    proxyRaw === "true" || proxyRaw === "1"
+      ? true
+      : proxyRaw === "false" || proxyRaw === "0"
+      ? false
+      : null;
+  const isVerified = Boolean(sourceCode) && Array.isArray(abi) && abi.length > 0;
+  return {
+    isVerified,
+    abi,
+    isProxy,
+    implementationAddress: isAddressLike(impl) ? toLower(impl) : "",
+  };
+};
+
+const getBlockscoutSourceInfo = async (tokenAddress) => {
+  const key = toLower(tokenAddress);
+  if (!isAddressLike(key)) return null;
+  const store = getStore();
+  const cached = cacheGet(store.blockscout, `source:${key}`, BLOCKSCOUT_TTL_MS);
+  if (cached) return cached;
+  const base = getExplorerBase();
+  const url = `${base}/api?module=contract&action=getsourcecode&address=${key}`;
+  try {
+    const json = await fetchJson(url, { timeoutMs: 8_000 });
+    const parsed = parseBlockscoutSource(json);
+    return cacheSet(store.blockscout, `source:${key}`, parsed);
+  } catch {
+    return cacheSet(store.blockscout, `source:${key}`, {
+      isVerified: false,
+      abi: null,
+      isProxy: null,
+      implementationAddress: "",
+    });
+  }
+};
+
+const getBlockscoutHolders = async (tokenAddress) => {
+  const key = toLower(tokenAddress);
+  if (!isAddressLike(key)) return [];
+  const store = getStore();
+  const cached = cacheGet(store.blockscout, `holders:${key}`, HOLDERS_TTL_MS);
+  if (cached) return cached;
+  const base = getExplorerBase();
+  const url = `${base}/api/v2/tokens/${key}/holders`;
+  try {
+    const json = await fetchJson(url, { timeoutMs: 8_000 });
+    const holders = (Array.isArray(json?.items) ? json.items : [])
+      .map((item) => ({
+        address: toLower(item?.address?.hash || ""),
+        value: toBigInt(item?.value, 0n),
+      }))
+      .filter((h) => isAddressLike(h.address) && h.value > 0n);
+    return cacheSet(store.blockscout, `holders:${key}`, holders);
+  } catch {
+    return cacheSet(store.blockscout, `holders:${key}`, []);
+  }
+};
+
+const DANGEROUS_NAMES = new Set([
+  "pause",
+  "unpause",
+  "blacklist",
+  "whitelist",
+  "setblacklist",
+  "setwhitelist",
+  "addtoblacklist",
+  "removefromblacklist",
+  "addtowhitelist",
+  "removefromwhitelist",
+  "enabletrading",
+  "disabletrading",
+  "settradingenabled",
+  "settradingactive",
+]);
+
+const isDangerousFunctionName = (name) => {
+  const n = String(name || "").trim().toLowerCase();
+  if (!n) return false;
+  if (DANGEROUS_NAMES.has(n)) return true;
+  if (n.startsWith("mint") || n.includes("minter")) return true;
+  // Fee/tax setters: allow read-only views (fee(), tax()) but flag setters/updaters.
+  const isSetter = n.startsWith("set") || n.startsWith("update") || n.startsWith("configure");
+  if (isSetter && (n.includes("fee") || n.includes("fees") || n.includes("tax") || n.includes("taxes"))) {
+    return true;
+  }
+  if (n.includes("blacklist") || n.includes("whitelist") || n.includes("blocklist")) return true;
+  return false;
+};
+
+const scanDangerousAbi = (abi) => {
+  const entries = Array.isArray(abi) ? abi : [];
+  const matched = [];
+  for (const entry of entries) {
+    if (!entry || entry.type !== "function") continue;
+    const name = entry.name;
+    if (!name) continue;
+    if (isDangerousFunctionName(name)) matched.push(String(name));
+  }
+  return { ok: matched.length === 0, matched };
+};
+
+const CURRENTX_DEPLOYMENTS_ABI = [
+  "function getTokensDeployedByUser(address user) view returns ((address token, uint256 positionId, address locker)[])",
+];
+const LP_LOCKER_ABI = ["function positionManager() view returns (address)"];
+const ERC721_ABI = ["function ownerOf(uint256 tokenId) view returns (address)"];
+
+const getCreatorFromContext = async (tokenAddress) => {
+  try {
+    const raw = await readTokenContextMeta(tokenAddress);
+    const ctx = parseJson(raw);
+    const list = Array.isArray(ctx?.rewardRecipients) ? ctx.rewardRecipients : [];
+    const creator =
+      list.find((r) => String(r?.role || "").trim().toLowerCase() === "creator") || null;
+    const candidate = toLower(creator?.admin || creator?.recipient || "").trim();
+    return isAddressLike(candidate) ? candidate : "";
+  } catch {
+    return "";
+  }
+};
+
+const getCreatorDeployments = async (creatorAddress) => {
+  const key = toLower(creatorAddress);
+  if (!isAddressLike(key)) return [];
+  const store = getStore();
+  const cached = cacheGet(store.deployments, key, DEPLOYMENTS_TTL_MS);
+  if (cached) return cached;
+  const currentxAddress = getCurrentxAddress();
+  if (!isAddressLike(currentxAddress)) return cacheSet(store.deployments, key, []);
+  try {
+    const currentx = new Contract(currentxAddress, CURRENTX_DEPLOYMENTS_ABI, getProvider());
+    const rows = await currentx.getTokensDeployedByUser(key);
+    const list = (Array.isArray(rows) ? rows : [])
+      .map((row) => ({
+        token: toLower(row?.token || row?.[0] || ""),
+        positionId: toBigInt(row?.positionId ?? row?.[1], 0n),
+        locker: toLower(row?.locker || row?.[2] || ""),
+      }))
+      .filter((row) => isAddressLike(row.token) && row.positionId > 0n && isAddressLike(row.locker));
+    return cacheSet(store.deployments, key, list);
+  } catch {
+    return cacheSet(store.deployments, key, []);
+  }
+};
+
+const isLiquidityLockedForToken = async (tokenAddress) => {
+  const key = toLower(tokenAddress);
+  if (!isAddressLike(key)) return false;
+  const creator = await getCreatorFromContext(key);
+  if (!creator) return false;
+
+  const deployments = await getCreatorDeployments(creator);
+  const row = deployments.find((d) => d.token === key) || null;
+  if (!row) return false;
+
+  const locker = toLower(row.locker || "") || getDefaultLockerAddress();
+  if (!isAddressLike(locker)) return false;
+
+  const store = getStore();
+  const cachedManager = cacheGet(store.lockerMeta, locker, VERIFY_TTL_MS);
+  let positionManager = cachedManager;
+  if (!isAddressLike(positionManager)) {
+    try {
+      const lockerContract = new Contract(locker, LP_LOCKER_ABI, getProvider());
+      const pm = await lockerContract.positionManager();
+      positionManager = toLower(pm || "");
+      cacheSet(store.lockerMeta, locker, positionManager);
+    } catch {
+      return false;
+    }
+  }
+
+  if (!isAddressLike(positionManager)) return false;
+  try {
+    const pm = new Contract(positionManager, ERC721_ABI, getProvider());
+    const owner = toLower(await pm.ownerOf(row.positionId));
+    return owner === locker;
+  } catch {
+    return false;
+  }
+};
+
+const passesHolderConcentration = async (tokenAddress, supplyRaw, snapshot) => {
+  const supply = toBigInt(supplyRaw, 0n);
+  if (supply <= 0n) return { ok: false, reason: "missing_supply" };
+
+  const excluded = new Set([
+    "0x0000000000000000000000000000000000000000",
+    "0x000000000000000000000000000000000000dead",
+    toLower(tokenAddress),
+  ]);
+  const vault = getVaultAddress();
+  if (isAddressLike(vault)) excluded.add(vault);
+  const currentx = getCurrentxAddress();
+  if (isAddressLike(currentx)) excluded.add(currentx);
+  const lockerDefault = getDefaultLockerAddress();
+  if (isAddressLike(lockerDefault)) excluded.add(lockerDefault);
+
+  const pools = snapshot?.tokenPools?.[toLower(tokenAddress)] || [];
+  (Array.isArray(pools) ? pools : []).forEach((pool) => {
+    const p = toLower(pool);
+    if (isAddressLike(p)) excluded.add(p);
+  });
+
+  const holders = await getBlockscoutHolders(tokenAddress);
+  let top1 = 0n;
+  let top5 = 0n;
+  let count = 0;
+  for (const holder of holders) {
+    const addr = toLower(holder.address || "");
+    if (!isAddressLike(addr) || excluded.has(addr)) continue;
+    count += 1;
+    if (count === 1) top1 = holder.value;
+    if (count <= 5) top5 += holder.value;
+    if (count >= 5) break;
+  }
+
+  if (count === 0) return { ok: false, reason: "no_holders" };
+
+  const top1Bps = Number((top1 * 10_000n) / supply);
+  const top5Bps = Number((top5 * 10_000n) / supply);
+  const ok = top1Bps <= 2000 && top5Bps <= 5000;
+  return { ok, top1Bps, top5Bps, count };
+};
+
+const shouldAutoVerifyToken = async (token, snapshot) => {
+  const address = toLower(token?.address || token?.tokenAddress || "");
+  if (!isAddressLike(address)) return false;
+  if (isManuallyVerified(address)) return true;
+  if (!AUTO_VERIFY_ENABLED) return false;
+
+  const store = getStore();
+  const cached = cacheGet(store.verify, address, VERIFY_TTL_MS);
+  if (cached != null) return Boolean(cached);
+
+  const source = await getBlockscoutSourceInfo(address);
+  if (!source?.isVerified) return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+  if (source.isProxy !== false) return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+  if (source.implementationAddress && isAddressLike(source.implementationAddress)) {
+    return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+  }
+
+  const dangerous = scanDangerousAbi(source.abi);
+  if (!dangerous.ok) return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+
+  // Use subgraph-provided supply when available, otherwise fall back to RPC.
+  let supplyRaw = token?.__totalSupplyRaw || "";
+  let supply = toBigInt(supplyRaw, 0n);
+  if (supply <= 0n) {
+    try {
+      const contract = new Contract(address, ERC20_META_ABI, getProvider());
+      supply = toBigInt(await readContractMethod(contract, "totalSupply"), 0n);
+    } catch {
+      supply = 0n;
+    }
+  }
+
+  const dist = await passesHolderConcentration(address, supply, snapshot);
+  if (!dist.ok) return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+
+  const locked = await isLiquidityLockedForToken(address);
+  if (!locked) return cacheSet(store.verify, address, false, VERIFY_FALSE_TTL_MS);
+
+  return cacheSet(store.verify, address, true, VERIFY_TRUE_TTL_MS);
+};
+
 const isLaunchpadContext = (context) => {
   if (!context || typeof context !== "object") return false;
   const uiSchema = String(context?.uiSchema || "").trim().toLowerCase();
@@ -260,13 +676,14 @@ const readTokenImageMeta = async (address) => {
   }
 
   const contract = new Contract(key, ERC20_META_ABI, getProvider());
-  const [image, metadataRaw] = await Promise.all([
+  const [imageUrl, imageLegacy, metadataRaw] = await Promise.all([
+    readContractMethod(contract, "imageUrl"),
     readContractMethod(contract, "image"),
     readContractMethod(contract, "metadata"),
   ]);
   const metadata = parseJson(metadataRaw);
   const metadataImage = pickMetadataImage(metadata);
-  const resolved = String(image || metadataImage || cachedImage || "").trim();
+  const resolved = String(imageUrl || imageLegacy || metadataImage || cachedImage || "").trim();
 
   store.meta.set(key, {
     ts: Date.now(),
@@ -410,7 +827,7 @@ const buildSnapshot = async () => {
       logoUrl: logoFrom(tokenAddress),
       createdAt,
       creator: "0x0000000000000000000000000000000000000000",
-      verified: KNOWN_VERIFIED.has(tokenAddress),
+      verified: isManuallyVerified(tokenAddress),
       tags: ["launchpad", ...(Date.now() - Date.parse(createdAt) < 72 * 3600 * 1000 ? ["new"] : [])],
       buysPerMinute: 0,
       sparkline: [priceUSD || 0],
@@ -429,6 +846,7 @@ const buildSnapshot = async () => {
       },
       __poolId: toLower(pool?.id),
       __tokenIs0: Boolean(is0),
+      __totalSupplyRaw: String(tokenEntity?.totalSupply || "0"),
     };
     const existing = tokenMap.get(tokenAddress);
     if (!existing || toNumber(card.market.liquidityUSD, 0) > toNumber(existing.market.liquidityUSD, 0)) {
@@ -563,10 +981,48 @@ const buildSnapshot = async () => {
     token.buysPerMinute = Number(((buysByToken.get(address) || 0) / 60).toFixed(4));
   });
 
+  // Auto-verify tokens lazily to avoid turning snapshot builds into long-running jobs.
+  // We first apply cached "true" results (fast), then evaluate a small budget of pending tokens.
+  if (AUTO_VERIFY_ENABLED && tokenMap.size > 0) {
+    const store = getStore();
+    tokenMap.forEach((token) => {
+      if (!token || token.verified) return;
+      const addr = toLower(token.address);
+      if (isManuallyVerified(addr)) {
+        token.verified = true;
+        return;
+      }
+      const cached = cacheGet(store.verify, addr, VERIFY_TTL_MS);
+      if (cached === true) token.verified = true;
+    });
+
+    const pending = Array.from(tokenMap.values())
+      .filter((token) => {
+        if (!token || token.verified) return false;
+        const addr = toLower(token.address);
+        const cached = cacheGet(store.verify, addr, VERIFY_TTL_MS);
+        return cached == null;
+      })
+      .sort((a, b) => toNumber(b?.market?.liquidityUSD, 0) - toNumber(a?.market?.liquidityUSD, 0))
+      .slice(0, AUTO_VERIFY_MAX_PER_SNAPSHOT);
+
+    if (pending.length) {
+      await mapLimit(pending, 4, async (token) => {
+        try {
+          const ok = await shouldAutoVerifyToken(token, { tokenPools });
+          if (ok) token.verified = true;
+        } catch {
+          // ignore auto-verify failures; tokens remain unverified.
+        }
+      });
+    }
+  }
+
   const tokens = Array.from(tokenMap.values()).map((token) => {
     const out = { ...token };
     delete out.__poolId;
     delete out.__tokenIs0;
+    delete out.__totalSupplyRaw;
     return out;
   });
 
@@ -676,17 +1132,28 @@ export const getTokenDetail = async (address) => {
   const key = toLower(address);
   const token = (snapshot.tokens || []).find((x) => toLower(x.address) === key);
   if (!token) return null;
+
+  if (!token.verified && AUTO_VERIFY_ENABLED) {
+    try {
+      const ok = await shouldAutoVerifyToken(token, snapshot);
+      if (ok) token.verified = true;
+    } catch {
+      // ignore
+    }
+  }
+
   const store = getStore();
   const cached = store.meta.get(key);
   const cachedValue = cached && Date.now() - cached.ts < META_TTL_MS ? cached.value : null;
   let meta = cachedValue && cachedValue?.detailReady ? cachedValue : null;
   if (!meta) {
     const contract = new Contract(key, ERC20_META_ABI, getProvider());
-    const [name, symbol, decimals, totalSupply, image, metadataRaw, contextRaw] = await Promise.all([
+    const [name, symbol, decimals, totalSupply, imageUrl, imageLegacy, metadataRaw, contextRaw] = await Promise.all([
       readContractMethod(contract, "name"),
       readContractMethod(contract, "symbol"),
       readContractMethod(contract, "decimals"),
       readContractMethod(contract, "totalSupply"),
+      readContractMethod(contract, "imageUrl"),
       readContractMethod(contract, "image"),
       readContractMethod(contract, "metadata"),
       readContractMethod(contract, "context"),
@@ -735,7 +1202,7 @@ export const getTokenDetail = async (address) => {
       symbol: String(symbol || "").trim() || "",
       decimals: Number.isFinite(Number(decimals)) ? Number(decimals) : null,
       totalSupply: totalSupply != null ? String(totalSupply) : "",
-      image: String(image || metadataImage || "").trim() || "",
+      image: String(imageUrl || imageLegacy || metadataImage || "").trim() || "",
       description,
       website,
       socials,
@@ -770,6 +1237,14 @@ export const getActivity = async ({ tokenAddress = "", type = "buys", limit = 20
   const key = toLower(tokenAddress);
   const pools = key ? snapshot.tokenPools[key] || [] : snapshot.poolIds || [];
   if (!pools.length) return { items: [], updatedAt: new Date().toISOString() };
+  const tokenMeta = new Map(
+    (snapshot.tokens || [])
+      .filter(Boolean)
+      .map((t) => [
+        toLower(t.address),
+        { name: String(t.name || "").trim(), symbol: String(t.symbol || "").trim() },
+      ])
+  );
   const first = Math.min(5000, Math.max(100, Number(limit || 20) * 12));
   const data = await graph(
     `
@@ -788,7 +1263,15 @@ export const getActivity = async ({ tokenAddress = "", type = "buys", limit = 20
       const side = snapshot.poolSide[toLower(swap?.pool?.id)];
       if (!side) return null;
       if (key && side.tokenAddress !== key) return null;
-      return normalizeTrade(swap, side.tokenAddress, side.tokenIs0);
+      const trade = normalizeTrade(swap, side.tokenAddress, side.tokenIs0);
+      if (!trade) return null;
+      const meta = tokenMeta.get(trade.tokenAddress);
+      if (!meta) return trade;
+      return {
+        ...trade,
+        tokenName: meta.name || undefined,
+        tokenSymbol: meta.symbol || undefined,
+      };
     })
     .filter(Boolean)
     .filter((trade) => {
@@ -821,6 +1304,10 @@ export const getTokenCandles = async (tokenAddress, tf = "24h") => {
     ];
   }
   const tokenIs0 = Boolean(snapshot.tokenSide[key]);
+  // Prefer the primary pool (highest liquidity) for a stable chart. The query below does not return pool IDs,
+  // so we can't reliably merge multiple pools into one candle series.
+  const primaryPoolId = toLower(snapshot.tokenPrimaryPool?.[key] || "") || toLower(poolIds[0] || "");
+  const candlePoolIds = primaryPoolId ? [primaryPoolId] : poolIds;
   const ethPriceUSD = Math.max(0, toNumber(snapshot.ethPriceUSD, 0));
   const tfKey = String(tf || "24h").toLowerCase();
   const hours = tfKey === "1h" ? 2 : tfKey === "7d" ? 7 * 24 : tfKey === "30d" ? 30 * 24 : tfKey === "all" ? 180 * 24 : 24;
@@ -836,18 +1323,21 @@ export const getTokenCandles = async (tokenAddress, tf = "24h") => {
         ) {
           periodStartUnix
           volumeUSD
+          close
           token0Price
           token1Price
         }
       }
     `,
-    { ids: poolIds, since }
+    { ids: candlePoolIds, since }
   );
   const rows = (data?.poolHourDatas || [])
     .slice()
     .sort((a, b) => toNumber(a?.periodStartUnix, 0) - toNumber(b?.periodStartUnix, 0))
     .map((row) => {
-      const pEth = tokenIs0 ? toNumber(row?.token1Price, 0) : toNumber(row?.token0Price, 0);
+      // Some subgraph deployments don't reliably populate token0Price/token1Price on hour/day tables.
+      // Reuse the snapshot price fallback logic (tokenXPrice -> close -> inverted close).
+      const pEth = priceFromRow(row, tokenIs0);
       const p = ethPriceUSD > 0 ? pEth * ethPriceUSD : pEth;
       return {
         timestamp: toNumber(row?.periodStartUnix, 0) * 1000,
@@ -859,9 +1349,95 @@ export const getTokenCandles = async (tokenAddress, tf = "24h") => {
       };
     })
     .filter((row) => row.timestamp > 0 && row.close > 0);
+  if (rows.length >= 2) return rows;
+
+  // If we only have 0-1 hour buckets (common for new pools with a couple swaps),
+  // fall back to swap-level points so the chart still shows something meaningful.
+  try {
+    const swapData = await graph(
+      `
+        query CandleSwaps($ids: [Bytes!], $since: Int!, $first: Int!) {
+          swaps(
+            first: $first
+            orderBy: timestamp
+            orderDirection: desc
+            where: { pool_in: $ids, timestamp_gte: $since }
+          ) {
+            timestamp
+            amount0
+            amount1
+            amountUSD
+          }
+        }
+      `,
+      { ids: candlePoolIds, since, first: 250 }
+    );
+    const swaps = Array.isArray(swapData?.swaps) ? swapData.swaps : [];
+    const swapRows = swaps
+      .slice()
+      .reverse() // oldest -> newest
+      .map((swap) => {
+        const tokenAmount = toNumber(tokenIs0 ? swap?.amount0 : swap?.amount1, 0);
+        const pairAmount = toNumber(tokenIs0 ? swap?.amount1 : swap?.amount0, 0);
+        const pEth = tokenAmount ? Math.abs(pairAmount / tokenAmount) : 0;
+        const p = ethPriceUSD > 0 ? pEth * ethPriceUSD : pEth;
+        return {
+          timestamp: Math.max(0, toNumber(swap?.timestamp, 0) * 1000),
+          open: p,
+          high: p,
+          low: p,
+          close: p,
+          volumeUSD: Math.max(0, Math.abs(toNumber(swap?.amountUSD, 0))),
+        };
+      })
+      .filter((row) => row.timestamp > 0 && row.close > 0);
+
+    if (swapRows.length >= 2) return swapRows;
+    if (swapRows.length === 1) return swapRows;
+  } catch {
+    // ignore swap fallback failures
+  }
+
   if (rows.length) return rows;
   const fallbackPrice = toNumber(token?.market?.priceUSD, 0);
-  if (fallbackPrice <= 0) return [];
+  if (fallbackPrice <= 0) {
+    try {
+      const last = await graph(
+        `
+          query LastSwap($ids: [Bytes!], $first: Int!) {
+            swaps(first: $first, orderBy: timestamp, orderDirection: desc, where: { pool_in: $ids }) {
+              timestamp
+              amount0
+              amount1
+              amountUSD
+            }
+          }
+        `,
+        { ids: candlePoolIds, first: 1 }
+      );
+      const swap = (last?.swaps || [])[0];
+      const tokenAmount = toNumber(tokenIs0 ? swap?.amount0 : swap?.amount1, 0);
+      const pairAmount = toNumber(tokenIs0 ? swap?.amount1 : swap?.amount0, 0);
+      const pEth = tokenAmount ? Math.abs(pairAmount / tokenAmount) : 0;
+      const p = ethPriceUSD > 0 ? pEth * ethPriceUSD : pEth;
+      const ts = Math.max(0, toNumber(swap?.timestamp, 0) * 1000) || Date.now();
+      if (p > 0) {
+        return [
+          {
+            timestamp: ts,
+            open: p,
+            high: p,
+            low: p,
+            close: p,
+            volumeUSD: Math.max(0, Math.abs(toNumber(swap?.amountUSD, 0))),
+          },
+        ];
+      }
+    } catch {
+      // ignore swap fallback failures
+    }
+    return [];
+  }
   return [
     {
       timestamp: Date.now(),

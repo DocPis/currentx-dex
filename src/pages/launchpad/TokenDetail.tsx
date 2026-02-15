@@ -17,7 +17,6 @@ const ACTIVITY_TABS = [
   { id: "trades", label: "Trades" },
   { id: "buys", label: "Buys" },
   { id: "sells", label: "Sells" },
-  { id: "liquidity", label: "Liquidity changes" },
 ] as const;
 
 const buildPricePath = (candles: LaunchpadCandle[], width: number, height: number) => {
@@ -26,6 +25,13 @@ const buildPricePath = (candles: LaunchpadCandle[], width: number, height: numbe
   const min = Math.min(...closes);
   const max = Math.max(...closes);
   const range = Math.max(max - min, 1e-9);
+  // When we only have 1 candle (e.g. 2 swaps in the same hour), draw a flat line
+  // so the user doesn't think the chart failed to load.
+  if (candles.length === 1) {
+    const y = height - ((candles[0].close - min) / range) * height;
+    return `M0,${y.toFixed(2)} L${width.toFixed(2)},${y.toFixed(2)}`;
+  }
+
   const stepX = width / Math.max(1, candles.length - 1);
   return candles
     .map((item, index) => {
@@ -285,7 +291,8 @@ const TokenDetail = ({
                       </linearGradient>
                     </defs>
                     {candles.map((item, index) => {
-                      const x = (index / Math.max(1, candles.length - 1)) * 860;
+                      const t = candles.length === 1 ? 0.5 : index / Math.max(1, candles.length - 1);
+                      const x = t * 860;
                       const barHeight = Math.max(4, (item.volumeUSD / volumeMax) * 72);
                       return (
                         <rect
@@ -347,49 +354,43 @@ const TokenDetail = ({
                 </span>
               </div>
 
-              {activityTab === "liquidity" ? (
-                <div className="rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-6 text-center text-xs text-slate-400">
-                  Liquidity change events are not available in the current adapter yet.
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {activity.items.map((item) => (
-                    <div
-                      key={item.txHash}
-                      className="grid grid-cols-[72px_minmax(0,1fr)_130px] items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-2 text-xs"
+              <div className="space-y-2">
+                {activity.items.map((item) => (
+                  <div
+                    key={item.txHash}
+                    className="grid grid-cols-[72px_minmax(0,1fr)_130px] items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-2 text-xs"
+                  >
+                    <span
+                      className={`rounded-full border px-2 py-1 text-center font-semibold uppercase tracking-wide ${
+                        item.side === "BUY"
+                          ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-200"
+                          : "border-rose-400/35 bg-rose-500/10 text-rose-200"
+                      }`}
                     >
-                      <span
-                        className={`rounded-full border px-2 py-1 text-center font-semibold uppercase tracking-wide ${
-                          item.side === "BUY"
-                            ? "border-emerald-400/35 bg-emerald-500/10 text-emerald-200"
-                            : "border-rose-400/35 bg-rose-500/10 text-rose-200"
-                        }`}
-                      >
-                        {item.side}
-                      </span>
-                      <div>
-                        <div className="text-slate-200">
-                          {shortAddress(item.buyer)} - {formatUsd(item.amountUSD)}
-                        </div>
-                        <div className="text-[11px] text-slate-500">{toTimeAgo(item.timestamp)}</div>
+                      {item.side}
+                    </span>
+                    <div>
+                      <div className="text-slate-200">
+                        {shortAddress(item.buyer)} - {formatUsd(item.amountUSD)}
                       </div>
-                      <a
-                        href={`${EXPLORER_BASE_URL}/tx/${item.txHash}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-right text-[11px] font-semibold text-sky-300 hover:text-sky-100"
-                      >
-                        View tx
-                      </a>
+                      <div className="text-[11px] text-slate-500">{toTimeAgo(item.timestamp)}</div>
                     </div>
-                  ))}
-                  {!activity.items.length && (
-                    <div className="rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-6 text-center text-xs text-slate-400">
-                      No activity for this filter.
-                    </div>
-                  )}
-                </div>
-              )}
+                    <a
+                      href={`${EXPLORER_BASE_URL}/tx/${item.txHash}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-right text-[11px] font-semibold text-sky-300 hover:text-sky-100"
+                    >
+                      View tx
+                    </a>
+                  </div>
+                ))}
+                {!activity.items.length && (
+                  <div className="rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-6 text-center text-xs text-slate-400">
+                    No activity for this filter.
+                  </div>
+                )}
+              </div>
             </section>
 
             <section className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">

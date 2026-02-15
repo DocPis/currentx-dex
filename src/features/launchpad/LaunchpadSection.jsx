@@ -778,16 +778,20 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const erc20 = new Contract(tokenAddress, ERC20_ABI, provider);
     const imageReader = new Contract(
       tokenAddress,
-      [{ inputs: [], name: "image", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" }],
+      [
+        { inputs: [], name: "imageUrl", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+        { inputs: [], name: "image", outputs: [{ internalType: "string", name: "", type: "string" }], stateMutability: "view", type: "function" },
+      ],
       provider
     );
-    const [name, symbol, decimals, imageRaw] = await Promise.all([
+    const [name, symbol, decimals, imageUrlRaw, imageRaw] = await Promise.all([
       erc20.name().catch(() => "Token"),
       erc20.symbol().catch(() => "TOKEN"),
       erc20.decimals().catch(() => 18),
+      imageReader.imageUrl().catch(() => ""),
       imageReader.image().catch(() => ""),
     ]);
-    const image = String(imageRaw || "").trim();
+    const image = String(imageUrlRaw || imageRaw || "").trim();
     const meta = {
       address: tokenAddress,
       name: String(name || "Token"),
