@@ -445,6 +445,7 @@ export default function App() {
               address={address}
               chainId={chainId}
               balances={balances}
+              onConnect={handleConnect}
               showV3={true}
               poolSelection={poolSelection}
               onBalancesRefresh={refresh}
@@ -465,7 +466,14 @@ export default function App() {
             <PointsPage
               address={address}
               onConnect={handleConnect}
-              onNavigate={(nextTab) => setTab(nextTab)}
+              onNavigate={(nextTab, opts = {}) => {
+                if (nextTab === "liquidity" && opts?.poolSelection) {
+                  setPoolSelection(opts.poolSelection);
+                  preloadSection("liquidity");
+                  prefetchTabData("liquidity");
+                }
+                setTab(nextTab);
+              }}
             />
           )}
           {tab === "farms" && (

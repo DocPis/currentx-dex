@@ -171,6 +171,5 @@ const server = http.createServer(async (nodeReq, nodeRes) => {
 });
 
 server.listen(PORT, HOST, () => {
-  // eslint-disable-next-line no-console
   console.log(`[launchpad-api-dev] listening on http://${HOST}:${PORT}`);
 });

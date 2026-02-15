@@ -83,14 +83,6 @@ const formatSignedCompact = (value, suffix = "") => {
   return `${sign}${body}${suffix}`;
 };
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-const hashString = (value = "") => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-};
 const normalizeSeasonKey = (value) =>
   String(value || "")
     .trim()
@@ -100,18 +92,30 @@ const isSeasonOne = (seasonId, seasonLabel) => {
   const keys = new Set([normalizeSeasonKey(seasonId), normalizeSeasonKey(seasonLabel)]);
   return keys.has("season1") || keys.has("s1") || keys.has("1");
 };
-const buildRowSparkline = (seedInput, pointsChange = 0, rankChange = 0) => {
-  const seed = hashString(seedInput);
-  const trend = clamp((Number(pointsChange) || 0) / 400, -0.24, 0.24);
-  const rankLift = clamp((Number(rankChange) || 0) / 50, -0.12, 0.12);
-  const base = 0.5 + trend * 0.5 + rankLift * 0.35;
+const buildRowSparkline = (_seedInput, pointsChange = 0, rankChange = 0) => {
+  const pointsDelta = Number(pointsChange) || 0;
+  const rankDelta = Number(rankChange) || 0;
+
+  // Keep the sparkline directional and easy to interpret:
+  // up = positive delta, down = negative delta, flat = no change.
+  const dir =
+    pointsDelta !== 0 ? Math.sign(pointsDelta) : rankDelta !== 0 ? Math.sign(rankDelta) : 0;
+
+  // Use a log scale so large deltas are visibly steeper without blowing out the chart.
+  const magnitude = Math.min(1, Math.log10(Math.abs(pointsDelta) + 1) / 4);
+  const base = 0.52;
+  const amplitude = dir === 0 ? 0 : 0.04 + 0.22 * magnitude;
+  const start = clamp(base - dir * amplitude, 0.1, 0.92);
+  const end = clamp(base + dir * amplitude, 0.1, 0.92);
+
   const values = [];
-  for (let i = 0; i < 12; i += 1) {
-    const wave = Math.sin(((seed % 17) + i) * 0.82) * 0.08;
-    const jitter = (((seed >> (i % 9)) & 3) - 1.5) / 26;
-    const slope = (i / 11 - 0.5) * (trend + rankLift);
-    values.push(clamp(base + wave + jitter + slope, 0.1, 0.92));
+  const steps = 12;
+  for (let i = 0; i < steps; i += 1) {
+    const t = steps === 1 ? 0 : i / (steps - 1);
+    const eased = t * t * (3 - 2 * t); // smoothstep
+    values.push(clamp(start + (end - start) * eased, 0.1, 0.92));
   }
+
   return values
     .map((value, idx) => `${idx * 4},${Math.round((1 - value) * 14) + 1}`)
     .join(" ");
@@ -363,8 +367,14 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
     return "Claim now";
   };
   const handleBoostMultiplier = () => {
+    const boostPool = {
+      type: "V3",
+      token0Symbol: "WETH",
+      token1Symbol: "CRX",
+      feeTier: 10000, // 1.00% pool on MegaETH
+    };
     if (typeof onNavigate === "function") {
-      onNavigate("liquidity");
+      onNavigate("liquidity", { poolSelection: boostPool });
       return;
     }
     if (typeof window !== "undefined") {
@@ -956,16 +966,22 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
                       isWhale ? "WHALE LP" : null,
                       isHighEfficiency ? "HIGH EFF" : null,
                     ].filter(Boolean);
-                    const sparkline = buildRowSparkline(
-                      `${row.address || idx}:${row.points || 0}:${displayRank}`,
-                      pointsChange24h,
-                      rankChange24h
-                    );
-                    const rankArrow =
-                      rankChange24h > 0 ? "\u2191" : rankChange24h < 0 ? "\u2193" : "\u2192";
-                    const rankTone =
-                      rankChange24h > 0
-                        ? "text-emerald-300"
+                     const sparkline = buildRowSparkline(
+                       `${row.address || idx}:${row.points || 0}:${displayRank}`,
+                       pointsChange24h,
+                       rankChange24h
+                     );
+                     const sparkTone =
+                       pointsChange24h > 0
+                         ? "text-emerald-300/90"
+                         : pointsChange24h < 0
+                         ? "text-rose-300/90"
+                         : "text-slate-500/80";
+                     const rankArrow =
+                       rankChange24h > 0 ? "\u2191" : rankChange24h < 0 ? "\u2193" : "\u2192";
+                     const rankTone =
+                       rankChange24h > 0
+                         ? "text-emerald-300"
                         : rankChange24h < 0
                         ? "text-rose-300"
                         : "text-slate-500";
@@ -1017,12 +1033,12 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
                               {formatCompactNumber(row.points || 0)}
                             </span>
                             <svg viewBox="0 0 44 16" className="h-[14px] w-[44px]">
-                              <polyline
+                             <polyline
                                 points={sparkline}
                                 fill="none"
                                 stroke="currentColor"
                                 strokeWidth="1.4"
-                                className="text-sky-300/90"
+                                className={sparkTone}
                               />
                             </svg>
                           </div>

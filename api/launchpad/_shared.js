@@ -701,7 +701,9 @@ export const getTokenDetail = async (address) => {
         telegram: String(links.telegram || metadata?.telegram || "").trim() || undefined,
         discord: String(links.discord || metadata?.discord || "").trim() || undefined,
       };
-    } catch {}
+    } catch {
+      // ignore invalid/malformed metadata shape
+    }
     try {
       const context = parseJson(contextRaw);
       const creatorEntry = Array.isArray(context?.rewardRecipients)
@@ -719,7 +721,9 @@ export const getTokenDetail = async (address) => {
             ? toNumber(context.poolConfiguration.startingMarketCapEth, 0) * toNumber(snapshot.ethPriceUSD, 0)
             : token?.launchParams?.initialMcapUSD,
       };
-    } catch {}
+    } catch {
+      // ignore invalid/malformed context payload
+    }
     meta = {
       name: String(name || "").trim() || "",
       symbol: String(symbol || "").trim() || "",

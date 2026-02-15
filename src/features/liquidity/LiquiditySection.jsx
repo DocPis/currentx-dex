@@ -1024,6 +1024,7 @@ export default function LiquiditySection({
   address,
   chainId,
   balances: balancesProp,
+  onConnect,
   onBalancesRefresh,
   poolSelection,
   showV2 = true,
@@ -5389,6 +5390,10 @@ export default function LiquiditySection({
 
   const handleV3Mint = async () => {
     if (!address) {
+      if (typeof onConnect === "function") {
+        onConnect();
+        return;
+      }
       setV3MintError("Connect your wallet to add a position.");
       return;
     }
@@ -8722,7 +8727,7 @@ export default function LiquiditySection({
                                       </div>
                                     </div>
                                     <div className="text-[11px] text-slate-500">
-                                      Position #{selectedPosition.tokenId} Â· Fee {formatFeeTier(selectedPosition.fee)}
+                                      Position #{selectedPosition.tokenId} {"\u00b7"} Fee {formatFeeTier(selectedPosition.fee)}
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
@@ -10064,8 +10069,8 @@ export default function LiquiditySection({
                           const feeLabelRaw = Number(pos.feeTier || pos.fee || 0);
                           const poolSubLabel =
                             Number.isFinite(feeLabelRaw) && feeLabelRaw > 0
-                              ? `v2 Â· ${formatFeeTier(feeLabelRaw)}`
-                              : "v2 Â· pool";
+                              ? `v2 \u00b7 ${formatFeeTier(feeLabelRaw)}`
+                              : "v2 \u00b7 pool";
 
                           return (
                             <div
@@ -10284,7 +10289,7 @@ export default function LiquiditySection({
                   <div>
                     <div className="text-slate-100 font-semibold">
                       {searchTokenMeta?.symbol
-                        ? `${searchTokenMeta.symbol} Â· ${searchTokenMeta.name || "Token"}`
+                        ? `${searchTokenMeta.symbol} \u00b7 ${searchTokenMeta.name || "Token"}`
                         : searchTokenMetaLoading
                           ? "Loading token..."
                           : "Token not listed"}
@@ -10467,7 +10472,7 @@ export default function LiquiditySection({
                         {position.token0Symbol} / {position.token1Symbol}
                       </div>
                       <div className="text-[11px] text-slate-500">
-                        Position #{position.tokenId} Â· Fee {formatFeeTier(position.fee)}
+                        Position #{position.tokenId} {"\u00b7"} Fee {formatFeeTier(position.fee)}
                       </div>
                     </div>
                     <button
