@@ -2448,6 +2448,17 @@ export const CHAINLINK_AGGREGATOR_ABI = [
 
 // CurrentX launchpad ABI (factory + deployment entrypoints)
 export const CURRENTX_ABI = [
+  { inputs: [], name: "Deprecated", type: "error" },
+  { inputs: [], name: "InvalidCreatorInfo", type: "error" },
+  { inputs: [], name: "InvalidCreatorReward", type: "error" },
+  { inputs: [], name: "InvalidInterfaceInfo", type: "error" },
+  { inputs: [], name: "InvalidTick", type: "error" },
+  { inputs: [], name: "InvalidVaultConfiguration", type: "error" },
+  { inputs: [], name: "NotFound", type: "error" },
+  { inputs: [], name: "OnlyNonOriginatingChains", type: "error" },
+  { inputs: [], name: "OnlyOriginatingChain", type: "error" },
+  { inputs: [], name: "Unauthorized", type: "error" },
+  { inputs: [], name: "ZeroTeamRewardRecipient", type: "error" },
   {
     inputs: [],
     name: "MAX_CREATOR_REWARD",
@@ -2494,6 +2505,20 @@ export const CURRENTX_ABI = [
     inputs: [],
     name: "weth",
     outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "deprecated",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "admins",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
     stateMutability: "view",
     type: "function",
   },

@@ -356,6 +356,15 @@ const decodeCurrentxRevert = (revertData) => {
   }
 };
 
+const isOpaqueRevert = (error) => {
+  const lower = collectErrorMessages(error).join(" ").toLowerCase();
+  const revertData = extractRevertData(error);
+  return (
+    lower.includes("missing revert data") ||
+    (lower.includes("execution reverted") && !revertData)
+  );
+};
+
 const errMsg = (error, fallback) => {
   const messages = collectErrorMessages(error);
   const raw = messages[0] || "";
@@ -1520,6 +1529,8 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const vaultPercentageNum = Number(vaultPercentageRaw);
       const lockupDaysRaw = parseUint(deployForm.lockupDays, "Lockup period (days)");
       const vestingDaysRaw = parseUint(deployForm.vestingDays, "Vesting period (days)");
+      const originatingChainIdRaw = parseUint(deployForm.originatingChainId, "Originating chain id");
+      const originatingChainId = BigInt(originatingChainIdRaw);
       const lockupDays = Number(lockupDaysRaw);
       const vestingDays = Number(vestingDaysRaw);
       if (vaultPercentageNum > 0) {
@@ -1566,6 +1577,23 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       }
       const signer = await provider.getSigner();
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, signer);
+      if (originatingChainId !== BigInt(signerChainId || 0)) {
+        throw new Error(
+          `Originating chain id mismatch. Set ${originatingChainIdRaw} to ${signerChainId || defaultChainId} for ${NETWORK_NAME}.`
+        );
+      }
+      const isDeprecated = await currentx.deprecated().catch(() => false);
+      if (isDeprecated) {
+        throw new Error("CurrentX deployments are currently disabled (deprecated=true).");
+      }
+      if (deployForm.useCustomTeamRewardRecipient) {
+        const isAdmin = await currentx.admins(address).catch(() => false);
+        if (!isAdmin) {
+          throw new Error(
+            "Custom team reward recipient is admin-only. Disable custom team recipient for standard deploys."
+          );
+        }
+      }
 
       let tokenSupply = protocol.tokenSupply;
       let tickSpacingRaw = protocol.tickSpacing;
@@ -1623,6 +1651,12 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         creatorRewardInput === "0" && maxCreatorReward
           ? String(maxCreatorReward)
           : creatorRewardInput;
+      if (creatorRewardInput === "0" && maxCreatorReward == null) {
+        throw new Error("Unable to resolve MAX_CREATOR_REWARD from contract. Set reward to 80 and retry.");
+      }
+      if (BigInt(creatorRewardRaw) === 0n) {
+        throw new Error("Creator reward cannot be 0.");
+      }
       const interfaceRewardRaw = "0";
       if (maxCreatorReward != null && BigInt(creatorRewardRaw) > BigInt(maxCreatorReward)) {
         throw new Error(`Creator reward exceeds MAX_CREATOR_REWARD (${String(maxCreatorReward)}).`);
@@ -1718,7 +1752,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           image,
           metadata: metadataValue,
           context: contextValue,
-          originatingChainId: BigInt(parseUint(deployForm.originatingChainId, "Originating chain id")),
+          originatingChainId,
         },
         vaultConfig: {
           vaultPercentage: vaultPercentageNum,
@@ -1743,14 +1777,19 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
 
       const overrides = txValue > 0n ? { value: txValue } : {};
       setDeployAction({ loading: true, error: "", hash: "", message: "Simulating deployment..." });
-      if (deployForm.useCustomTeamRewardRecipient) {
-        await currentx.deployTokenWithCustomTeamRewardRecipient.staticCall(
-          deploymentConfig,
-          teamRewardRecipient,
-          overrides
-        );
-      } else {
-        await currentx.deployToken.staticCall(deploymentConfig, overrides);
+      try {
+        if (deployForm.useCustomTeamRewardRecipient) {
+          await currentx.deployTokenWithCustomTeamRewardRecipient.staticCall(
+            deploymentConfig,
+            teamRewardRecipient,
+            overrides
+          );
+        } else {
+          await currentx.deployToken.staticCall(deploymentConfig, overrides);
+        }
+      } catch (simulationError) {
+        if (!isOpaqueRevert(simulationError)) throw simulationError;
+        console.warn("[launchpad][deploy] opaque simulation failure, continuing to tx send", simulationError);
       }
       setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
       const tx = deployForm.useCustomTeamRewardRecipient
