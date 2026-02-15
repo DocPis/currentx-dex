@@ -8,7 +8,7 @@ const DEFAULT_MAINNET_SUBGRAPH_URL =
 const DEFAULT_MAINNET_SUBGRAPH_API_KEY = env.VITE_UNIV2_SUBGRAPH_API_KEY || "";
 const DEFAULT_MAINNET_V3_SUBGRAPH_URL =
   env.VITE_UNIV3_SUBGRAPH ||
-  "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd";
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn";
 const DEFAULT_MAINNET_V3_SUBGRAPH_API_KEY = env.VITE_UNIV3_SUBGRAPH_API_KEY || "";
 const DEFAULT_CHAINLINK_ETH_USD_FEED = env.VITE_CHAINLINK_ETH_USD_FEED || "";
 const DEFAULT_CHAINLINK_RPC_URL = env.VITE_CHAINLINK_RPC_URL || "";

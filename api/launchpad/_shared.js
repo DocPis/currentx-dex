@@ -1,7 +1,9 @@
 import { Contract, JsonRpcProvider, formatUnits } from "ethers";
 
-const DEFAULT_V3_URL =
-  "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd";
+const DEFAULT_V3_URLS = [
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
+  "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
+];
 const DEFAULT_WETH = "0x4200000000000000000000000000000000000006";
 const DEFAULT_RPC = "https://mainnet.megaeth.com/rpc";
 const SNAPSHOT_TTL_MS = 20_000;
@@ -61,7 +63,7 @@ const getGraphCfg = () => {
     ...csv(process.env.LAUNCHPAD_UNIV3_SUBGRAPH_URL),
     ...csv(process.env.UNIV3_SUBGRAPH_URL),
     ...csv(process.env.VITE_UNIV3_SUBGRAPH),
-    DEFAULT_V3_URL,
+    ...DEFAULT_V3_URLS,
   ]);
   const key = String(
     process.env.LAUNCHPAD_UNIV3_SUBGRAPH_API_KEY ||
@@ -80,7 +82,11 @@ const graphNeedsAuth = (url) => {
 const graphError = (error) => {
   const message = String(error?.message || "Subgraph unavailable");
   const lower = message.toLowerCase();
-  if (lower.includes("bad indexers") || lower.includes("indexer not available")) {
+  if (
+    lower.includes("bad indexer") ||
+    lower.includes("indexer not available") ||
+    lower.includes("indexer issue")
+  ) {
     return "Subgraph temporarily unavailable (indexer issue)";
   }
   return message;

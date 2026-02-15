@@ -936,10 +936,42 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   );
   const approvalTarget = approvalTargetsForSell[0] || null;
   const approveNeeded = approvalTargetsForSell.length > 0;
-  const approvalSteps = approvalTargetsForSell.length;
-  const approvalButtonLabel = approvalSteps > 1
-    ? `Approve ${sellToken} (${approvalSteps} steps)`
-    : `Approve ${sellToken}`;
+  const approvalButtonLabel = "Approve";
+
+  const [walletFlow, setWalletFlow] = useState({
+    open: false,
+    steps: [],
+    lastError: "",
+  });
+  const closeWalletFlow = useCallback(() => {
+    setWalletFlow((prev) => ({ ...prev, open: false, lastError: "" }));
+  }, []);
+  const setWalletFlowStepStatus = useCallback((id, status) => {
+    setWalletFlow((prev) => {
+      if (!prev?.steps?.length) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((step) => (step.id === id ? { ...step, status } : step)),
+      };
+    });
+  }, []);
+  const activateNextPendingWalletFlowStep = useCallback((allowedIds = null) => {
+    setWalletFlow((prev) => {
+      const steps = Array.isArray(prev?.steps) ? prev.steps : [];
+      if (!steps.length) return prev;
+      // If a step is already active, keep it.
+      if (steps.some((s) => s.status === "active")) return prev;
+      const allowAll = !Array.isArray(allowedIds) || allowedIds.length === 0;
+      const nextIdx = steps.findIndex(
+        (s) => s.status === "pending" && (allowAll || allowedIds.includes(s.id))
+      );
+      if (nextIdx < 0) return prev;
+      return {
+        ...prev,
+        steps: steps.map((s, idx) => (idx === nextIdx ? { ...s, status: "active" } : s)),
+      };
+    });
+  }, []);
 
   const tokenOptions = useMemo(() => {
     const orderedBase = BASE_TOKEN_OPTIONS.filter((sym) => {
@@ -3449,9 +3481,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       ? splitProtocolLabel || "V3"
       : quoteMeta?.protocol || "V3";
   const hopCount = routeSegments.reduce((sum, seg) => sum + (seg.hops?.length || 0), 0);
-  const approvalSummary = approvalTargetsForSell.length
-    ? `${approvalTargetsForSell.length} approval${approvalTargetsForSell.length > 1 ? "s" : ""}`
-    : "";
   const isSellAmountFocused = focusedAmountField === "sell";
   const isBuyAmountFocused = focusedAmountField === "buy";
   const hasSellAmountValue = String(amountIn || "").trim().length > 0;
@@ -3545,6 +3574,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       return;
     }
     let provider;
+    let activeWalletFlowStepId = null;
     try {
       setApproveLoading(true);
       setSwapStatus(null);
@@ -3555,13 +3585,38 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const bScore = b.kind === "erc20" ? 0 : 1;
         return aScore - bScore;
       });
+
+      const needsErc20 = ordered.some((t) => t.kind === "erc20");
+      const needsPermit2 = ordered.some((t) => t.kind === "permit2");
+      setWalletFlow({
+        open: true,
+        lastError: "",
+        steps: [
+          {
+            id: "erc20",
+            label: `Approve ${displaySellSymbol}`,
+            status: needsErc20 ? "active" : "done",
+          },
+          {
+            id: "permit2",
+            label: "Approve Permit2",
+            status: needsPermit2 ? (needsErc20 ? "pending" : "active") : "done",
+          },
+          {
+            id: "swap",
+            label: "Confirm swap in wallet",
+            status: "pending",
+          },
+        ],
+      });
       for (let i = 0; i < ordered.length; i += 1) {
         const target = ordered[i];
-        const stepLabel =
-          ordered.length > 1 ? ` (${i + 1}/${ordered.length})` : "";
+        const stepId = target.kind === "permit2" ? "permit2" : "erc20";
+        activeWalletFlowStepId = stepId;
+        setWalletFlowStepStatus(stepId, "active");
         setSwapStatus({
           variant: "pending",
-          message: `Approving ${target.symbol || sellToken}${stepLabel}...`,
+          message: `Approving ${target.symbol || sellToken}...`,
         });
         let tx;
         if (target.kind === "permit2") {
@@ -3585,6 +3640,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           throw new Error("Approval failed");
         }
         setCachedApproval(target);
+        setWalletFlowStepStatus(stepId, "done");
+        activeWalletFlowStepId = null;
+        activateNextPendingWalletFlowStep(["erc20", "permit2"]);
       }
       setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
       setSwapStatus({
@@ -3600,6 +3658,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const normalized = typeof status === "bigint" ? Number(status) : status;
         const symbol = approvalTarget?.symbol || sellToken || "token";
         if (normalized === 1) {
+          if (activeWalletFlowStepId) {
+            setWalletFlowStepStatus(activeWalletFlowStepId, "done");
+            activeWalletFlowStepId = null;
+            activateNextPendingWalletFlowStep(["erc20", "permit2"]);
+          }
           setApprovalTargets((prev) => prev.filter((t) => t.symbol !== sellToken));
           setSwapStatus({
             variant: "success",
@@ -3609,6 +3672,13 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           return;
         }
         if (normalized === 0) {
+          if (activeWalletFlowStepId) {
+            setWalletFlowStepStatus(activeWalletFlowStepId, "error");
+          }
+          setWalletFlow((prev) => ({
+            ...prev,
+            lastError: friendlySwapError(e) || "Approve failed",
+          }));
           setSwapStatus({
             variant: "error",
             hash: txHash,
@@ -3627,6 +3697,15 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         e?.code === 4001 ||
         e?.code === "ACTION_REJECTED" ||
         (e?.message || "").toLowerCase().includes("user denied");
+      if (activeWalletFlowStepId) {
+        setWalletFlowStepStatus(activeWalletFlowStepId, "error");
+      }
+      setWalletFlow((prev) => ({
+        ...prev,
+        lastError: userRejected
+          ? "Approval was rejected in wallet."
+          : friendlySwapError(e) || "Approve failed",
+      }));
       setSwapStatus({
         variant: "error",
         message: userRejected
@@ -3640,6 +3719,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
   const handleSwap = async () => {
     let provider;
+    let walletFlowSwapStarted = false;
     try {
       setSwapStatus(null);
       setExecutionProof(null);
@@ -3878,6 +3958,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         // Some RPCs reject gas estimation; fall back to a safe manual limit if needed.
         const fallbackGas = 200000n;
         let tx;
+        if (walletFlow.open) {
+          walletFlowSwapStarted = true;
+          setWalletFlowStepStatus("swap", "active");
+        }
         if (sellToken === "ETH") {
           const wrapOpts = { value: amountWei };
           try {
@@ -3933,6 +4017,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         });
         refreshPoints();
         await refreshBalances();
+        if (walletFlowSwapStarted) {
+          setWalletFlowStepStatus("swap", "done");
+          setTimeout(closeWalletFlow, 900);
+        }
         return;
       }
 
@@ -4009,6 +4097,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
         const commandBytes = buildCommandBytes(commands);
         const callOpts = isEthIn ? { value: amountWei } : {};
+        if (walletFlow.open) {
+          walletFlowSwapStarted = true;
+          setWalletFlowStepStatus("swap", "active");
+        }
         const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
         pendingTxHashRef.current = tx.hash;
@@ -4073,6 +4165,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         });
         refreshPoints();
         await refreshBalances();
+        if (walletFlowSwapStarted) {
+          setWalletFlowStepStatus("swap", "done");
+          setTimeout(closeWalletFlow, 900);
+        }
         return;
       }
 
@@ -4127,6 +4223,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
         const commandBytes = buildCommandBytes(commands);
         const callOpts = isEthIn ? { value: amountWei } : {};
+        if (walletFlow.open) {
+          walletFlowSwapStarted = true;
+          setWalletFlowStepStatus("swap", "active");
+        }
         const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
         pendingTxHashRef.current = tx.hash;
@@ -4190,6 +4290,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         });
         refreshPoints();
         await refreshBalances();
+        if (walletFlowSwapStarted) {
+          setWalletFlowStepStatus("swap", "done");
+          setTimeout(closeWalletFlow, 900);
+        }
         return;
       }
 
@@ -4259,6 +4363,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
 
       const commandBytes = buildCommandBytes(commands);
       const callOpts = sellToken === "ETH" ? { value: amountWei } : {};
+      if (walletFlow.open) {
+        walletFlowSwapStarted = true;
+        setWalletFlowStepStatus("swap", "active");
+      }
       const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
       pendingTxHashRef.current = tx.hash;
@@ -4326,6 +4434,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       });
       refreshPoints();
       await refreshBalances();
+      if (walletFlowSwapStarted) {
+        setWalletFlowStepStatus("swap", "done");
+        setTimeout(closeWalletFlow, 900);
+      }
     } catch (e) {
       const txHash = extractTxHash(e) || pendingTxHashRef.current;
       if (txHash) {
@@ -4333,6 +4445,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const status = receipt?.status;
         const normalized = typeof status === "bigint" ? Number(status) : status;
         if (normalized === 1) {
+          if (walletFlow.open) {
+            setWalletFlowStepStatus("swap", "done");
+            setTimeout(closeWalletFlow, 900);
+          }
           setSwapStatus({
             variant: "success",
             hash: txHash,
@@ -4343,6 +4459,13 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           return;
         }
         if (normalized === 0) {
+          if (walletFlow.open) {
+            setWalletFlowStepStatus("swap", "error");
+            setWalletFlow((prev) => ({
+              ...prev,
+              lastError: friendlySwapError(e),
+            }));
+          }
           setSwapStatus({
             variant: "error",
             hash: txHash,
@@ -4364,6 +4487,10 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       const message = userRejected
         ? "Transaction was rejected in wallet."
         : friendlySwapError(e);
+      if (walletFlowSwapStarted) {
+        setWalletFlowStepStatus("swap", "error");
+        setWalletFlow((prev) => ({ ...prev, lastError: message }));
+      }
       setSwapStatus({ message, variant: "error" });
     } finally {
       setSwapLoading(false);
@@ -4859,7 +4986,6 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   {!isDirectEthWeth && approveNeeded && amountIn ? (
                     <span className="text-slate-100 font-semibold">
                       Approval required for {sellToken}.
-                      {approvalSummary ? ` (${approvalSummary})` : ""}
                     </span>
                   ) : (
                     <span className="text-slate-400">
@@ -5259,6 +5385,169 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           </div>
         </div>
       )}
+
+      {walletFlow.open && walletFlow.steps.length ? (
+        <div className="fixed inset-0 z-[70] flex items-start justify-center px-4 py-10">
+          <div
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={closeWalletFlow}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="relative w-full max-w-md rounded-3xl bg-[#0a0f24] border border-slate-800 shadow-2xl shadow-black/60 overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div className="text-sm font-semibold text-slate-100">
+                Continue in your wallet
+              </div>
+              <button
+                type="button"
+                onClick={closeWalletFlow}
+                className="h-9 w-9 rounded-full bg-slate-900 text-slate-200 flex items-center justify-center border border-slate-800 hover:border-slate-600"
+                aria-label="Close wallet flow"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4"
+                >
+                  <path
+                    d="M6 6l12 12M6 18L18 6"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </div>
+
+            <div className="px-5 py-5">
+              <div className="space-y-3">
+                {walletFlow.steps.map((step, idx) => {
+                  const total = walletFlow.steps.length;
+                  const isLast = idx === total - 1;
+                  const isActive = step.status === "active";
+                  const isDone = step.status === "done";
+                  const isError = step.status === "error";
+                  const label = isDone
+                    ? String(step.label || "").replace(/^Approve\s+/i, "Approved ")
+                    : step.label;
+                  const iconTone = isDone
+                    ? "bg-emerald-600/25 border-emerald-500/40 text-emerald-100"
+                    : isActive
+                      ? "bg-sky-500/25 border-sky-400/40 text-sky-100"
+                      : isError
+                        ? "bg-rose-600/25 border-rose-500/40 text-rose-100"
+                        : "bg-slate-900 border-slate-700 text-slate-500";
+
+                  return (
+                    <div key={step.id} className="flex items-start gap-3">
+                      <div className="relative flex flex-col items-center">
+                        <div
+                          className={`h-9 w-9 rounded-2xl border flex items-center justify-center shadow-[inset_0_1px_0_rgba(148,163,184,0.12)] ${iconTone}`}
+                        >
+                          {isDone ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-4.5 w-4.5"
+                            >
+                              <path
+                                d="M5 13l4 4L19 7"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          ) : isActive ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-4.5 w-4.5 animate-spin"
+                            >
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="9"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeOpacity="0.35"
+                              />
+                              <path
+                                d="M21 12a9 9 0 00-9-9"
+                                stroke="currentColor"
+                                strokeWidth="1.6"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          ) : isError ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="h-4.5 w-4.5"
+                            >
+                              <path
+                                d="M6 6l12 12M6 18L18 6"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                              />
+                            </svg>
+                          ) : (
+                            <span className="h-2 w-2 rounded-full bg-current opacity-60" />
+                          )}
+                        </div>
+                        {!isLast ? (
+                          <div className="w-px flex-1 bg-slate-800/80 mt-2" />
+                        ) : null}
+                      </div>
+
+                      <div className="flex-1 min-w-0 pt-1">
+                        <div className="flex items-center justify-between gap-3">
+                          <div
+                            className={`text-sm font-semibold truncate ${
+                              isDone
+                                ? "text-slate-100"
+                                : isActive
+                                  ? "text-white"
+                                  : isError
+                                    ? "text-rose-100"
+                                    : "text-slate-400"
+                            }`}
+                          >
+                            {label}
+                          </div>
+                          {isActive ? (
+                            <div className="text-xs text-slate-500 whitespace-nowrap">
+                              Step {idx + 1} of {total}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {walletFlow.lastError ? (
+                <div className="mt-4 rounded-2xl bg-rose-900/35 border border-rose-500/30 px-3 py-2 text-xs text-rose-100">
+                  {walletFlow.lastError}
+                </div>
+              ) : null}
+
+              <div className="mt-4 text-[11px] text-slate-500">
+                Keep this window open while confirming transactions in your wallet.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {swapStatus && (
         <div className="fixed left-4 bottom-4 z-50 max-w-sm">

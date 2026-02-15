@@ -21,6 +21,7 @@ const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
 ];
 const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
+  "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
 ];
 
@@ -86,11 +87,8 @@ const buildSubgraphEndpoints = (primaryUrl, primaryApiKey, fallbackUrls = []) =>
   const urls = prioritizeSubgraphUrls(dedupeUrls([normalizedPrimary, ...fallbackUrls]));
   return urls.map((url) => ({
     url,
-    // Keep key for the explicit primary, and for providers that require auth (The Graph gateway).
-    apiKey:
-      url === normalizedPrimary || endpointRequiresApiKey(url)
-        ? String(primaryApiKey || "").trim()
-        : "",
+    // Only attach API keys to endpoints that require auth (avoid forcing auth headers on public endpoints).
+    apiKey: endpointRequiresApiKey(url) ? String(primaryApiKey || "").trim() : "",
   }));
 };
 
@@ -125,8 +123,9 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const isIndexerUnavailableMessage = (value = "") => {
   const msg = String(value || "").toLowerCase();
   return (
-    msg.includes("bad indexers") ||
+    msg.includes("bad indexer") ||
     msg.includes("indexer not available") ||
+    msg.includes("indexer issue") ||
     msg.includes("unavailable(no status")
   );
 };
