@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import LaunchpadMarket from "../../pages/launchpad/LaunchpadMarket";
 import TokenDetail from "../../pages/launchpad/TokenDetail";
 import LegacyLaunchpadSection from "./LaunchpadSection";
@@ -59,6 +59,18 @@ export default function LaunchpadMarketplaceSection({
   onNavigate,
 }) {
   const parsed = useMemo(() => parseLaunchpadPath(routePath), [routePath]);
+
+  // When navigating from a long scrollable list (market) into a shorter detail view,
+  // keep the UX predictable by resetting scroll. Otherwise the user can land "below"
+  // the content and think nothing rendered.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+    } catch {
+      window.scrollTo(0, 0);
+    }
+  }, [parsed.view, parsed.tokenAddress, parsed.tradeIntent]);
 
   if (parsed.view === "detail") {
     return (

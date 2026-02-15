@@ -1,8 +1,18 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { MegaVaultPositionWidget } from "@avon_xyz/widget";
-import { useAccount, useConnect, useReconnect } from "wagmi";
+import { MEGAVAULTS, MegaVaultPositionWidget } from "@avon_xyz/widget";
+import { useAccount, useConnect, useReadContract, useReconnect } from "wagmi";
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import megaLogo from "../../tokens/megaeth.png";
+
+const AVON_VAULT_REFERRAL_ABI = [
+  {
+    type: "function",
+    name: "isWhitelistedReferrer",
+    stateMutability: "view",
+    inputs: [{ name: "referrer", type: "address" }],
+    outputs: [{ name: "", type: "bool" }],
+  },
+];
 
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
@@ -13,7 +23,25 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
     const parsed = Number.parseInt(hex, 16);
     return Number.isFinite(parsed) ? parsed : 4326;
   }, [activeNetwork]);
-  const safeReferrer = /^0x[a-f0-9]{40}$/iu.test(REFERRER_ADDRESS) ? REFERRER_ADDRESS : ZERO_ADDRESS;
+
+  const vaultAddress = MEGAVAULTS?.[chainId]?.id || null;
+  const referrerLooksValid = /^0x[a-f0-9]{40}$/iu.test(REFERRER_ADDRESS);
+
+  const whitelistedReferrerQuery = useReadContract({
+    address: vaultAddress || undefined,
+    abi: AVON_VAULT_REFERRAL_ABI,
+    functionName: "isWhitelistedReferrer",
+    args: [REFERRER_ADDRESS],
+    chainId,
+    query: {
+      enabled: Boolean(vaultAddress) && referrerLooksValid,
+      refetchOnWindowFocus: false,
+      staleTime: 60_000,
+    },
+  });
+
+  const isWhitelistedReferrer = Boolean(whitelistedReferrerQuery.data);
+  const safeReferrer = isWhitelistedReferrer ? REFERRER_ADDRESS : ZERO_ADDRESS;
   const { isConnected } = useAccount();
   const { connectAsync, connectors } = useConnect();
   const { reconnect } = useReconnect();
@@ -113,7 +141,27 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300" />
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+              <span className="uppercase tracking-[0.22em] text-[10px] text-slate-500">Referral</span>
+              {referrerLooksValid && isWhitelistedReferrer ? (
+                <span className="rounded-full border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
+                  Active
+                </span>
+              ) : referrerLooksValid ? (
+                <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
+                  Inactive
+                </span>
+              ) : (
+                <span className="rounded-full border border-rose-400/35 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200">
+                  Invalid
+                </span>
+              )}
+              {!isWhitelistedReferrer && referrerLooksValid ? (
+                <span className="text-[11px] text-slate-400">
+                  Referrer must be whitelisted by Avon; deposits will proceed without referral.
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex items-start justify-center lg:justify-end">
