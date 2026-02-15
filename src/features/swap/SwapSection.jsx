@@ -959,19 +959,26 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const filteredTokens = useMemo(() => {
     const q = tokenSearch.trim().toLowerCase();
     const all = tokenOptions
-      .map((sym) => tokenRegistry[sym])
-      .filter(
-        (t) =>
-          t &&
-          (t.address || t.symbol === "ETH" || t.symbol === "WETH")
-      );
+      .map((key) => ({ key, meta: tokenRegistry[key] }))
+      .filter(({ key, meta }) => {
+        if (!meta) return false;
+        // Always allow selecting native ETH/WETH entries.
+        if (key === "ETH" || key === "WETH") return true;
+        return Boolean(meta.address);
+      });
     if (!q) return all;
-    return all.filter((t) => {
-      const addr = (t.address || "").toLowerCase();
+    return all.filter(({ key, meta }) => {
+      const addr = (meta?.address || "").toLowerCase();
+      const sym = String(meta?.symbol || "").toLowerCase();
+      const display = String(meta?.displaySymbol || "").toLowerCase();
+      const name = String(meta?.name || "").toLowerCase();
+      const keyLower = String(key || "").toLowerCase();
       return (
-        t.symbol.toLowerCase().includes(q) ||
-        (t.name || "").toLowerCase().includes(q) ||
-        addr.includes(q)
+        sym.includes(q) ||
+        display.includes(q) ||
+        name.includes(q) ||
+        addr.includes(q) ||
+        keyLower.includes(q)
       );
     });
   }, [tokenOptions, tokenRegistry, tokenSearch]);
@@ -1065,10 +1072,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       try {
         const provider = await getProvider().catch(() => getReadOnlyProvider());
         const iface = new Interface(ERC20_ABI);
-        const ercTokens = Object.values(tokenRegistry).filter((t) => t && t.address);
+        const ercTokens = Object.entries(tokenRegistry)
+          .map(([key, meta]) => ({ key, meta }))
+          .filter(({ meta }) => meta && meta.address);
         if (!ercTokens.length) return;
-        const calls = ercTokens.map((t) => ({
-          target: t.address,
+        const calls = ercTokens.map(({ meta }) => ({
+          target: meta.address,
           callData: iface.encodeFunctionData("balanceOf", [address]),
         }));
         const res = await multicall(
@@ -1081,8 +1090,8 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           try {
             const raw = iface.decodeFunctionResult("balanceOf", r.returnData)[0];
             const token = ercTokens[idx];
-            const num = Number(formatUnits(raw, token.decimals || 18));
-            if (Number.isFinite(num)) next[token.symbol] = num;
+            const num = Number(formatUnits(raw, token.meta?.decimals || 18));
+            if (Number.isFinite(num)) next[token.key] = num;
           } catch {
             /* ignore */
           }
@@ -5088,19 +5097,19 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             </div>
 
             <div className="max-h-[480px] overflow-y-auto divide-y divide-slate-800">
-              {filteredTokens.map((t) => {
-                const displayAddress = t.address || "";
-                const displaySym = displaySymbol(t, t.symbol);
+              {filteredTokens.map(({ key: tokenKey, meta: t }) => {
+                const displayAddress = t?.address || "";
+                const displaySym = displaySymbol(t, tokenKey);
                 return (
                   <button
-                    key={`${selectorOpen}-${t.symbol}`}
+                    key={`${selectorOpen}-${tokenKey}`}
                     type="button"
-                    onClick={() => handleSelectToken(t.symbol)}
+                    onClick={() => handleSelectToken(tokenKey)}
                     className="w-full px-4 py-3 flex items-center gap-3 bg-slate-950/50 hover:bg-slate-900/70 transition text-left"
                   >
                     <TokenLogo
                       token={t}
-                      fallbackSymbol={t.symbol}
+                      fallbackSymbol={tokenKey}
                       imgClassName="h-10 w-10 rounded-full border border-slate-800 bg-slate-900 object-contain"
                       placeholderClassName="h-10 w-10 rounded-full bg-slate-800 border border-slate-700 text-sm font-semibold text-white flex items-center justify-center"
                     />
@@ -5209,7 +5218,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                       ) : (
                         <span className="text-[11px] text-slate-500">Native asset</span>
                       )}
-                      <div>{formatBalance(effectiveBalances[t.symbol])}</div>
+                      <div>{formatBalance(effectiveBalances[tokenKey])}</div>
                     </div>
                   </button>
                 );
