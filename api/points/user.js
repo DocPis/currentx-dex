@@ -341,11 +341,16 @@ export default async function handler(req, res) {
     const userRowsByAddress = new Map(
       top100Addresses.map((address, idx) => [address, top100Rows?.[idx] || null])
     );
+    const leaderboardPreviewConfig = {
+      ...rewardsConfig,
+      top100MinVolumeUsd: 0,
+      top100RequireFinalization: false,
+    };
     const rewardsTable = computeLeaderboardRewardsTable({
       entries: rankedEntries,
       userRowsByAddress,
       seasonRewardCrx,
-      config: rewardsConfig,
+      config: leaderboardPreviewConfig,
       nowMs,
       requireTop100Finalization: false,
     });
@@ -359,11 +364,16 @@ export default async function handler(req, res) {
     };
 
     const parsedRewardRow = parseRewardClaimRow(rewardRow);
+    const claimCount = excludedFromLeaderboard
+      ? 0
+      : Math.max(0, Math.floor(toNumber(parsedRewardRow?.claimCount, 0)));
+    const frozenRewardSnapshotCrx = toNumber(parsedRewardRow?.totalRewardSnapshotCrx, 0);
+    const hasFrozenSnapshot = claimCount > 0 && frozenRewardSnapshotCrx > 0;
     const rewardSnapshotCrx =
       excludedFromLeaderboard
         ? 0
-        : parsedRewardRow?.totalRewardSnapshotCrx > 0
-        ? parsedRewardRow.totalRewardSnapshotCrx
+        : hasFrozenSnapshot
+        ? frozenRewardSnapshotCrx
         : rewardBreakdown.rewardCrx;
     const claimState = getLeaderboardClaimState({
       totalRewardCrx: rewardSnapshotCrx,
@@ -396,7 +406,7 @@ export default async function handler(req, res) {
           sharePct: rewardBreakdown.sharePct,
           rewardCrx: rewardBreakdown.rewardCrx,
           rewardSnapshotCrx,
-          claimCount: excludedFromLeaderboard ? 0 : parsedRewardRow?.claimCount || 0,
+          claimCount,
           lastClaimAt: excludedFromLeaderboard ? null : parsedRewardRow?.lastClaimAt || null,
           ...claimState,
         },
