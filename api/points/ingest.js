@@ -1358,7 +1358,9 @@ export default async function handler(req, res) {
   }
 
   const startSec = Math.floor(startMs / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
   const endSec = Math.floor((endMs || Date.now()) / 1000);
+  const ingestCeilingSec = Math.min(endSec, nowSec);
   const ingestMaxWindowSeconds = getIngestWindowSeconds();
   const cursorNearTipSeconds = getCursorNearTipSeconds();
   const keys = getKeys(seasonId);
@@ -1383,7 +1385,10 @@ export default async function handler(req, res) {
           : startSec;
 
       try {
-        const sourceEndSec = Math.min(endSec, cursor + ingestMaxWindowSeconds);
+        const sourceEndSec = Math.min(
+          ingestCeilingSec,
+          cursor + ingestMaxWindowSeconds
+        );
         const { totals, cursor: nextCursor } = await ingestSource({
           source: src.source,
           url: src.url,
@@ -1397,7 +1402,7 @@ export default async function handler(req, res) {
           const advancedEmptyNearTip =
             totals.size === 0 &&
             nextCursor === sourceEndSec + 1 &&
-            sourceEndSec >= endSec - cursorNearTipSeconds;
+            sourceEndSec >= ingestCeilingSec - cursorNearTipSeconds;
           if (!advancedEmptyNearTip) {
             cursorsToSet.push({ key: cursorKey, value: nextCursor });
           }
@@ -1419,7 +1424,10 @@ export default async function handler(req, res) {
               : lpBootstrapStart;
 
           try {
-            const lpEndSec = Math.min(endSec, lpCursorStart + ingestMaxWindowSeconds);
+            const lpEndSec = Math.min(
+              ingestCeilingSec,
+              lpCursorStart + ingestMaxWindowSeconds
+            );
             const { wallets: lpWallets, cursor: nextLpCursor } =
               await ingestBoostLiquidityActivitySource({
                 url: src.url,
@@ -1436,7 +1444,7 @@ export default async function handler(req, res) {
               const advancedEmptyNearTip =
                 lpWallets.size === 0 &&
                 nextLpCursor === lpEndSec + 1 &&
-                lpEndSec >= endSec - cursorNearTipSeconds;
+                lpEndSec >= ingestCeilingSec - cursorNearTipSeconds;
               if (!advancedEmptyNearTip) {
                 cursorsToSet.push({ key: lpCursorKey, value: nextLpCursor });
               }
