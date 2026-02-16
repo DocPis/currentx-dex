@@ -59,6 +59,11 @@ const V3_FEE_OPTIONS = [
   { fee: 3000, label: "0.30%" },
   { fee: 10000, label: "1.00%" },
 ];
+const V3_FEE_DESCRIPTIONS = {
+  500: "Low fee - best for correlated pairs",
+  3000: "Balanced - default for most pairs",
+  10000: "High fee - better for volatile pairs",
+};
 const V3_TICK_SPACING = {
   500: 10,
   3000: 60,
@@ -1150,6 +1155,7 @@ export default function LiquiditySection({
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [v3Token0Open, setV3Token0Open] = useState(false);
   const [v3Token1Open, setV3Token1Open] = useState(false);
+  const [v3FeeTierOpen, setV3FeeTierOpen] = useState(false);
   const [v3Token0Search, setV3Token0Search] = useState("");
   const [v3Token1Search, setV3Token1Search] = useState("");
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
@@ -1177,6 +1183,7 @@ export default function LiquiditySection({
   const nftMetaRef = useRef({});
   const v3Token0DropdownRef = useRef(null);
   const v3Token1DropdownRef = useRef(null);
+  const v3FeeTierDropdownRef = useRef(null);
   const v3RangeTrackRef = useRef(null);
   const v3DragRafRef = useRef(null);
   const v3DragTargetRef = useRef(null);
@@ -1282,6 +1289,10 @@ export default function LiquiditySection({
       }),
     [tokenRegistry]
   );
+  const selectedV3FeeOption = useMemo(() => {
+    const matched = V3_FEE_OPTIONS.find((opt) => Number(opt.fee) === Number(v3FeeTier));
+    return matched || V3_FEE_OPTIONS[1];
+  }, [v3FeeTier]);
 
   useEffect(() => {
     if (showV2 && !showV3 && liquidityView !== "v2") {
@@ -2912,7 +2923,7 @@ export default function LiquiditySection({
 
   const v3Ratio0Pct = v3DepositRatio ? Math.round(v3DepositRatio.token0 * 100) : 0;
   const v3Ratio1Pct = v3DepositRatio ? Math.round(v3DepositRatio.token1 * 100) : 0;
-  const v3HideChartControls = v3Token0Open || v3Token1Open;
+  const v3HideChartControls = v3Token0Open || v3Token1Open || v3FeeTierOpen;
   const v3AprReady =
     v3EstimatedApr !== null &&
     v3EstimatedApr !== undefined &&
@@ -3073,12 +3084,17 @@ export default function LiquiditySection({
             tokenMap[meta0.symbol] = tokenMap[meta0.symbol] || meta0;
             tokenMap[meta1.symbol] = tokenMap[meta1.symbol] || meta1;
 
-            const id = `${meta0.symbol.toLowerCase()}-${meta1.symbol.toLowerCase()}`;
+            const normalizedPairAddress = String(pairAddress || "").toLowerCase();
+            const id =
+              normalizedPairAddress ||
+              `${meta0.symbol.toLowerCase()}-${meta1.symbol.toLowerCase()}`;
             poolsFromChain.push({
               id,
               token0Symbol: meta0.symbol,
               token1Symbol: meta1.symbol,
               poolType: "volatile",
+              pairAddress: pairAddress || null,
+              pairId: normalizedPairAddress || null,
               token0Address: meta0.address,
               token1Address: meta1.address,
               token0Decimals: meta0.decimals,
@@ -3865,7 +3881,7 @@ export default function LiquiditySection({
   }, [showTokenList]);
 
   useEffect(() => {
-    if (!v3Token0Open && !v3Token1Open) return undefined;
+    if (!v3Token0Open && !v3Token1Open && !v3FeeTierOpen) return undefined;
     const handleClick = (event) => {
       const target = event.target;
       if (
@@ -3882,10 +3898,17 @@ export default function LiquiditySection({
       ) {
         setV3Token1Open(false);
       }
+      if (
+        v3FeeTierOpen &&
+        v3FeeTierDropdownRef.current &&
+        !v3FeeTierDropdownRef.current.contains(target)
+      ) {
+        setV3FeeTierOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
-  }, [v3Token0Open, v3Token1Open]);
+  }, [v3Token0Open, v3Token1Open, v3FeeTierOpen]);
 
   useEffect(() => {
     if (!v3ChartMenuOpen) return undefined;
@@ -3902,10 +3925,10 @@ export default function LiquiditySection({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [v3ChartMenuOpen]);
   useEffect(() => {
-    if (v3Token0Open || v3Token1Open) {
+    if (v3Token0Open || v3Token1Open || v3FeeTierOpen) {
       setV3ChartMenuOpen(false);
     }
-  }, [v3Token0Open, v3Token1Open]);
+  }, [v3Token0Open, v3Token1Open, v3FeeTierOpen]);
 
   useEffect(() => {
     if (!slippageMenuOpen) return undefined;
@@ -6027,6 +6050,12 @@ export default function LiquiditySection({
       poolSelection.pairSymbol ||
       poolSelection.token1;
     if (!raw0 || !raw1) return;
+
+    const normalizeAddress = (value) => {
+      const trimmed = String(value || "").trim();
+      if (!trimmed) return "";
+      return isAddressLike(trimmed) ? trimmed.toLowerCase() : "";
+    };
     const resolveSymbol = (symbol) => {
       const trimmed = String(symbol || "").trim();
       if (!trimmed) return "";
@@ -6036,9 +6065,50 @@ export default function LiquiditySection({
       );
       return found || trimmed;
     };
+    const resolveV3Symbol = (symbol, tokenId) => {
+      const trimmed = String(symbol || "").trim();
+      const lower = trimmed.toLowerCase();
+      const byAddress = tokenId
+        ? v3TokenOptions.find((key) => {
+            const meta = tokenRegistry[key];
+            if (!meta) return false;
+            if (meta.address && meta.address.toLowerCase() === tokenId) return true;
+            if (key === "ETH" && WETH_ADDRESS && WETH_ADDRESS.toLowerCase() === tokenId) {
+              return true;
+            }
+            return false;
+          })
+        : "";
+      if (byAddress) return byAddress;
+      if (lower) {
+        const byKey = v3TokenOptions.find((key) => key.toLowerCase() === lower);
+        if (byKey) return byKey;
+        const byMetaSymbol = v3TokenOptions.find((key) => {
+          const meta = tokenRegistry[key];
+          if (!meta) return false;
+          const labels = [meta.symbol, meta.displaySymbol]
+            .filter(Boolean)
+            .map((label) => String(label).toLowerCase());
+          return labels.includes(lower);
+        });
+        if (byMetaSymbol) return byMetaSymbol;
+      }
+      return resolveSymbol(trimmed);
+    };
+
+    const selectedPoolIdRaw = String(poolSelection.id || "").trim();
+    const selectedPoolIdNormalizedAddress = normalizeAddress(poolSelection.id);
+    const selectedPoolRefId =
+      selectedPoolIdNormalizedAddress ||
+      (selectedPoolIdRaw ? selectedPoolIdRaw.toLowerCase() : "");
+    const token0Id = normalizeAddress(poolSelection.token0Id);
+    const token1Id = normalizeAddress(poolSelection.token1Id);
     const token0Symbol = resolveSymbol(raw0);
     const token1Symbol = resolveSymbol(raw1);
     if (!token0Symbol || !token1Symbol) return;
+    const v3Token0Symbol = resolveV3Symbol(raw0, token0Id) || token0Symbol;
+    const v3Token1Symbol = resolveV3Symbol(raw1, token1Id) || token1Symbol;
+    if (!v3Token0Symbol || !v3Token1Symbol) return;
     const feeTierNum = Number(poolSelection.feeTier);
     const hasFeeTier = Number.isFinite(feeTierNum) && feeTierNum > 0;
     const typeRaw = String(poolSelection.type || "").toUpperCase();
@@ -6046,6 +6116,9 @@ export default function LiquiditySection({
     const preferV2 = typeRaw === "V2" || (!typeRaw && !hasFeeTier);
     const selectionKey = [
       typeRaw || (preferV3 ? "V3" : "V2"),
+      selectedPoolRefId,
+      token0Id,
+      token1Id,
       token0Symbol,
       token1Symbol,
       hasFeeTier ? feeTierNum : "",
@@ -6060,8 +6133,10 @@ export default function LiquiditySection({
 
     if (targetView === "v3") {
       setLiquidityView("v3");
-      setV3Token0(token0Symbol);
-      setV3Token1(token1Symbol);
+      setV3Token0(v3Token0Symbol);
+      setV3Token1(v3Token1Symbol);
+      // Selection from Pools should stay on the selected tier, no automatic tier fallback.
+      v3FeeTierLockedRef.current = hasFeeTier;
       if (hasFeeTier) setV3FeeTier(feeTierNum);
       window.requestAnimationFrame(() => {
         const target = document.getElementById("v3-add-liquidity");
@@ -6082,6 +6157,26 @@ export default function LiquiditySection({
       const lower0 = token0Symbol.toLowerCase();
       const lower1 = token1Symbol.toLowerCase();
       const matched = allPools.find((p) => {
+        const candidateId = String(p.id || "").toLowerCase();
+        const candidatePairId = normalizeAddress(p.pairAddress || p.pairId);
+        if (
+          selectedPoolRefId &&
+          (candidateId === selectedPoolRefId || candidatePairId === selectedPoolRefId)
+        ) {
+          return true;
+        }
+        const p0 = normalizeAddress(
+          p.token0Address || resolveTokenAddress(p.token0Symbol, tokenRegistry)
+        );
+        const p1 = normalizeAddress(
+          p.token1Address || resolveTokenAddress(p.token1Symbol, tokenRegistry)
+        );
+        if (token0Id && token1Id && p0 && p1) {
+          return (
+            (p0 === token0Id && p1 === token1Id) ||
+            (p0 === token1Id && p1 === token0Id)
+          );
+        }
         const symA = (p.token0Symbol || "").toLowerCase();
         const symB = (p.token1Symbol || "").toLowerCase();
         return (
@@ -6089,17 +6184,17 @@ export default function LiquiditySection({
           (symA === lower1 && symB === lower0)
         );
       });
-      const fallbackId = `custom-${token0Symbol}-${token1Symbol}`;
-      const poolId = matched?.id || fallbackId;
-      setSelectedPoolId(poolId);
-      setSelectionDepositPoolId(poolId);
+      const fallbackId = selectedPoolRefId || `custom-${token0Symbol}-${token1Symbol}`;
+      const targetPoolId = matched?.id || fallbackId;
+      setSelectedPoolId(targetPoolId);
+      setSelectionDepositPoolId(targetPoolId);
       window.requestAnimationFrame(() => {
         const target = document.getElementById("token-selection-deposit");
         if (target) target.scrollIntoView({ behavior: "smooth" });
       });
       lastPoolSelectionRef.current = selectionKey;
     }
-  }, [poolSelection, tokenRegistry, allPools, showV2, showV3]);
+  }, [poolSelection, tokenRegistry, v3TokenOptions, allPools, showV2, showV3]);
 
   const addCustomTokenByAddress = useCallback(
     async (rawAddress, { clearSearch = false } = {}) => {
@@ -7489,6 +7584,7 @@ export default function LiquiditySection({
                         onClick={() => {
                           setV3Token0Open((v) => !v);
                           setV3Token1Open(false);
+                          setV3FeeTierOpen(false);
                           setV3Token0Search("");
                         }}
                         className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
@@ -7612,6 +7708,7 @@ export default function LiquiditySection({
                         onClick={() => {
                           setV3Token1Open((v) => !v);
                           setV3Token0Open(false);
+                          setV3FeeTierOpen(false);
                           setV3Token1Search("");
                         }}
                         className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
@@ -7732,21 +7829,101 @@ export default function LiquiditySection({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-xs text-slate-400">Fee tier</span>
-                    <select
-                      name="v3-fee-tier"
-                      value={v3FeeTier}
-                      onChange={(e) => {
-                        v3FeeTierLockedRef.current = true;
-                        setV3FeeTier(Number(e.target.value));
-                      }}
-                      className="bg-transparent border-0 border-b border-[#1B2433] rounded-none px-0 py-2 text-sm text-[#C7D2E0] focus:outline-none"
-                    >
-                      {V3_FEE_OPTIONS.map((opt) => (
-                        <option key={`fee-${opt.fee}`} value={opt.fee}>
-                          {opt.label}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative" ref={v3FeeTierDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setV3FeeTierOpen((v) => !v);
+                          setV3Token0Open(false);
+                          setV3Token1Open(false);
+                        }}
+                        className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100 flex items-center justify-between"
+                        aria-haspopup="listbox"
+                        aria-expanded={v3FeeTierOpen}
+                        aria-label="Select V3 fee tier"
+                      >
+                        <div className="min-w-0 flex flex-col items-start">
+                          <span className="font-medium text-slate-100">{selectedV3FeeOption.label}</span>
+                          <span className="text-[11px] text-slate-400 truncate">
+                            {V3_FEE_DESCRIPTIONS[selectedV3FeeOption.fee] || "Fee tier"}
+                          </span>
+                        </div>
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className={`h-4 w-4 text-slate-400 transition ${v3FeeTierOpen ? "rotate-180" : ""}`}
+                        >
+                          <path
+                            d="M6 8l4 4 4-4"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      {v3FeeTierOpen && (
+                        <div
+                          role="listbox"
+                          aria-label="V3 fee tiers"
+                          className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-slate-700/80 bg-[#0b1324]/95 shadow-[0_20px_60px_-28px_rgba(56,189,248,0.55)] backdrop-blur"
+                        >
+                          <div className="p-1.5">
+                            {V3_FEE_OPTIONS.map((opt) => {
+                              const isSelected = Number(v3FeeTier) === Number(opt.fee);
+                              return (
+                                <button
+                                  key={`fee-${opt.fee}`}
+                                  type="button"
+                                  role="option"
+                                  aria-selected={isSelected}
+                                  onClick={() => {
+                                    v3FeeTierLockedRef.current = true;
+                                    setV3FeeTier(Number(opt.fee));
+                                    setV3FeeTierOpen(false);
+                                  }}
+                                  className={`w-full rounded-lg px-3 py-2 text-left transition flex items-center justify-between gap-3 ${
+                                    isSelected
+                                      ? "bg-sky-500/15 border border-sky-500/35"
+                                      : "border border-transparent hover:bg-slate-800/70"
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <div
+                                      className={`text-sm font-medium ${
+                                        isSelected ? "text-sky-100" : "text-slate-100"
+                                      }`}
+                                    >
+                                      {opt.label}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400">
+                                      {V3_FEE_DESCRIPTIONS[opt.fee] || "Fee tier"}
+                                    </div>
+                                  </div>
+                                  {isSelected && (
+                                    <svg
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      xmlns="http://www.w3.org/2000/svg"
+                                      className="h-4 w-4 text-emerald-300 shrink-0"
+                                    >
+                                      <path
+                                        d="M5 13l4 4L19 7"
+                                        stroke="currentColor"
+                                        strokeWidth="1.8"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                      />
+                                    </svg>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2 border-b border-[#1B2433] pb-1 text-xs text-slate-400">

@@ -17,7 +17,7 @@ const AVON_VAULT_REFERRAL_ABI = [
 export default function MegaVaultSection({ address, onConnectWallet }) {
   const activeNetwork = useMemo(() => getActiveNetworkConfig(), []);
   const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-  const REFERRER_ADDRESS = "0x522Fd15322252984011D8E59fDB3b2fB8F586127";
+  const REFERRER_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
   const chainId = useMemo(() => {
     const hex = activeNetwork?.chainIdHex || "0x10e6";
     const parsed = Number.parseInt(hex, 16);
@@ -141,27 +141,6 @@ export default function MegaVaultSection({ address, onConnectWallet }) {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-              <span className="uppercase tracking-[0.22em] text-[10px] text-slate-500">Referral</span>
-              {referrerLooksValid && isWhitelistedReferrer ? (
-                <span className="rounded-full border border-emerald-400/35 bg-emerald-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-200">
-                  Active
-                </span>
-              ) : referrerLooksValid ? (
-                <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200">
-                  Inactive
-                </span>
-              ) : (
-                <span className="rounded-full border border-rose-400/35 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-rose-200">
-                  Invalid
-                </span>
-              )}
-              {!isWhitelistedReferrer && referrerLooksValid ? (
-                <span className="text-[11px] text-slate-400">
-                  Referrer must be whitelisted by Avon; deposits will proceed without referral.
-                </span>
-              ) : null}
-            </div>
           </div>
 
           <div className="flex items-start justify-center lg:justify-end">
