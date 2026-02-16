@@ -227,7 +227,7 @@ const CREATOR_BUY_UNAVAILABLE_DEFAULT_ERROR =
 const CURRENTX_INITIAL_BUY_ROUTER_SELECTOR = id(
   "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"
 )
-  .slice(2)
+  .slice(2, 10)
   .toLowerCase();
 const CURRENTX_ROUTER_READER_ABI = [
   {
