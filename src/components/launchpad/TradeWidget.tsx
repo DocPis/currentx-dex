@@ -1,40 +1,45 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AbiCoder, Contract, formatUnits, parseUnits } from "ethers";
+import { Contract, formatUnits, isAddress, parseUnits } from "ethers";
 import {
+  CURRENTX_ADDRESS,
   EXPLORER_BASE_URL,
-  PERMIT2_ADDRESS,
   TOKENS,
   UNIV3_FACTORY_ADDRESS,
   UNIV3_QUOTER_V2_ADDRESS,
-  UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+  UNIV3_SWAP_ROUTER_ADDRESS,
   WETH_ADDRESS,
   getProvider,
   getReadOnlyProvider,
-  getV2Quote,
-  getV2QuoteWithMeta,
 } from "../../shared/config/web3";
 import {
   ERC20_ABI,
-  PERMIT2_ABI,
   UNIV3_FACTORY_ABI,
   UNIV3_QUOTER_V2_ABI,
-  UNIV3_UNIVERSAL_ROUTER_ABI,
+  UNIV3_SWAP_ROUTER_ABI,
 } from "../../shared/config/abis";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatTokenAmount, shortAddress } from "../../services/launchpad/utils";
 
-const UR_COMMANDS = {
-  V3_SWAP_EXACT_IN: 0x00,
-  V2_SWAP_EXACT_IN: 0x08,
-  WRAP_ETH: 0x0b,
-  UNWRAP_WETH: 0x0c,
-};
 const MAX_UINT256 = (1n << 256n) - 1n;
-const MAX_UINT160 = (1n << 160n) - 1n;
-const MAX_UINT48 = (1n << 48n) - 1n;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const V3_FEE_TIERS = [10000, 3000, 500];
+const CURRENTX_ROUTER_AND_FEE_READER_ABI = [
+  {
+    inputs: [],
+    name: "swapRouter",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "POOL_FEE",
+    outputs: [{ internalType: "uint24", name: "", type: "uint24" }],
+    stateMutability: "view",
+    type: "function",
+  },
+];
 
 const toSymbol = (address: string, token: LaunchpadTokenCard) => {
   const lower = String(address || "").toLowerCase();
@@ -44,32 +49,6 @@ const toSymbol = (address: string, token: LaunchpadTokenCard) => {
     (entry) => String(entry?.address || "").toLowerCase() === lower
   );
   return known?.symbol || shortAddress(address);
-};
-
-const buildCommandBytes = (commands: number[]) =>
-  `0x${commands.map((cmd) => Number(cmd).toString(16).padStart(2, "0")).join("")}`;
-
-const encodeV3Path = (tokens: string[], fees: number[]) => {
-  if (
-    !Array.isArray(tokens) ||
-    !Array.isArray(fees) ||
-    tokens.length !== fees.length + 1
-  ) {
-    throw new Error("Invalid V3 path.");
-  }
-  const parts: string[] = [];
-  for (let i = 0; i < fees.length; i += 1) {
-    const token = String(tokens[i] || "").toLowerCase().replace(/^0x/u, "");
-    const next = String(tokens[i + 1] || "").toLowerCase().replace(/^0x/u, "");
-    const fee = Number(fees[i]);
-    if (!token || !next || !Number.isFinite(fee)) {
-      throw new Error("Invalid V3 path.");
-    }
-    if (i === 0) parts.push(token);
-    parts.push(fee.toString(16).padStart(6, "0"));
-    parts.push(next);
-  }
-  return `0x${parts.join("")}`;
 };
 
 const parseAmount = (value: string, decimals: number) => {
@@ -147,12 +126,56 @@ const TradeWidget = ({
   const [walletToken, setWalletToken] = useState<bigint>(0n);
   const [tx, setTx] = useState<TxState>({ stage: "idle", message: "" });
   const [submitLoading, setSubmitLoading] = useState(false);
+  const [swapRouterAddress, setSwapRouterAddress] = useState<string>(
+    String(UNIV3_SWAP_ROUTER_ADDRESS || "").trim()
+  );
+  const [preferredPoolFee, setPreferredPoolFee] = useState<number | null>(null);
   const quoteTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!initialSide) return;
     setSide(initialSide);
   }, [initialSide, token.address]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const resolveRouterAndFee = async () => {
+      const fallbackRouter = String(UNIV3_SWAP_ROUTER_ADDRESS || "").trim();
+      const provider = getReadOnlyProvider(false, true);
+      if (!isAddress(CURRENTX_ADDRESS)) {
+        if (!ignore) {
+          setSwapRouterAddress(fallbackRouter);
+          setPreferredPoolFee(null);
+        }
+        return;
+      }
+
+      try {
+        const reader = new Contract(CURRENTX_ADDRESS, CURRENTX_ROUTER_AND_FEE_READER_ABI, provider);
+        const [routerRaw, feeRaw] = await Promise.all([
+          reader.swapRouter().catch(() => fallbackRouter),
+          reader.POOL_FEE().catch(() => null),
+        ]);
+        const router = String(routerRaw || "").trim();
+        const fee = Number(feeRaw);
+        if (!ignore) {
+          setSwapRouterAddress(isAddress(router) ? router : fallbackRouter);
+          setPreferredPoolFee(Number.isFinite(fee) && fee > 0 ? fee : null);
+        }
+      } catch {
+        if (!ignore) {
+          setSwapRouterAddress(fallbackRouter);
+          setPreferredPoolFee(null);
+        }
+      }
+    };
+
+    void resolveRouterAndFee();
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   const sellAddress = side === "buy" ? WETH_ADDRESS : token.address;
   const buyAddress = side === "buy" ? token.address : WETH_ADDRESS;
@@ -205,24 +228,6 @@ const TradeWidget = ({
     void fetchBalances();
   }, [fetchBalances]);
 
-  const buildCandidatePaths = useCallback(() => {
-    const direct = [sellAddress, buyAddress];
-    const mids = [TOKENS.USDM?.address, TOKENS.CUSD?.address, TOKENS.CRX?.address]
-      .map((value) => String(value || ""))
-      .filter(Boolean)
-      .filter((mid) => {
-        const lower = mid.toLowerCase();
-        return lower !== sellAddress.toLowerCase() && lower !== buyAddress.toLowerCase();
-      });
-    const paths = [direct, ...mids.map((mid) => [sellAddress, mid, buyAddress])];
-    const dedup = new Map<string, string[]>();
-    paths.forEach((path) => {
-      const key = path.map((item) => item.toLowerCase()).join(",");
-      if (!dedup.has(key)) dedup.set(key, path);
-    });
-    return Array.from(dedup.values());
-  }, [buyAddress, sellAddress]);
-
   const refreshQuote = useCallback(async () => {
     const parsedAmount = parseAmount(amount, sellDecimals);
     if (!parsedAmount || parsedAmount <= 0n) {
@@ -241,82 +246,53 @@ const TradeWidget = ({
     setQuote((prev) => ({ ...prev, loading: true, error: "" }));
 
     try {
+      if (!UNIV3_FACTORY_ADDRESS || !UNIV3_QUOTER_V2_ADDRESS) {
+        throw new Error("V3 quoting contracts are not configured.");
+      }
       const provider = getReadOnlyProvider();
-      const candidates = buildCandidatePaths();
-      let bestPath: string[] = [];
+      const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+      const quoter = new Contract(UNIV3_QUOTER_V2_ADDRESS, UNIV3_QUOTER_V2_ABI, provider);
+      const feeCandidates = Array.from(
+        new Set(
+          [preferredPoolFee, ...V3_FEE_TIERS].filter(
+            (value) => Number.isFinite(Number(value)) && Number(value) > 0
+          )
+        )
+      ).map((value) => Number(value));
+
       let bestOut: bigint | null = null;
-      let bestProtocol: QuoteState["protocol"] = null;
       let bestV3Fee: number | null = null;
 
-      for (const path of candidates) {
-        try {
-          const output = await getV2Quote(provider, parsedAmount, path);
-          if (!bestOut || output > bestOut) {
-            bestOut = output;
-            bestPath = path;
-            bestProtocol = "V2";
-            bestV3Fee = null;
-          }
-        } catch {
-          // ignore missing pools
+      for (const fee of feeCandidates) {
+        const poolAddress = await factory.getPool(sellAddress, buyAddress, fee).catch(() => ZERO_ADDRESS);
+        if (!poolAddress || String(poolAddress).toLowerCase() === ZERO_ADDRESS) continue;
+
+        const params = {
+          tokenIn: sellAddress,
+          tokenOut: buyAddress,
+          amountIn: parsedAmount,
+          fee,
+          sqrtPriceLimitX96: 0,
+        };
+        const res = await quoter.quoteExactInputSingle.staticCall(params);
+        const outputRaw = res?.[0] ?? res?.amountOut ?? 0n;
+        const output = BigInt(outputRaw.toString());
+        if (output <= 0n) continue;
+        if (!bestOut || output > bestOut) {
+          bestOut = output;
+          bestV3Fee = fee;
         }
       }
 
-      if (UNIV3_FACTORY_ADDRESS && UNIV3_QUOTER_V2_ADDRESS) {
-        try {
-          const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
-          const quoter = new Contract(UNIV3_QUOTER_V2_ADDRESS, UNIV3_QUOTER_V2_ABI, provider);
-          for (const fee of V3_FEE_TIERS) {
-            const poolAddress = await factory
-              .getPool(sellAddress, buyAddress, fee)
-              .catch(() => ZERO_ADDRESS);
-            if (!poolAddress || String(poolAddress).toLowerCase() === ZERO_ADDRESS) continue;
-            const params = {
-              tokenIn: sellAddress,
-              tokenOut: buyAddress,
-              amountIn: parsedAmount,
-              fee,
-              sqrtPriceLimitX96: 0,
-            };
-            const res = await quoter.quoteExactInputSingle.staticCall(params);
-            const outputRaw = res?.[0] ?? res?.amountOut ?? 0n;
-            const output = BigInt(outputRaw.toString());
-            if (output <= 0n) continue;
-            if (!bestOut || output > bestOut) {
-              bestOut = output;
-              bestPath = [sellAddress, buyAddress];
-              bestProtocol = "V3";
-              bestV3Fee = fee;
-            }
-          }
-        } catch {
-          // ignore V3 lookup failures and keep best available route
-        }
-      }
-
-      if (!bestOut || !bestPath.length || !bestProtocol) {
-        throw new Error("No route with available liquidity.");
-      }
-
-      let priceImpact: number | null = null;
-      if (bestProtocol === "V2" && bestPath.length === 2) {
-        try {
-          const meta = await getV2QuoteWithMeta(provider, parsedAmount, bestPath[0], bestPath[1]);
-          if (Number.isFinite(meta?.priceImpactPct)) {
-            priceImpact = Number(meta.priceImpactPct);
-          }
-        } catch {
-          // no-op
-        }
-      }
+      if (!bestOut || !bestV3Fee) throw new Error("No V3 route with available liquidity.");
 
       setQuote({
         loading: false,
         error: "",
         amountOut: bestOut,
-        path: bestPath,
-        priceImpact,
-        protocol: bestProtocol,
+        path: [sellAddress, buyAddress],
+        priceImpact: null,
+        protocol: "V3",
         v3Fee: bestV3Fee,
       });
     } catch (error) {
@@ -330,7 +306,7 @@ const TradeWidget = ({
         v3Fee: null,
       });
     }
-  }, [amount, buildCandidatePaths, buyAddress, sellAddress, sellDecimals]);
+  }, [amount, buyAddress, preferredPoolFee, sellAddress, sellDecimals]);
 
   useEffect(() => {
     if (quoteTimerRef.current !== null) {
@@ -362,25 +338,20 @@ const TradeWidget = ({
   const checkApprovalNeeds = useCallback(
     async (owner: string, amountIn: bigint) => {
       if (side !== "sell") {
-        return { needsErc20: false, needsPermit2: false };
+        return { needsErc20: false };
+      }
+      if (!isAddress(swapRouterAddress)) {
+        throw new Error("Swap router is not configured.");
       }
 
       const provider = getReadOnlyProvider();
       const erc20 = new Contract(token.address, ERC20_ABI, provider);
-      const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider);
-
-      const [erc20Allowance, permit2AllowanceRaw] = await Promise.all([
-        erc20.allowance(owner, PERMIT2_ADDRESS),
-        permit2.allowance(owner, token.address, UNIV3_UNIVERSAL_ROUTER_ADDRESS),
-      ]);
-
-      const permit2Amount = BigInt((permit2AllowanceRaw?.[0] || 0n).toString());
+      const erc20Allowance = await erc20.allowance(owner, swapRouterAddress);
       return {
         needsErc20: BigInt(erc20Allowance.toString()) < amountIn,
-        needsPermit2: permit2Amount < amountIn,
       };
     },
-    [side, token.address]
+    [side, swapRouterAddress, token.address]
   );
 
   const trackPendingTx = async (hash: string) => {
@@ -412,6 +383,14 @@ const TradeWidget = ({
       setTx({ stage: "failed", message: "Route unavailable. Fetch a fresh quote." });
       return;
     }
+    if (quote.protocol !== "V3" || !quote.v3Fee) {
+      setTx({ stage: "failed", message: "Only V3 route is supported in Launchpad trades." });
+      return;
+    }
+    if (!isAddress(swapRouterAddress)) {
+      setTx({ stage: "failed", message: "Swap router is not configured." });
+      return;
+    }
 
     setSubmitLoading(true);
     let unsubscribeRealtime: (() => void) | null = null;
@@ -427,21 +406,7 @@ const TradeWidget = ({
         if (approval.needsErc20) {
           setTx({ stage: "awaiting_signature", message: `Approve ${token.symbol} allowance...` });
           const erc20 = new Contract(token.address, ERC20_ABI, signer);
-          const approveTx = await erc20.approve(PERMIT2_ADDRESS, MAX_UINT256);
-          const dispose = await trackPendingTx(String(approveTx.hash || ""));
-          await approveTx.wait();
-          dispose();
-        }
-
-        if (approval.needsPermit2) {
-          setTx({ stage: "awaiting_signature", message: "Approve Permit2 spender..." });
-          const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
-          const approveTx = await permit2.approve(
-            token.address,
-            UNIV3_UNIVERSAL_ROUTER_ADDRESS,
-            MAX_UINT160,
-            MAX_UINT48
-          );
+          const approveTx = await erc20.approve(swapRouterAddress, MAX_UINT256);
           const dispose = await trackPendingTx(String(approveTx.hash || ""));
           await approveTx.wait();
           dispose();
@@ -450,60 +415,33 @@ const TradeWidget = ({
 
       const minOut = (quote.amountOut * BigInt(Math.max(1, 10000 - slippageBps))) / 10000n;
       const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
-      const abi = AbiCoder.defaultAbiCoder();
-      const universal = new Contract(
-        UNIV3_UNIVERSAL_ROUTER_ADDRESS,
-        UNIV3_UNIVERSAL_ROUTER_ABI,
-        signer
-      );
+      const swapRouter = new Contract(swapRouterAddress, UNIV3_SWAP_ROUTER_ABI, signer);
+      const fee = Number(quote.v3Fee || V3_FEE_TIERS[0]);
 
-      const commands: number[] = [];
-      const inputs: string[] = [];
-      const isEthIn = side === "buy";
-      const isEthOut = side === "sell";
-      const payerIsUser = !isEthIn;
-      const useV3Route = quote.protocol === "V3" || Boolean(quote.v3Fee);
-
-      if (isEthIn) {
-        commands.push(UR_COMMANDS.WRAP_ETH);
-        inputs.push(
-          abi.encode(["address", "uint256"], [UNIV3_UNIVERSAL_ROUTER_ADDRESS, parsedAmount])
-        );
-      }
-
-      const recipient = isEthOut ? UNIV3_UNIVERSAL_ROUTER_ADDRESS : user;
-      if (useV3Route) {
-        const fee = Number(quote.v3Fee || V3_FEE_TIERS[0]);
-        const encodedPath = encodeV3Path(quote.path, [fee]);
-        commands.push(UR_COMMANDS.V3_SWAP_EXACT_IN);
-        inputs.push(
-          abi.encode(
-            ["address", "uint256", "uint256", "bytes", "bool"],
-            [recipient, parsedAmount, minOut, encodedPath, payerIsUser]
-          )
-        );
-      } else {
-        commands.push(UR_COMMANDS.V2_SWAP_EXACT_IN);
-        inputs.push(
-          abi.encode(
-            ["address", "uint256", "uint256", "address[]", "bool"],
-            [recipient, parsedAmount, minOut, quote.path, payerIsUser]
-          )
-        );
-      }
-
-      if (isEthOut) {
-        commands.push(UR_COMMANDS.UNWRAP_WETH);
-        inputs.push(abi.encode(["address", "uint256"], [user, minOut]));
-      }
+      const baseParams = {
+        tokenIn: sellAddress,
+        tokenOut: buyAddress,
+        fee,
+        recipient: user,
+        deadline,
+        amountIn: parsedAmount,
+        amountOutMinimum: minOut,
+        sqrtPriceLimitX96: 0,
+      };
 
       setTx({ stage: "awaiting_signature", message: "Confirm swap in wallet..." });
-      const txRequest = await universal.execute(
-        buildCommandBytes(commands),
-        inputs,
-        deadline,
-        isEthIn ? { value: parsedAmount } : {}
-      );
+      const txRequest =
+        side === "buy"
+          ? await swapRouter.exactInputSingle(baseParams, { value: parsedAmount })
+          : await swapRouter.multicall([
+              swapRouter.interface.encodeFunctionData("exactInputSingle", [
+                {
+                  ...baseParams,
+                  recipient: swapRouterAddress,
+                },
+              ]),
+              swapRouter.interface.encodeFunctionData("unwrapWETH9", [minOut, user]),
+            ]);
 
       unsubscribeRealtime = await trackPendingTx(String(txRequest.hash || ""));
       const receipt = await txRequest.wait();
