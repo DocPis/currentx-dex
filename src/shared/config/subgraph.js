@@ -3,6 +3,13 @@ import { getActiveNetworkConfig } from "./networks";
 import { TOKENS } from "./tokens";
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const parseEnvBoolean = (value, fallback = false) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+};
 const activeNet = getActiveNetworkConfig() || {};
 let SUBGRAPH_URL = activeNet.subgraphUrl;
 let SUBGRAPH_API_KEY = activeNet.subgraphApiKey;
@@ -12,12 +19,29 @@ const SUBGRAPH_CACHE_TTL_MS = 20000;
 const SUBGRAPH_MAX_RETRIES = 2;
 const subgraphCache = new Map();
 const subgraphCacheV3 = new Map();
+const subgraphEndpointCooldown = new Map();
 const DEFAULT_SUBGRAPH_PROXY = "/api/subgraph?url=";
 const SUBGRAPH_PROXY =
   String(
     (typeof import.meta !== "undefined" ? import.meta.env?.VITE_SUBGRAPH_PROXY : null) ||
       DEFAULT_SUBGRAPH_PROXY
   ).trim();
+const SUBGRAPH_REQUEST_TIMEOUT_MS = Math.max(
+  1000,
+  Number(env.VITE_SUBGRAPH_REQUEST_TIMEOUT_MS) || 12000
+);
+const SUBGRAPH_ENDPOINT_COOLDOWN_MS = Math.max(
+  30000,
+  Number(env.VITE_SUBGRAPH_ENDPOINT_COOLDOWN_MS) || 5 * 60 * 1000
+);
+const SUBGRAPH_PROXY_FIRST = parseEnvBoolean(
+  env.VITE_SUBGRAPH_PROXY_FIRST,
+  false
+);
+const SUBGRAPH_V3_PROXY_FIRST = parseEnvBoolean(
+  env.VITE_UNIV3_SUBGRAPH_PROXY_FIRST,
+  true
+);
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
@@ -149,6 +173,40 @@ const isTransientSubgraphMessage = (value = "") => {
   );
 };
 
+const isAuthOrQuotaMessage = (value = "") => {
+  const msg = String(value || "").toLowerCase();
+  return (
+    msg.includes("payment required") ||
+    msg.includes("auth error") ||
+    msg.includes("unauthorized") ||
+    msg.includes("forbidden") ||
+    msg.includes("invalid api key") ||
+    msg.includes("api key")
+  );
+};
+
+const endpointCooldownKey = (source = "v2", url = "") => `${source}:${url}`;
+
+const isEndpointCoolingDown = (source = "v2", url = "") => {
+  const key = endpointCooldownKey(source, url);
+  const until = Number(subgraphEndpointCooldown.get(key) || 0);
+  if (!Number.isFinite(until) || until <= 0) return false;
+  if (Date.now() >= until) {
+    subgraphEndpointCooldown.delete(key);
+    return false;
+  }
+  return true;
+};
+
+const markEndpointCoolingDown = (source = "v2", url = "") => {
+  if (!url) return;
+  const key = endpointCooldownKey(source, url);
+  subgraphEndpointCooldown.set(
+    key,
+    Date.now() + SUBGRAPH_ENDPOINT_COOLDOWN_MS
+  );
+};
+
 async function postSubgraph(query, variables = {}) {
   return postSubgraphWithFallback({
     query,
@@ -156,6 +214,7 @@ async function postSubgraph(query, variables = {}) {
     endpoints: SUBGRAPH_ENDPOINTS,
     cache: subgraphCache,
     missingConfigMessage: "Missing V2 subgraph endpoint configuration",
+    source: "v2",
   });
 }
 
@@ -166,6 +225,7 @@ async function postSubgraphV3(query, variables = {}) {
     endpoints: SUBGRAPH_V3_ENDPOINTS,
     cache: subgraphCacheV3,
     missingConfigMessage: "Missing V3 subgraph endpoint configuration",
+    source: "v3",
   });
 }
 
@@ -175,17 +235,51 @@ const isUsableSubgraphEndpoint = (endpoint) =>
       (!endpointRequiresApiKey(endpoint.url) || Boolean(endpoint.apiKey))
   );
 
-const buildSubgraphHeaders = (endpoint, useProxy) => {
+const buildSubgraphHeaders = (endpoint) => {
   const headers = {
     "Content-Type": "application/json",
   };
-  if (!useProxy && endpoint?.apiKey) {
+  if (endpoint?.apiKey) {
     headers.Authorization = `Bearer ${endpoint.apiKey}`;
   }
   return headers;
 };
 
-const shouldPreferProxyForEndpoint = () => false;
+const shouldPreferProxyForEndpoint = (source = "v2") => {
+  if (!SUBGRAPH_PROXY) return false;
+  if (source === "v3") return SUBGRAPH_V3_PROXY_FIRST;
+  return SUBGRAPH_PROXY_FIRST;
+};
+
+const createSubgraphTimeoutError = () => {
+  const err = new Error("Subgraph request timeout");
+  err.code = "SUBGRAPH_TIMEOUT";
+  return err;
+};
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = SUBGRAPH_REQUEST_TIMEOUT_MS) => {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetch(url, options);
+  }
+  if (typeof AbortController === "undefined") {
+    return fetch(url, options);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err?.name === "AbortError") {
+      throw createSubgraphTimeoutError();
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 async function postSubgraphWithFallback({
   query,
@@ -193,11 +287,18 @@ async function postSubgraphWithFallback({
   endpoints = [],
   cache,
   missingConfigMessage,
+  source = "v2",
 }) {
   const usableEndpoints = (endpoints || []).filter(isUsableSubgraphEndpoint);
   if (!usableEndpoints.length) {
     throw new Error(missingConfigMessage || "Subgraph unavailable");
   }
+  const candidateEndpoints = usableEndpoints.filter(
+    (endpoint) => !isEndpointCoolingDown(source, endpoint?.url)
+  );
+  const endpointsToTry = candidateEndpoints.length
+    ? candidateEndpoints
+    : usableEndpoints;
 
   const cacheKey = JSON.stringify({ q: query, v: variables });
   const cached = cache.get(cacheKey);
@@ -208,9 +309,9 @@ async function postSubgraphWithFallback({
 
   let lastError = null;
 
-  for (const endpoint of usableEndpoints) {
+  for (const endpoint of endpointsToTry) {
     let endpointError = null;
-    let attemptedProxy = shouldPreferProxyForEndpoint(endpoint.url);
+    let attemptedProxy = shouldPreferProxyForEndpoint(source);
     let canTryDirectFallback = attemptedProxy;
 
     for (let attempt = 0; attempt <= SUBGRAPH_MAX_RETRIES; attempt += 1) {
@@ -219,9 +320,9 @@ async function postSubgraphWithFallback({
         const url = useProxy
           ? `${SUBGRAPH_PROXY}${encodeURIComponent(endpoint.url)}`
           : endpoint.url;
-        const res = await fetch(url, {
+        const res = await fetchWithTimeout(url, {
           method: "POST",
-          headers: buildSubgraphHeaders(endpoint, useProxy),
+          headers: buildSubgraphHeaders(endpoint),
           body: JSON.stringify({ query, variables }),
         });
 
@@ -231,14 +332,23 @@ async function postSubgraphWithFallback({
             res.status === 429 ||
             text.toLowerCase().includes("rate") ||
             text.toLowerCase().includes("limit");
+          const authOrQuota =
+            res.status === 401 ||
+            res.status === 403 ||
+            isAuthOrQuotaMessage(text);
           const indexerUnavailable = isIndexerUnavailableMessage(text);
           endpointError = new Error(
             rateLimited
               ? "Subgraph rate-limited. Please retry shortly."
+              : authOrQuota
+                ? "Subgraph auth/quota error on endpoint."
               : indexerUnavailable
                 ? "Subgraph temporarily unavailable (indexer issue). Please retry shortly."
                 : `Subgraph HTTP ${res.status}`
           );
+          if (authOrQuota) {
+            markEndpointCoolingDown(source, endpoint.url);
+          }
           if (
             attempt < SUBGRAPH_MAX_RETRIES &&
             (res.status >= 500 || rateLimited || indexerUnavailable)
@@ -251,9 +361,15 @@ async function postSubgraphWithFallback({
 
         const json = await res.json();
         if (json.errors?.length) {
+          const firstErrorMessage = String(
+            json.errors[0]?.message || "Subgraph error"
+          );
+          if (isAuthOrQuotaMessage(firstErrorMessage)) {
+            markEndpointCoolingDown(source, endpoint.url);
+          }
           endpointError = new Error(
             normalizeSubgraphErrorMessage(
-              json.errors[0]?.message || "Subgraph error",
+              firstErrorMessage,
               "Subgraph error"
             )
           );
@@ -265,14 +381,31 @@ async function postSubgraphWithFallback({
         const msg = String(err?.message || "").toLowerCase();
         const transient = isTransientSubgraphMessage(msg);
         const corsLikely = msg.includes("cors") || msg.includes("failed to fetch");
+        const invalidJson = msg.includes("unexpected token") && msg.includes("json");
+        const httpMatch = msg.match(/subgraph http\s+(\d{3})/u);
+        const httpStatus = httpMatch ? Number(httpMatch[1]) : 0;
         if (canTryDirectFallback) {
-          attemptedProxy = false;
+          const proxyTransportFailed =
+            transient ||
+            invalidJson ||
+            (Number.isFinite(httpStatus) && httpStatus >= 400);
           canTryDirectFallback = false;
+          if (!proxyTransportFailed) {
+            endpointError = err;
+            break;
+          }
+          attemptedProxy = false;
           // If proxy-first fails, retry immediately with direct endpoint.
           attempt -= 1;
           continue;
         }
-        if (!attemptedProxy && corsLikely && SUBGRAPH_PROXY) {
+        if (
+          !attemptedProxy &&
+          SUBGRAPH_PROXY &&
+          (corsLikely ||
+            transient ||
+            (Number.isFinite(httpStatus) && httpStatus >= 400 && httpStatus < 500))
+        ) {
           attemptedProxy = true;
           // retry immediately with proxy
           attempt -= 1;

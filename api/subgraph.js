@@ -4,6 +4,10 @@ const ALLOWED_HOST_SUFFIXES = [
 ];
 
 const MAX_BODY_BYTES = 200_000;
+const UPSTREAM_TIMEOUT_MS = Math.max(
+  1000,
+  Number(process.env.SUBGRAPH_PROXY_TIMEOUT_MS || 12000)
+);
 
 const isAllowedHost = (hostname) =>
   ALLOWED_HOST_SUFFIXES.some((suffix) => hostname.endsWith(suffix));
@@ -58,19 +62,37 @@ export default async function handler(req, res) {
   }
 
   try {
-    const upstream = await fetch(targetUrl.toString(), {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(req.body || {}),
-    });
+    const headers = {
+      "Content-Type": "application/json",
+    };
+    const inboundAuth = req.headers?.authorization;
+    if (typeof inboundAuth === "string" && inboundAuth.trim()) {
+      headers.Authorization = inboundAuth.trim();
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+    let upstream;
+    try {
+      upstream = await fetch(targetUrl.toString(), {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req.body || {}),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
 
     const text = await upstream.text();
     res.status(upstream.status);
     res.setHeader("Content-Type", "application/json");
     res.send(text);
   } catch (err) {
+    if (err?.name === "AbortError") {
+      res.status(504).json({ error: "Upstream timeout" });
+      return;
+    }
     res.status(502).json({ error: err?.message || "Upstream error" });
   }
 }

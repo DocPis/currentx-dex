@@ -331,7 +331,14 @@ export default function App() {
   };
 
   const handlePoolSelect = (pool) => {
-    setPoolSelection(pool || null);
+    setPoolSelection(
+      pool
+        ? {
+            ...pool,
+            selectionNonce: Date.now(),
+          }
+        : null
+    );
     preloadSection("liquidity");
     prefetchTabData("liquidity");
     setTab("liquidity");
@@ -470,7 +477,10 @@ export default function App() {
               onConnect={handleConnect}
               onNavigate={(nextTab, opts = {}) => {
                 if (nextTab === "liquidity" && opts?.poolSelection) {
-                  setPoolSelection(opts.poolSelection);
+                  setPoolSelection({
+                    ...opts.poolSelection,
+                    selectionNonce: Date.now(),
+                  });
                   preloadSection("liquidity");
                   prefetchTabData("liquidity");
                 }

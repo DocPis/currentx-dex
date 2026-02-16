@@ -1151,7 +1151,8 @@ export default function LiquiditySection({
   const [_tokenBalanceLoading, setTokenBalanceLoading] = useState(false);
   const [showTokenList, setShowTokenList] = useState(false);
   const [tokenSearch, setTokenSearch] = useState("");
-  const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol }
+  const [tokenSelection, setTokenSelection] = useState(null); // { baseSymbol, pairSymbol, baseAddress?, pairAddress? }
+  const [selectionAddressHints, setSelectionAddressHints] = useState({});
   const [pairSelectorOpen, setPairSelectorOpen] = useState(false);
   const [v3Token0Open, setV3Token0Open] = useState(false);
   const [v3Token1Open, setV3Token1Open] = useState(false);
@@ -4473,12 +4474,17 @@ export default function LiquiditySection({
       return symbols.includes(base) && symbols.includes(pair);
     });
     if (matched.length) return matched;
-    const baseMeta = tokenRegistry[base];
-    const pairMeta = tokenRegistry[pair];
-    if (!baseMeta || !pairMeta) return [];
-    const baseAddr = resolveTokenAddress(base, tokenRegistry);
-    const pairAddr = resolveTokenAddress(pair, tokenRegistry);
-    const hasAddresses = baseAddr && pairAddr;
+    const baseHint = selectionAddressHints[String(base || "").toLowerCase()] || "";
+    const pairHint = selectionAddressHints[String(pair || "").toLowerCase()] || "";
+    const baseAddr =
+      tokenSelection?.baseAddress ||
+      resolveTokenAddress(base, tokenRegistry) ||
+      baseHint;
+    const pairAddr =
+      tokenSelection?.pairAddress ||
+      resolveTokenAddress(pair, tokenRegistry) ||
+      pairHint;
+    const hasAddresses = Boolean(baseAddr && pairAddr);
     const poolId = `custom-${base}-${pair}`;
     const stats = poolStats[poolId] || {};
     return [
@@ -4500,8 +4506,11 @@ export default function LiquiditySection({
   }, [
     pools,
     poolStats,
+    selectionAddressHints,
     tokenSelection?.baseSymbol,
+    tokenSelection?.baseAddress,
     tokenSelection?.pairSymbol,
+    tokenSelection?.pairAddress,
     tokenRegistry,
   ]);
 
@@ -4516,7 +4525,9 @@ export default function LiquiditySection({
   const selectedPool = useMemo(() => {
     if (!allPools.length) return null;
     const found = allPools.find((p) => p.id === selectedPoolId);
-    return found || allPools[0];
+    if (found) return found;
+    if (selectedPoolId) return null;
+    return allPools[0];
   }, [allPools, selectedPoolId]);
   const selectedV2LpPosition = useMemo(() => {
     if (!selectedPoolId || !v2LpPositions.length) return null;
@@ -4540,18 +4551,42 @@ export default function LiquiditySection({
       ? formatUsdTableValue(selectedPool.tvlUsd)
       : "--";
 
-  const token0Meta = selectedPool
-    ? tokenRegistry[selectedPool.token0Symbol]
-    : null;
-  const token1Meta = selectedPool
-    ? tokenRegistry[selectedPool.token1Symbol]
-    : null;
+  const token0HintAddress =
+    selectionAddressHints[String(selectedPool?.token0Symbol || "").toLowerCase()] || "";
+  const token1HintAddress =
+    selectionAddressHints[String(selectedPool?.token1Symbol || "").toLowerCase()] || "";
   const token0Address =
     selectedPool?.token0Address ||
-    resolveTokenAddress(selectedPool?.token0Symbol, tokenRegistry);
+    resolveTokenAddress(selectedPool?.token0Symbol, tokenRegistry) ||
+    token0HintAddress;
   const token1Address =
     selectedPool?.token1Address ||
-    resolveTokenAddress(selectedPool?.token1Symbol, tokenRegistry);
+    resolveTokenAddress(selectedPool?.token1Symbol, tokenRegistry) ||
+    token1HintAddress;
+  const token0Meta = useMemo(() => {
+    if (!selectedPool) return null;
+    return (
+      tokenRegistry[selectedPool.token0Symbol] || {
+        symbol: selectedPool.token0Symbol,
+        name: selectedPool.token0Symbol,
+        decimals: 18,
+        address: token0Address || "",
+        logo: DEFAULT_TOKEN_LOGO,
+      }
+    );
+  }, [selectedPool, tokenRegistry, token0Address]);
+  const token1Meta = useMemo(() => {
+    if (!selectedPool) return null;
+    return (
+      tokenRegistry[selectedPool.token1Symbol] || {
+        symbol: selectedPool.token1Symbol,
+        name: selectedPool.token1Symbol,
+        decimals: 18,
+        address: token1Address || "",
+        logo: DEFAULT_TOKEN_LOGO,
+      }
+    );
+  }, [selectedPool, tokenRegistry, token1Address]);
   const selectedToken0Symbol = selectedPool?.token0Symbol;
   const selectedToken1Symbol = selectedPool?.token1Symbol;
   const poolSupportsActions = Boolean(token0Address && token1Address);
@@ -6030,10 +6065,16 @@ export default function LiquiditySection({
         ? `${String(pool.token0Symbol).toLowerCase()}-${String(pool.token1Symbol).toLowerCase()}`
         : null);
     if (!poolId) return;
+    const baseAddress =
+      pool.token0Address || resolveTokenAddress(pool.token0Symbol, tokenRegistry);
+    const pairAddress =
+      pool.token1Address || resolveTokenAddress(pool.token1Symbol, tokenRegistry);
     suppressSelectionResetRef.current = true;
     setTokenSelection({
       baseSymbol: pool.token0Symbol,
       pairSymbol: pool.token1Symbol,
+      baseAddress: baseAddress || undefined,
+      pairAddress: pairAddress || undefined,
     });
     setSelectedPoolId(poolId);
     setSelectionDepositPoolId(poolId);
@@ -6131,6 +6172,21 @@ export default function LiquiditySection({
     const token0Symbol = resolveSymbol(raw0);
     const token1Symbol = resolveSymbol(raw1);
     if (!token0Symbol || !token1Symbol) return;
+    setSelectionAddressHints((prev) => {
+      let next = prev;
+      let changed = false;
+      const assignHint = (symbol, addr) => {
+        const key = String(symbol || "").toLowerCase();
+        if (!key || !addr) return;
+        if (next[key] === addr) return;
+        if (!changed) next = { ...prev };
+        next[key] = addr;
+        changed = true;
+      };
+      assignHint(token0Symbol, token0Id);
+      assignHint(token1Symbol, token1Id);
+      return changed ? next : prev;
+    });
     const v3Token0Symbol = resolveV3Symbol(raw0, token0Id) || token0Symbol;
     const v3Token1Symbol = resolveV3Symbol(raw1, token1Id) || token1Symbol;
     if (!v3Token0Symbol || !v3Token1Symbol) return;
@@ -6139,6 +6195,7 @@ export default function LiquiditySection({
     const typeRaw = String(poolSelection.type || "").toUpperCase();
     const preferV3 = typeRaw === "V3" || (!typeRaw && hasFeeTier);
     const preferV2 = typeRaw === "V2" || (!typeRaw && !hasFeeTier);
+    const selectionNonce = String(poolSelection.selectionNonce || "").trim();
     const selectionKey = [
       typeRaw || (preferV3 ? "V3" : "V2"),
       selectedPoolRefId,
@@ -6147,6 +6204,7 @@ export default function LiquiditySection({
       token0Symbol,
       token1Symbol,
       hasFeeTier ? feeTierNum : "",
+      selectionNonce,
     ].join(":");
     if (lastPoolSelectionRef.current === selectionKey) return;
 
@@ -6177,6 +6235,8 @@ export default function LiquiditySection({
       setTokenSelection({
         baseSymbol: token0Symbol,
         pairSymbol: token1Symbol,
+        baseAddress: token0Id || undefined,
+        pairAddress: token1Id || undefined,
       });
       setPairSelectorOpen(false);
       const lower0 = token0Symbol.toLowerCase();
@@ -6209,7 +6269,7 @@ export default function LiquiditySection({
           (symA === lower1 && symB === lower0)
         );
       });
-      const fallbackId = selectedPoolRefId || `custom-${token0Symbol}-${token1Symbol}`;
+      const fallbackId = `custom-${token0Symbol}-${token1Symbol}`;
       const targetPoolId = matched?.id || fallbackId;
       setSelectedPoolId(targetPoolId);
       setSelectionDepositPoolId(targetPoolId);
@@ -6916,6 +6976,7 @@ export default function LiquiditySection({
                           setTokenSelection((prev) => ({
                             ...prev,
                             pairSymbol: opt.symbol,
+                            pairAddress: undefined,
                           }));
                           setPairSelectorOpen(false);
                         }}
