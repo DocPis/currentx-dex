@@ -1,5 +1,6 @@
 // src/config/subgraph.js
 import { getActiveNetworkConfig } from "./networks";
+import { TOKENS } from "./tokens";
 
 const env = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
 const activeNet = getActiveNetworkConfig() || {};
@@ -25,6 +26,19 @@ const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
 ];
+const SUBGRAPH_POOL_PAGE_SIZE = 200;
+const SUBGRAPH_POOL_PAGE_MAX = 25;
+
+const normalizeAddress = (value) => String(value || "").trim().toLowerCase();
+const WHITELISTED_TOKEN_IDS = new Set(
+  Object.values(TOKENS || {})
+    .map((token) => normalizeAddress(token?.address))
+    .filter((address) => /^0x[a-f0-9]{40}$/u.test(address))
+);
+
+const isWhitelistedTokenId = (tokenId) => WHITELISTED_TOKEN_IDS.has(normalizeAddress(tokenId));
+const isWhitelistedPairOrPool = (pairOrPool) =>
+  isWhitelistedTokenId(pairOrPool?.token0Id) && isWhitelistedTokenId(pairOrPool?.token1Id);
 
 // Fallback to global env when missing (align behavior across networks).
 if (!SUBGRAPH_URL) {
@@ -633,13 +647,37 @@ export async function fetchDashboardStatsCombined() {
 
   if (!v2 && !v3) return null;
 
-  const totalLiquidityUsd =
+  const totalLiquidityUsdRaw =
     Number(v2?.totalLiquidityUsd || 0) + Number(v3?.totalLiquidityUsd || 0);
   const totalVolumeUsd =
     Number(v2?.totalVolumeUsd || 0) + Number(v3?.totalVolumeUsd || 0);
 
+  // Dashboard TVL should only account for pools where both tokens are whitelisted.
+  const fetchWhitelistedTvl = async (fetchPage) => {
+    let total = 0;
+    let skip = 0;
+    for (let page = 0; page < SUBGRAPH_POOL_PAGE_MAX; page += 1) {
+      const rows = await fetchPage({ limit: SUBGRAPH_POOL_PAGE_SIZE, skip }).catch(() => []);
+      if (!Array.isArray(rows) || !rows.length) break;
+      rows.forEach((row) => {
+        if (!isWhitelistedPairOrPool(row)) return;
+        total += Number(row?.tvlUsd || 0);
+      });
+      if (rows.length < SUBGRAPH_POOL_PAGE_SIZE) break;
+      skip += SUBGRAPH_POOL_PAGE_SIZE;
+    }
+    return total;
+  };
+
+  const [v2WhitelistTvl, v3WhitelistTvl] = await Promise.all([
+    fetchWhitelistedTvl(fetchV2PoolsPage),
+    fetchWhitelistedTvl(fetchV3PoolsPage),
+  ]);
+  const totalLiquidityUsd = Number(v2WhitelistTvl || 0) + Number(v3WhitelistTvl || 0);
+
   return {
     totalLiquidityUsd,
+    totalLiquidityUsdRaw,
     totalVolumeUsd,
     v2,
     v3,
@@ -1865,7 +1903,7 @@ export async function fetchTopPairsBreakdownCombined(limit = 4) {
   ]);
 
   const combined = [...(v2Pairs || []), ...(v3Pools || [])].filter(
-    (p) => (p.tvlUsd || 0) > 0
+    (p) => (p.tvlUsd || 0) > 0 && isWhitelistedPairOrPool(p)
   );
 
   if (!combined.length) return [];

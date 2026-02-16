@@ -421,7 +421,7 @@ export default function Dashboard() {
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-400">Protocol TVL</div>
               <div className="mt-2 text-[36px] leading-none font-black tracking-[-0.04em] text-white">
-                ${formatNumber(tvlHistory[0]?.tvlUsd || stats?.totalLiquidityUsd || 0)}
+                ${formatNumber(stats?.totalLiquidityUsd ?? tvlHistory[0]?.tvlUsd ?? 0)}
               </div>
             </div>
           </div>

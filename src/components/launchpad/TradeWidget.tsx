@@ -362,15 +362,23 @@ const TradeWidget = ({
     };
   }, [refreshQuote]);
 
-  const applyMax = () => {
+  const setAmountFromBalanceShare = (bps = 10000) => {
+    const clampedBps = Math.max(0, Math.min(10000, Number(bps) || 0));
+    const share = BigInt(clampedBps);
     if (side === "buy") {
       const reserve = parseUnits("0.002", 18);
-      const value = walletEth > reserve ? walletEth - reserve : 0n;
+      const spendable = walletEth > reserve ? walletEth - reserve : 0n;
+      const value = (spendable * share) / 10000n;
       setAmount(trimTrailingZeros(formatUnits(value, 18)));
       return;
     }
-    setAmount(trimTrailingZeros(formatUnits(walletToken, token.decimals)));
+    const value = (walletToken * share) / 10000n;
+    setAmount(trimTrailingZeros(formatUnits(value, token.decimals)));
   };
+
+  const applyPreset25 = () => setAmountFromBalanceShare(2500);
+  const applyPreset50 = () => setAmountFromBalanceShare(5000);
+  const applyMax = () => setAmountFromBalanceShare(10000);
 
   const checkApprovalNeeds = useCallback(
     async (owner: string, amountIn: bigint) => {
@@ -545,13 +553,29 @@ const TradeWidget = ({
               placeholder="0.0"
               className="w-full bg-transparent text-lg font-semibold text-slate-100 outline-none placeholder:text-slate-500"
             />
-            <button
-              type="button"
-              onClick={applyMax}
-              className="rounded-lg border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-500"
-            >
-              Max
-            </button>
+            <div className="inline-flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={applyPreset25}
+                className="rounded-lg border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-500"
+              >
+                25%
+              </button>
+              <button
+                type="button"
+                onClick={applyPreset50}
+                className="rounded-lg border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-500"
+              >
+                50%
+              </button>
+              <button
+                type="button"
+                onClick={applyMax}
+                className="rounded-lg border border-slate-700/70 bg-slate-900/80 px-2 py-1 text-[11px] font-semibold text-slate-200 transition hover:border-slate-500"
+              >
+                Max
+              </button>
+            </div>
           </div>
         </div>
 

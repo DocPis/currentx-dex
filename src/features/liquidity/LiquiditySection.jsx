@@ -5941,20 +5941,45 @@ export default function LiquiditySection({
         amount1Min: 0,
         deadline: Math.floor(Date.now() / 1000) + 60 * 20,
       };
-      const tx = await manager.decreaseLiquidity(params);
-      await tx.wait();
+      const token0Address = String(position.token0 || "").trim();
+      const token1Address = String(position.token1 || "").trim();
+      const wethLower = String(WETH_ADDRESS || "").toLowerCase();
+      const token0IsWeth = Boolean(wethLower && token0Address.toLowerCase() === wethLower);
+      const token1IsWeth = Boolean(wethLower && token1Address.toLowerCase() === wethLower);
+
       const collectParams = {
         tokenId: position.tokenId,
-        recipient: user,
+        recipient: UNIV3_POSITION_MANAGER_ADDRESS,
         amount0Max: MAX_UINT128,
         amount1Max: MAX_UINT128,
       };
-      const collectTx = await manager.collect(collectParams);
-      const receipt = await collectTx.wait();
+      const iface = manager.interface;
+      const data = [
+        iface.encodeFunctionData("decreaseLiquidity", [params]),
+        iface.encodeFunctionData("collect", [collectParams]),
+      ];
+
+      if (token0IsWeth || token1IsWeth) {
+        data.push(iface.encodeFunctionData("unwrapWETH9", [0, user]));
+        const nonWethToken = token0IsWeth ? token1Address : token0Address;
+        if (nonWethToken && nonWethToken.toLowerCase() !== ZERO_ADDRESS) {
+          data.push(iface.encodeFunctionData("sweepToken", [nonWethToken, 0, user]));
+        }
+      } else {
+        if (token0Address && token0Address.toLowerCase() !== ZERO_ADDRESS) {
+          data.push(iface.encodeFunctionData("sweepToken", [token0Address, 0, user]));
+        }
+        if (token1Address && token1Address.toLowerCase() !== ZERO_ADDRESS) {
+          data.push(iface.encodeFunctionData("sweepToken", [token1Address, 0, user]));
+        }
+      }
+
+      const tx = await manager.multicall(data);
+      const receipt = await tx.wait();
       setActionStatus({
         variant: "success",
         hash: receipt?.hash,
-        message: "Liquidity removed and fees collected.",
+        message: "Liquidity removed and fees collected (single tx).",
       });
       refreshPointsForPair(position.token0, position.token1);
       setV3RefreshTick((t) => t + 1);
