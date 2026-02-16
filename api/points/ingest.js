@@ -4,6 +4,11 @@ import {
   buildPointsSummary,
   getLeaderboardRewardsConfig,
 } from "../../src/server/leaderboardRewardsLib.js";
+import {
+  computeLpData as computeLpDataShared,
+  computePoints as computePointsShared,
+  fetchTokenPrices as fetchTokenPricesShared,
+} from "../../src/server/pointsLib.js";
 
 
 const PAGE_LIMIT = 200;
@@ -15,6 +20,7 @@ const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
 const POINTS_DEFAULT_SCORING_MODE = "volume";
 const POINTS_DEFAULT_FEE_BPS = 30;
 const INGEST_DEFAULT_MAX_WINDOW_SECONDS = 10 * 60;
+const LP_DISCOVERY_DEFAULT_BACKFILL_SECONDS = 24 * 60 * 60;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 
@@ -373,6 +379,18 @@ const getIngestWindowSeconds = () =>
       parsePositiveInt(
         process.env.POINTS_INGEST_MAX_WINDOW_SECONDS,
         INGEST_DEFAULT_MAX_WINDOW_SECONDS
+      )
+    )
+  );
+
+const getLpDiscoveryBackfillSeconds = () =>
+  Math.max(
+    0,
+    Math.min(
+      30 * 24 * 60 * 60,
+      parsePositiveInt(
+        process.env.POINTS_LP_DISCOVERY_BACKFILL_SECONDS,
+        LP_DISCOVERY_DEFAULT_BACKFILL_SECONDS
       )
     )
   );
@@ -767,6 +785,136 @@ const getBoostPairMultiplier = (token0, token1, addr) => {
   const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
   if (hasWeth) return 2;
   return 1;
+};
+
+const resolveLiquidityActor = (event) =>
+  normalizeAddress(event?.origin) ||
+  normalizeAddress(event?.sender) ||
+  normalizeAddress(event?.owner);
+
+const fetchBoostLiquidityActivityPage = async ({
+  url,
+  apiKey,
+  start,
+  end,
+}) => {
+  const query = `
+    query BoostLiquidityActivity($start: Int!, $end: Int!, $first: Int!) {
+      mints(
+        first: $first
+        orderBy: timestamp
+        orderDirection: asc
+        where: { timestamp_gte: $start, timestamp_lte: $end }
+      ) {
+        id
+        timestamp
+        origin
+        sender
+        owner
+        pool {
+          token0 { id }
+          token1 { id }
+        }
+      }
+      burns(
+        first: $first
+        orderBy: timestamp
+        orderDirection: asc
+        where: { timestamp_gte: $start, timestamp_lte: $end }
+      ) {
+        id
+        timestamp
+        origin
+        owner
+        pool {
+          token0 { id }
+          token1 { id }
+        }
+      }
+    }
+  `;
+
+  const data = await postGraph(url, apiKey, query, {
+    start,
+    end,
+    first: PAGE_LIMIT,
+  });
+  return {
+    mints: data?.mints || [],
+    burns: data?.burns || [],
+  };
+};
+
+const ingestBoostLiquidityActivitySource = async ({
+  url,
+  apiKey,
+  startSec,
+  endSec,
+  addr,
+}) => {
+  const wallets = new Set();
+  let cursor = startSec;
+  let done = false;
+  let iterations = 0;
+
+  while (!done && iterations < 50) {
+    iterations += 1;
+    let mints = [];
+    let burns = [];
+    try {
+      const page = await fetchBoostLiquidityActivityPage({
+        url,
+        apiKey,
+        start: cursor,
+        end: endSec,
+      });
+      mints = page?.mints || [];
+      burns = page?.burns || [];
+    } catch (err) {
+      if (isMissingFieldError(err)) {
+        if (Number.isFinite(endSec) && endSec >= cursor) {
+          cursor = endSec + 1;
+        }
+        break;
+      }
+      throw err;
+    }
+
+    const events = [...mints, ...burns];
+    if (!events.length) {
+      if (Number.isFinite(endSec) && endSec >= cursor) {
+        cursor = endSec + 1;
+      }
+      break;
+    }
+
+    let lastTs = cursor;
+    events.forEach((event) => {
+      const ts = Number(event?.timestamp || 0);
+      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
+      const token0 = normalizeAddress(event?.pool?.token0?.id);
+      const token1 = normalizeAddress(event?.pool?.token1?.id);
+      if (getBoostPairMultiplier(token0, token1, addr) < 2) return;
+      const wallet = resolveLiquidityActor(event);
+      if (!wallet) return;
+      wallets.add(wallet);
+    });
+
+    if (lastTs <= cursor) {
+      if (Number.isFinite(endSec) && endSec >= cursor) {
+        cursor = endSec + 1;
+      }
+      done = true;
+    } else {
+      cursor = lastTs + 1;
+    }
+
+    if (mints.length < PAGE_LIMIT && burns.length < PAGE_LIMIT) {
+      done = true;
+    }
+  }
+
+  return { wallets, cursor };
 };
 
 const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
@@ -1209,6 +1357,7 @@ export default async function handler(req, res) {
     const aggregated = new Map();
     const cursorsToSet = [];
     const sourceErrors = [];
+    const failedSources = new Set();
 
     for (const src of sources) {
       const cursorKey = getKeys(seasonId, src.source).cursor;
@@ -1241,7 +1390,47 @@ export default async function handler(req, res) {
         totals.forEach((amount, wallet) => {
           aggregated.set(wallet, (aggregated.get(wallet) || 0) + amount);
         });
+
+        if (src.source === "v3") {
+          const lpCursorKey = getKeys(seasonId, "v3-lp").cursor;
+          const storedLpCursor = await kv.get(lpCursorKey);
+          const storedLpCursorNum = Number(storedLpCursor || 0);
+          const lpBackfillSeconds = getLpDiscoveryBackfillSeconds();
+          const lpBootstrapStart = Math.max(startSec, cursor - lpBackfillSeconds);
+          let lpCursorStart =
+            Number.isFinite(storedLpCursorNum) && storedLpCursorNum > startSec
+              ? storedLpCursorNum
+              : lpBootstrapStart;
+          if (lpCursorStart > endSec) {
+            lpCursorStart = endSec;
+          }
+
+          try {
+            const lpEndSec = Math.min(endSec, lpCursorStart + ingestMaxWindowSeconds);
+            const { wallets: lpWallets, cursor: nextLpCursor } =
+              await ingestBoostLiquidityActivitySource({
+                url: src.url,
+                apiKey: src.apiKey,
+                startSec: lpCursorStart,
+                endSec: lpEndSec,
+                addr,
+              });
+            lpWallets.forEach((wallet) => {
+              if (!wallet) return;
+              if (!aggregated.has(wallet)) aggregated.set(wallet, 0);
+            });
+            if (nextLpCursor && nextLpCursor > lpCursorStart) {
+              cursorsToSet.push({ key: lpCursorKey, value: nextLpCursor });
+            }
+          } catch (error) {
+            sourceErrors.push({
+              source: "v3-lp",
+              message: error?.message || "Unable to process V3 LP activity",
+            });
+          }
+        }
       } catch (error) {
+        failedSources.add(src.source);
         sourceErrors.push({
           source: src.source,
           message: error?.message || "Unknown source error",
@@ -1249,7 +1438,7 @@ export default async function handler(req, res) {
       }
     }
 
-    if (sourceErrors.length === sources.length) {
+    if (failedSources.size === sources.length) {
       throw new Error(
         `All points sources failed: ${sourceErrors
           .map((entry) => `${entry.source}=${entry.message}`)
@@ -1284,7 +1473,7 @@ export default async function handler(req, res) {
     let priceMap = {};
     if (v3Url) {
       try {
-        priceMap = await fetchTokenPrices({
+        priceMap = await fetchTokenPricesShared({
           url: v3Url,
           apiKey: v3Key,
           tokenIds: [addr.crx, addr.weth].filter(Boolean),
@@ -1319,7 +1508,7 @@ export default async function handler(req, res) {
         snapshot24hAtRaw > 0 &&
         now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
-      const lpData = await computeLpData({
+      const lpData = await computeLpDataShared({
         url: v3Url,
         apiKey: v3Key,
         wallet,
@@ -1328,7 +1517,7 @@ export default async function handler(req, res) {
         startBlock,
       });
 
-      const points = computePoints({
+      const points = computePointsShared({
         volumeUsd: currentVolume,
         lpUsdTotal: lpData.lpUsd,
         lpUsdCrxEth: lpData.lpUsdCrxEth,
