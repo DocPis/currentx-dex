@@ -283,9 +283,9 @@ const isTop100Eligible = ({
 }) => {
   if (!row || typeof row !== "object") return false;
   const volumeUsd = Math.max(0, toNumber(row.volumeUsd, 0));
-  const hasSwap = volumeUsd > 0;
-  const meetsMinVolume = volumeUsd >= Math.max(0, toNumber(minVolumeUsd, 0));
-  if (!hasSwap || !meetsMinVolume) return false;
+  const requiredMinVolumeUsd = Math.max(0, toNumber(minVolumeUsd, 0));
+  const meetsMinVolume = volumeUsd >= requiredMinVolumeUsd;
+  if (!meetsMinVolume) return false;
   if (isWashFlagged(row)) return false;
   if (requireTop100Finalization && !finalizationComplete) return false;
   return true;

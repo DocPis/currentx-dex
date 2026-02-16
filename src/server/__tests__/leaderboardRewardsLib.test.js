@@ -85,4 +85,39 @@ describe("computeLeaderboardRewardsTable top100-only", () => {
     expect(reward1).toBeGreaterThan(reward2);
     expect(reward2).toBeGreaterThan(reward3);
   });
+
+  it("allows no-swap wallets when top100MinVolumeUsd is zero", () => {
+    const entries = buildEntries(2, 500);
+    const userRowsByAddress = new Map(
+      entries.map((entry) => [
+        entry.address,
+        {
+          volumeUsd: 0,
+          washFlag: 0,
+        },
+      ])
+    );
+    const result = computeLeaderboardRewardsTable({
+      entries,
+      userRowsByAddress,
+      seasonRewardCrx: 100,
+      config: {
+        top100Only: true,
+        top100PoolPct: 0.5,
+        top100MinVolumeUsd: 0,
+        top100RequireFinalization: false,
+      },
+      requireTop100Finalization: false,
+      nowMs: Date.now(),
+    });
+
+    const reward1 = Number(result.rewardsByAddress.get(entries[0].address) || 0);
+    const reward2 = Number(result.rewardsByAddress.get(entries[1].address) || 0);
+
+    expect(result.rewardsByAddress.size).toBe(2);
+    expect(reward1).toBeGreaterThan(0);
+    expect(reward2).toBeGreaterThan(0);
+    expect(reward1).toBeGreaterThan(reward2);
+    expect(sumRewards(result.rewardsByAddress)).toBeCloseTo(100, 4);
+  });
 });

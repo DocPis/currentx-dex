@@ -1569,12 +1569,12 @@ export default async function handler(req, res) {
           ? previousPoints
           : points.totalPoints,
         snapshot24hRank: hasFreshSnapshot
-          ? Number.isFinite(snapshot24hRankRaw)
+          ? Number.isFinite(snapshot24hRankRaw) && snapshot24hRankRaw > 0
             ? snapshot24hRankRaw
-            : Number.isFinite(previousRank)
+            : Number.isFinite(previousRank) && previousRank > 0
             ? previousRank
             : ""
-          : Number.isFinite(previousRank)
+          : Number.isFinite(previousRank) && previousRank > 0
           ? previousRank
           : "",
         rawVolumeUsd: points.rawVolumeUsd,
