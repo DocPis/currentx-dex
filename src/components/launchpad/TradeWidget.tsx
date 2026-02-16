@@ -15,7 +15,6 @@ import {
   ERC20_ABI,
   UNIV3_FACTORY_ABI,
   UNIV3_QUOTER_V2_ABI,
-  UNIV3_SWAP_ROUTER_ABI,
 } from "../../shared/config/abis";
 import { getRealtimeClient } from "../../shared/services/realtime";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
@@ -37,6 +36,47 @@ const CURRENTX_ROUTER_AND_FEE_READER_ABI = [
     name: "POOL_FEE",
     outputs: [{ internalType: "uint24", name: "", type: "uint24" }],
     stateMutability: "view",
+    type: "function",
+  },
+];
+const LAUNCHPAD_SWAP_ROUTER02_ABI = [
+  {
+    inputs: [
+      {
+        components: [
+          { internalType: "address", name: "tokenIn", type: "address" },
+          { internalType: "address", name: "tokenOut", type: "address" },
+          { internalType: "uint24", name: "fee", type: "uint24" },
+          { internalType: "address", name: "recipient", type: "address" },
+          { internalType: "uint256", name: "amountIn", type: "uint256" },
+          { internalType: "uint256", name: "amountOutMinimum", type: "uint256" },
+          { internalType: "uint160", name: "sqrtPriceLimitX96", type: "uint160" },
+        ],
+        internalType: "struct IV3SwapRouter.ExactInputSingleParams",
+        name: "params",
+        type: "tuple",
+      },
+    ],
+    name: "exactInputSingle",
+    outputs: [{ internalType: "uint256", name: "amountOut", type: "uint256" }],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "bytes[]", name: "data", type: "bytes[]" }],
+    name: "multicall",
+    outputs: [{ internalType: "bytes[]", name: "results", type: "bytes[]" }],
+    stateMutability: "payable",
+    type: "function",
+  },
+  {
+    inputs: [
+      { internalType: "uint256", name: "amountMinimum", type: "uint256" },
+      { internalType: "address", name: "recipient", type: "address" },
+    ],
+    name: "unwrapWETH9",
+    outputs: [],
+    stateMutability: "payable",
     type: "function",
   },
 ];
@@ -92,7 +132,7 @@ interface QuoteState {
   amountOut: bigint | null;
   path: string[];
   priceImpact: number | null;
-  protocol: "V2" | "V3" | null;
+  protocol: "V3" | null;
   v3Fee: number | null;
 }
 
@@ -187,9 +227,6 @@ const TradeWidget = ({
     const base = quote.path.map((item) => toSymbol(item, token)).join(" > ");
     if (quote.protocol === "V3" && Number.isFinite(Number(quote.v3Fee))) {
       return `${base} (V3 ${(Number(quote.v3Fee) / 10000).toFixed(2)}%)`;
-    }
-    if (quote.protocol === "V2") {
-      return `${base} (V2)`;
     }
     return base;
   }, [quote.path, quote.protocol, quote.v3Fee, side, token]);
@@ -414,8 +451,7 @@ const TradeWidget = ({
       }
 
       const minOut = (quote.amountOut * BigInt(Math.max(1, 10000 - slippageBps))) / 10000n;
-      const deadline = Math.floor(Date.now() / 1000) + 60 * 20;
-      const swapRouter = new Contract(swapRouterAddress, UNIV3_SWAP_ROUTER_ABI, signer);
+      const swapRouter = new Contract(swapRouterAddress, LAUNCHPAD_SWAP_ROUTER02_ABI, signer);
       const fee = Number(quote.v3Fee || V3_FEE_TIERS[0]);
 
       const baseParams = {
@@ -423,7 +459,6 @@ const TradeWidget = ({
         tokenOut: buyAddress,
         fee,
         recipient: user,
-        deadline,
         amountIn: parsedAmount,
         amountOutMinimum: minOut,
         sqrtPriceLimitX96: 0,
