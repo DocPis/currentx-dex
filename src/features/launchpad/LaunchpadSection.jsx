@@ -193,6 +193,8 @@ const VESTING_DAY_PRESETS = ["30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
 const PROTOCOL_WALLET_ADDRESS = "0xF1aEC27981FA7645902026f038F69552Ae4e0e8F";
 const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const LAUNCHPAD_DEBUG_LOGS =
+  Boolean(ENV.DEV) || String(ENV.VITE_LAUNCHPAD_DEBUG || "").trim().toLowerCase() === "true";
 const IPFS_UPLOAD_ENDPOINT = String(ENV.VITE_IPFS_UPLOAD_ENDPOINT || "/api/ipfs/upload").trim();
 const IPFS_IMAGE_GATEWAY = String(ENV.VITE_IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/")
   .trim()
@@ -1900,10 +1902,15 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           } else {
             await currentx.deployToken.estimateGas(deploymentConfig, overrides);
           }
-          console.warn(
-            "[launchpad][deploy] opaque static simulation, continuing after successful gas estimate",
-            simulationError
-          );
+          if (LAUNCHPAD_DEBUG_LOGS) {
+            const simulationSummary = String(
+              simulationError?.shortMessage || simulationError?.message || "opaque static simulation error"
+            );
+            console.warn(
+              "[launchpad][deploy] opaque static simulation, continuing after successful gas estimate:",
+              simulationSummary
+            );
+          }
         } catch (gasError) {
           if (!isOpaqueRevert(gasError)) throw gasError;
           if (txValue > 0n) {
@@ -1911,10 +1918,16 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
               "Creator Buy precheck failed without revert data (staticCall + estimateGas). Set Creator Buy ETH to 0 and retry."
             );
           }
-          console.warn("[launchpad][deploy] opaque simulation and gas estimate failure, continuing to tx send", {
-            simulationError,
-            gasError,
-          });
+          if (LAUNCHPAD_DEBUG_LOGS) {
+            const simulationSummary = String(
+              simulationError?.shortMessage || simulationError?.message || "opaque static simulation error"
+            );
+            const gasSummary = String(gasError?.shortMessage || gasError?.message || "opaque gas estimate error");
+            console.warn(
+              "[launchpad][deploy] opaque simulation and gas estimate failure, continuing to tx send:",
+              { simulation: simulationSummary, gas: gasSummary }
+            );
+          }
         }
       }
       setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
