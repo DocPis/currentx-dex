@@ -1889,12 +1889,33 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         }
       } catch (simulationError) {
         if (!isOpaqueRevert(simulationError)) throw simulationError;
-        if (txValue > 0n) {
-          throw new Error(
-            "Creator Buy simulation failed without revert data on this CurrentX deployment. Set Creator Buy ETH to 0 and retry."
+        setDeployAction({ loading: true, error: "", hash: "", message: "Simulation unavailable on RPC, estimating gas..." });
+        try {
+          if (deployForm.useCustomTeamRewardRecipient) {
+            await currentx.deployTokenWithCustomTeamRewardRecipient.estimateGas(
+              deploymentConfig,
+              teamRewardRecipient,
+              overrides
+            );
+          } else {
+            await currentx.deployToken.estimateGas(deploymentConfig, overrides);
+          }
+          console.warn(
+            "[launchpad][deploy] opaque static simulation, continuing after successful gas estimate",
+            simulationError
           );
+        } catch (gasError) {
+          if (!isOpaqueRevert(gasError)) throw gasError;
+          if (txValue > 0n) {
+            throw new Error(
+              "Creator Buy precheck failed without revert data (staticCall + estimateGas). Set Creator Buy ETH to 0 and retry."
+            );
+          }
+          console.warn("[launchpad][deploy] opaque simulation and gas estimate failure, continuing to tx send", {
+            simulationError,
+            gasError,
+          });
         }
-        console.warn("[launchpad][deploy] opaque simulation failure, continuing to tx send", simulationError);
       }
       setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
       const tx = deployForm.useCustomTeamRewardRecipient
