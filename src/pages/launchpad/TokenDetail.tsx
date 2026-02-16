@@ -1,5 +1,13 @@
-import React, { useMemo, useState } from "react";
-import { EXPLORER_BASE_URL } from "../../shared/config/web3";
+import React, { useEffect, useMemo, useState } from "react";
+import { Contract, isAddress } from "ethers";
+import {
+  CURRENTX_ADDRESS,
+  EXPLORER_BASE_URL,
+  UNIV3_FACTORY_ADDRESS,
+  WETH_ADDRESS,
+  getReadOnlyProvider,
+} from "../../shared/config/web3";
+import { CURRENTX_ABI, UNIV3_FACTORY_ABI } from "../../shared/config/abis";
 import TradeWidget from "../../components/launchpad/TradeWidget";
 import LiveBuysFeed from "../../components/launchpad/LiveBuysFeed";
 import TokenLogo from "../../components/launchpad/TokenLogo";
@@ -17,6 +25,13 @@ const ACTIVITY_TABS = [
   { id: "buys", label: "Buys" },
   { id: "sells", label: "Sells" },
 ] as const;
+const ENV = typeof import.meta !== "undefined" ? import.meta.env || {} : {};
+const DEXSCREENER_BASE_URL = "https://dexscreener.com";
+const DEXSCREENER_CHAIN_SLUG = String(ENV.VITE_DEXSCREENER_CHAIN_SLUG || "megaeth")
+  .trim()
+  .toLowerCase();
+const DEFAULT_V3_FEE_CANDIDATES = [10000, 3000, 500, 100];
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 const buildPricePath = (candles: LaunchpadCandle[], width: number, height: number) => {
   if (!candles.length) return "";
@@ -64,6 +79,8 @@ const TokenDetail = ({
   const [timeframe, setTimeframe] = useState<(typeof TIMEFRAME_OPTIONS)[number]>("24h");
   const [activityTab, setActivityTab] = useState<(typeof ACTIVITY_TABS)[number]["id"]>("trades");
   const [copyState, setCopyState] = useState<"idle" | "done" | "fail">("idle");
+  const [dexScreenerPoolAddress, setDexScreenerPoolAddress] = useState("");
+  const [dexScreenerPoolResolving, setDexScreenerPoolResolving] = useState(false);
 
   const tokenQuery = useTokenDetail(tokenAddress);
   const token = tokenQuery.data;
@@ -81,6 +98,79 @@ const TokenDetail = ({
     if (!candles.length) return 1;
     return Math.max(...candles.map((item) => item.volumeUSD), 1);
   }, [candles]);
+  const dexScreenerPageUrl = useMemo(() => {
+    if (!isAddress(dexScreenerPoolAddress)) return "";
+    return `${DEXSCREENER_BASE_URL}/${DEXSCREENER_CHAIN_SLUG}/${dexScreenerPoolAddress}`;
+  }, [dexScreenerPoolAddress]);
+  const dexScreenerEmbedUrl = useMemo(() => {
+    if (!dexScreenerPageUrl) return "";
+    const params = new URLSearchParams({
+      embed: "1",
+      theme: "dark",
+      info: "0",
+      trades: "0",
+    });
+    return `${dexScreenerPageUrl}?${params.toString()}`;
+  }, [dexScreenerPageUrl]);
+
+  useEffect(() => {
+    let ignore = false;
+
+    const resolveDexScreenerPool = async () => {
+      const tokenAddr = String(token?.address || tokenAddress || "").trim();
+      if (!isAddress(tokenAddr) || !isAddress(UNIV3_FACTORY_ADDRESS) || !isAddress(WETH_ADDRESS)) {
+        if (!ignore) {
+          setDexScreenerPoolAddress("");
+          setDexScreenerPoolResolving(false);
+        }
+        return;
+      }
+
+      if (!ignore) {
+        setDexScreenerPoolAddress("");
+        setDexScreenerPoolResolving(true);
+      }
+
+      try {
+        const provider = getReadOnlyProvider(false, true);
+        const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
+
+        let preferredFee = NaN;
+        if (isAddress(CURRENTX_ADDRESS)) {
+          const currentx = new Contract(CURRENTX_ADDRESS, CURRENTX_ABI, provider);
+          preferredFee = Number(await currentx.POOL_FEE().catch(() => NaN));
+        }
+
+        const feeCandidates = Array.from(
+          new Set(
+            [preferredFee, ...DEFAULT_V3_FEE_CANDIDATES].filter(
+              (value) => Number.isFinite(value) && value > 0
+            )
+          )
+        ) as number[];
+
+        let foundPool = "";
+        for (const fee of feeCandidates) {
+          const pool = String(await factory.getPool(tokenAddr, WETH_ADDRESS, fee).catch(() => "")).trim();
+          if (isAddress(pool) && pool.toLowerCase() !== ZERO_ADDRESS) {
+            foundPool = pool;
+            break;
+          }
+        }
+
+        if (!ignore) setDexScreenerPoolAddress(foundPool);
+      } catch {
+        if (!ignore) setDexScreenerPoolAddress("");
+      } finally {
+        if (!ignore) setDexScreenerPoolResolving(false);
+      }
+    };
+
+    void resolveDexScreenerPool();
+    return () => {
+      ignore = true;
+    };
+  }, [token?.address, tokenAddress]);
 
   const handleCopyContract = async () => {
     try {
@@ -247,26 +337,49 @@ const TokenDetail = ({
             <section className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4 shadow-[0_16px_36px_rgba(2,6,23,0.45)]">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="font-display text-sm font-semibold text-slate-100">Chart</h2>
-                <div className="inline-flex rounded-xl border border-slate-700/70 bg-slate-900/70 p-1 text-xs">
-                  {TIMEFRAME_OPTIONS.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setTimeframe(option)}
-                      className={`rounded-lg px-2.5 py-1.5 font-semibold uppercase ${
-                        timeframe === option
-                          ? "bg-sky-500/25 text-sky-100"
-                          : "text-slate-300 hover:text-slate-100"
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
+                {dexScreenerPageUrl ? (
+                  <a
+                    href={dexScreenerPageUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center rounded-lg border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-[11px] font-semibold text-slate-200 transition hover:border-sky-400/60 hover:text-sky-100"
+                  >
+                    Open on DexScreener
+                  </a>
+                ) : (
+                  <div className="inline-flex rounded-xl border border-slate-700/70 bg-slate-900/70 p-1 text-xs">
+                    {TIMEFRAME_OPTIONS.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setTimeframe(option)}
+                        className={`rounded-lg px-2.5 py-1.5 font-semibold uppercase ${
+                          timeframe === option
+                            ? "bg-sky-500/25 text-sky-100"
+                            : "text-slate-300 hover:text-slate-100"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 p-3">
-                {candlesQuery.isLoading && !candles.length ? (
+                {dexScreenerEmbedUrl ? (
+                  <iframe
+                    title={`${token.symbol} DexScreener chart`}
+                    src={dexScreenerEmbedUrl}
+                    className="h-[420px] w-full rounded-lg border-0 bg-slate-950"
+                    loading="lazy"
+                    referrerPolicy="no-referrer-when-downgrade"
+                  />
+                ) : dexScreenerPoolResolving ? (
+                  <div className="h-[320px] rounded bg-slate-900/60 px-3 py-4 text-sm text-slate-400">
+                    Resolving pool for DexScreener chart...
+                  </div>
+                ) : candlesQuery.isLoading && !candles.length ? (
                   <div className="h-[320px] animate-pulse rounded bg-slate-900" />
                 ) : candles.length ? (
                   <svg viewBox="0 0 860 320" className="h-[320px] w-full" role="img" aria-label="Price chart">
