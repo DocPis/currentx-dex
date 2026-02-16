@@ -1367,10 +1367,6 @@ export default async function handler(req, res) {
         Number.isFinite(storedCursorNum) && storedCursorNum > startSec
           ? storedCursorNum
           : startSec;
-      if (cursor > endSec) {
-        // Guard against future cursor drift from malformed timestamps.
-        cursor = endSec;
-      }
 
       try {
         const sourceEndSec = Math.min(endSec, cursor + ingestMaxWindowSeconds);
@@ -1401,9 +1397,6 @@ export default async function handler(req, res) {
             Number.isFinite(storedLpCursorNum) && storedLpCursorNum > startSec
               ? storedLpCursorNum
               : lpBootstrapStart;
-          if (lpCursorStart > endSec) {
-            lpCursorStart = endSec;
-          }
 
           try {
             const lpEndSec = Math.min(endSec, lpCursorStart + ingestMaxWindowSeconds);
