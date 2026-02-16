@@ -46,6 +46,11 @@ const authorizeRequest = (req, secrets) => {
   );
 };
 
+const parseBool = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
 export default async function handler(req, res) {
   const secrets = getSecrets();
   if (!secrets.length) {
@@ -89,6 +94,7 @@ export default async function handler(req, res) {
 
   const cursor = clampNumber(req.query?.cursor, 0, Number.MAX_SAFE_INTEGER, 0);
   const limitParam = req.query?.limit;
+  const fastMode = parseBool(req.query?.fast);
   const limit =
     limitParam === undefined || limitParam === null || limitParam === ""
       ? null
@@ -137,14 +143,21 @@ export default async function handler(req, res) {
     });
     const userRows = await readPipeline.exec();
 
-    const priceMap = await fetchTokenPrices({
-      url: v3Url,
-      apiKey: v3Key,
-      tokenIds: [addr.crx, addr.weth].filter(Boolean),
-    });
-    if (addr.usdm) priceMap[addr.usdm] = 1;
-    if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
-      priceMap[addr.weth] = 0;
+    let priceMap = {};
+    if (!fastMode) {
+      try {
+        priceMap = await fetchTokenPrices({
+          url: v3Url,
+          apiKey: v3Key,
+          tokenIds: [addr.crx, addr.weth].filter(Boolean),
+        });
+      } catch {
+        priceMap = {};
+      }
+      if (addr.usdm) priceMap[addr.usdm] = 1;
+      if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
+        priceMap[addr.weth] = 0;
+      }
     }
 
     const now = Date.now();
@@ -165,14 +178,25 @@ export default async function handler(req, res) {
         snapshot24hAtRaw > 0 &&
         now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
-      const lpData = await computeLpData({
-        url: v3Url,
-        apiKey: v3Key,
-        wallet,
-        addr,
-        priceMap,
-        startBlock,
-      });
+      const lpData = fastMode
+        ? {
+            hasBoostLp: Number(row?.hasBoostLp || 0) > 0,
+            lpUsd: Math.max(0, toNumberSafe(row?.lpUsd) ?? 0),
+            lpUsdCrxEth: Math.max(0, toNumberSafe(row?.lpUsdCrxEth) ?? 0),
+            lpUsdCrxUsdm: Math.max(0, toNumberSafe(row?.lpUsdCrxUsdm) ?? 0),
+            lpInRangePct: Math.max(0, toNumberSafe(row?.lpInRangePct) ?? 0),
+            hasRangeData: Number(row?.hasRangeData || 0) > 0,
+            hasInRange: Number(row?.hasInRange || 0) > 0,
+            lpAgeSeconds: toNumberSafe(row?.lpAgeSeconds),
+          }
+        : await computeLpData({
+            url: v3Url,
+            apiKey: v3Key,
+            wallet,
+            addr,
+            priceMap,
+            startBlock,
+          });
 
       const points = computePoints({
         volumeUsd,
@@ -327,6 +351,7 @@ export default async function handler(req, res) {
       done: nextCursor === null,
       totalWallets: normalized.length,
       updatedAt: now,
+      fastMode,
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });

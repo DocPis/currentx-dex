@@ -9,6 +9,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
+    "points:rebuild": "node scripts/points-rebuild.mjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

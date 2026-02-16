@@ -12,6 +12,7 @@ const DEFAULTS = {
   leaderboardRewardsPct: 0.4,
   seasonAllocationsCrx: [120_000, 90_000, 70_000, 50_000, 40_000, 30_000],
   top100PoolPct: 0.5,
+  top100Only: true,
   top100MinVolumeUsd: 1,
   top100RequireFinalization: true,
   finalizationWindowHours: 48,
@@ -136,6 +137,10 @@ export const getLeaderboardRewardsConfig = (seasonIdOverride) => {
     1,
     DEFAULTS.top100PoolPct
   );
+  const top100Only = parseBool(
+    process.env.POINTS_TOP100_ONLY,
+    DEFAULTS.top100Only
+  );
   const top100MinVolumeUsd = clampNumber(
     process.env.POINTS_TOP100_MIN_VOLUME_USD,
     0,
@@ -155,6 +160,7 @@ export const getLeaderboardRewardsConfig = (seasonIdOverride) => {
     seasonAllocationsCrx,
     seasonRewardCrx,
     top100PoolPct,
+    top100Only,
     top100MinVolumeUsd,
     top100RequireFinalization,
     top100Tiers: DEFAULT_TOP100_TIERS,
@@ -342,8 +348,13 @@ export const computeLeaderboardRewardsTable = ({
     1,
     DEFAULTS.top100PoolPct
   );
-  const top100PoolCrx = round6(seasonReward * top100PoolPct);
-  const baseOthersPoolCrx = round6(Math.max(0, seasonReward - top100PoolCrx));
+  const top100Only = parseBool(config?.top100Only, DEFAULTS.top100Only);
+  const top100PoolCrx = round6(
+    top100Only ? seasonReward : seasonReward * top100PoolPct
+  );
+  const baseOthersPoolCrx = round6(
+    top100Only ? 0 : Math.max(0, seasonReward - top100PoolCrx)
+  );
   const top100MinVolumeUsd = Math.max(
     0,
     toNumber(config?.top100MinVolumeUsd, DEFAULTS.top100MinVolumeUsd)
@@ -364,6 +375,7 @@ export const computeLeaderboardRewardsTable = ({
   });
 
   let top100UnassignedCrx = 0;
+  const eligibleTop100Entries = [];
   top100Tiers.forEach((tier) => {
     const from = Math.max(1, Math.floor(toNumber(tier?.from, 0)));
     const to = Math.max(from, Math.floor(toNumber(tier?.to, from)));
@@ -388,11 +400,36 @@ export const computeLeaderboardRewardsTable = ({
         continue;
       }
       addReward(rewardsByAddress, entry.address, perRankCrx);
+      eligibleTop100Entries.push(entry);
     }
   });
 
-  const effectiveOthersPoolCrx = round6(baseOthersPoolCrx + top100UnassignedCrx);
-  const others = normalizedEntries.filter((entry) => entry.rank > 100 && entry.points > 0);
+  // When top100-only rewards are enabled, any unassigned top100 quota stays within top100.
+  if (top100Only && top100UnassignedCrx > 0) {
+    const uniqueEligibleTop100 = Array.from(
+      new Map(eligibleTop100Entries.map((entry) => [entry.address, entry])).values()
+    );
+    const eligiblePointsTotal = round6(
+      uniqueEligibleTop100.reduce(
+        (acc, entry) => acc + Math.max(0, toNumber(entry.points, 0)),
+        0
+      )
+    );
+    if (eligiblePointsTotal > 0) {
+      uniqueEligibleTop100.forEach((entry) => {
+        const share = entry.points / eligiblePointsTotal;
+        addReward(rewardsByAddress, entry.address, round6(top100UnassignedCrx * share));
+      });
+      top100UnassignedCrx = 0;
+    }
+  }
+
+  const effectiveOthersPoolCrx = round6(
+    top100Only ? 0 : baseOthersPoolCrx + top100UnassignedCrx
+  );
+  const others = top100Only
+    ? []
+    : normalizedEntries.filter((entry) => entry.rank > 100 && entry.points > 0);
   const othersPointsTotal = round6(
     others.reduce((acc, entry) => acc + Math.max(0, toNumber(entry.points, 0)), 0)
   );
@@ -408,6 +445,7 @@ export const computeLeaderboardRewardsTable = ({
     rewardsByAddress,
     seasonRewardCrx: seasonReward,
     top100PoolCrx,
+    top100Only,
     baseOthersPoolCrx,
     top100UnassignedCrx,
     effectiveOthersPoolCrx,

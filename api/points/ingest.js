@@ -6,7 +6,7 @@ import {
 } from "../../src/server/leaderboardRewardsLib.js";
 
 
-const PAGE_LIMIT = 1000;
+const PAGE_LIMIT = 200;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
 const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -14,6 +14,8 @@ const POINTS_DEFAULT_VOLUME_CAP_USD = 250_000;
 const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
 const POINTS_DEFAULT_SCORING_MODE = "volume";
 const POINTS_DEFAULT_FEE_BPS = 30;
+const INGEST_DEFAULT_MAX_WINDOW_SECONDS = 10 * 60;
+const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -355,6 +357,26 @@ const buildHeaders = (apiKey) => {
   return headers;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parsePositiveInt = (value, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
+};
+
+const getIngestWindowSeconds = () =>
+  Math.max(
+    60,
+    Math.min(
+      24 * 60 * 60,
+      parsePositiveInt(
+        process.env.POINTS_INGEST_MAX_WINDOW_SECONDS,
+        INGEST_DEFAULT_MAX_WINDOW_SECONDS
+      )
+    )
+  );
+
 const postGraph = async (url, apiKey, query, variables) => {
   const urls = dedupeUrls(parseSubgraphUrls(url));
   if (!urls.length) {
@@ -362,22 +384,32 @@ const postGraph = async (url, apiKey, query, variables) => {
   }
   let lastError = null;
   for (const candidate of urls) {
-    try {
-      const res = await fetch(candidate, {
-        method: "POST",
-        headers: buildHeaders(apiKey),
-        body: JSON.stringify({ query, variables }),
-      });
-      if (!res.ok) {
-        throw new Error(`Subgraph HTTP ${res.status}`);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const res = await fetch(candidate, {
+          method: "POST",
+          headers: buildHeaders(apiKey),
+          body: JSON.stringify({ query, variables }),
+        });
+        if (!res.ok) {
+          const err = new Error(`Subgraph HTTP ${res.status}`);
+          err.httpStatus = Number(res.status || 0);
+          throw err;
+        }
+        const json = await res.json();
+        if (json.errors?.length) {
+          throw new Error(json.errors[0]?.message || "Subgraph error");
+        }
+        return json.data;
+      } catch (err) {
+        lastError = err;
+        const status = Number(err?.httpStatus || 0);
+        if (!GRAPH_RETRY_STATUSES.has(status) || attempt >= 4) {
+          break;
+        }
+        const backoffMs = 1000 * (attempt + 1);
+        await sleep(backoffMs);
       }
-      const json = await res.json();
-      if (json.errors?.length) {
-        throw new Error(json.errors[0]?.message || "Subgraph error");
-      }
-      return json.data;
-    } catch (err) {
-      lastError = err;
     }
   }
   throw lastError || new Error("Subgraph unavailable");
@@ -487,7 +519,12 @@ const ingestSource = async ({
         throw err;
       }
     }
-    if (!swaps.length) break;
+    if (!swaps.length) {
+      if (Number.isFinite(endSec) && endSec >= cursor) {
+        cursor = endSec + 1;
+      }
+      break;
+    }
 
     let lastTs = cursor;
     swaps.forEach((swap) => {
@@ -505,6 +542,10 @@ const ingestSource = async ({
     });
 
     if (lastTs <= cursor) {
+      // Advance cursor past this time window when no valid rows survive filters.
+      if (Number.isFinite(endSec) && endSec >= cursor) {
+        cursor = endSec + 1;
+      }
       done = true;
     } else {
       cursor = lastTs + 1; // move past the last timestamp
@@ -1157,6 +1198,7 @@ export default async function handler(req, res) {
 
   const startSec = Math.floor(startMs / 1000);
   const endSec = Math.floor((endMs || Date.now()) / 1000);
+  const ingestMaxWindowSeconds = getIngestWindowSeconds();
   const keys = getKeys(seasonId);
 
   try {
@@ -1166,36 +1208,72 @@ export default async function handler(req, res) {
 
     const aggregated = new Map();
     const cursorsToSet = [];
+    const sourceErrors = [];
 
     for (const src of sources) {
       const cursorKey = getKeys(seasonId, src.source).cursor;
       const storedCursor = await kv.get(cursorKey);
-      const cursor =
-        Number(storedCursor || 0) > startSec
-          ? Number(storedCursor)
+      const storedCursorNum = Number(storedCursor || 0);
+      let cursor =
+        Number.isFinite(storedCursorNum) && storedCursorNum > startSec
+          ? storedCursorNum
           : startSec;
-
-      const { totals, cursor: nextCursor } = await ingestSource({
-        source: src.source,
-        url: src.url,
-        apiKey: src.apiKey,
-        startSec: cursor,
-        endSec,
-        startBlock,
-      });
-
-      if (nextCursor && nextCursor > cursor) {
-        cursorsToSet.push({ key: cursorKey, value: nextCursor });
+      if (cursor > endSec) {
+        // Guard against future cursor drift from malformed timestamps.
+        cursor = endSec;
       }
 
-      totals.forEach((amount, wallet) => {
-        aggregated.set(wallet, (aggregated.get(wallet) || 0) + amount);
-      });
+      try {
+        const sourceEndSec = Math.min(endSec, cursor + ingestMaxWindowSeconds);
+        const { totals, cursor: nextCursor } = await ingestSource({
+          source: src.source,
+          url: src.url,
+          apiKey: src.apiKey,
+          startSec: cursor,
+          endSec: sourceEndSec,
+          startBlock,
+        });
+
+        if (nextCursor && nextCursor > cursor) {
+          cursorsToSet.push({ key: cursorKey, value: nextCursor });
+        }
+
+        totals.forEach((amount, wallet) => {
+          aggregated.set(wallet, (aggregated.get(wallet) || 0) + amount);
+        });
+      } catch (error) {
+        sourceErrors.push({
+          source: src.source,
+          message: error?.message || "Unknown source error",
+        });
+      }
+    }
+
+    if (sourceErrors.length === sources.length) {
+      throw new Error(
+        `All points sources failed: ${sourceErrors
+          .map((entry) => `${entry.source}=${entry.message}`)
+          .join(" | ")}`
+      );
     }
 
     const wallets = Array.from(aggregated.keys());
+    const now = Date.now();
     if (!wallets.length) {
-      res.status(200).json({ ok: true, seasonId, ingestedWallets: 0 });
+      const idlePipeline = kv.pipeline();
+      cursorsToSet.forEach((cursor) => {
+        if (cursor?.key) idlePipeline.set(cursor.key, cursor.value);
+      });
+      idlePipeline.set(keys.updatedAt, now);
+      await idlePipeline.exec();
+      res.status(200).json({
+        ok: true,
+        seasonId,
+        ingestedWallets: 0,
+        cursorUpdates: cursorsToSet.length,
+        updatedAt: now,
+        sourceErrors,
+      });
       return;
     }
 
@@ -1203,19 +1281,27 @@ export default async function handler(req, res) {
     wallets.forEach((wallet) => readPipeline.hgetall(keys.user(wallet)));
     const existingRows = await readPipeline.exec();
 
-    const priceMap = v3Url
-      ? await fetchTokenPrices({
+    let priceMap = {};
+    if (v3Url) {
+      try {
+        priceMap = await fetchTokenPrices({
           url: v3Url,
           apiKey: v3Key,
           tokenIds: [addr.crx, addr.weth].filter(Boolean),
-        })
-      : {};
+        });
+      } catch (error) {
+        sourceErrors.push({
+          source: "v3-prices",
+          message: error?.message || "Unable to fetch token prices",
+        });
+        priceMap = {};
+      }
+    }
     if (addr.usdm) priceMap[addr.usdm] = 1;
     if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
       priceMap[addr.weth] = 0;
     }
 
-    const now = Date.now();
     const seasonBoostActive = now >= startMs;
 
     const computed = await runWithConcurrency(wallets, CONCURRENCY, async (wallet, idx) => {
@@ -1394,6 +1480,9 @@ export default async function handler(req, res) {
       seasonId,
       updatedAt: now,
       ingestedWallets: aggregated.size,
+      cursorUpdates: cursorsToSet.length,
+      ingestMaxWindowSeconds,
+      sourceErrors,
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });

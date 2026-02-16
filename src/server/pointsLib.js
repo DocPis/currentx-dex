@@ -1,13 +1,14 @@
 ﻿/* eslint-env node */
 import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
 
-const PAGE_LIMIT = 1000;
+const PAGE_LIMIT = 200;
 const MAX_POSITIONS = 200;
 const CONCURRENCY = 4;
 const POINTS_DEFAULT_VOLUME_CAP_USD = 250_000;
 const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
 const POINTS_DEFAULT_SCORING_MODE = "volume";
 const POINTS_DEFAULT_FEE_BPS = 30;
+const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -498,6 +499,8 @@ const buildHeaders = (apiKey) => {
   return headers;
 };
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const postGraph = async (url, apiKey, query, variables) => {
   const urls = dedupeUrls(parseSubgraphUrls(url));
   if (!urls.length) {
@@ -505,22 +508,32 @@ export const postGraph = async (url, apiKey, query, variables) => {
   }
   let lastError = null;
   for (const candidate of urls) {
-    try {
-      const res = await fetch(candidate, {
-        method: "POST",
-        headers: buildHeaders(apiKey),
-        body: JSON.stringify({ query, variables }),
-      });
-      if (!res.ok) {
-        throw new Error(`Subgraph HTTP ${res.status}`);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const res = await fetch(candidate, {
+          method: "POST",
+          headers: buildHeaders(apiKey),
+          body: JSON.stringify({ query, variables }),
+        });
+        if (!res.ok) {
+          const err = new Error(`Subgraph HTTP ${res.status}`);
+          err.httpStatus = Number(res.status || 0);
+          throw err;
+        }
+        const json = await res.json();
+        if (json.errors?.length) {
+          throw new Error(json.errors[0]?.message || "Subgraph error");
+        }
+        return json.data;
+      } catch (err) {
+        lastError = err;
+        const status = Number(err?.httpStatus || 0);
+        if (!GRAPH_RETRY_STATUSES.has(status) || attempt >= 4) {
+          break;
+        }
+        const backoffMs = 1000 * (attempt + 1);
+        await sleep(backoffMs);
       }
-      const json = await res.json();
-      if (json.errors?.length) {
-        throw new Error(json.errors[0]?.message || "Subgraph error");
-      }
-      return json.data;
-    } catch (err) {
-      lastError = err;
     }
   }
   throw lastError || new Error("Subgraph unavailable");
