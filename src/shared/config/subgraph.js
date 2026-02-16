@@ -2030,9 +2030,10 @@ export async function fetchTopPoolsBreakdownV3(limit = 4) {
 
 export async function fetchTopPairsBreakdownCombined(limit = 4) {
   const finalLimit = Math.max(1, Math.min(Number(limit) || 4, 20));
+  const candidateLimit = Math.min(20, Math.max(finalLimit * 5, finalLimit));
   const [v2Pairs, v3Pools] = await Promise.all([
-    fetchTopPairsBreakdown(finalLimit),
-    fetchTopPoolsBreakdownV3(finalLimit),
+    fetchTopPairsBreakdown(candidateLimit),
+    fetchTopPoolsBreakdownV3(candidateLimit),
   ]);
 
   const combined = [...(v2Pairs || []), ...(v3Pools || [])].filter(
