@@ -21,6 +21,7 @@ const POINTS_DEFAULT_SCORING_MODE = "volume";
 const POINTS_DEFAULT_FEE_BPS = 30;
 const INGEST_DEFAULT_MAX_WINDOW_SECONDS = 10 * 60;
 const LP_DISCOVERY_DEFAULT_BACKFILL_SECONDS = 24 * 60 * 60;
+const CURSOR_NEAR_TIP_DEFAULT_SECONDS = 120;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 
@@ -391,6 +392,18 @@ const getLpDiscoveryBackfillSeconds = () =>
       parsePositiveInt(
         process.env.POINTS_LP_DISCOVERY_BACKFILL_SECONDS,
         LP_DISCOVERY_DEFAULT_BACKFILL_SECONDS
+      )
+    )
+  );
+
+const getCursorNearTipSeconds = () =>
+  Math.max(
+    0,
+    Math.min(
+      3600,
+      parsePositiveInt(
+        process.env.POINTS_CURSOR_NEAR_TIP_SECONDS,
+        CURSOR_NEAR_TIP_DEFAULT_SECONDS
       )
     )
   );
@@ -1347,6 +1360,7 @@ export default async function handler(req, res) {
   const startSec = Math.floor(startMs / 1000);
   const endSec = Math.floor((endMs || Date.now()) / 1000);
   const ingestMaxWindowSeconds = getIngestWindowSeconds();
+  const cursorNearTipSeconds = getCursorNearTipSeconds();
   const keys = getKeys(seasonId);
 
   try {
@@ -1380,7 +1394,13 @@ export default async function handler(req, res) {
         });
 
         if (nextCursor && nextCursor > cursor) {
-          cursorsToSet.push({ key: cursorKey, value: nextCursor });
+          const advancedEmptyNearTip =
+            totals.size === 0 &&
+            nextCursor === sourceEndSec + 1 &&
+            sourceEndSec >= endSec - cursorNearTipSeconds;
+          if (!advancedEmptyNearTip) {
+            cursorsToSet.push({ key: cursorKey, value: nextCursor });
+          }
         }
 
         totals.forEach((amount, wallet) => {
@@ -1413,7 +1433,13 @@ export default async function handler(req, res) {
               if (!aggregated.has(wallet)) aggregated.set(wallet, 0);
             });
             if (nextLpCursor && nextLpCursor > lpCursorStart) {
-              cursorsToSet.push({ key: lpCursorKey, value: nextLpCursor });
+              const advancedEmptyNearTip =
+                lpWallets.size === 0 &&
+                nextLpCursor === lpEndSec + 1 &&
+                lpEndSec >= endSec - cursorNearTipSeconds;
+              if (!advancedEmptyNearTip) {
+                cursorsToSet.push({ key: lpCursorKey, value: nextLpCursor });
+              }
             }
           } catch (error) {
             sourceErrors.push({
