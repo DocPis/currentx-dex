@@ -4,6 +4,9 @@ import { V3_STAKER_ABI } from "../config/abis";
 import { V3_STAKER_ADDRESS } from "../config/addresses";
 
 export const V3_STAKER_DEPLOY_BLOCK = 7873058;
+const DEFAULT_LOG_CHUNK_SIZE = 5000;
+const DEFAULT_LOG_CHUNK_CONCURRENCY = 3;
+const LOG_REORG_WINDOW = 25;
 
 const INCENTIVE_KEY_TYPE =
   "tuple(address rewardToken,address pool,uint256 startTime,uint256 endTime,address refundee)";
@@ -12,6 +15,8 @@ const abi = AbiCoder.defaultAbiCoder();
 const iface = new Interface(V3_STAKER_ABI);
 const incentiveCreatedTopic = iface.getEvent("IncentiveCreated").topicHash;
 const depositTransferredTopic = iface.getEvent("DepositTransferred").topicHash;
+const incentivesCache = new Map();
+const depositsCache = new Map();
 
 const encodeIncentiveKey = (key) => abi.encode([INCENTIVE_KEY_TYPE], [key]);
 export const getIncentiveId = (key) => keccak256(encodeIncentiveKey(key));
@@ -19,32 +24,82 @@ export const getIncentiveId = (key) => keccak256(encodeIncentiveKey(key));
 const asTopicAddress = (address) =>
   `0x${(address || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 
-const fetchLogsInChunks = async (provider, filter, fromBlock, toBlock, chunkSize = 4000) => {
-  const logs = [];
-  let start = fromBlock;
-  const end = toBlock;
-  while (start <= end) {
-    const chunkEnd = Math.min(end, start + chunkSize - 1);
-    const res = await provider.getLogs({ ...filter, fromBlock: start, toBlock: chunkEnd });
-    if (res?.length) logs.push(...res);
-    start = chunkEnd + 1;
-  }
-  return logs;
+const toSafeBlock = (value, fallback = 0) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? Math.floor(num) : fallback;
 };
 
-export async function fetchV3StakerIncentives(provider, opts = {}) {
-  const fromBlock = Number(opts.fromBlock || V3_STAKER_DEPLOY_BLOCK);
-  const latest =
-    typeof opts.toBlock === "number" ? opts.toBlock : await provider.getBlockNumber();
-  const logs = await fetchLogsInChunks(
-    provider,
-    { address: V3_STAKER_ADDRESS, topics: [incentiveCreatedTopic] },
-    fromBlock,
-    latest,
-    opts.chunkSize || 5000
+const sortLogs = (logs = []) =>
+  (logs || []).sort((a, b) => {
+    const blockDelta = Number(a?.blockNumber || 0) - Number(b?.blockNumber || 0);
+    if (blockDelta !== 0) return blockDelta;
+    return Number(a?.logIndex || 0) - Number(b?.logIndex || 0);
+  });
+
+const runWithConcurrency = async (items = [], limit = 3, worker) => {
+  if (!Array.isArray(items) || !items.length) return [];
+  const concurrency = Math.max(1, Math.min(limit, items.length));
+  const out = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: concurrency }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+  return out;
+};
+
+const buildBlockRanges = (fromBlock, toBlock, chunkSize) => {
+  if (fromBlock > toBlock) return [];
+  const ranges = [];
+  const size = Math.max(1, toSafeBlock(chunkSize, DEFAULT_LOG_CHUNK_SIZE));
+  for (let start = fromBlock; start <= toBlock; start += size) {
+    ranges.push([start, Math.min(toBlock, start + size - 1)]);
+  }
+  return ranges;
+};
+
+const fetchLogsInChunks = async (
+  provider,
+  filter,
+  fromBlock,
+  toBlock,
+  chunkSize = DEFAULT_LOG_CHUNK_SIZE,
+  chunkConcurrency = DEFAULT_LOG_CHUNK_CONCURRENCY
+) => {
+  if (fromBlock > toBlock) return [];
+  const ranges = buildBlockRanges(fromBlock, toBlock, chunkSize);
+  const chunks = await runWithConcurrency(
+    ranges,
+    Math.max(1, toSafeBlock(chunkConcurrency, DEFAULT_LOG_CHUNK_CONCURRENCY)),
+    async ([start, end]) =>
+      provider.getLogs({ ...filter, fromBlock: start, toBlock: end }).catch(() => [])
   );
-  const incentives = [];
-  const seen = new Set();
+  return sortLogs(chunks.flat().filter(Boolean));
+};
+
+const getProviderScope = async (provider) => {
+  try {
+    const network = await provider.getNetwork();
+    const chainId = Number(network?.chainId || 0);
+    if (Number.isFinite(chainId) && chainId > 0) return String(chainId);
+  } catch {
+    // ignore network resolution failures
+  }
+  return "unknown";
+};
+
+const collectOwnedTokenIds = (ownerByToken, ownerLower) => {
+  const out = [];
+  ownerByToken.forEach((owner, tokenId) => {
+    if (owner === ownerLower) out.push(tokenId);
+  });
+  return out;
+};
+
+const parseIncentiveLogsIntoMap = (logs, byId) => {
   logs.forEach((log) => {
     try {
       const parsed = iface.parseLog(log);
@@ -57,9 +112,7 @@ export async function fetchV3StakerIncentives(provider, opts = {}) {
       if (!rewardToken || !pool || !startTime || !endTime || !refundee) return;
       const key = { rewardToken, pool, startTime, endTime, refundee };
       const incentiveId = getIncentiveId(key);
-      if (seen.has(incentiveId)) return;
-      seen.add(incentiveId);
-      incentives.push({
+      byId.set(incentiveId, {
         id: incentiveId,
         rewardToken,
         pool,
@@ -74,35 +127,102 @@ export async function fetchV3StakerIncentives(provider, opts = {}) {
       // ignore malformed logs
     }
   });
-  return incentives.sort((a, b) => a.startTime - b.startTime);
+};
+
+export async function fetchV3StakerIncentives(provider, opts = {}) {
+  const fromBlock = Math.max(
+    V3_STAKER_DEPLOY_BLOCK,
+    toSafeBlock(opts.fromBlock, V3_STAKER_DEPLOY_BLOCK)
+  );
+  const latest =
+    typeof opts.toBlock === "number"
+      ? toSafeBlock(opts.toBlock, fromBlock)
+      : await provider.getBlockNumber();
+  if (latest < fromBlock) return [];
+
+  const scope = await getProviderScope(provider);
+  const cacheKey = `${scope}:${V3_STAKER_ADDRESS.toLowerCase()}:${fromBlock}`;
+  const forceRefresh = Boolean(opts.forceRefresh);
+  const cached = !forceRefresh ? incentivesCache.get(cacheKey) : null;
+  let byId = cached?.byId ? new Map(cached.byId) : new Map();
+  let queryFrom = fromBlock;
+
+  if (cached && Number.isFinite(cached.toBlock)) {
+    const cachedToBlock = Number(cached.toBlock);
+    if (latest <= cachedToBlock) {
+      return Array.from(byId.values()).sort((a, b) => a.startTime - b.startTime);
+    }
+    queryFrom = Math.max(fromBlock, cachedToBlock - LOG_REORG_WINDOW + 1);
+  }
+
+  const logs = await fetchLogsInChunks(
+    provider,
+    { address: V3_STAKER_ADDRESS, topics: [incentiveCreatedTopic] },
+    queryFrom,
+    latest,
+    opts.chunkSize || DEFAULT_LOG_CHUNK_SIZE,
+    opts.chunkConcurrency || DEFAULT_LOG_CHUNK_CONCURRENCY
+  );
+  parseIncentiveLogsIntoMap(logs, byId);
+
+  incentivesCache.set(cacheKey, {
+    toBlock: latest,
+    byId,
+  });
+
+  return Array.from(byId.values()).sort((a, b) => a.startTime - b.startTime);
 }
 
 export async function fetchV3StakerDepositsForUser(provider, address, opts = {}) {
   if (!address) return [];
-  const fromBlock = Number(opts.fromBlock || V3_STAKER_DEPLOY_BLOCK);
+  const target = address.toLowerCase();
+  const fromBlock = Math.max(
+    V3_STAKER_DEPLOY_BLOCK,
+    toSafeBlock(opts.fromBlock, V3_STAKER_DEPLOY_BLOCK)
+  );
   const latest =
-    typeof opts.toBlock === "number" ? opts.toBlock : await provider.getBlockNumber();
-  const addrTopic = asTopicAddress(address);
-  const logsOld = await fetchLogsInChunks(
-    provider,
-    { address: V3_STAKER_ADDRESS, topics: [depositTransferredTopic, null, addrTopic] },
-    fromBlock,
-    latest,
-    opts.chunkSize || 5000
-  );
-  const logsNew = await fetchLogsInChunks(
-    provider,
-    { address: V3_STAKER_ADDRESS, topics: [depositTransferredTopic, null, null, addrTopic] },
-    fromBlock,
-    latest,
-    opts.chunkSize || 5000
-  );
-  const logs = [...logsOld, ...logsNew].sort((a, b) => {
-    if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
-    return (a.logIndex || 0) - (b.logIndex || 0);
-  });
+    typeof opts.toBlock === "number"
+      ? toSafeBlock(opts.toBlock, fromBlock)
+      : await provider.getBlockNumber();
+  if (latest < fromBlock) return [];
 
-  const ownerByToken = new Map();
+  const scope = await getProviderScope(provider);
+  const cacheKey = `${scope}:${V3_STAKER_ADDRESS.toLowerCase()}:${target}:${fromBlock}`;
+  const forceRefresh = Boolean(opts.forceRefresh);
+  const cached = !forceRefresh ? depositsCache.get(cacheKey) : null;
+  let ownerByToken = cached?.ownerByToken
+    ? new Map(cached.ownerByToken)
+    : new Map();
+  let queryFrom = fromBlock;
+
+  if (cached && Number.isFinite(cached.toBlock)) {
+    const cachedToBlock = Number(cached.toBlock);
+    if (latest <= cachedToBlock) {
+      return collectOwnedTokenIds(ownerByToken, target);
+    }
+    queryFrom = Math.max(fromBlock, cachedToBlock - LOG_REORG_WINDOW + 1);
+  }
+
+  const addrTopic = asTopicAddress(address);
+  const [logsOld, logsNew] = await Promise.all([
+    fetchLogsInChunks(
+      provider,
+      { address: V3_STAKER_ADDRESS, topics: [depositTransferredTopic, null, addrTopic] },
+      queryFrom,
+      latest,
+      opts.chunkSize || DEFAULT_LOG_CHUNK_SIZE,
+      opts.chunkConcurrency || DEFAULT_LOG_CHUNK_CONCURRENCY
+    ),
+    fetchLogsInChunks(
+      provider,
+      { address: V3_STAKER_ADDRESS, topics: [depositTransferredTopic, null, null, addrTopic] },
+      queryFrom,
+      latest,
+      opts.chunkSize || DEFAULT_LOG_CHUNK_SIZE,
+      opts.chunkConcurrency || DEFAULT_LOG_CHUNK_CONCURRENCY
+    ),
+  ]);
+  const logs = sortLogs([...logsOld, ...logsNew]);
   logs.forEach((log) => {
     try {
       const parsed = iface.parseLog(log);
@@ -115,10 +235,10 @@ export async function fetchV3StakerDepositsForUser(provider, address, opts = {})
     }
   });
 
-  const target = address.toLowerCase();
-  const out = [];
-  ownerByToken.forEach((owner, tokenId) => {
-    if (owner === target) out.push(tokenId);
+  depositsCache.set(cacheKey, {
+    toBlock: latest,
+    ownerByToken,
   });
-  return out;
+
+  return collectOwnedTokenIds(ownerByToken, target);
 }

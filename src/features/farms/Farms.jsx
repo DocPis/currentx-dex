@@ -86,6 +86,20 @@ const formatLocalInput = (date) => {
     date.getDate()
   )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
+const runWithConcurrency = async (items = [], limit = 4, worker) => {
+  if (!Array.isArray(items) || !items.length) return [];
+  const concurrency = Math.max(1, Math.min(limit, items.length));
+  const out = new Array(items.length);
+  let cursor = 0;
+  const runners = Array.from({ length: concurrency }, async () => {
+    while (cursor < items.length) {
+      const idx = cursor++;
+      out[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(runners);
+  return out;
+};
 
 export default function Farms({ address, onConnect }) {
   return (
@@ -204,16 +218,33 @@ function V3StakerList({ address, onConnect }) {
     const raw = await fetchV3StakerIncentives(provider, {
       fromBlock: V3_STAKER_DEPLOY_BLOCK,
     });
-    const enriched = [];
-    for (const incentive of raw) {
-      const rewardMeta = await loadTokenMeta(provider, incentive.rewardToken);
-      const poolMeta = await loadPoolMeta(provider, incentive.pool);
-      enriched.push({
+    const rewardAddresses = Array.from(
+      new Set(raw.map((incentive) => String(incentive?.rewardToken || "").toLowerCase()).filter(Boolean))
+    );
+    const poolAddresses = Array.from(
+      new Set(raw.map((incentive) => String(incentive?.pool || "").toLowerCase()).filter(Boolean))
+    );
+    const [rewardMetaRows, poolMetaRows] = await Promise.all([
+      runWithConcurrency(rewardAddresses, 6, async (rewardAddress) => [
+        rewardAddress,
+        await loadTokenMeta(provider, rewardAddress),
+      ]),
+      runWithConcurrency(poolAddresses, 6, async (poolAddress) => [
+        poolAddress,
+        await loadPoolMeta(provider, poolAddress),
+      ]),
+    ]);
+    const rewardMetaByAddress = Object.fromEntries(rewardMetaRows || []);
+    const poolMetaByAddress = Object.fromEntries(poolMetaRows || []);
+    const enriched = raw.map((incentive) => {
+      const rewardKey = String(incentive?.rewardToken || "").toLowerCase();
+      const poolKey = String(incentive?.pool || "").toLowerCase();
+      return {
         ...incentive,
-        rewardMeta,
-        poolMeta,
-      });
-    }
+        rewardMeta: rewardMetaByAddress[rewardKey] || null,
+        poolMeta: poolMetaByAddress[poolKey] || null,
+      };
+    });
     setIncentives(enriched);
   }, [loadPoolMeta, loadTokenMeta]);
 
@@ -230,92 +261,117 @@ function V3StakerList({ address, onConnect }) {
       provider
     );
     const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
-    const balance = await positionManager.balanceOf(address);
-    const count = Number(balance || 0);
-    const walletIds = [];
-    for (let i = 0; i < count; i += 1) {
-      try {
-        const tokenId = await positionManager.tokenOfOwnerByIndex(address, i);
-        if (tokenId !== undefined && tokenId !== null) walletIds.push(String(tokenId));
-      } catch {
-        // ignore
-      }
-    }
-    const depositIds = await fetchV3StakerDepositsForUser(provider, address, {
-      fromBlock: V3_STAKER_DEPLOY_BLOCK,
-    });
-    const allIds = Array.from(new Set([...walletIds, ...depositIds]));
     const staker = new Contract(V3_STAKER_ADDRESS, V3_STAKER_ABI, provider);
+    const depositIdsPromise = fetchV3StakerDepositsForUser(provider, address, {
+      fromBlock: V3_STAKER_DEPLOY_BLOCK,
+    }).catch(() => []);
+    const balance = await positionManager.balanceOf(address).catch(() => 0n);
+    const count = Number(balance || 0);
+    const walletIndexes = Array.from({ length: Math.max(0, count) }, (_, idx) => idx);
+    const walletIdRows = await runWithConcurrency(walletIndexes, 8, async (idx) => {
+      try {
+        const tokenId = await positionManager.tokenOfOwnerByIndex(address, idx);
+        return tokenId !== undefined && tokenId !== null ? String(tokenId) : null;
+      } catch {
+        return null;
+      }
+    });
+    const walletIds = (walletIdRows || []).filter(Boolean);
+    const walletIdSet = new Set(walletIds);
+    const depositIds = (await depositIdsPromise).map((id) => String(id));
+    const allIds = Array.from(new Set([...walletIds, ...depositIds]));
     const nextDeposits = {};
-    const nextPositions = [];
-
-    for (const tokenId of allIds) {
+    const positionRows = await runWithConcurrency(allIds, 6, async (tokenId) => {
       try {
         const pos = await positionManager.positions(tokenId);
         const token0 = pos?.token0;
         const token1 = pos?.token1;
         const fee = Number(pos?.fee || 0);
-        const pool = await factory.getPool(token0, token1, fee);
-        const token0Meta = await loadTokenMeta(provider, token0);
-        const token1Meta = await loadTokenMeta(provider, token1);
-        const isWallet = walletIds.includes(tokenId);
+        const [pool, token0Meta, token1Meta] = await Promise.all([
+          factory.getPool(token0, token1, fee).catch(() => ""),
+          loadTokenMeta(provider, token0),
+          loadTokenMeta(provider, token1),
+        ]);
+        const isWallet = walletIdSet.has(String(tokenId));
         const ownerType = isWallet ? "wallet" : "staker";
+        let depositEntry = null;
         if (ownerType === "staker") {
-          try {
-            const deposit = await staker.deposits(tokenId);
-            nextDeposits[tokenId] = {
-              owner: deposit?.owner || "",
-              numberOfStakes: Number(deposit?.numberOfStakes || 0),
-              tickLower: Number(deposit?.tickLower || 0),
-              tickUpper: Number(deposit?.tickUpper || 0),
-            };
-          } catch {
-            nextDeposits[tokenId] = { owner: "", numberOfStakes: 0, tickLower: 0, tickUpper: 0 };
-          }
+          const deposit = await staker.deposits(tokenId).catch(() => null);
+          depositEntry = deposit
+            ? {
+                owner: deposit?.owner || "",
+                numberOfStakes: Number(deposit?.numberOfStakes || 0),
+                tickLower: Number(deposit?.tickLower || 0),
+                tickUpper: Number(deposit?.tickUpper || 0),
+              }
+            : { owner: "", numberOfStakes: 0, tickLower: 0, tickUpper: 0 };
         }
-        nextPositions.push({
-          tokenId,
-          token0,
-          token1,
-          fee,
-          tickLower: Number(pos?.tickLower || 0),
-          tickUpper: Number(pos?.tickUpper || 0),
-          liquidity: pos?.liquidity || 0n,
-          pool,
-          token0Meta,
-          token1Meta,
-          ownerType,
-        });
+        return {
+          tokenId: String(tokenId),
+          position: {
+            tokenId: String(tokenId),
+            token0,
+            token1,
+            fee,
+            tickLower: Number(pos?.tickLower || 0),
+            tickUpper: Number(pos?.tickUpper || 0),
+            liquidity: pos?.liquidity || 0n,
+            pool,
+            token0Meta,
+            token1Meta,
+            ownerType,
+          },
+          depositEntry,
+        };
       } catch {
-        // ignore broken positions
+        return null;
       }
-    }
+    });
+
+    const nextPositions = [];
+    (positionRows || []).forEach((row) => {
+      if (!row || !row.position) return;
+      nextPositions.push(row.position);
+      if (row.depositEntry) {
+        nextDeposits[row.tokenId] = row.depositEntry;
+      }
+    });
 
     setDepositInfo(nextDeposits);
     setPositions(nextPositions);
   }, [address, loadTokenMeta]);
 
-  const refreshAll = useCallback(async () => {
+  const refreshAll = useCallback(async (opts = {}) => {
+    const background = Boolean(opts?.background);
     try {
-      setLoading(true);
-      setError("");
-      await loadIncentives();
-      await loadPositions();
+      if (!background) {
+        setLoading(true);
+        setError("");
+      }
+      await Promise.all([loadIncentives(), loadPositions()]);
     } catch (e) {
-      setError(e?.message || "Unable to load incentives");
+      if (!background) {
+        setError(e?.message || "Unable to load incentives");
+      }
     } finally {
-      setLoading(false);
+      if (!background) {
+        setLoading(false);
+      }
     }
   }, [loadIncentives, loadPositions]);
 
   useEffect(() => {
     let cancelled = false;
-    const load = async () => {
+    const loadInitial = async () => {
       if (cancelled) return;
       await refreshAll();
     };
-    load();
-    const id = setInterval(load, 60000);
+    const loadBackground = async () => {
+      if (cancelled) return;
+      await refreshAll({ background: true });
+    };
+    loadInitial();
+    const id = setInterval(loadBackground, 60000);
     return () => {
       cancelled = true;
       clearInterval(id);

@@ -860,6 +860,9 @@ const friendlyActionError = (e, actionLabel = "Action") => {
   ) {
     return `${actionLabel} failed: insufficient allowance. Re-approve the tokens and try again.`;
   }
+  if (lower.includes("stf")) {
+    return `${actionLabel} failed: token transfer failed (STF). Check token decimals, wallet balance, and allowance, then retry.`;
+  }
   if (lower.includes("missing revert data") || lower.includes("estimategas")) {
     return `${actionLabel} simulation failed. Try a smaller amount, refresh balances, or wait for liquidity.`;
   }
@@ -5471,32 +5474,37 @@ export default function LiquiditySection({
       setV3MintError("Token addresses missing for this selection.");
       return;
     }
-    const amountAParsed = safeParseUnits(v3Amount0 || "0", v3Token0 === "ETH" ? 18 : metaA?.decimals || 18);
-    const amountBParsed = safeParseUnits(v3Amount1 || "0", v3Token1 === "ETH" ? 18 : metaB?.decimals || 18);
-    if ((v3Amount0 && amountAParsed === null) || (v3Amount1 && amountBParsed === null)) {
+    if (addrA.toLowerCase() === addrB.toLowerCase()) {
+      setV3MintError("Selected tokens resolve to the same asset. Choose a different pair.");
+      return;
+    }
+    const amountInputA = String(v3Amount0 || "").trim();
+    const amountInputB = String(v3Amount1 || "").trim();
+    if (
+      (amountInputA && safeParseUnits(amountInputA, 18) === null) ||
+      (amountInputB && safeParseUnits(amountInputB, 18) === null)
+    ) {
       setV3MintError("Enter valid amounts.");
       return;
     }
-    const amountA = amountAParsed || 0n;
-    const amountB = amountBParsed || 0n;
     if (v3RangeMath) {
       if (v3RangeSide === "dual") {
-        if (amountA <= 0n || amountB <= 0n) {
+        if (!amountInputA || !amountInputB) {
           setV3MintError("Enter valid amounts for both tokens.");
           return;
         }
       } else if (v3RangeSide === "token0") {
-        if (amountA <= 0n) {
+        if (!amountInputA) {
           setV3MintError(`Enter an amount for ${v3Token0}.`);
           return;
         }
       } else if (v3RangeSide === "token1") {
-        if (amountB <= 0n) {
+        if (!amountInputB) {
           setV3MintError(`Enter an amount for ${v3Token1}.`);
           return;
         }
       }
-    } else if (amountA <= 0n && amountB <= 0n) {
+    } else if (!amountInputA && !amountInputB) {
       setV3MintError("Enter an amount for at least one token.");
       return;
     }
@@ -5520,8 +5528,8 @@ export default function LiquiditySection({
       const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, readProvider);
       let token0Addr = addrA;
       let token1Addr = addrB;
-      let amount0Desired = amountA;
-      let amount1Desired = amountB;
+      let token0InputAmount = amountInputA;
+      let token1InputAmount = amountInputB;
       let token0IsEth = v3MintUseEth0Effective;
       let token1IsEth = v3MintUseEth1Effective;
       const isReversed = addrA.toLowerCase() !== addrB.toLowerCase() &&
@@ -5529,8 +5537,92 @@ export default function LiquiditySection({
 
       if (token0Addr.toLowerCase() > token1Addr.toLowerCase()) {
         [token0Addr, token1Addr] = [token1Addr, token0Addr];
-        [amount0Desired, amount1Desired] = [amount1Desired, amount0Desired];
+        [token0InputAmount, token1InputAmount] = [token1InputAmount, token0InputAmount];
         [token0IsEth, token1IsEth] = [token1IsEth, token0IsEth];
+      }
+      const token0MetaForParse = findTokenMetaByAddress(token0Addr);
+      const token1MetaForParse = findTokenMetaByAddress(token1Addr);
+      const token0SymbolLabel = token0IsEth
+        ? "ETH"
+        : token0MetaForParse?.symbol || shortenAddress(token0Addr);
+      const token1SymbolLabel = token1IsEth
+        ? "ETH"
+        : token1MetaForParse?.symbol || shortenAddress(token1Addr);
+      const dec0 = token0IsEth
+        ? 18
+        : await readDecimals(readProvider, token0Addr, token0MetaForParse);
+      const dec1 = token1IsEth
+        ? 18
+        : await readDecimals(readProvider, token1Addr, token1MetaForParse);
+      const countInputDecimals = (value) => {
+        const input = String(value || "").trim();
+        if (!input) return 0;
+        const [, frac = ""] = input.split(".");
+        return frac.length;
+      };
+      if (token0InputAmount && countInputDecimals(token0InputAmount) > dec0) {
+        throw new Error(`${token0SymbolLabel} supports up to ${dec0} decimals.`);
+      }
+      if (token1InputAmount && countInputDecimals(token1InputAmount) > dec1) {
+        throw new Error(`${token1SymbolLabel} supports up to ${dec1} decimals.`);
+      }
+      const parsedAmount0 = token0InputAmount
+        ? safeParseUnits(token0InputAmount, dec0)
+        : 0n;
+      const parsedAmount1 = token1InputAmount
+        ? safeParseUnits(token1InputAmount, dec1)
+        : 0n;
+      if (
+        (token0InputAmount && parsedAmount0 === null) ||
+        (token1InputAmount && parsedAmount1 === null)
+      ) {
+        throw new Error("Invalid amount format. Use dot for decimals.");
+      }
+      const amount0Desired = parsedAmount0 || 0n;
+      const amount1Desired = parsedAmount1 || 0n;
+      if (v3RangeMath) {
+        if (v3RangeSide === "dual") {
+          if (amount0Desired <= 0n || amount1Desired <= 0n) {
+            throw new Error("Enter valid amounts for both tokens.");
+          }
+        } else if (v3RangeSide === "token0") {
+          if (amount0Desired <= 0n) {
+            throw new Error(`Enter an amount for ${token0SymbolLabel}.`);
+          }
+        } else if (v3RangeSide === "token1") {
+          if (amount1Desired <= 0n) {
+            throw new Error(`Enter an amount for ${token1SymbolLabel}.`);
+          }
+        }
+      } else if (amount0Desired <= 0n && amount1Desired <= 0n) {
+        throw new Error("Enter an amount for at least one token.");
+      }
+      const readBalance = async (tokenAddress, useEth) => {
+        if (useEth) return provider.getBalance(user);
+        const erc20 = new Contract(tokenAddress, ERC20_ABI, readProvider);
+        return erc20.balanceOf(user);
+      };
+      const [balance0Raw, balance1Raw] = await Promise.all([
+        amount0Desired > 0n ? readBalance(token0Addr, token0IsEth) : Promise.resolve(0n),
+        amount1Desired > 0n ? readBalance(token1Addr, token1IsEth) : Promise.resolve(0n),
+      ]);
+      if (!token0IsEth && amount0Desired > 0n && balance0Raw < amount0Desired) {
+        throw new Error(`Insufficient ${token0SymbolLabel} balance for this deposit.`);
+      }
+      if (!token1IsEth && amount1Desired > 0n && balance1Raw < amount1Desired) {
+        throw new Error(`Insufficient ${token1SymbolLabel} balance for this deposit.`);
+      }
+      const requiredEth =
+        (token0IsEth ? amount0Desired : 0n) + (token1IsEth ? amount1Desired : 0n);
+      if (requiredEth > 0n) {
+        const nativeBalanceRaw = token0IsEth
+          ? balance0Raw
+          : token1IsEth
+          ? balance1Raw
+          : 0n;
+        if (nativeBalanceRaw < requiredEth) {
+          throw new Error("Insufficient ETH balance for this deposit.");
+        }
       }
 
       const fee = Number(v3FeeTier);
