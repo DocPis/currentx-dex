@@ -222,6 +222,22 @@ const PROTOCOL_REWARD_CONFIG_ERROR = (() => {
   }
   return "";
 })();
+const CREATOR_BUY_UNAVAILABLE_DEFAULT_ERROR =
+  "Creator Buy is unavailable on this CurrentX deployment. Set Creator Buy ETH amount to 0.";
+const CURRENTX_INITIAL_BUY_ROUTER_SELECTOR = id(
+  "exactInputSingle((address,address,uint24,address,uint256,uint256,uint160))"
+)
+  .slice(2)
+  .toLowerCase();
+const CURRENTX_ROUTER_READER_ABI = [
+  {
+    inputs: [],
+    name: "swapRouter",
+    outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+];
 
 const toImagePreviewSrc = (value) => {
   const raw = String(value || "").trim();
@@ -268,6 +284,54 @@ const formatRemainingFromUnix = (unix) => {
   if (days > 0) return `${days}d ${hours}h`;
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
+};
+
+const resolveCreatorBuySupport = async (provider, currentxAddress) => {
+  if (!provider || !isAddress(currentxAddress)) {
+    return {
+      supported: null,
+      reason: "Unable to verify Creator Buy compatibility.",
+      swapRouter: "",
+    };
+  }
+  try {
+    const reader = new Contract(currentxAddress, CURRENTX_ROUTER_READER_ABI, provider);
+    const swapRouter = String(await reader.swapRouter().catch(() => "")).trim();
+    if (!isAddress(swapRouter)) {
+      return {
+        supported: false,
+        reason: "Creator Buy unavailable: CurrentX swap router is not configured.",
+        swapRouter,
+      };
+    }
+    const swapRouterCode = String(await provider.getCode(swapRouter)).trim().toLowerCase();
+    if (!swapRouterCode || swapRouterCode === "0x") {
+      return {
+        supported: false,
+        reason: `Creator Buy unavailable: swap router not found at ${swapRouter}.`,
+        swapRouter,
+      };
+    }
+    const selectorNeedle = `63${CURRENTX_INITIAL_BUY_ROUTER_SELECTOR}`;
+    const supportsExpectedSelector =
+      swapRouterCode.includes(selectorNeedle) ||
+      swapRouterCode.includes(CURRENTX_INITIAL_BUY_ROUTER_SELECTOR);
+    if (!supportsExpectedSelector) {
+      return {
+        supported: false,
+        reason:
+          "Creator Buy unavailable: swap router is incompatible with CurrentX initial buy flow. Set Creator Buy ETH to 0.",
+        swapRouter,
+      };
+    }
+    return { supported: true, reason: "", swapRouter };
+  } catch {
+    return {
+      supported: null,
+      reason: "Unable to verify Creator Buy compatibility.",
+      swapRouter: "",
+    };
+  }
 };
 
 const CURRENTX_INTERFACE = new Interface(CURRENTX_ABI);
@@ -534,29 +598,37 @@ function CopyIcon({ className = "h-3.5 w-3.5" }) {
   );
 }
 
-function SectionEnableToggle({ enabled, onToggle }) {
+function SectionEnableToggle({ enabled, onToggle, disabled = false }) {
   return (
     <button
       type="button"
       aria-pressed={enabled}
+      disabled={disabled}
       onClick={(event) => {
         event.stopPropagation();
+        if (disabled) return;
         onToggle(!enabled);
       }}
       className={`inline-flex items-center gap-2 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition ${
-        enabled
-          ? "border-emerald-300/55 bg-emerald-500/15 text-emerald-100"
-          : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-500 hover:text-slate-100"
+        disabled
+          ? "cursor-not-allowed border-slate-700/70 bg-slate-900/50 text-slate-500"
+          : enabled
+            ? "border-emerald-300/55 bg-emerald-500/15 text-emerald-100"
+            : "border-slate-600/70 bg-slate-900/70 text-slate-300 hover:border-slate-500 hover:text-slate-100"
       }`}
-      title={enabled ? "Extension enabled" : "Extension disabled"}
+      title={disabled ? "Extension unavailable" : enabled ? "Extension enabled" : "Extension disabled"}
     >
       <span>Enable</span>
       <span
         className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-          enabled ? "bg-emerald-500/20 text-emerald-100" : "bg-slate-800/80 text-slate-300"
+          disabled
+            ? "bg-slate-800/70 text-slate-500"
+            : enabled
+              ? "bg-emerald-500/20 text-emerald-100"
+              : "bg-slate-800/80 text-slate-300"
         }`}
       >
-        {enabled ? "ON" : "OFF"}
+        {disabled ? "N/A" : enabled ? "ON" : "OFF"}
       </span>
     </button>
   );
@@ -601,7 +673,7 @@ function AddressPreviewRow({ label, value, copyKey, copiedKey, onCopy }) {
   );
 }
 
-function SelectorPills({ value, onChange, options, columns = 3 }) {
+function SelectorPills({ value, onChange, options, columns = 3, disabled = false }) {
   const gridCols = columns === 2 ? "sm:grid-cols-2" : columns === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3";
   return (
     <div className={`grid grid-cols-1 gap-2 ${gridCols}`}>
@@ -611,11 +683,14 @@ function SelectorPills({ value, onChange, options, columns = 3 }) {
           <button
             key={option.value}
             type="button"
+            disabled={disabled}
             onClick={() => onChange(option.value)}
             className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-              active
-                ? "border-emerald-300/65 bg-gradient-to-r from-emerald-400/20 to-cyan-400/15 text-emerald-100 shadow-[0_10px_22px_rgba(16,185,129,0.2)]"
-                : "border-slate-700/70 bg-slate-900/65 text-slate-200 hover:border-slate-500 hover:text-slate-50"
+              disabled
+                ? "cursor-not-allowed border-slate-700/70 bg-slate-900/45 text-slate-500"
+                : active
+                  ? "border-emerald-300/65 bg-gradient-to-r from-emerald-400/20 to-cyan-400/15 text-emerald-100 shadow-[0_10px_22px_rgba(16,185,129,0.2)]"
+                  : "border-slate-700/70 bg-slate-900/65 text-slate-200 hover:border-slate-500 hover:text-slate-50"
             }`}
           >
             {option.label}
@@ -732,6 +807,9 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     poolFee: null,
     tokenSupply: null,
     weth: "",
+    swapRouter: "",
+    creatorBuySupported: null,
+    creatorBuySupportReason: "",
   });
   const [deployForm, setDeployForm] = useState(defaultDeployForm);
   const [deployAction, setDeployAction] = useState({ loading: false, error: "", hash: "", message: "" });
@@ -911,7 +989,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setProtocol((prev) => ({ ...prev, loading: true, error: "" }));
       const provider = getReadOnlyProvider(false, true);
       const currentx = new Contract(contracts.currentx, CURRENTX_ABI, provider);
-      const [maxCreatorReward, maxVaultPercentage, tickSpacing, poolFee, tokenSupply, weth] =
+      const [maxCreatorReward, maxVaultPercentage, tickSpacing, poolFee, tokenSupply, weth, creatorBuySupport] =
         await Promise.all([
           currentx.MAX_CREATOR_REWARD(),
           currentx.MAX_VAULT_PERCENTAGE(),
@@ -919,6 +997,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           currentx.POOL_FEE(),
           currentx.TOKEN_SUPPLY(),
           currentx.weth(),
+          resolveCreatorBuySupport(provider, contracts.currentx),
         ]);
       setProtocol({
         loading: false,
@@ -929,6 +1008,9 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         poolFee,
         tokenSupply,
         weth,
+        swapRouter: creatorBuySupport?.swapRouter || "",
+        creatorBuySupported: creatorBuySupport?.supported ?? null,
+        creatorBuySupportReason: creatorBuySupport?.reason || "",
       });
     } catch (error) {
       setProtocol((prev) => ({ ...prev, loading: false, error: errMsg(error, "Unable to load CurrentX constants.") }));
@@ -1681,6 +1763,12 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         "Paired token pool fee"
       );
       const txValue = parseEthAmount(deployForm.txValueEth);
+      if (txValue > 0n) {
+        const creatorBuySupport = await resolveCreatorBuySupport(provider, contracts.currentx);
+        if (creatorBuySupport?.supported === false) {
+          throw new Error(creatorBuySupport.reason || creatorBuyUnavailableReason);
+        }
+      }
       if (txValue > 0n && deployForm.useCustomCreatorBuyRecipient) {
         throw new Error(
           "Custom recipient for Creator Buy is not supported by deployToken. Disable custom recipient or set ETH amount to 0."
@@ -1801,6 +1889,11 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         }
       } catch (simulationError) {
         if (!isOpaqueRevert(simulationError)) throw simulationError;
+        if (txValue > 0n) {
+          throw new Error(
+            "Creator Buy simulation failed without revert data on this CurrentX deployment. Set Creator Buy ETH to 0 and retry."
+          );
+        }
         console.warn("[launchpad][deploy] opaque simulation failure, continuing to tx send", simulationError);
       }
       setDeployAction({ loading: true, error: "", hash: "", message: "Sending transaction..." });
@@ -2045,8 +2138,12 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const value = Number.parseFloat(creatorBuyRawInput || "0");
     return Number.isFinite(value) ? value : 0;
   }, [creatorBuyRawInput]);
+  const creatorBuyUnavailable = protocol.creatorBuySupported === false;
+  const creatorBuyUnavailableReason = String(
+    protocol.creatorBuySupportReason || CREATOR_BUY_UNAVAILABLE_DEFAULT_ERROR
+  ).trim();
   const creatorBuyConfigured = creatorBuyAmount > 0;
-  const creatorBuyEnabled = openSections.buy || creatorBuyConfigured;
+  const creatorBuyEnabled = !creatorBuyUnavailable && (openSections.buy || creatorBuyConfigured);
   const startingTickPreview = useMemo(() => {
     try {
       return computeTickFromMarketCapEth({
@@ -2083,20 +2180,32 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   const vaultStatusSummary = vaultEnabled
     ? `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${deployForm.vestingDays || "0"}d vest`
     : "Disabled";
-  const creatorBuyStatusLabel = creatorBuyConfigured
-    ? "Configured"
+  const creatorBuyStatusLabel = creatorBuyUnavailable
+    ? "Unavailable"
+    : creatorBuyConfigured
+      ? "Configured"
+      : creatorBuyEnabled
+        ? "Not configured"
+        : "Disabled";
+  const creatorBuyStatusSummary = creatorBuyUnavailable
+    ? "Set to 0 ETH"
     : creatorBuyEnabled
-      ? "Not configured"
+      ? `${creatorBuyAmountLabel} ETH`
       : "Disabled";
-  const creatorBuyStatusSummary = creatorBuyEnabled ? `${creatorBuyAmountLabel} ETH` : "Disabled";
-  const creatorBuyStatusTone = creatorBuyConfigured ? "good" : creatorBuyEnabled ? "warn" : "neutral";
+  const creatorBuyStatusTone = creatorBuyUnavailable
+    ? "warn"
+    : creatorBuyConfigured
+      ? "good"
+      : creatorBuyEnabled
+        ? "warn"
+        : "neutral";
   const rewardsSummaryLine = `${rewardTypeLabel} • ${allocatedRewardsLabel}% • ${rewardRecipientCount} recipient${
     rewardRecipientCount === 1 ? "" : "s"
   }`;
   const vaultSummaryLine = `${deployForm.vaultPercentage || "0"}% • ${deployForm.lockupDays || "0"}d lock • ${
     deployForm.vestingDays || "0"
   }d vest`;
-  const creatorBuySummaryLine = `${creatorBuyAmountLabel} ETH`;
+  const creatorBuySummaryLine = creatorBuyUnavailable ? "Unavailable (0 ETH required)" : `${creatorBuyAmountLabel} ETH`;
   const startTickCopyValue = startingTickPreview != null ? String(startingTickPreview) : "";
   const startingPriceCopyValue =
     startingPricePreview != null ? `${formatEthPerTokenPrecise(startingPricePreview)} ETH/token` : "";
@@ -2148,20 +2257,34 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       };
     });
   }, []);
-  const handleToggleCreatorBuyExtension = useCallback((enabled) => {
-    setOpenSections((prev) => ({ ...prev, buy: enabled }));
-    setDeployForm((prev) => {
-      const current = Number.parseFloat(String(prev.txValueEth || "").replace(/,/gu, ".").trim() || "0");
-      const nextAmount =
-        enabled && !(Number.isFinite(current) && current > 0) ? CREATOR_BUY_ETH_PRESETS[0] || "0.1" : prev.txValueEth;
-      return {
-        ...prev,
-        txValueEth: enabled ? nextAmount : "0",
-        useCustomCreatorBuyRecipient: enabled ? prev.useCustomCreatorBuyRecipient : false,
-        creatorBuyRecipient: enabled ? prev.creatorBuyRecipient : "",
-      };
-    });
-  }, []);
+  const handleToggleCreatorBuyExtension = useCallback(
+    (enabled) => {
+      if (enabled && creatorBuyUnavailable) {
+        setOpenSections((prev) => ({ ...prev, buy: true }));
+        setDeployAction((prev) => ({
+          ...prev,
+          loading: false,
+          hash: "",
+          message: "",
+          error: creatorBuyUnavailableReason,
+        }));
+        return;
+      }
+      setOpenSections((prev) => ({ ...prev, buy: enabled }));
+      setDeployForm((prev) => {
+        const current = Number.parseFloat(String(prev.txValueEth || "").replace(/,/gu, ".").trim() || "0");
+        const nextAmount =
+          enabled && !(Number.isFinite(current) && current > 0) ? CREATOR_BUY_ETH_PRESETS[0] || "0.1" : prev.txValueEth;
+        return {
+          ...prev,
+          txValueEth: enabled ? nextAmount : "0",
+          useCustomCreatorBuyRecipient: enabled ? prev.useCustomCreatorBuyRecipient : false,
+          creatorBuyRecipient: enabled ? prev.creatorBuyRecipient : "",
+        };
+      });
+    },
+    [creatorBuyUnavailable, creatorBuyUnavailableReason]
+  );
   const createSummaryCard = (
     <div className="space-y-3 rounded-2xl border border-slate-700/60 bg-slate-950/65 p-4">
       <div className="flex items-center gap-3">
@@ -2215,11 +2338,21 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
           <div className="flex items-center justify-between gap-2">
             <span className="text-slate-300/80">Creator Buy</span>
-            <span className={creatorBuyEnabled ? "text-emerald-200" : "text-slate-300/75"}>
-              {creatorBuyEnabled ? "On" : "Off"}
+            <span
+              className={
+                creatorBuyUnavailable
+                  ? "text-amber-200"
+                  : creatorBuyEnabled
+                    ? "text-emerald-200"
+                    : "text-slate-300/75"
+              }
+            >
+              {creatorBuyUnavailable ? "N/A" : creatorBuyEnabled ? "On" : "Off"}
             </span>
           </div>
-          {creatorBuyEnabled ? <div className="text-[11px] text-slate-300/75">{creatorBuySummaryLine}</div> : null}
+          {creatorBuyEnabled || creatorBuyUnavailable ? (
+            <div className="text-[11px] text-slate-300/75">{creatorBuySummaryLine}</div>
+          ) : null}
         </div>
         <div className="space-y-1 rounded-lg border border-slate-700/55 bg-slate-900/35 px-2.5 py-2">
           <div className="flex items-center justify-between gap-2">
@@ -2872,12 +3005,27 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                 statusLabel={creatorBuyStatusLabel}
                 statusSummary={creatorBuyStatusSummary}
                 statusTone={creatorBuyStatusTone}
-                headerAction={<SectionEnableToggle enabled={creatorBuyEnabled} onToggle={handleToggleCreatorBuyExtension} />}
+                headerAction={
+                  <SectionEnableToggle
+                    enabled={creatorBuyEnabled}
+                    onToggle={handleToggleCreatorBuyExtension}
+                    disabled={creatorBuyUnavailable}
+                  />
+                }
               >
                 <div className="text-xs text-slate-300/75">
                   What this does: executes an optional initial buy right after deployment.
                 </div>
-                {!creatorBuyEnabled ? (
+                {creatorBuyUnavailable ? (
+                  <div className="space-y-2">
+                    <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                      {creatorBuyUnavailableReason}
+                    </div>
+                    <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/85">
+                      Keep Creator Buy at 0 ETH on this deployment.
+                    </div>
+                  </div>
+                ) : !creatorBuyEnabled ? (
                   <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
                     Disabled (0 ETH).
                   </div>
