@@ -13,8 +13,8 @@ const LOW_TVL_THRESHOLD = 50;
 const PROTOCOL_INTEL_FILTERS = [
   { id: "all", label: "All Pools" },
   { id: "highest-apr", label: "Highest APR" },
-  { id: "highest-efficiency", label: "Highest Efficiency" },
-  { id: "highest-flow", label: "Highest Flow" },
+  { id: "highest-efficiency", label: "Highest Turnover" },
+  { id: "largest-tvl-change", label: "Largest TVL Delta" },
   { id: "stable-yield", label: "Stable Yield" },
 ];
 
@@ -57,42 +57,16 @@ const formatSignedUsd = (num) => {
   const sign = num > 0 ? "+" : num < 0 ? "-" : "";
   return `${sign}${formatUsd(Math.abs(num))}`;
 };
+const formatPercent = (num, digits = 2) => {
+  if (!Number.isFinite(num)) return "--";
+  return `${trimTrailingZeros(num.toFixed(digits))}%`;
+};
+const formatSignedPercent = (num, digits = 2) => {
+  if (!Number.isFinite(num)) return "--";
+  const sign = num > 0 ? "+" : num < 0 ? "-" : "";
+  return `${sign}${formatPercent(Math.abs(num), digits)}`;
+};
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-const getMedian = (values = []) => {
-  if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[mid - 1] + sorted[mid]) / 2
-    : sorted[mid];
-};
-const hashString = (value = "") => {
-  let hash = 0;
-  for (let i = 0; i < value.length; i += 1) {
-    hash = (hash << 5) - hash + value.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash);
-};
-const buildSparklinePath = (seedInput, baseLevel = 0.5, trendShift = 0) => {
-  const points = [];
-  const seed = hashString(seedInput);
-  for (let idx = 0; idx < 12; idx += 1) {
-    const phase = ((seed % 11) + idx) * 0.8;
-    const jitter = (((seed >> (idx % 15)) & 7) - 3) / 40;
-    const wave = Math.sin(phase) * 0.08;
-    const trend = (idx / 11 - 0.5) * trendShift;
-    const value = clamp(baseLevel + wave + jitter + trend, 0.08, 0.92);
-    points.push(value);
-  }
-  return points;
-};
-const mapVolatilityLabel = (score) => {
-  if (!Number.isFinite(score)) return "--";
-  if (score < 3.4) return "Low";
-  if (score < 6.8) return "Medium";
-  return "High";
-};
 
 const formatFeePercent = (feeTier, fallback = "0.30%") => {
   const num = Number(feeTier);
@@ -116,23 +90,6 @@ const buildTokenMaps = () => {
 };
 
 const TOKEN_MAPS = buildTokenMaps();
-
-const STABLE_SYMBOLS = new Set([
-  "USDM",
-  "USDT0",
-  "CUSD",
-  "USDC",
-  "USDT",
-  "DAI",
-  "USDE",
-  "SUSDE",
-  "STCUSD",
-]);
-
-const isStableSymbol = (symbol) => {
-  const normalized = (symbol || "").toString().toUpperCase();
-  return Boolean(normalized && STABLE_SYMBOLS.has(normalized));
-};
 
 const resolveTokenMeta = (tokenId, symbol) => {
   if (tokenId) {
@@ -212,6 +169,10 @@ export default function PoolsSection({ onSelectPool }) {
           : volume24hUsd !== null && feeRate !== null
           ? volume24hUsd * feeRate
           : null;
+      const tvlChange24hUsd =
+        roll.tvlChange24hUsd !== undefined && roll.tvlChange24hUsd !== null
+          ? roll.tvlChange24hUsd
+          : null;
       const apr =
         liquidityUsd && liquidityUsd > 0 && fees24hUsd !== null
           ? (fees24hUsd * 365 * 100) / liquidityUsd
@@ -223,24 +184,16 @@ export default function PoolsSection({ onSelectPool }) {
         liquidityUsd,
         volume24hUsd,
         fees24hUsd,
+        tvlChange24hUsd,
         apr,
       });
     });
     v2Pools.forEach((pool) => {
       const roll = v2RollingData[pool.id?.toLowerCase?.() || ""] || {};
-      let liquidityUsd =
+      const liquidityUsd =
         roll.tvlUsd !== undefined && roll.tvlUsd !== null
           ? roll.tvlUsd
           : pool.tvlUsd ?? null;
-      if (!liquidityUsd || liquidityUsd <= 0) {
-        const stable0 = isStableSymbol(pool.token0Symbol);
-        const stable1 = isStableSymbol(pool.token1Symbol);
-        if (stable0 && Number.isFinite(pool.reserve0) && pool.reserve0 > 0) {
-          liquidityUsd = pool.reserve0 * 2;
-        } else if (stable1 && Number.isFinite(pool.reserve1) && pool.reserve1 > 0) {
-          liquidityUsd = pool.reserve1 * 2;
-        }
-      }
       const volume24hUsd =
         roll.volumeUsd !== undefined && roll.volumeUsd !== null
           ? roll.volumeUsd
@@ -248,6 +201,10 @@ export default function PoolsSection({ onSelectPool }) {
       const feeRate = 0.003;
       const fees24hUsd =
         volume24hUsd !== null ? volume24hUsd * feeRate : null;
+      const tvlChange24hUsd =
+        roll.tvlChange24hUsd !== undefined && roll.tvlChange24hUsd !== null
+          ? roll.tvlChange24hUsd
+          : null;
       const apr =
         liquidityUsd && liquidityUsd > 0 && fees24hUsd !== null
           ? (fees24hUsd * 365 * 100) / liquidityUsd
@@ -259,6 +216,7 @@ export default function PoolsSection({ onSelectPool }) {
         liquidityUsd,
         volume24hUsd,
         fees24hUsd,
+        tvlChange24hUsd,
         apr,
       });
     });
@@ -271,14 +229,17 @@ export default function PoolsSection({ onSelectPool }) {
         tvl: null,
         volume24h: null,
         fees24h: null,
+        tvlChange24h: null,
       };
     }
     let tvl = 0;
     let volume24h = 0;
     let fees24h = 0;
+    let tvlChange24h = 0;
     let hasTvl = false;
     let hasVolume = false;
     let hasFees = false;
+    let hasTvlChange = false;
 
     combinedPools.forEach((pool) => {
       if (Number.isFinite(pool?.liquidityUsd) && pool.liquidityUsd >= 0) {
@@ -293,18 +254,24 @@ export default function PoolsSection({ onSelectPool }) {
         fees24h += pool.fees24hUsd;
         hasFees = true;
       }
+      if (Number.isFinite(pool?.tvlChange24hUsd)) {
+        tvlChange24h += pool.tvlChange24hUsd;
+        hasTvlChange = true;
+      }
     });
 
     return {
       tvl: hasTvl ? tvl : null,
       volume24h: hasVolume ? volume24h : null,
       fees24h: hasFees ? fees24h : null,
+      tvlChange24h: hasTvlChange ? tvlChange24h : null,
     };
   }, [combinedPools]);
 
   const protocolTvl = protocolAggregates.tvl;
   const protocolVolumeUtc = protocolAggregates.volume24h;
   const protocolFeesUtc = protocolAggregates.fees24h;
+  const protocolTvlChange24h = protocolAggregates.tvlChange24h;
   const activePoolsCount = useMemo(
     () =>
       combinedPools.filter(
@@ -362,70 +329,37 @@ export default function PoolsSection({ onSelectPool }) {
   const poolAnalytics = useMemo(() => {
     const liquidityValues = [];
     const volumeValues = [];
-    const feeLiquidityRatios = [];
-    const volumeLiquidityRatios = [];
     let totalLiquidity = 0;
 
     filteredByType.forEach((pool) => {
       const liquidity = Number(pool?.liquidityUsd);
       const volume = Number(pool?.volume24hUsd);
-      const fees = Number(pool?.fees24hUsd);
       if (Number.isFinite(liquidity) && liquidity > 0) {
         liquidityValues.push(liquidity);
         totalLiquidity += liquidity;
         if (Number.isFinite(volume) && volume >= 0) {
           volumeValues.push(volume);
-          volumeLiquidityRatios.push(volume / liquidity);
-        }
-        if (Number.isFinite(fees) && fees >= 0) {
-          feeLiquidityRatios.push(fees / liquidity);
         }
       }
     });
-
-    const flowMean = volumeLiquidityRatios.length
-      ? volumeLiquidityRatios.reduce((sum, value) => sum + value, 0) /
-        volumeLiquidityRatios.length
-      : null;
-    const flowStd =
-      flowMean !== null && volumeLiquidityRatios.length
-        ? Math.sqrt(
-            volumeLiquidityRatios.reduce(
-              (sum, value) => sum + (value - flowMean) ** 2,
-              0
-            ) / volumeLiquidityRatios.length
-          )
-        : null;
 
     return {
       totalLiquidity: totalLiquidity || null,
       maxLiquidity: liquidityValues.length ? Math.max(...liquidityValues) : null,
       maxVolume: volumeValues.length ? Math.max(...volumeValues) : null,
-      medianVolume: getMedian(volumeValues),
-      maxFeeLiquidityRatio: feeLiquidityRatios.length
-        ? Math.max(...feeLiquidityRatios)
-        : null,
-      flowMean,
-      flowMedian: getMedian(volumeLiquidityRatios),
-      flowStd,
     };
   }, [filteredByType]);
   const poolInsightsByKey = useMemo(() => {
     const map = {};
-    const baselineFlowRatio =
-      poolAnalytics.flowMedian ?? poolAnalytics.flowMean ?? 0;
     const maxLiquidity = poolAnalytics.maxLiquidity || 0;
     const totalLiquidity = poolAnalytics.totalLiquidity || 0;
-    const maxFeeLiquidityRatio = poolAnalytics.maxFeeLiquidityRatio || 0;
-    const flowStd = poolAnalytics.flowStd || 0;
-    const flowMean = poolAnalytics.flowMean || 0;
 
     filteredByType.forEach((pool) => {
       const poolKey = `${pool.type}-${pool.id}`;
       const liquidity = Number(pool?.liquidityUsd);
       const volume = Number(pool?.volume24hUsd);
       const fees = Number(pool?.fees24hUsd);
-      const apr = Number(pool?.apr);
+      const tvlChange24hUsd = Number(pool?.tvlChange24hUsd);
       const feeLiquidityRatio =
         Number.isFinite(liquidity) &&
         liquidity > 0 &&
@@ -440,21 +374,13 @@ export default function PoolsSection({ onSelectPool }) {
         volume >= 0
           ? volume / liquidity
           : null;
-      const capitalEfficiency =
-        Number.isFinite(feeLiquidityRatio) && maxFeeLiquidityRatio > 0
-          ? clamp(feeLiquidityRatio / maxFeeLiquidityRatio, 0, 1)
-          : null;
-      const expectedVolume =
-        Number.isFinite(liquidity) && liquidity > 0
-          ? liquidity * baselineFlowRatio
-          : null;
-      const netFlowUsd =
-        Number.isFinite(volume) && volume >= 0 && Number.isFinite(expectedVolume)
-          ? volume - expectedVolume
-          : null;
-      const netFlowPct =
-        Number.isFinite(volumeLiquidityRatio) && baselineFlowRatio > 0
-          ? ((volumeLiquidityRatio - baselineFlowRatio) / baselineFlowRatio) * 100
+      const turnover24hPct =
+        Number.isFinite(volumeLiquidityRatio) ? volumeLiquidityRatio * 100 : null;
+      const tvlChangePct =
+        Number.isFinite(liquidity) &&
+        liquidity > 0 &&
+        Number.isFinite(tvlChange24hUsd)
+          ? (tvlChange24hUsd / liquidity) * 100
           : null;
       const depthRatio =
         Number.isFinite(liquidity) && maxLiquidity > 0
@@ -464,43 +390,15 @@ export default function PoolsSection({ onSelectPool }) {
         Number.isFinite(liquidity) && totalLiquidity > 0
           ? clamp(liquidity / totalLiquidity, 0, 1)
           : 0;
-      const flowZScore =
-        Number.isFinite(volumeLiquidityRatio) && flowStd > 0
-          ? (volumeLiquidityRatio - flowMean) / flowStd
-          : 0;
-      const volatilityScore = clamp(
-        Math.abs(flowZScore) * 2.4 +
-          (Number.isFinite(netFlowPct) ? Math.min(Math.abs(netFlowPct), 120) / 40 : 0) +
-          (Number.isFinite(apr) && apr > 0 ? Math.min(apr, 40) / 20 : 0),
-        0,
-        10
-      );
-      const concentrationLabel =
-        concentrationRatio >= 0.22
-          ? "High"
-          : concentrationRatio >= 0.1
-          ? "Medium"
-          : "Low";
-      const sparkline = buildSparklinePath(
-        `${poolKey}:${liquidity}:${volume}`,
-        0.28 + depthRatio * 0.45,
-        Number.isFinite(netFlowPct) ? clamp(netFlowPct / 140, -0.35, 0.35) : 0
-      );
 
       map[poolKey] = {
         feeLiquidityRatioPct:
           Number.isFinite(feeLiquidityRatio) ? feeLiquidityRatio * 100 : null,
-        volumeLiquidityRatioPct:
-          Number.isFinite(volumeLiquidityRatio) ? volumeLiquidityRatio * 100 : null,
-        capitalEfficiency,
-        netFlowUsd,
-        netFlowPct,
+        turnover24hPct,
+        tvlChange24hUsd: Number.isFinite(tvlChange24hUsd) ? tvlChange24hUsd : null,
+        tvlChangePct,
         depthRatio,
         concentrationRatio,
-        concentrationLabel,
-        volatilityScore,
-        volatilityLabel: mapVolatilityLabel(volatilityScore),
-        sparkline,
       };
     });
     return map;
@@ -509,45 +407,31 @@ export default function PoolsSection({ onSelectPool }) {
     const tvl = Number(protocolTvl);
     const volume24h = Number(protocolVolumeUtc);
     const fees24h = Number(protocolFeesUtc);
-    const volumeLiquidityRatio =
+    const tvlChange24h = Number(protocolTvlChange24h);
+    const turnover24hPct =
       Number.isFinite(tvl) && tvl > 0 && Number.isFinite(volume24h) && volume24h >= 0
-        ? volume24h / tvl
+        ? (volume24h / tvl) * 100
         : null;
-    const feeLiquidityRatio =
+    const feeYield24hPct =
       Number.isFinite(tvl) && tvl > 0 && Number.isFinite(fees24h) && fees24h >= 0
-        ? fees24h / tvl
-        : null;
-    const capitalEfficiencyIndex =
-      Number.isFinite(volumeLiquidityRatio) && Number.isFinite(feeLiquidityRatio)
-        ? clamp(volumeLiquidityRatio * 8 + feeLiquidityRatio * 1200, 0, 10)
-        : null;
-    const baselineFlowRatio =
-      poolAnalytics.flowMedian ?? poolAnalytics.flowMean ?? null;
-    const expectedVolume =
-      Number.isFinite(tvl) && tvl > 0 && Number.isFinite(baselineFlowRatio)
-        ? tvl * baselineFlowRatio
+        ? (fees24h / tvl) * 100
         : null;
     const netLiquidityFlow24h =
-      Number.isFinite(volume24h) && Number.isFinite(expectedVolume)
-        ? volume24h - expectedVolume
+      Number.isFinite(tvlChange24h)
+        ? tvlChange24h
         : null;
-    const dispersionRatio =
-      Number.isFinite(poolAnalytics.flowStd) &&
-      Number.isFinite(poolAnalytics.flowMean) &&
-      Math.abs(poolAnalytics.flowMean) > 0
-        ? poolAnalytics.flowStd / Math.abs(poolAnalytics.flowMean)
+    const tvlChange24hPct =
+      Number.isFinite(tvl) && tvl > 0 && Number.isFinite(tvlChange24h)
+        ? (tvlChange24h / tvl) * 100
         : null;
-    const volatilityScore = Number.isFinite(dispersionRatio)
-      ? clamp(dispersionRatio * 4.5, 0, 10)
-      : null;
 
     return {
-      capitalEfficiencyIndex,
+      turnover24hPct,
+      feeYield24hPct,
       netLiquidityFlow24h,
-      volatilityScore,
-      volatilityLabel: mapVolatilityLabel(volatilityScore),
+      tvlChange24hPct,
     };
-  }, [protocolTvl, protocolVolumeUtc, protocolFeesUtc, poolAnalytics]);
+  }, [protocolTvl, protocolVolumeUtc, protocolFeesUtc, protocolTvlChange24h]);
   const intelligenceFilteredPools = useMemo(() => {
     if (intelFilter === "all") return filteredByType;
     const ranked = filteredByType.map((pool) => {
@@ -569,17 +453,17 @@ export default function PoolsSection({ onSelectPool }) {
         return ranked
           .sort(
             (a, b) =>
-              (Number(b.insight?.capitalEfficiency) || -1) -
-              (Number(a.insight?.capitalEfficiency) || -1)
+              (Number(b.insight?.turnover24hPct) || -1) -
+              (Number(a.insight?.turnover24hPct) || -1)
           )
           .slice(0, 20)
           .map((entry) => entry.pool);
-      case "highest-flow":
+      case "largest-tvl-change":
         return ranked
           .sort(
             (a, b) =>
-              Math.abs(Number(b.insight?.netFlowUsd) || 0) -
-              Math.abs(Number(a.insight?.netFlowUsd) || 0)
+              Math.abs(Number(b.insight?.tvlChange24hUsd) || 0) -
+              Math.abs(Number(a.insight?.tvlChange24hUsd) || 0)
           )
           .slice(0, 20)
           .map((entry) => entry.pool);
@@ -587,12 +471,10 @@ export default function PoolsSection({ onSelectPool }) {
         const stable = ranked
           .filter((entry) => {
             const feeRatio = Number(entry.insight?.feeLiquidityRatioPct);
-            const flowPct = Number(entry.insight?.netFlowPct);
-            const volScore = Number(entry.insight?.volatilityScore);
+            const tvlChangePct = Number(entry.insight?.tvlChangePct);
             if (!Number.isFinite(feeRatio) || feeRatio <= 0) return false;
-            if (!Number.isFinite(volScore) || volScore > 5.2) return false;
-            if (!Number.isFinite(flowPct)) return false;
-            return Math.abs(flowPct) <= 45;
+            if (!Number.isFinite(tvlChangePct)) return false;
+            return Math.abs(tvlChangePct) <= 25;
           })
           .sort(
             (a, b) =>
@@ -604,8 +486,8 @@ export default function PoolsSection({ onSelectPool }) {
         return ranked
           .sort(
             (a, b) =>
-              (Number(a.insight?.volatilityScore) || 10) -
-              (Number(b.insight?.volatilityScore) || 10)
+              Math.abs(Number(a.insight?.tvlChangePct) || Number.POSITIVE_INFINITY) -
+              Math.abs(Number(b.insight?.tvlChangePct) || Number.POSITIVE_INFINITY)
           )
           .slice(0, 20)
           .map((entry) => entry.pool);
@@ -655,45 +537,44 @@ export default function PoolsSection({ onSelectPool }) {
     return { median, max };
   }, [displayPools]);
   const getActivitySignal = (insight) => {
-    const flowPct = Number(insight?.netFlowPct);
+    const tvlChangeUsd = Number(insight?.tvlChange24hUsd);
+    const tvlChangePct = Number(insight?.tvlChangePct);
     const feeRatio = Number(insight?.feeLiquidityRatioPct);
-    const volatilityScore = Number(insight?.volatilityScore);
-    if (!Number.isFinite(flowPct)) {
+    if (!Number.isFinite(tvlChangeUsd)) {
       return {
         icon: "\u2022",
-        label: "No flow",
+        label: "No TVL delta",
         className: "border-slate-800 text-slate-500 bg-slate-900/40",
-        detail: "24h volume data unavailable.",
+        detail: "24h TVL delta unavailable.",
       };
     }
-    const flowDetail = `24h flow ${flowPct >= 0 ? "+" : ""}${flowPct.toFixed(0)}% vs baseline.`;
+    const tvlDetail = Number.isFinite(tvlChangePct)
+      ? `24h TVL ${formatSignedUsd(tvlChangeUsd)} (${formatSignedPercent(tvlChangePct)}).`
+      : `24h TVL ${formatSignedUsd(tvlChangeUsd)}.`;
     const feeDetail = Number.isFinite(feeRatio)
       ? ` Fee/Liquidity ${feeRatio.toFixed(2)}%.`
       : "";
-    const volDetail = Number.isFinite(volatilityScore)
-      ? ` Volatility ${volatilityScore.toFixed(1)}/10.`
-      : "";
-    if (flowPct >= 30) {
+    if (Number.isFinite(tvlChangePct) && tvlChangePct >= 5) {
       return {
         icon: "\u2191",
-        label: "Hot flow",
+        label: "TVL Inflow",
         className: "border-emerald-500/40 text-emerald-200 bg-emerald-500/10",
-        detail: `${flowDetail}${feeDetail}${volDetail}`,
+        detail: `${tvlDetail}${feeDetail}`,
       };
     }
-    if (flowPct >= -12) {
+    if (!Number.isFinite(tvlChangePct) || tvlChangePct >= -5) {
       return {
         icon: "\u2192",
-        label: "Active flow",
+        label: "TVL Stable",
         className: "border-sky-500/40 text-sky-200 bg-sky-500/10",
-        detail: `${flowDetail}${feeDetail}${volDetail}`,
+        detail: `${tvlDetail}${feeDetail}`,
       };
     }
     return {
       icon: "\u2193",
-      label: "Light flow",
+      label: "TVL Outflow",
       className: "border-slate-700 text-slate-300 bg-slate-900/50",
-      detail: `${flowDetail}${feeDetail}${volDetail}`,
+      detail: `${tvlDetail}${feeDetail}`,
     };
   };
 
@@ -799,18 +680,24 @@ export default function PoolsSection({ onSelectPool }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-5 sm:px-6 py-4 border-t border-slate-800/70 bg-slate-950/70">
           <div>
             <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-              Liquidity Trend
+              TVL Change
             </div>
             <div className="text-base font-semibold text-slate-100">
-              {formatSignedUsd(protocolIntel.netLiquidityFlow24h)} (24h)
+              {formatSignedUsd(protocolIntel.netLiquidityFlow24h)}{" "}
+              {Number.isFinite(protocolIntel.tvlChange24hPct)
+                ? `(${formatSignedPercent(protocolIntel.tvlChange24hPct)})`
+                : "(24h)"}
             </div>
           </div>
           <div>
             <div className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-              Volatility
+              Turnover
             </div>
             <div className="text-base font-semibold text-slate-100">
-              {protocolIntel.volatilityLabel}
+              {formatPercent(protocolIntel.turnover24hPct)}
+            </div>
+            <div className="mt-1 text-[11px] text-slate-500">
+              Fee/TVL {formatPercent(protocolIntel.feeYield24hPct)}
             </div>
           </div>
         </div>
@@ -1016,32 +903,10 @@ export default function PoolsSection({ onSelectPool }) {
                   ? "bg-sky-300"
                   : "bg-slate-500";
               const depthRatio = Number(insight?.depthRatio);
-              const concentrationLabel = insight?.concentrationLabel || "--";
-              const flowPct = Number(insight?.netFlowPct);
-              const flowLabel = Number.isFinite(flowPct)
-                ? `${flowPct >= 0 ? "+" : ""}${flowPct.toFixed(0)}%`
-                : "--";
-              const flowTrendTone =
-                Number.isFinite(flowPct) && flowPct >= 0
-                  ? "text-emerald-300"
-                  : "text-slate-400";
-              const flowArrow =
-                Number.isFinite(flowPct) && flowPct >= 14
-                  ? "\u2191"
-                  : Number.isFinite(flowPct) && flowPct <= -14
-                  ? "\u2193"
-                  : "\u2192";
-              const sparklineValues = Array.isArray(insight?.sparkline)
-                ? insight.sparkline
-                : [];
-              const sparklinePoints = sparklineValues
-                .map((value, idx) => {
-                  const x = idx * 4;
-                  const y = Math.round((1 - value) * 16) + 1;
-                  return `${x},${y}`;
-                })
-                .join(" ");
-              const isTopLiquidityPool = poolKey === highlightKeys.liquidity;
+              const liquiditySharePct =
+                Number.isFinite(insight?.concentrationRatio)
+                  ? insight.concentrationRatio * 100
+                  : null;
               const contextBadges = [
                 {
                   key: "activity",
@@ -1139,11 +1004,10 @@ export default function PoolsSection({ onSelectPool }) {
                         </span>
                       </div>
                       <div className="mt-1 text-[10px] text-slate-500">
-                        <span className={flowTrendTone}>
-                          Flow {flowArrow} {flowLabel}
-                        </span>
-                        {" \u00b7 "}
-                        <span>Whale {concentrationLabel}</span>
+                        Share{" "}
+                        {Number.isFinite(liquiditySharePct)
+                          ? formatPercent(liquiditySharePct, 1)
+                          : "--"}
                       </div>
                     </div>
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
@@ -1163,20 +1027,12 @@ export default function PoolsSection({ onSelectPool }) {
                           />
                         </span>
                       </div>
-                      {isTopLiquidityPool && sparklinePoints ? (
-                        <div className="mt-1 inline-flex items-center justify-end gap-1 w-full text-[10px] text-slate-500">
-                          <span>24h sparkline</span>
-                          <svg viewBox="0 0 44 18" className="h-[14px] w-[44px]">
-                            <polyline
-                              points={sparklinePoints}
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.5"
-                              className="text-sky-300"
-                            />
-                          </svg>
-                        </div>
-                      ) : null}
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        Turnover{" "}
+                        {Number.isFinite(insight?.turnover24hPct)
+                          ? formatPercent(insight.turnover24hPct)
+                          : "--"}
+                      </div>
                     </div>
                     <div className="md:col-span-2 text-right text-sm text-slate-100">
                       {pool.fees24hUsd !== null ? formatUsd(pool.fees24hUsd) : "--"}

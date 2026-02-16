@@ -2275,10 +2275,19 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
       ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
       : null;
     const tvlUsd = toNumberSafe(readTvl(rows[0]));
+    const latestTvlNum = Number(readTvl(rows[0]));
+    const oldestTvlNum = Number(readTvl(rows[rows.length - 1]));
+    const tvlChange24hUsd =
+      rows.length > 1 &&
+      Number.isFinite(latestTvlNum) &&
+      Number.isFinite(oldestTvlNum)
+        ? latestTvlNum - oldestTvlNum
+        : null;
     return {
       volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
       feesUsd,
       tvlUsd,
+      tvlChange24hUsd,
       hours: rows.length,
     };
   };
@@ -2507,10 +2516,19 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
       ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
       : null;
     const tvlUsd = toNumberSafe(readTvl(rows[0]));
+    const latestTvlNum = Number(readTvl(rows[0]));
+    const oldestTvlNum = Number(readTvl(rows[rows.length - 1]));
+    const tvlChange24hUsd =
+      rows.length > 1 &&
+      Number.isFinite(latestTvlNum) &&
+      Number.isFinite(oldestTvlNum)
+        ? latestTvlNum - oldestTvlNum
+        : null;
     return {
       volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
       feesUsd,
       tvlUsd,
+      tvlChange24hUsd,
       hours: rows.length,
     };
   };
@@ -2685,7 +2703,7 @@ export async function fetchV2PoolsDayData(ids = []) {
           .map(
             (id, idx) => `
           p${idx}: pairDayDatas(
-            first: 1
+            first: 2
             orderBy: date
             orderDirection: desc
             where: { ${field}: "${id}" }
@@ -2702,11 +2720,20 @@ export async function fetchV2PoolsDayData(ids = []) {
 
     const res = await postSubgraph(query);
     chunk.forEach((id, idx) => {
-      const row = res?.[`p${idx}`]?.[0];
+      const rows = res?.[`p${idx}`] || [];
+      const row = rows[0];
       if (!row) return;
+      const previous = rows[1] || null;
+      const latestTvlNum = Number(row?.reserveUSD);
+      const previousTvlNum = previous ? Number(previous?.reserveUSD) : NaN;
+      const tvlChange24hUsd =
+        Number.isFinite(latestTvlNum) && Number.isFinite(previousTvlNum)
+          ? latestTvlNum - previousTvlNum
+          : null;
       out[id] = {
         volumeUsd: toNumberSafe(row.dailyVolumeUSD),
         tvlUsd: toNumberSafe(row.reserveUSD),
+        tvlChange24hUsd,
       };
     });
   };
@@ -2809,7 +2836,7 @@ export async function fetchV3PoolsDayData(ids = []) {
           .map(
             (id, idx) => `
           p${idx}: poolDayDatas(
-            first: 1
+            first: 2
             orderBy: date
             orderDirection: desc
             where: { ${field}: "${id}" }
@@ -2824,12 +2851,20 @@ export async function fetchV3PoolsDayData(ids = []) {
 
     const res = await postSubgraphV3(query);
     chunk.forEach((id, idx) => {
-      const row = res?.[`p${idx}`]?.[0];
+      const rows = res?.[`p${idx}`] || [];
+      const row = rows[0];
       if (!row) return;
+      const previous = rows[1] || null;
       const tvl =
         row.tvlUSD !== undefined && row.tvlUSD !== null
           ? row.tvlUSD
           : row.totalValueLockedUSD;
+      const previousTvl =
+        previous && previous.tvlUSD !== undefined && previous.tvlUSD !== null
+          ? previous.tvlUSD
+          : previous?.totalValueLockedUSD;
+      const latestTvlNum = Number(tvl);
+      const previousTvlNum = Number(previousTvl);
       const feesUsd =
         row.feesUSD !== undefined && row.feesUSD !== null
           ? toNumberSafe(row.feesUSD)
@@ -2837,6 +2872,10 @@ export async function fetchV3PoolsDayData(ids = []) {
       out[id] = {
         volumeUsd: toNumberSafe(row.volumeUSD),
         tvlUsd: toNumberSafe(tvl),
+        tvlChange24hUsd:
+          Number.isFinite(latestTvlNum) && Number.isFinite(previousTvlNum)
+            ? latestTvlNum - previousTvlNum
+            : null,
         feesUsd,
       };
     });
