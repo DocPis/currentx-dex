@@ -4900,9 +4900,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 {quoteOut !== null ? formatDisplayAmount(quoteOut, displayBuySymbol) : "--"}
               </span>
             </div>
-            <div className="sm:col-span-1 rounded-xl border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 flex flex-col gap-0.5">
+            <div className="sm:col-span-1 min-w-0 rounded-xl border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 flex flex-col gap-0.5">
               <span className="text-slate-500 text-[10px] uppercase tracking-wide">Min received</span>
-              <span className="text-sm font-semibold text-slate-200">{minReceivedDisplay}</span>
+              <span className="text-[13px] sm:text-sm font-semibold leading-tight text-slate-200 whitespace-normal [overflow-wrap:anywhere]">
+                {minReceivedDisplay}
+              </span>
             </div>
             <div className="sm:col-span-1 rounded-xl border border-slate-800 bg-slate-900/50 px-2.5 py-1.5 flex flex-col gap-0.5">
               <span className="text-slate-500 text-[10px] uppercase tracking-wide">Price impact</span>
@@ -4910,9 +4912,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                 {priceImpact !== null ? `${priceImpact.toFixed(2)}%` : "--"}
               </span>
             </div>
-            <div className="sm:col-span-1 rounded-xl border border-slate-800/75 bg-slate-950/40 px-2.5 py-1.5 flex flex-col gap-0.5">
+            <div className="sm:col-span-1 min-w-0 rounded-xl border border-slate-800/75 bg-slate-950/40 px-2.5 py-1.5 flex flex-col gap-0.5">
               <span className="text-slate-600 text-[10px] uppercase tracking-wide">LP fees (est.)</span>
-              <span className="text-xs font-medium text-slate-400">{routeFeeUsdLabel}</span>
+              <span className="text-xs font-medium leading-tight text-slate-400 whitespace-normal [overflow-wrap:anywhere]">
+                {routeFeeUsdLabel}
+              </span>
             </div>
           </div>
 
