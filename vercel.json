@@ -1,4 +1,8 @@
 {
+  "crons": [
+    { "path": "/api/cron/points-jobs", "schedule": "*/5 * * * *" },
+    { "path": "/api/points/health", "schedule": "*/10 * * * *" }
+  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "handle": "filesystem" },

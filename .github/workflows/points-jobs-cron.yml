@@ -86,15 +86,9 @@ jobs:
             return 1
           }
 
-          body='{}'
+          body='{"includeWhitelist":true}'
           if [ -n "${POINTS_SEASON_ID:-}" ]; then
-            body="{\"seasonId\":\"${POINTS_SEASON_ID}\"}"
-          fi
-          recalc_body='{"fast":true,"limit":500}'
-          if [ -n "${POINTS_SEASON_ID:-}" ]; then
-            recalc_body="{\"seasonId\":\"${POINTS_SEASON_ID}\",\"fast\":true,\"limit\":500}"
+            body="{\"seasonId\":\"${POINTS_SEASON_ID}\",\"includeWhitelist\":true}"
           fi
 
-          call_endpoint "points-ingest" "/api/points/ingest" "${body}"
-          call_endpoint "points-recalc" "/api/points/recalc" "${recalc_body}"
-          call_endpoint "whitelist-recalc" "/api/whitelist-rewards/recalc" "${body}"
+          call_endpoint "points-jobs" "/api/cron/points-jobs" "${body}"
