@@ -14,6 +14,9 @@ const maxIngestRounds = Number.isFinite(Number(env.POINTS_MAX_INGEST_ROUNDS))
 const maxCallRetries = Number.isFinite(Number(env.POINTS_CALL_MAX_RETRIES))
   ? Math.max(0, Math.floor(Number(env.POINTS_CALL_MAX_RETRIES)))
   : 8;
+const callTimeoutMs = Number.isFinite(Number(env.POINTS_CALL_TIMEOUT_MS))
+  ? Math.max(1000, Math.floor(Number(env.POINTS_CALL_TIMEOUT_MS)))
+  : 45000;
 const retryBaseDelayMs = Number.isFinite(Number(env.POINTS_CALL_RETRY_BASE_MS))
   ? Math.max(100, Math.floor(Number(env.POINTS_CALL_RETRY_BASE_MS)))
   : 3000;
@@ -72,12 +75,29 @@ const isRetriableStatus = (status) => {
 
 const callJsonOnce = async (path, params = {}) => {
   const url = buildUrl(path, params);
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), callTimeoutMs);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      const timeoutError = new Error(
+        `${path} -> request timeout after ${callTimeoutMs}ms`
+      );
+      timeoutError.httpStatus = 0;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const bodyText = await res.text();
   let payload = {};
   try {
