@@ -56,6 +56,8 @@ jobs:
               tmp_file="$(mktemp)"
               local status
               status="$(curl --silent --show-error --location \
+                --connect-timeout 20 \
+                --max-time 330 \
                 --output "${tmp_file}" \
                 --write-out "%{http_code}" \
                 --request POST \
@@ -88,8 +90,11 @@ jobs:
           if [ -n "${POINTS_SEASON_ID:-}" ]; then
             body="{\"seasonId\":\"${POINTS_SEASON_ID}\"}"
           fi
+          recalc_body='{"fast":true,"limit":500}'
+          if [ -n "${POINTS_SEASON_ID:-}" ]; then
+            recalc_body="{\"seasonId\":\"${POINTS_SEASON_ID}\",\"fast\":true,\"limit\":500}"
+          fi
 
           call_endpoint "points-ingest" "/api/points/ingest" "${body}"
-          call_endpoint "points-recalc" "/api/points/recalc" "${body}"
+          call_endpoint "points-recalc" "/api/points/recalc" "${recalc_body}"
           call_endpoint "whitelist-recalc" "/api/whitelist-rewards/recalc" "${body}"
-
