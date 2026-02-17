@@ -8,8 +8,15 @@ const LOCK_RETRY_DELAY_MS = 250;
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const DEFAULT_MAX_INGEST_ROUNDS = 6;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parsePositiveInt = (value, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
+};
 
 const parseBool = (value, fallback = true) => {
   if (value === undefined || value === null || value === "") return fallback;
@@ -18,6 +25,12 @@ const parseBool = (value, fallback = true) => {
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
 };
+
+const getMaxIngestRounds = () =>
+  Math.max(
+    1,
+    Math.min(48, parsePositiveInt(process.env.POINTS_JOBS_MAX_INGEST_ROUNDS, DEFAULT_MAX_INGEST_ROUNDS))
+  );
 
 const getSecrets = () =>
   [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
@@ -164,74 +177,88 @@ export default async function handler(req, res) {
   }
 
   const calls = [];
-  const endpoints = [
-    {
-      name: "points-ingest",
-      path: "/api/points/ingest",
-      body: seasonId ? { seasonId } : {},
-      required: true,
-    },
-    {
-      name: "points-recalc",
-      path: "/api/points/recalc",
-      body: seasonId ? { seasonId, fast: true, limit: 500 } : { fast: true, limit: 500 },
-      required: true,
-    },
-    ...(includeWhitelist
-      ? [
-          {
-            name: "whitelist-recalc",
-            path: "/api/whitelist-rewards/recalc",
-            body: seasonId ? { seasonId } : {},
-            required: false,
-          },
-        ]
-      : []),
-  ];
+  const ingestBody = seasonId ? { seasonId } : {};
+  const recalcBody = seasonId ? { seasonId, fast: true, limit: 500 } : { fast: true, limit: 500 };
+  const whitelistBody = seasonId ? { seasonId } : {};
+  const maxIngestRounds = getMaxIngestRounds();
+
+  const runEndpoint = async ({ name, path, body, required }) => {
+    const startedAt = Date.now();
+    try {
+      const result = await postJsonWithRetry({
+        name,
+        url: `${baseUrl}${path}`,
+        token,
+        body,
+      });
+      const entry = {
+        name,
+        ok: true,
+        status: result.status,
+        durationMs: Date.now() - startedAt,
+        payload: result.payload,
+      };
+      calls.push(entry);
+      return entry;
+    } catch (error) {
+      const entry = {
+        name,
+        ok: false,
+        status: Number(error?.httpStatus || 0) || null,
+        durationMs: Date.now() - startedAt,
+        error: error?.message || "Request failed",
+        payload: error?.payload || null,
+      };
+      calls.push(entry);
+      if (required) {
+        const status = Number(error?.httpStatus || 0);
+        res.status(status >= 400 && status < 600 ? status : 502).json({
+          ok: false,
+          seasonId: seasonId || null,
+          lockUnavailable,
+          calls,
+        });
+      }
+      return entry;
+    }
+  };
 
   try {
-    for (const endpoint of endpoints) {
-      const startedAt = Date.now();
-      try {
-        const result = await postJsonWithRetry({
-          name: endpoint.name,
-          url: `${baseUrl}${endpoint.path}`,
-          token,
-          body: endpoint.body,
-        });
-        calls.push({
-          name: endpoint.name,
-          ok: true,
-          status: result.status,
-          durationMs: Date.now() - startedAt,
-          payload: result.payload,
-        });
-      } catch (error) {
-        calls.push({
-          name: endpoint.name,
-          ok: false,
-          status: Number(error?.httpStatus || 0) || null,
-          durationMs: Date.now() - startedAt,
-          error: error?.message || "Request failed",
-          payload: error?.payload || null,
-        });
-        if (endpoint.required) {
-          const status = Number(error?.httpStatus || 0);
-          res.status(status >= 400 && status < 600 ? status : 502).json({
-            ok: false,
-            seasonId: seasonId || null,
-            lockUnavailable,
-            calls,
-          });
-          return;
-        }
-      }
+    for (let round = 1; round <= maxIngestRounds; round += 1) {
+      const ingestResult = await runEndpoint({
+        name: `points-ingest#${round}`,
+        path: "/api/points/ingest",
+        body: ingestBody,
+        required: true,
+      });
+      if (!ingestResult?.ok) return;
+      const ingestedWallets = Number(ingestResult?.payload?.ingestedWallets || 0);
+      const cursorUpdates = Number(ingestResult?.payload?.cursorUpdates || 0);
+      if (ingestedWallets <= 0 && cursorUpdates <= 0) break;
+    }
+
+    const recalcResult = await runEndpoint({
+      name: "points-recalc",
+      path: "/api/points/recalc",
+      body: recalcBody,
+      required: true,
+    });
+    if (!recalcResult?.ok) return;
+
+    if (includeWhitelist) {
+      await runEndpoint({
+        name: "whitelist-recalc",
+        path: "/api/whitelist-rewards/recalc",
+        body: whitelistBody,
+        required: false,
+      });
     }
 
     res.status(200).json({
       ok: true,
       seasonId: seasonId || null,
       lockUnavailable,
+      maxIngestRounds,
       calls,
       executedAt: Date.now(),
     });
@@ -241,4 +268,3 @@ export default async function handler(req, res) {
     }
   }
 }
-

@@ -9,6 +9,7 @@ import {
   parseRewardClaimRow,
   round6,
 } from "../../src/server/leaderboardRewardsLib.js";
+import { maybeTriggerPointsSelfHeal } from "../../src/server/pointsSelfHeal.js";
 
 const SCAN_BATCH_SIZE = 1000;
 const MAX_SCAN_ROUNDS = 2000;
@@ -270,11 +271,23 @@ export default async function handler(req, res) {
   const rewardsConfig = getLeaderboardRewardsConfig(targetSeason);
 
   try {
-    const [userRow, summaryRow, rewardRow] = await Promise.all([
+    const [userRow, summaryRow, rewardRow, updatedAtRaw] = await Promise.all([
       kv.hgetall(keys.user),
       kv.hgetall(keys.summary),
       kv.hgetall(keys.rewardUser),
+      kv.get(keys.updatedAt),
     ]);
+
+    void maybeTriggerPointsSelfHeal({
+      kv,
+      req,
+      seasonId: targetSeason,
+      updatedAtMs: Number(updatedAtRaw || summaryRow?.updatedAt || 0),
+      reason: "user_read",
+      includeWhitelist: false,
+    }).catch(() => {
+      // best effort self-heal; never block user response
+    });
 
     if (!userRow) {
       res.status(200).json({

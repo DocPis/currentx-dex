@@ -7,6 +7,7 @@ import {
   parsePointsSummaryRow,
   round6,
 } from "../../src/server/leaderboardRewardsLib.js";
+import { maybeTriggerPointsSelfHeal } from "../../src/server/pointsSelfHeal.js";
 
 const SCAN_BATCH_SIZE = 1000;
 const MAX_SCAN_ROUNDS = 2000;
@@ -387,6 +388,16 @@ export default async function handler(req, res) {
     );
 
     const updatedAt = await kv.get(keys.updatedAt);
+    void maybeTriggerPointsSelfHeal({
+      kv,
+      req,
+      seasonId: targetSeason,
+      updatedAtMs: Number(updatedAt || summary?.updatedAt || 0),
+      reason: "leaderboard_read",
+      includeWhitelist: false,
+    }).catch(() => {
+      // best effort self-heal; never block leaderboard response
+    });
     res.status(200).json({
       seasonId: targetSeason,
       seasonStart: seasonStartMs,

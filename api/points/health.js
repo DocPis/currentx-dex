@@ -1,5 +1,6 @@
 import { kv } from "@vercel/kv";
 import { getKeys, getSeasonConfig } from "../../src/server/pointsLib.js";
+import { maybeTriggerPointsSelfHeal } from "../../src/server/pointsSelfHeal.js";
 
 const DEFAULT_MAX_STALE_MS = 20 * 60 * 1000;
 
@@ -48,6 +49,17 @@ export default async function handler(req, res) {
     const hasUpdatedAt = Number.isFinite(updatedAt) && updatedAt > 0;
     const ageMs = hasUpdatedAt ? Math.max(0, now - updatedAt) : null;
     const healthy = Boolean(hasUpdatedAt && ageMs !== null && ageMs <= maxStaleMs);
+    const selfHeal = healthy
+      ? null
+      : await maybeTriggerPointsSelfHeal({
+          kv,
+          req,
+          seasonId,
+          updatedAtMs: updatedAt,
+          staleMs: maxStaleMs,
+          reason: "health_stale",
+          includeWhitelist: false,
+        });
 
     res.status(healthy ? 200 : 503).json({
       ok: healthy,
@@ -58,6 +70,9 @@ export default async function handler(req, res) {
       maxStaleMs,
       checkedAt: now,
       reason: healthy ? "fresh" : "stale_or_missing_updated_at",
+      selfHealTriggered: Boolean(selfHeal?.triggered),
+      selfHealStatus: selfHeal?.status ?? null,
+      selfHealSkipReason: selfHeal?.skipped ?? null,
     });
   } catch (err) {
     res.status(500).json({
@@ -68,4 +83,3 @@ export default async function handler(req, res) {
     });
   }
 }
-

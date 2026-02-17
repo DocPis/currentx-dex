@@ -208,6 +208,28 @@ const getCursorNearTipSeconds = () =>
     )
   );
 
+const normalizeCursorSec = ({
+  rawCursor,
+  startSec,
+  ingestCeilingSec,
+  ingestMaxWindowSeconds,
+}) => {
+  let cursorNum = Number(rawCursor || 0);
+  if (!Number.isFinite(cursorNum) || cursorNum <= 0) return startSec;
+  // Recover from accidental ms writes in KV (seconds expected).
+  if (cursorNum > 1e12) {
+    cursorNum = Math.floor(cursorNum / 1000);
+  }
+  cursorNum = Math.floor(cursorNum);
+  if (cursorNum < startSec) return startSec;
+  // Guard against future cursors that can stall ingest indefinitely.
+  const maxReasonable = ingestCeilingSec + Math.max(60, ingestMaxWindowSeconds * 2);
+  if (cursorNum > maxReasonable) {
+    return Math.max(startSec, ingestCeilingSec - ingestMaxWindowSeconds);
+  }
+  return cursorNum;
+};
+
 const postGraph = async (url, apiKey, query, variables) => {
   const urls = dedupeUrls(parseSubgraphUrls(url));
   if (!urls.length) {
@@ -625,11 +647,12 @@ export default async function handler(req, res) {
     for (const src of sources) {
       const cursorKey = getKeys(seasonId, src.source).cursor;
       const storedCursor = await kv.get(cursorKey);
-      const storedCursorNum = Number(storedCursor || 0);
-      let cursor =
-        Number.isFinite(storedCursorNum) && storedCursorNum > startSec
-          ? storedCursorNum
-          : startSec;
+      let cursor = normalizeCursorSec({
+        rawCursor: storedCursor,
+        startSec,
+        ingestCeilingSec,
+        ingestMaxWindowSeconds,
+      });
 
       try {
         const sourceEndSec = Math.min(
@@ -662,13 +685,14 @@ export default async function handler(req, res) {
         if (src.source === "v3") {
           const lpCursorKey = getKeys(seasonId, "v3-lp").cursor;
           const storedLpCursor = await kv.get(lpCursorKey);
-          const storedLpCursorNum = Number(storedLpCursor || 0);
           const lpBackfillSeconds = getLpDiscoveryBackfillSeconds();
-          const lpBootstrapStart = Math.max(startSec, cursor - lpBackfillSeconds);
-          let lpCursorStart =
-            Number.isFinite(storedLpCursorNum) && storedLpCursorNum > startSec
-              ? storedLpCursorNum
-              : lpBootstrapStart;
+          const lpDefaultStart = Math.max(startSec, cursor - lpBackfillSeconds);
+          let lpCursorStart = normalizeCursorSec({
+            rawCursor: storedLpCursor,
+            startSec: lpDefaultStart,
+            ingestCeilingSec,
+            ingestMaxWindowSeconds,
+          });
 
           try {
             const lpEndSec = Math.min(
