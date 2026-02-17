@@ -40,6 +40,13 @@ const skipIngest =
   String(env.POINTS_SKIP_INGEST || "")
     .trim()
     .toLowerCase() === "true";
+const skipRecalc =
+  String(env.POINTS_SKIP_RECALC || "")
+    .trim()
+    .toLowerCase() === "1" ||
+  String(env.POINTS_SKIP_RECALC || "")
+    .trim()
+    .toLowerCase() === "true";
 const recalcFast =
   String(env.POINTS_RECALC_FAST || "")
     .trim()
@@ -195,31 +202,35 @@ const run = async () => {
     }
   }
 
-  console.log("[points-rebuild] recalc loop...");
-  let cursor = 0;
-  let rounds = 0;
-  while (true) {
-    rounds += 1;
-    const recalc = await callJson("/api/points/recalc", {
-      seasonId,
-      cursor,
-      limit: recalcLimit,
-      fast: recalcFast ? 1 : "",
-    });
-    const processed = Number(recalc?.processed || 0);
-    const nextCursorRaw = recalc?.nextCursor;
-    const done = Boolean(recalc?.done);
-    console.log(
-      `[points-rebuild] recalc #${rounds}: processed=${processed} cursor=${cursor} next=${nextCursorRaw ?? "null"} done=${done}`
-    );
-    if (done || nextCursorRaw === null || nextCursorRaw === undefined || nextCursorRaw === "") {
-      break;
+  if (skipRecalc) {
+    console.log("[points-rebuild] recalc skipped (POINTS_SKIP_RECALC=1).");
+  } else {
+    console.log("[points-rebuild] recalc loop...");
+    let cursor = 0;
+    let rounds = 0;
+    while (true) {
+      rounds += 1;
+      const recalc = await callJson("/api/points/recalc", {
+        seasonId,
+        cursor,
+        limit: recalcLimit,
+        fast: recalcFast ? 1 : "",
+      });
+      const processed = Number(recalc?.processed || 0);
+      const nextCursorRaw = recalc?.nextCursor;
+      const done = Boolean(recalc?.done);
+      console.log(
+        `[points-rebuild] recalc #${rounds}: processed=${processed} cursor=${cursor} next=${nextCursorRaw ?? "null"} done=${done}`
+      );
+      if (done || nextCursorRaw === null || nextCursorRaw === undefined || nextCursorRaw === "") {
+        break;
+      }
+      const nextCursor = Number(nextCursorRaw);
+      if (!Number.isFinite(nextCursor) || nextCursor <= cursor) {
+        break;
+      }
+      cursor = nextCursor;
     }
-    const nextCursor = Number(nextCursorRaw);
-    if (!Number.isFinite(nextCursor) || nextCursor <= cursor) {
-      break;
-    }
-    cursor = nextCursor;
   }
 
   console.log("[points-rebuild] done.");

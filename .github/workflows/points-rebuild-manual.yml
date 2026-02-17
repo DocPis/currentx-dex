@@ -17,6 +17,11 @@ on:
         required: false
         type: boolean
         default: false
+      skip_recalc:
+        description: "Skip recalc loop (ingest only)"
+        required: false
+        type: boolean
+        default: false
       recalc_fast:
         description: "Use fast recalc mode"
         required: false
@@ -79,6 +84,7 @@ jobs:
           INPUT_SEASON_ID: ${{ inputs.season_id }}
           INPUT_SKIP_RESET: ${{ inputs.skip_reset }}
           INPUT_SKIP_INGEST: ${{ inputs.skip_ingest }}
+          INPUT_SKIP_RECALC: ${{ inputs.skip_recalc }}
           INPUT_RECALC_FAST: ${{ inputs.recalc_fast }}
           INPUT_INGEST_VOLUME_ONLY: ${{ inputs.ingest_volume_only }}
           INPUT_MAX_INGEST_ROUNDS: ${{ inputs.max_ingest_rounds }}
@@ -104,6 +110,9 @@ jobs:
           fi
           if [ "${INPUT_SKIP_INGEST:-false}" = "true" ]; then
             export POINTS_SKIP_INGEST=1
+          fi
+          if [ "${INPUT_SKIP_RECALC:-false}" = "true" ]; then
+            export POINTS_SKIP_RECALC=1
           fi
           if [ "${INPUT_RECALC_FAST:-true}" = "true" ]; then
             export POINTS_RECALC_FAST=1
