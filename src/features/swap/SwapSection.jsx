@@ -4564,6 +4564,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             <input
               name="swap-amount-in"
               value={amountIn}
+              autoComplete="off"
+              data-lpignore="true"
+              data-form-type="other"
               onChange={(e) => {
                 const next = sanitizeAmountInput(e.target.value, sellInputDecimals);
                 if (activeQuickPercent !== null) setActiveQuickPercent(null);
@@ -4703,6 +4706,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               <input
                 name="swap-amount-out"
                 value={quoteOutDisplayValue}
+                autoComplete="off"
+                data-lpignore="true"
+                data-form-type="other"
                 onChange={(e) => {
                   const next = sanitizeAmountInput(e.target.value, buyInputDecimals);
                   setAmountOutInput(next);

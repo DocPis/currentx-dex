@@ -59,6 +59,29 @@ button {
   font-family: inherit;
 }
 
+/* Keep swap amount fields in dark theme even if browser/extension autofill overrides styles. */
+input[name="swap-amount-in"],
+input[name="swap-amount-out"] {
+  background-color: transparent !important;
+  color: #f8fafc;
+  -webkit-text-fill-color: #f8fafc;
+  caret-color: #f8fafc;
+}
+
+input[name="swap-amount-in"]:autofill,
+input[name="swap-amount-out"]:autofill,
+input[name="swap-amount-in"]:-webkit-autofill,
+input[name="swap-amount-out"]:-webkit-autofill,
+input[name="swap-amount-in"]:-webkit-autofill:hover,
+input[name="swap-amount-out"]:-webkit-autofill:hover,
+input[name="swap-amount-in"]:-webkit-autofill:focus,
+input[name="swap-amount-out"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: #f8fafc !important;
+  caret-color: #f8fafc;
+  box-shadow: inset 0 0 0 1000px rgba(2, 6, 23, 0.75) !important;
+  transition: background-color 99999s ease-out 0s;
+}
+
 @keyframes cx-fade-up {
   from {
     transform: translate3d(0, 6px, 0);
