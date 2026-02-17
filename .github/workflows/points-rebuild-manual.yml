@@ -1,0 +1,101 @@
+name: Points Rebuild Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      season_id:
+        description: "Optional season id override (defaults to repo variable)"
+        required: false
+        type: string
+      skip_reset:
+        description: "Skip /api/points/reset before rebuild"
+        required: false
+        type: boolean
+        default: false
+      skip_ingest:
+        description: "Skip ingest loop (recalc only)"
+        required: false
+        type: boolean
+        default: false
+      recalc_fast:
+        description: "Use fast recalc mode"
+        required: false
+        type: boolean
+        default: true
+      max_ingest_rounds:
+        description: "Max ingest rounds"
+        required: false
+        type: string
+        default: "1200"
+      recalc_limit:
+        description: "Recalc page size"
+        required: false
+        type: string
+        default: "500"
+      ingest_round_delay_ms:
+        description: "Delay between ingest rounds (ms)"
+        required: false
+        type: string
+        default: "300"
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run points rebuild
+        shell: bash
+        env:
+          POINTS_API_BASE: ${{ secrets.POINTS_API_BASE }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          POINTS_INGEST_TOKEN: ${{ secrets.POINTS_INGEST_TOKEN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          DEFAULT_SEASON_ID: ${{ vars.POINTS_SEASON_ID }}
+          INPUT_SEASON_ID: ${{ inputs.season_id }}
+          INPUT_SKIP_RESET: ${{ inputs.skip_reset }}
+          INPUT_SKIP_INGEST: ${{ inputs.skip_ingest }}
+          INPUT_RECALC_FAST: ${{ inputs.recalc_fast }}
+          INPUT_MAX_INGEST_ROUNDS: ${{ inputs.max_ingest_rounds }}
+          INPUT_RECALC_LIMIT: ${{ inputs.recalc_limit }}
+          INPUT_INGEST_ROUND_DELAY_MS: ${{ inputs.ingest_round_delay_ms }}
+        run: |
+          set -euo pipefail
+
+          export POINTS_API_BASE="${POINTS_API_BASE:-${API_BASE_URL:-}}"
+          export POINTS_SEASON_ID="${INPUT_SEASON_ID:-${DEFAULT_SEASON_ID:-}}"
+          export POINTS_MAX_INGEST_ROUNDS="${INPUT_MAX_INGEST_ROUNDS:-1200}"
+          export POINTS_RECALC_LIMIT="${INPUT_RECALC_LIMIT:-500}"
+          export POINTS_INGEST_ROUND_DELAY_MS="${INPUT_INGEST_ROUND_DELAY_MS:-300}"
+
+          if [ "${INPUT_SKIP_RESET:-false}" = "true" ]; then
+            export POINTS_SKIP_RESET=1
+          fi
+          if [ "${INPUT_SKIP_INGEST:-false}" = "true" ]; then
+            export POINTS_SKIP_INGEST=1
+          fi
+          if [ "${INPUT_RECALC_FAST:-true}" = "true" ]; then
+            export POINTS_RECALC_FAST=1
+          fi
+
+          if [ -z "${POINTS_API_BASE:-}" ]; then
+            echo "Missing secret POINTS_API_BASE (or API_BASE_URL)." >&2
+            exit 1
+          fi
+          if [ -z "${POINTS_INGEST_TOKEN:-${CRON_SECRET:-}}" ]; then
+            echo "Missing secret POINTS_INGEST_TOKEN (or CRON_SECRET)." >&2
+            exit 1
+          fi
+
+          node scripts/points-rebuild.mjs
+
