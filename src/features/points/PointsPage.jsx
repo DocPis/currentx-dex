@@ -577,6 +577,7 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
                 </div>
                 <div>Top 100 rewards require finalization complete + no wash flags + min activity.</div>
                 <div>Whitelist rewards: 30% immediate + 70% streamed on activation.</div>
+                <div>Season rewards: 30% immediate unlock + 70% 90-day linear vesting.</div>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-800/70">
                 <div className="uppercase tracking-[0.3em] text-[10px] text-slate-500">
@@ -625,6 +626,9 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
                   <span className="font-semibold">
                     {formatCrx(estimatedRewardIfEndedNowCrx)}
                   </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-300">
+                  At claim: 30% unlocked, 70% vested over 90 days.
                 </div>
                 <div className="mt-1 text-xs text-slate-300">
                   Top 100 cutoff:{" "}
@@ -1089,9 +1093,20 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
             </>
           </AccordionItem>
           <AccordionItem title="Claim">
-            <div>
-              Rewards are claimable at the end of each season, once finalization is complete.
-            </div>
+            <>
+              <div>
+                Rewards become claimable at the end of each 30-day Season, once finalization is complete.
+              </div>
+              <div>
+                Reward Distribution: 30% unlocks immediately at claim, and 70% vests linearly over 90 days.
+              </div>
+              <div>
+                Vesting begins when the reward is claimed. Delaying claim delays vesting start.
+              </div>
+              <div>
+                All rewards are funded from existing CRX allocations. No additional tokens are minted.
+              </div>
+            </>
           </AccordionItem>
           <AccordionItem title="Whitelist rewards activation">
             <>
@@ -1105,8 +1120,7 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
                 the micro LP threshold within the activation window.
               </div>
               <div>
-                Payout schedule: 30% immediate and 70% streamed over the configured vesting
-                duration.
+                Payout schedule: 30% unlocks immediately and 70% vests linearly over 90 days.
               </div>
               <div>Claim unlocks only after the season finalization window is completed.</div>
             </>
