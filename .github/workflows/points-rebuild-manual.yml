@@ -37,6 +37,15 @@ on:
         required: false
         type: string
         default: "300"
+      ingest_window_seconds:
+        description: "Optional ingest window override in seconds"
+        required: false
+        type: string
+      call_timeout_ms:
+        description: "HTTP timeout per API call (ms)"
+        required: false
+        type: string
+        default: "120000"
 
 permissions:
   contents: read
@@ -69,6 +78,8 @@ jobs:
           INPUT_MAX_INGEST_ROUNDS: ${{ inputs.max_ingest_rounds }}
           INPUT_RECALC_LIMIT: ${{ inputs.recalc_limit }}
           INPUT_INGEST_ROUND_DELAY_MS: ${{ inputs.ingest_round_delay_ms }}
+          INPUT_INGEST_WINDOW_SECONDS: ${{ inputs.ingest_window_seconds }}
+          INPUT_CALL_TIMEOUT_MS: ${{ inputs.call_timeout_ms }}
         run: |
           set -euo pipefail
 
@@ -77,6 +88,10 @@ jobs:
           export POINTS_MAX_INGEST_ROUNDS="${INPUT_MAX_INGEST_ROUNDS:-1200}"
           export POINTS_RECALC_LIMIT="${INPUT_RECALC_LIMIT:-500}"
           export POINTS_INGEST_ROUND_DELAY_MS="${INPUT_INGEST_ROUND_DELAY_MS:-300}"
+          export POINTS_CALL_TIMEOUT_MS="${INPUT_CALL_TIMEOUT_MS:-120000}"
+          if [ -n "${INPUT_INGEST_WINDOW_SECONDS:-}" ]; then
+            export POINTS_INGEST_WINDOW_SECONDS="${INPUT_INGEST_WINDOW_SECONDS}"
+          fi
 
           if [ "${INPUT_SKIP_RESET:-false}" = "true" ]; then
             export POINTS_SKIP_RESET=1

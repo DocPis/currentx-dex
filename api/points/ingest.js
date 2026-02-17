@@ -172,14 +172,17 @@ const parsePositiveInt = (value, fallback) => {
   return Math.floor(num);
 };
 
-const getIngestWindowSeconds = () =>
+const getIngestWindowSeconds = (overrideSeconds) =>
   Math.max(
     60,
     Math.min(
       24 * 60 * 60,
       parsePositiveInt(
-        process.env.POINTS_INGEST_MAX_WINDOW_SECONDS,
-        INGEST_DEFAULT_MAX_WINDOW_SECONDS
+        overrideSeconds,
+        parsePositiveInt(
+          process.env.POINTS_INGEST_MAX_WINDOW_SECONDS,
+          INGEST_DEFAULT_MAX_WINDOW_SECONDS
+        )
       )
     )
   );
@@ -630,7 +633,11 @@ export default async function handler(req, res) {
   const nowSec = Math.floor(Date.now() / 1000);
   const endSec = Math.floor((endMs || Date.now()) / 1000);
   const ingestCeilingSec = Math.min(endSec, nowSec);
-  const ingestMaxWindowSeconds = getIngestWindowSeconds();
+  const ingestWindowOverride =
+    req.query?.ingestWindowSeconds ??
+    req.query?.windowSeconds ??
+    req.query?.maxWindowSeconds;
+  const ingestMaxWindowSeconds = getIngestWindowSeconds(ingestWindowOverride);
   const cursorNearTipSeconds = getCursorNearTipSeconds();
   const keys = getKeys(seasonId);
 

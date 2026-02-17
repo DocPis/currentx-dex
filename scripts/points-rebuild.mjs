@@ -14,6 +14,9 @@ const maxIngestRounds = Number.isFinite(Number(env.POINTS_MAX_INGEST_ROUNDS))
 const maxCallRetries = Number.isFinite(Number(env.POINTS_CALL_MAX_RETRIES))
   ? Math.max(0, Math.floor(Number(env.POINTS_CALL_MAX_RETRIES)))
   : 8;
+const ingestWindowSeconds = Number.isFinite(Number(env.POINTS_INGEST_WINDOW_SECONDS))
+  ? Math.max(60, Math.floor(Number(env.POINTS_INGEST_WINDOW_SECONDS)))
+  : null;
 const callTimeoutMs = Number.isFinite(Number(env.POINTS_CALL_TIMEOUT_MS))
   ? Math.max(1000, Math.floor(Number(env.POINTS_CALL_TIMEOUT_MS)))
   : 45000;
@@ -138,6 +141,10 @@ const run = async () => {
   if (seasonId) {
     console.log(`[points-rebuild] season=${seasonId}`);
   }
+  console.log(`[points-rebuild] callTimeoutMs=${callTimeoutMs}`);
+  if (Number.isFinite(ingestWindowSeconds)) {
+    console.log(`[points-rebuild] ingestWindowSeconds=${ingestWindowSeconds}`);
+  }
 
   if (skipReset) {
     console.log("[points-rebuild] reset skipped (POINTS_SKIP_RESET=1).");
@@ -154,7 +161,11 @@ const run = async () => {
   } else {
     console.log("[points-rebuild] ingest loop...");
     for (let round = 1; round <= maxIngestRounds; round += 1) {
-      const ingest = await callJson("/api/points/ingest", { seasonId });
+      const ingestParams = { seasonId };
+      if (Number.isFinite(ingestWindowSeconds)) {
+        ingestParams.ingestWindowSeconds = ingestWindowSeconds;
+      }
+      const ingest = await callJson("/api/points/ingest", ingestParams);
       const ingestedWallets = Number(ingest?.ingestedWallets || 0);
       const cursorUpdates = Number(ingest?.cursorUpdates || 0);
       const updatedAt = Number(ingest?.updatedAt || 0);
