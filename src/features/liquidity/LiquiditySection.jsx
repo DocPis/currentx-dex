@@ -48,6 +48,7 @@ import { getRealtimeClient, TRANSFER_TOPIC } from "../../shared/services/realtim
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 import { useBalances } from "../../shared/hooks/useBalances";
 import { multicall, hasMulticall } from "../../shared/services/multicall";
+import { computeV3QuickFillAmount } from "./v3QuickFillUtils";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
@@ -2088,7 +2089,10 @@ export default function LiquiditySection({
       if (side === 1 && !v3MintCanUseSide1) return;
       const balance = side === 0 ? v3MintBalance0Num : v3MintBalance1Num;
       if (!Number.isFinite(balance) || balance <= 0) return;
-      const next = formatAutoAmount(balance * pct);
+      const sideDecimals =
+        side === 0 ? v3MintDisplayMeta0?.decimals ?? 18 : v3MintDisplayMeta1?.decimals ?? 18;
+      const next = computeV3QuickFillAmount(balance, pct, sideDecimals);
+      if (!next) return;
       if (side === 0) {
         applyV3MintAmount0(next);
       } else {
@@ -2100,6 +2104,8 @@ export default function LiquiditySection({
       applyV3MintAmount1,
       v3MintBalance0Num,
       v3MintBalance1Num,
+      v3MintDisplayMeta0,
+      v3MintDisplayMeta1,
       v3MintCanUseSide0,
       v3MintCanUseSide1,
       walletBalancesLoading,

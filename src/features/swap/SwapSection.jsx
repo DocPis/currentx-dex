@@ -1,7 +1,7 @@
 // src/features/swap/SwapSection.jsx
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Contract, Interface, formatUnits, id, parseUnits, AbiCoder } from "ethers";
+import { Contract, Interface, formatUnits, parseUnits, AbiCoder } from "ethers";
 import {
   TOKENS,
   getProvider,
@@ -36,6 +36,7 @@ import { getRealtimeClient } from "../../shared/services/realtime";
 import { fetchTokenPrices } from "../../shared/config/subgraph";
 import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 import { applyTokenAliases } from "../../shared/config/tokens";
+import { findActualOutput } from "./swapReceiptUtils";
 
 const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB"];
 const MAX_ROUTE_CANDIDATES = 12;
@@ -46,9 +47,6 @@ const APPROVAL_CACHE_KEY = "cx_approval_cache_v1";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
-const TRANSFER_TOPIC = id("Transfer(address,address,uint256)").toLowerCase();
-const WETH_WITHDRAWAL_TOPIC = id("Withdrawal(address,uint256)").toLowerCase();
-const WETH_DEPOSIT_TOPIC = id("Deposit(address,uint256)").toLowerCase();
 const V3_FEE_TIERS = [500, 3000, 10000];
 const V3_FEE_PRIORITY = [3000, 500, 10000];
 const MAX_V3_HOPS = 3;
@@ -236,8 +234,6 @@ const normalizeCustomTokenLogo = (logo) => {
   if ((crxLogo && lower === crxLogo) || lower.includes("currentx")) return null;
   return raw;
 };
-const paddedTopicAddress = (addr) =>
-  `0x${(addr || "").toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 const NATIVE_PARAM_VALUES = new Set([
   "eth",
   "native",
@@ -439,53 +435,6 @@ const computeOutcomeGrade = (expected, actual, minReceived) => {
     return { label: "Bad", icon: "❌", deltaPct };
   }
   return { label: "OK", icon: "⚠️", deltaPct };
-};
-
-const findActualOutput = (receipt, targetAddress, userAddress, opts = {}) => {
-  if (!receipt || !Array.isArray(receipt.logs) || !userAddress) return null;
-  const targetLower = (targetAddress || "").toLowerCase();
-  const userTopic = paddedTopicAddress(userAddress);
-  let observed = null;
-
-  for (let i = 0; i < receipt.logs.length; i += 1) {
-    const log = receipt.logs[i];
-    const addr = (log?.address || "").toLowerCase();
-    const topic0 = (log?.topics?.[0] || "").toLowerCase();
-
-    if (targetLower && addr === targetLower && topic0 === TRANSFER_TOPIC) {
-      const toTopic = (log?.topics?.[2] || "").toLowerCase();
-      if (toTopic === userTopic) {
-        const amount = log?.data ? BigInt(log.data) : 0n;
-        if (observed === null || amount > observed) observed = amount;
-      }
-    }
-
-    if (
-      opts.captureWithdrawal &&
-      addr === WETH_ADDRESS.toLowerCase() &&
-      topic0 === WETH_WITHDRAWAL_TOPIC
-    ) {
-      const dstTopic = (log?.topics?.[1] || "").toLowerCase();
-      if (dstTopic === userTopic) {
-        const amount = log?.data ? BigInt(log.data) : 0n;
-        if (observed === null || amount > observed) observed = amount;
-      }
-    }
-
-    if (
-      opts.captureDeposit &&
-      addr === WETH_ADDRESS.toLowerCase() &&
-      topic0 === WETH_DEPOSIT_TOPIC
-    ) {
-      const dstTopic = (log?.topics?.[1] || "").toLowerCase();
-      if (dstTopic === userTopic) {
-        const amount = log?.data ? BigInt(log.data) : 0n;
-        if (observed === null || amount > observed) observed = amount;
-      }
-    }
-  }
-
-  return observed;
 };
 
 const requireDecimals = (symbol, meta) => {
