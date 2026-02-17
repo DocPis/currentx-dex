@@ -174,6 +174,24 @@ const parsePositiveInt = (value, fallback) => {
   return Math.floor(num);
 };
 
+const parseBool = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+};
+
+const parseBody = (req) => {
+  if (!req?.body) return {};
+  if (typeof req.body === "string") {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof req.body === "object") return req.body;
+  return {};
+};
+
 const getIngestWindowSeconds = (overrideSeconds) =>
   Math.max(
     60,
@@ -606,6 +624,7 @@ export default async function handler(req, res) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
+  const body = parseBody(req);
 
   const { seasonId, startMs, startBlock, endMs, missing: missingSeasonEnv } = getSeasonConfig();
   const { v2Url, v2Key, v3Url, v3Key } = getSubgraphConfig();
@@ -632,9 +651,11 @@ export default async function handler(req, res) {
   const endSec = Math.floor((endMs || Date.now()) / 1000);
   const ingestCeilingSec = Math.min(endSec, nowSec);
   const ingestWindowOverride =
+    body?.ingestWindowSeconds ??
     req.query?.ingestWindowSeconds ??
     req.query?.windowSeconds ??
     req.query?.maxWindowSeconds;
+  const ingestVolumeOnly = parseBool(body?.volumeOnly ?? req.query?.volumeOnly);
   const ingestMaxWindowSeconds = getIngestWindowSeconds(ingestWindowOverride);
   const cursorNearTipSeconds = getCursorNearTipSeconds();
   const keys = getKeys(seasonId);
@@ -765,6 +786,42 @@ export default async function handler(req, res) {
         cursorUpdates: cursorsToSet.length,
         updatedAt: now,
         sourceErrors,
+      });
+      return;
+    }
+
+    if (ingestVolumeOnly) {
+      const volumeOnlyPipeline = kv.pipeline();
+      wallets.forEach((wallet) => {
+        const userKey = keys.user(wallet);
+        const increment = Number(aggregated.get(wallet) || 0);
+        volumeOnlyPipeline.hset(userKey, {
+          address: wallet,
+          updatedAt: now,
+        });
+        if (Number.isFinite(increment) && increment !== 0) {
+          volumeOnlyPipeline.hincrbyfloat(userKey, "volumeUsd", increment);
+        }
+        // Keep wallet discoverable for /api/points/recalc pass.
+        volumeOnlyPipeline.zadd(keys.leaderboard, {
+          score: 0,
+          member: wallet,
+        });
+      });
+      cursorsToSet.forEach((cursor) => {
+        if (cursor?.key) volumeOnlyPipeline.set(cursor.key, cursor.value);
+      });
+      volumeOnlyPipeline.set(keys.updatedAt, now);
+      await volumeOnlyPipeline.exec();
+      res.status(200).json({
+        ok: true,
+        seasonId,
+        updatedAt: now,
+        ingestedWallets: aggregated.size,
+        cursorUpdates: cursorsToSet.length,
+        ingestMaxWindowSeconds,
+        sourceErrors,
+        volumeOnly: true,
       });
       return;
     }

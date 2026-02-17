@@ -47,6 +47,13 @@ const recalcFast =
   String(env.POINTS_RECALC_FAST || "")
     .trim()
     .toLowerCase() === "true";
+const ingestVolumeOnly =
+  String(env.POINTS_INGEST_VOLUME_ONLY || "")
+    .trim()
+    .toLowerCase() === "1" ||
+  String(env.POINTS_INGEST_VOLUME_ONLY || "")
+    .trim()
+    .toLowerCase() === "true";
 
 if (!baseUrl) {
   console.error("Missing POINTS_API_BASE (example: https://your-app.vercel.app).");
@@ -145,6 +152,9 @@ const run = async () => {
   if (Number.isFinite(ingestWindowSeconds)) {
     console.log(`[points-rebuild] ingestWindowSeconds=${ingestWindowSeconds}`);
   }
+  if (ingestVolumeOnly) {
+    console.log("[points-rebuild] ingest mode=volume-only");
+  }
 
   if (skipReset) {
     console.log("[points-rebuild] reset skipped (POINTS_SKIP_RESET=1).");
@@ -164,6 +174,9 @@ const run = async () => {
       const ingestParams = { seasonId };
       if (Number.isFinite(ingestWindowSeconds)) {
         ingestParams.ingestWindowSeconds = ingestWindowSeconds;
+      }
+      if (ingestVolumeOnly) {
+        ingestParams.volumeOnly = 1;
       }
       const ingest = await callJson("/api/points/ingest", ingestParams);
       const ingestedWallets = Number(ingest?.ingestedWallets || 0);

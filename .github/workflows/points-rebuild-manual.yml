@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: true
+      ingest_volume_only:
+        description: "Ingest volume-only mode (faster; use recalc_fast=false)"
+        required: false
+        type: boolean
+        default: false
       max_ingest_rounds:
         description: "Max ingest rounds"
         required: false
@@ -75,6 +80,7 @@ jobs:
           INPUT_SKIP_RESET: ${{ inputs.skip_reset }}
           INPUT_SKIP_INGEST: ${{ inputs.skip_ingest }}
           INPUT_RECALC_FAST: ${{ inputs.recalc_fast }}
+          INPUT_INGEST_VOLUME_ONLY: ${{ inputs.ingest_volume_only }}
           INPUT_MAX_INGEST_ROUNDS: ${{ inputs.max_ingest_rounds }}
           INPUT_RECALC_LIMIT: ${{ inputs.recalc_limit }}
           INPUT_INGEST_ROUND_DELAY_MS: ${{ inputs.ingest_round_delay_ms }}
@@ -101,6 +107,9 @@ jobs:
           fi
           if [ "${INPUT_RECALC_FAST:-true}" = "true" ]; then
             export POINTS_RECALC_FAST=1
+          fi
+          if [ "${INPUT_INGEST_VOLUME_ONLY:-false}" = "true" ]; then
+            export POINTS_INGEST_VOLUME_ONLY=1
           fi
 
           if [ -z "${POINTS_API_BASE:-}" ]; then
