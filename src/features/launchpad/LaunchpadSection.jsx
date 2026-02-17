@@ -1290,6 +1290,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   const uploadPngToIpfs = useCallback(async ({ dataBase64, fileName, fileBytes }) => {
     try {
       const hasRawFile = fileBytes instanceof Uint8Array && fileBytes.length > 0;
+      const normalizeWallet = (value) => String(value || "").trim().toLowerCase();
       const parseUploadResponse = async (uploadRes) => {
         const rawText = await uploadRes.text().catch(() => "");
         let uploadJson = {};
@@ -1328,19 +1329,92 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         };
       };
 
-      const sendJsonUpload = async (base64Payload) =>
-        fetch(IPFS_UPLOAD_ENDPOINT, {
+      const buildUploadChallengeHeaders = async () => {
+        const normalizedAddress = normalizeWallet(address);
+        if (!isAddress(normalizedAddress)) {
+          throw new Error("Connect wallet before uploading image to IPFS.");
+        }
+        const provider = await getProvider();
+        const signer = await provider.getSigner();
+        const signerAddress = normalizeWallet(
+          (await signer.getAddress().catch(() => normalizedAddress)) || normalizedAddress
+        );
+        if (!isAddress(signerAddress)) {
+          throw new Error("Unable to resolve connected wallet for upload challenge.");
+        }
+        if (signerAddress !== normalizedAddress) {
+          throw new Error("Wallet mismatch detected. Reconnect wallet and retry upload.");
+        }
+
+        const challengeRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "challenge",
+            address: signerAddress,
+          }),
+        });
+        const challengeRaw = await challengeRes.text().catch(() => "");
+        let challengeJson = {};
+        try {
+          challengeJson = challengeRaw ? JSON.parse(challengeRaw) : {};
+        } catch {
+          challengeJson = {};
+        }
+        if (!challengeRes.ok) {
+          const detail = [
+            challengeJson?.error,
+            challengeJson?.message,
+            challengeRaw,
+          ]
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+            .join(" | ");
+          throw new Error(
+            detail
+              ? `Upload challenge failed (${challengeRes.status}): ${detail.slice(0, 260)}`
+              : `Upload challenge failed (${challengeRes.status}).`
+          );
+        }
+
+        const challengeId = String(challengeJson?.challengeId || "").trim();
+        const challengeMessage = String(challengeJson?.message || "").trim();
+        if (!challengeId || !challengeMessage) {
+          throw new Error("Upload challenge response is invalid.");
+        }
+        const challengeSignature = await signer.signMessage(challengeMessage);
+        return {
+          challengeId,
+          challengeAddress: signerAddress,
+          challengeSignature,
+          headers: {
+            "X-Upload-Challenge-Id": challengeId,
+            "X-Upload-Challenge-Address": signerAddress,
+            "X-Upload-Challenge-Signature": challengeSignature,
+          },
+        };
+      };
+
+      const sendJsonUpload = async (base64Payload, challengePayload) =>
+        fetch(IPFS_UPLOAD_ENDPOINT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(challengePayload?.headers || {}),
+          },
           body: JSON.stringify({
             fileName: fileName || "token-image.png",
             contentType: "image/png",
             dataBase64: base64Payload,
+            challengeId: challengePayload?.challengeId || "",
+            challengeAddress: challengePayload?.challengeAddress || "",
+            challengeSignature: challengePayload?.challengeSignature || "",
           }),
         });
 
       let parsedResult = null;
       let rawFailureResult = null;
+      const challengePayload = await buildUploadChallengeHeaders();
 
       if (hasRawFile) {
         const rawUploadRes = await fetch(IPFS_UPLOAD_ENDPOINT, {
@@ -1348,6 +1422,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           headers: {
             "Content-Type": "image/png",
             "X-File-Name": String(fileName || "token-image.png"),
+            ...(challengePayload?.headers || {}),
           },
           body: fileBytes,
         });
@@ -1359,7 +1434,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
             parsedResult.status === 400 || parsedResult.status === 415 || parsedResult.status >= 500;
           if (shouldFallbackToJson) {
             const base64Payload = bytesToBase64(fileBytes);
-            const jsonUploadRes = await sendJsonUpload(base64Payload);
+            const jsonUploadRes = await sendJsonUpload(base64Payload, challengePayload);
             parsedResult = await parseUploadResponse(jsonUploadRes);
             if (!parsedResult.ok && rawFailureResult?.detail) {
               const mergedDetail = [rawFailureResult.detail, parsedResult.detail]
@@ -1373,7 +1448,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           }
         }
       } else {
-        const jsonUploadRes = await sendJsonUpload(String(dataBase64 || ""));
+        const jsonUploadRes = await sendJsonUpload(String(dataBase64 || ""), challengePayload);
         parsedResult = await parseUploadResponse(jsonUploadRes);
       }
 
@@ -1393,13 +1468,16 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         cid: parsedResult.cid,
       };
     } catch (error) {
+      if (Number(error?.code) === 4001 || error?.code === "ACTION_REJECTED") {
+        throw new Error("Signature rejected in wallet.");
+      }
       const message = String(error?.message || "");
       if (message.toLowerCase().includes("failed to fetch")) {
         throw new Error("Cannot reach IPFS upload API. If local, run backend API (vercel dev) or deploy latest changes.");
       }
       throw error;
     }
-  }, []);
+  }, [address]);
 
   const migrateLegacyImageToIpfs = useCallback(async () => {
     if (imageUploading) return;

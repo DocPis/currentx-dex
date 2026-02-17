@@ -1,9 +1,4 @@
 {
-  "crons": [
-    { "path": "/api/points/ingest", "schedule": "*/5 * * * *" },
-    { "path": "/api/points/recalc", "schedule": "*/5 * * * *" },
-    { "path": "/api/whitelist-rewards/recalc", "schedule": "*/5 * * * *" }
-  ],
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "handle": "filesystem" },

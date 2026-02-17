@@ -1,5 +1,6 @@
 import { kv } from "@vercel/kv";
 import { verifyMessage } from "ethers";
+import { acquireKvLock, releaseKvLock } from "../../src/server/kvLock.js";
 import {
   buildPointsClaimMessage,
   buildPointsSummary,
@@ -191,6 +192,28 @@ export default async function handler(req, res) {
   }
 
   try {
+    const lockKey = `points:${config.seasonId}:claim:lock:${address}`;
+    let lockToken = "";
+    try {
+      lockToken = await acquireKvLock(kv, lockKey, {
+        ttlSeconds: 20,
+        retries: 2,
+        retryDelayMs: 100,
+      });
+    } catch {
+      res.status(503).json({ error: "Claim lock unavailable. Retry in a few seconds." });
+      return;
+    }
+    if (!lockToken) {
+      res.status(409).json({
+        error: "Claim already in progress for this wallet. Retry in a few seconds.",
+        seasonId: config.seasonId,
+        address,
+      });
+      return;
+    }
+
+    try {
     const [userRow, summaryRow, rewardRow] = await Promise.all([
       kv.hgetall(keys.user),
       kv.hgetall(keys.summary),
@@ -291,6 +314,10 @@ export default async function handler(req, res) {
     const nextClaimCount = Number.isFinite(claimRow?.claimCount)
       ? claimRow.claimCount + 1
       : 1;
+    const nextClaimVersion = Math.max(
+      0,
+      Math.floor(toNumber(rewardRow?.claimVersion, claimRow?.claimCount || 0))
+    ) + 1;
 
     await kv.hset(keys.rewardUser, {
       address,
@@ -299,6 +326,7 @@ export default async function handler(req, res) {
       immediateClaimedCrx: payout.nextImmediateClaimedCrx,
       streamedClaimedCrx: payout.nextStreamedClaimedCrx,
       claimCount: nextClaimCount,
+      claimVersion: nextClaimVersion,
       lastClaimAt: nowMs,
       updatedAt: nowMs,
     });
@@ -326,6 +354,9 @@ export default async function handler(req, res) {
       claimState,
       rewardSnapshotCrx,
     });
+    } finally {
+      await releaseKvLock(kv, lockKey, lockToken);
+    }
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });
   }

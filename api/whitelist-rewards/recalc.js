@@ -11,6 +11,11 @@ import {
 } from "../../src/server/whitelistRewardsLib.js";
 
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
   const secrets = [
     process.env.WHITELIST_REWARDS_TOKEN,
     process.env.POINTS_INGEST_TOKEN,
@@ -30,12 +35,19 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (req.method !== "POST" && req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
+  const body = (() => {
+    if (!req?.body) return {};
+    if (typeof req.body === "string") {
+      try {
+        return JSON.parse(req.body);
+      } catch {
+        return {};
+      }
+    }
+    return typeof req.body === "object" ? req.body : {};
+  })();
 
-  const config = getWhitelistRewardsConfig(req.query?.seasonId);
+  const config = getWhitelistRewardsConfig(body?.seasonId || req.query?.seasonId);
   if (!config?.seasonId) {
     res.status(503).json({ error: "Missing required env: POINTS_SEASON_ID" });
     return;

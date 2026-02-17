@@ -1,5 +1,6 @@
 import { kv } from "@vercel/kv";
 import { verifyMessage } from "ethers";
+import { acquireKvLock, releaseKvLock } from "../../src/server/kvLock.js";
 import { buildWhitelistClaimMessage } from "../../src/shared/lib/whitelistRewards.js";
 import {
   computeClaimPayout,
@@ -101,59 +102,90 @@ export default async function handler(req, res) {
   }
 
   try {
-    const stored = await kv.hgetall(keys.user(address));
-    const user = parseStoredRewardRow(stored);
-    if (!user || !user.address || !user.whitelisted) {
-      res.status(404).json({ error: "Wallet not found in whitelist rewards" });
+    const lockKey = `whitelist:${config.seasonId}:claim:lock:${address}`;
+    let lockToken = "";
+    try {
+      lockToken = await acquireKvLock(kv, lockKey, {
+        ttlSeconds: 20,
+        retries: 2,
+        retryDelayMs: 100,
+      });
+    } catch {
+      res.status(503).json({ error: "Claim lock unavailable. Retry in a few seconds." });
       return;
     }
-
-    const payout = computeClaimPayout(user, config, nowMs);
-    if (payout.claimTotalCrx <= 0) {
+    if (!lockToken) {
       res.status(409).json({
-        error: "Nothing claimable now",
+        error: "Claim already in progress for this wallet. Retry in a few seconds.",
         seasonId: config.seasonId,
         address,
-        claimState: payout,
       });
       return;
     }
 
-    const nextClaimCount = Number.isFinite(user.claimCount)
-      ? user.claimCount + 1
-      : 1;
+    try {
+      const stored = await kv.hgetall(keys.user(address));
+      const user = parseStoredRewardRow(stored);
+      if (!user || !user.address || !user.whitelisted) {
+        res.status(404).json({ error: "Wallet not found in whitelist rewards" });
+        return;
+      }
 
-    await kv.hset(keys.user(address), {
-      immediateClaimedCrx: payout.nextImmediateClaimedCrx,
-      streamedClaimedCrx: payout.nextStreamedClaimedCrx,
-      lastClaimAt: nowMs,
-      claimCount: nextClaimCount,
-      updatedAt: nowMs,
-    });
+      const payout = computeClaimPayout(user, config, nowMs);
+      if (payout.claimTotalCrx <= 0) {
+        res.status(409).json({
+          error: "Nothing claimable now",
+          seasonId: config.seasonId,
+          address,
+          claimState: payout,
+        });
+        return;
+      }
 
-    const updatedUser = {
-      ...user,
-      immediateClaimedCrx: payout.nextImmediateClaimedCrx,
-      streamedClaimedCrx: payout.nextStreamedClaimedCrx,
-      lastClaimAt: nowMs,
-      claimCount: nextClaimCount,
-      updatedAt: nowMs,
-    };
-    const claimState = getWhitelistClaimState(updatedUser, config, nowMs);
+      const nextClaimCount = Number.isFinite(user.claimCount)
+        ? user.claimCount + 1
+        : 1;
+      const nextClaimVersion = Math.max(
+        0,
+        Math.floor(Number(stored?.claimVersion || user.claimCount || 0))
+      ) + 1;
 
-    res.status(200).json({
-      ok: true,
-      seasonId: config.seasonId,
-      address,
-      claim: {
-        amountCrx: payout.claimTotalCrx,
-        immediateCrx: payout.claimImmediateCrx,
-        streamedCrx: payout.claimStreamedCrx,
-        claimedAt: nowMs,
-      },
-      claimState,
-      user: updatedUser,
-    });
+      await kv.hset(keys.user(address), {
+        immediateClaimedCrx: payout.nextImmediateClaimedCrx,
+        streamedClaimedCrx: payout.nextStreamedClaimedCrx,
+        lastClaimAt: nowMs,
+        claimCount: nextClaimCount,
+        claimVersion: nextClaimVersion,
+        updatedAt: nowMs,
+      });
+
+      const updatedUser = {
+        ...user,
+        immediateClaimedCrx: payout.nextImmediateClaimedCrx,
+        streamedClaimedCrx: payout.nextStreamedClaimedCrx,
+        lastClaimAt: nowMs,
+        claimCount: nextClaimCount,
+        claimVersion: nextClaimVersion,
+        updatedAt: nowMs,
+      };
+      const claimState = getWhitelistClaimState(updatedUser, config, nowMs);
+
+      res.status(200).json({
+        ok: true,
+        seasonId: config.seasonId,
+        address,
+        claim: {
+          amountCrx: payout.claimTotalCrx,
+          immediateCrx: payout.claimImmediateCrx,
+          streamedCrx: payout.claimStreamedCrx,
+          claimedAt: nowMs,
+        },
+        claimState,
+        user: updatedUser,
+      });
+    } finally {
+      await releaseKvLock(kv, lockKey, lockToken);
+    }
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });
   }

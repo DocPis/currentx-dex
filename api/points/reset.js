@@ -1,4 +1,5 @@
 import { kv } from "@vercel/kv";
+import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 
 const DELETE_BATCH_SIZE = 200;
 const SCAN_BATCH_SIZE = 1000;
@@ -58,18 +59,17 @@ const getSecrets = () =>
     .map((value) => String(value || "").trim())
     .filter(Boolean);
 
-const authorizeRequest = (req, secrets) => {
-  const list = Array.isArray(secrets) ? secrets : [secrets];
-  const active = list.filter(Boolean);
-  if (!active.length) return true;
-  const authHeader = req.headers?.authorization || "";
-  const token = req.query?.token || "";
-  return active.some(
-    (secret) =>
-      authHeader === `Bearer ${secret}` ||
-      authHeader === secret ||
-      token === secret
-  );
+const parseBody = (req) => {
+  if (!req?.body) return {};
+  if (typeof req.body === "string") {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof req.body === "object") return req.body;
+  return {};
 };
 
 const normalizeScanResult = (result) => {
@@ -137,6 +137,11 @@ const deleteInBatches = async (keys) => {
 };
 
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
   const secrets = getSecrets();
   if (!secrets.length) {
     res.status(503).json({
@@ -144,18 +149,14 @@ export default async function handler(req, res) {
     });
     return;
   }
-  if (!authorizeRequest(req, secrets)) {
+  if (!authorizeBearerRequest(req, secrets)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  if (req.method !== "POST" && req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
-
+  const body = parseBody(req);
   const { seasonId, missing: missingSeasonEnv } = getSeasonConfig();
-  const targetSeason = req.query?.seasonId || seasonId;
+  const targetSeason = body?.seasonId || req.query?.seasonId || seasonId;
   if (!targetSeason || missingSeasonEnv?.length) {
     res.status(503).json({
       error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,

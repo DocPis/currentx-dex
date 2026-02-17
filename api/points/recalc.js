@@ -3,6 +3,7 @@ import {
   buildPointsSummary,
   getLeaderboardRewardsConfig,
 } from "../../src/server/leaderboardRewardsLib.js";
+import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 import {
   computeLpData,
   computePoints,
@@ -32,18 +33,17 @@ const getSecrets = () =>
     .map((value) => String(value || "").trim())
     .filter(Boolean);
 
-const authorizeRequest = (req, secrets) => {
-  const list = Array.isArray(secrets) ? secrets : [secrets];
-  const active = list.filter(Boolean);
-  if (!active.length) return true;
-  const authHeader = req.headers?.authorization || "";
-  const token = req.query?.token || "";
-  return active.some(
-    (secret) =>
-      authHeader === `Bearer ${secret}` ||
-      authHeader === secret ||
-      token === secret
-  );
+const parseBody = (req) => {
+  if (!req?.body) return {};
+  if (typeof req.body === "string") {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  if (typeof req.body === "object") return req.body;
+  return {};
 };
 
 const parseBool = (value) => {
@@ -52,6 +52,11 @@ const parseBool = (value) => {
 };
 
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
   const secrets = getSecrets();
   if (!secrets.length) {
     res.status(503).json({
@@ -59,18 +64,19 @@ export default async function handler(req, res) {
     });
     return;
   }
-  if (!authorizeRequest(req, secrets)) {
+  if (!authorizeBearerRequest(req, secrets)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
-  if (req.method !== "POST" && req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
-    return;
-  }
+  const body = parseBody(req);
+  const seasonIdInput = body?.seasonId ?? req.query?.seasonId;
+  const cursorInput = body?.cursor ?? req.query?.cursor;
+  const limitInput = body?.limit ?? req.query?.limit;
+  const fastInput = body?.fast ?? req.query?.fast;
 
   const { seasonId, startBlock, startMs, missing: missingSeasonEnv } = getSeasonConfig();
-  const targetSeason = req.query?.seasonId || seasonId;
+  const targetSeason = seasonIdInput || seasonId;
   const { v3Url, v3Key } = getSubgraphConfig();
   if (!v3Url) {
     res.status(503).json({ error: "V3 subgraph not configured" });
@@ -92,9 +98,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const cursor = clampNumber(req.query?.cursor, 0, Number.MAX_SAFE_INTEGER, 0);
-  const limitParam = req.query?.limit;
-  const fastMode = parseBool(req.query?.fast);
+  const cursor = clampNumber(cursorInput, 0, Number.MAX_SAFE_INTEGER, 0);
+  const limitParam = limitInput;
+  const fastMode = parseBool(fastInput);
   const limit =
     limitParam === undefined || limitParam === null || limitParam === ""
       ? null

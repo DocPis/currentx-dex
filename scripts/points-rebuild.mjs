@@ -60,7 +60,6 @@ const buildUrl = (path, params = {}) => {
     if (value === undefined || value === null || value === "") return;
     url.searchParams.set(key, String(value));
   });
-  url.searchParams.set("token", token);
   return url.toString();
 };
 
@@ -73,7 +72,12 @@ const isRetriableStatus = (status) => {
 
 const callJsonOnce = async (path, params = {}) => {
   const url = buildUrl(path, params);
-  const res = await fetch(url, { method: "POST" });
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
   const bodyText = await res.text();
   let payload = {};
   try {

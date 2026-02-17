@@ -1,14 +1,35 @@
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { kv } from "@vercel/kv";
+import { verifyMessage } from "ethers";
 
 const MAX_IMAGE_BYTES = 1024 * 1024; // 1 MB
 const MAX_IMAGE_LABEL = "1 MB";
 const MAX_BASE64_CHARS = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
 const MAX_BODY_BYTES = MAX_BASE64_CHARS + 40_000; // base64 payload + JSON envelope guardrail
-const RATE_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-const MAX_REQUESTS_PER_IP = 20;
+const JSON_ACTION_MAX_BODY_BYTES = 16 * 1024;
+const RATE_WINDOW_SECONDS = 10 * 60;
+const MAX_UPLOADS_PER_IP = 20;
+const MAX_UPLOADS_PER_ADDRESS = 12;
+const MAX_CHALLENGES_PER_IP = 30;
+const MAX_CHALLENGES_PER_ADDRESS = 12;
+const CHALLENGE_TTL_SECONDS = 5 * 60;
+const MAX_CHALLENGE_USES = 4;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PINATA_UPLOAD_URL = "https://uploads.pinata.cloud/v3/files";
 const DEFAULT_IPFS_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
+const RATE_PREFIX = "ipfs:rate:";
+const CHALLENGE_PREFIX = "ipfs:challenge:";
+const DEFAULT_ALLOWED_ORIGINS = process.env.IPFS_UPLOAD_ALLOWED_ORIGINS || "";
+
+const fallbackRateBuckets =
+  globalThis.__cxIpfsRateBucketsDistributed ||
+  (globalThis.__cxIpfsRateBucketsDistributed = new Map());
+const fallbackChallenges =
+  globalThis.__cxIpfsChallengesFallback || (globalThis.__cxIpfsChallengesFallback = new Map());
+
+const normalizeAddress = (value) => String(value || "").trim().toLowerCase();
+const isAddress = (value) => /^0x[a-f0-9]{40}$/u.test(normalizeAddress(value));
 
 const sanitizeFileName = (value) => {
   const base = String(value || "token-image")
@@ -53,6 +74,17 @@ const parseJsonBody = (body) => {
   return {};
 };
 
+const parseCsv = (value) =>
+  String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const allowedOrigins = (() => {
+  const list = parseCsv(DEFAULT_ALLOWED_ORIGINS);
+  return list.length ? list : ["*"];
+})();
+
 const readRawBodyFromStream = async (req, maxBytes) =>
   new Promise((resolve, reject) => {
     const chunks = [];
@@ -78,19 +110,48 @@ const getClientIp = (req) => {
   return req.socket?.remoteAddress || "unknown";
 };
 
-const rateBuckets =
-  globalThis.__cxIpfsRateBuckets || (globalThis.__cxIpfsRateBuckets = new Map());
+const getHeaderValue = (req, name) => {
+  const value = req?.headers?.[name];
+  if (Array.isArray(value)) return String(value[0] || "").trim();
+  return String(value || "").trim();
+};
 
-const isRateLimited = (ip) => {
-  if (!ip) return false;
-  const now = Date.now();
-  const bucket = rateBuckets.get(ip);
-  if (!bucket || bucket.resetAt < now) {
-    rateBuckets.set(ip, { count: 1, resetAt: now + RATE_WINDOW_MS });
-    return false;
+const normalizeOrigin = (origin) => {
+  const raw = String(origin || "").trim();
+  if (!raw) return "";
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return "";
   }
-  bucket.count += 1;
-  return bucket.count > MAX_REQUESTS_PER_IP;
+};
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.includes("*")) return true;
+  return allowedOrigins.some((allowed) => normalizeOrigin(allowed) === normalizeOrigin(origin));
+};
+
+const setCors = (req, res) => {
+  const origin = String(req.headers?.origin || "").trim();
+  if (!origin || allowedOrigins.includes("*")) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (isOriginAllowed(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    [
+      "Content-Type",
+      "Authorization",
+      "X-File-Name",
+      "X-Upload-Challenge-Id",
+      "X-Upload-Challenge-Address",
+      "X-Upload-Challenge-Signature",
+    ].join(", ")
+  );
 };
 
 const isPngBuffer = (buffer) =>
@@ -143,7 +204,6 @@ const normalizePinataJwt = (value) => {
   ) {
     token = token.slice(1, -1).trim();
   }
-  // JWT must not include spaces/newlines; remove accidental formatting artifacts.
   token = token.replace(/\s+/gu, "");
   return token;
 };
@@ -181,15 +241,334 @@ const buildPinataAuthHeaders = () => {
   };
 };
 
-const setCors = (res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-File-Name");
+const createChallengeId = () => {
+  if (typeof randomUUID === "function") return randomUUID();
+  return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+};
+
+const toChallengeKey = (challengeId) => `${CHALLENGE_PREFIX}${challengeId}`;
+
+const parseChallengeRecord = (raw, challengeId) => {
+  if (!raw || typeof raw !== "object") return null;
+  const issuedAt = Number(raw.issuedAt || 0);
+  const expiresAt = Number(raw.expiresAt || 0);
+  const uses = Number(raw.uses || 0);
+  const record = {
+    challengeId: String(challengeId || raw.challengeId || "").trim(),
+    address: normalizeAddress(raw.address),
+    ip: String(raw.ip || "").trim(),
+    origin: String(raw.origin || "").trim(),
+    issuedAt: Number.isFinite(issuedAt) && issuedAt > 0 ? issuedAt : 0,
+    expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : 0,
+    uses: Number.isFinite(uses) && uses >= 0 ? uses : 0,
+  };
+  if (!record.challengeId || !record.address || !record.issuedAt || !record.expiresAt) {
+    return null;
+  }
+  return record;
+};
+
+const pruneFallbackChallenges = () => {
+  if (!fallbackChallenges.size) return;
+  const now = Date.now();
+  for (const [id, record] of fallbackChallenges.entries()) {
+    if (!record || Number(record.expiresAt || 0) <= now) {
+      fallbackChallenges.delete(id);
+    }
+  }
+};
+
+const saveChallengeRecord = async (record) => {
+  const key = toChallengeKey(record.challengeId);
+  const payload = {
+    challengeId: record.challengeId,
+    address: record.address,
+    ip: record.ip,
+    origin: record.origin,
+    issuedAt: record.issuedAt,
+    expiresAt: record.expiresAt,
+    uses: 0,
+  };
+  try {
+    await kv.hset(key, payload);
+    if (typeof kv.expire === "function") {
+      await kv.expire(key, CHALLENGE_TTL_SECONDS + 10);
+    }
+    return "kv";
+  } catch {
+    pruneFallbackChallenges();
+    fallbackChallenges.set(record.challengeId, payload);
+    return "memory";
+  }
+};
+
+const loadChallengeRecord = async (challengeId) => {
+  const key = toChallengeKey(challengeId);
+  try {
+    const raw = await kv.hgetall(key);
+    const parsed = parseChallengeRecord(raw, challengeId);
+    if (parsed) return { record: parsed, storage: "kv" };
+  } catch {
+    // fall back to in-memory store
+  }
+  pruneFallbackChallenges();
+  const fallback = parseChallengeRecord(fallbackChallenges.get(challengeId), challengeId);
+  if (!fallback) return { record: null, storage: "none" };
+  return { record: fallback, storage: "memory" };
+};
+
+const incrementChallengeUsage = async ({ challengeId, storage, record }) => {
+  const key = toChallengeKey(challengeId);
+  if (storage === "kv") {
+    try {
+      if (typeof kv.hincrby === "function") {
+        const next = Number(await kv.hincrby(key, "uses", 1));
+        return Number.isFinite(next) ? next : record.uses + 1;
+      }
+      const next = record.uses + 1;
+      await kv.hset(key, { uses: next });
+      return next;
+    } catch {
+      // fallback to memory increment below
+    }
+  }
+
+  pruneFallbackChallenges();
+  const current = parseChallengeRecord(
+    fallbackChallenges.get(challengeId) || record,
+    challengeId
+  );
+  const next = (current?.uses || 0) + 1;
+  fallbackChallenges.set(challengeId, {
+    ...(current || record),
+    uses: next,
+  });
+  return next;
+};
+
+const buildUploadChallengeMessage = ({
+  address,
+  challengeId,
+  issuedAt,
+  expiresAt,
+  origin,
+}) =>
+  [
+    "CurrentX IPFS Upload Authorization",
+    `Address: ${normalizeAddress(address)}`,
+    `Challenge ID: ${challengeId}`,
+    `Issued At (ms): ${issuedAt}`,
+    `Expires At (ms): ${expiresAt}`,
+    `Origin: ${String(origin || "unknown").trim() || "unknown"}`,
+  ].join("\n");
+
+const getBucketKey = ({ scope, identifier, nowMs = Date.now() }) => {
+  const bucket = Math.floor(nowMs / (RATE_WINDOW_SECONDS * 1000));
+  return `${scope}:${bucket}:${String(identifier || "unknown").slice(0, 160)}`;
+};
+
+const incrementFallbackRate = (bucketKey) => {
+  if (fallbackRateBuckets.size > 8000) {
+    const stalePrefixes = new Set(
+      Array.from(fallbackRateBuckets.keys())
+        .filter((key) => !key.includes(`:${Math.floor(Date.now() / (RATE_WINDOW_SECONDS * 1000))}:`))
+        .slice(0, 2000)
+    );
+    stalePrefixes.forEach((key) => fallbackRateBuckets.delete(key));
+  }
+  const next = Number(fallbackRateBuckets.get(bucketKey) || 0) + 1;
+  fallbackRateBuckets.set(bucketKey, next);
+  return next;
+};
+
+const incrementDistributedRate = async (bucketKey) => {
+  const fullKey = `${RATE_PREFIX}${bucketKey}`;
+  const count = Number(await kv.incr(fullKey));
+  if (count === 1 && typeof kv.expire === "function") {
+    await kv.expire(fullKey, RATE_WINDOW_SECONDS + 20);
+  }
+  return count;
+};
+
+const isRateLimited = async ({ scope, identifier, maxRequests, nowMs = Date.now() }) => {
+  const bucketKey = getBucketKey({ scope, identifier, nowMs });
+  let current = 0;
+  try {
+    current = await incrementDistributedRate(bucketKey);
+  } catch {
+    current = incrementFallbackRate(bucketKey);
+  }
+  return Number.isFinite(current) && current > maxRequests;
+};
+
+const extractChallengePayload = (req, body) => ({
+  challengeId: String(
+    getHeaderValue(req, "x-upload-challenge-id") ||
+      body?.challengeId ||
+      body?.challenge?.id ||
+      ""
+  ).trim(),
+  challengeAddress: normalizeAddress(
+    getHeaderValue(req, "x-upload-challenge-address") ||
+      body?.challengeAddress ||
+      body?.challenge?.address ||
+      ""
+  ),
+  challengeSignature: String(
+    getHeaderValue(req, "x-upload-challenge-signature") ||
+      body?.challengeSignature ||
+      body?.challenge?.signature ||
+      ""
+  ).trim(),
+});
+
+const verifyUploadChallenge = async ({
+  challengeId,
+  challengeAddress,
+  challengeSignature,
+  requestIp,
+}) => {
+  if (!challengeId || !challengeAddress || !challengeSignature) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Missing upload challenge. Request a challenge and sign it with your wallet.",
+    };
+  }
+  if (!isAddress(challengeAddress)) {
+    return { ok: false, status: 400, error: "Invalid challenge wallet address." };
+  }
+  if (challengeId.length > 200) {
+    return { ok: false, status: 400, error: "Invalid challenge ID." };
+  }
+
+  const loaded = await loadChallengeRecord(challengeId);
+  const challenge = loaded.record;
+  if (!challenge) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Upload challenge not found or expired. Request a new challenge.",
+    };
+  }
+
+  const now = Date.now();
+  if (challenge.expiresAt <= now) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Upload challenge expired. Request a new challenge.",
+    };
+  }
+  if (challenge.address !== challengeAddress) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Challenge address mismatch. Request a new challenge.",
+    };
+  }
+  if (challenge.ip && requestIp && challenge.ip !== requestIp) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Challenge is bound to a different client IP. Request a new challenge.",
+    };
+  }
+  if (challenge.uses >= MAX_CHALLENGE_USES) {
+    return {
+      ok: false,
+      status: 429,
+      error: "Challenge usage exceeded. Request a new challenge.",
+    };
+  }
+
+  const message = buildUploadChallengeMessage(challenge);
+  let recovered = "";
+  try {
+    recovered = normalizeAddress(verifyMessage(message, challengeSignature));
+  } catch {
+    return { ok: false, status: 401, error: "Invalid challenge signature." };
+  }
+  if (!recovered || recovered !== challenge.address) {
+    return { ok: false, status: 401, error: "Challenge signature does not match address." };
+  }
+
+  const nextUses = await incrementChallengeUsage({
+    challengeId,
+    storage: loaded.storage,
+    record: challenge,
+  });
+  if (nextUses > MAX_CHALLENGE_USES) {
+    return {
+      ok: false,
+      status: 429,
+      error: "Challenge usage exceeded. Request a new challenge.",
+    };
+  }
+
+  return {
+    ok: true,
+    address: challenge.address,
+  };
+};
+
+const handleChallengeRequest = async ({ req, res, body, ip }) => {
+  const address = normalizeAddress(body?.address || body?.wallet || "");
+  if (!isAddress(address)) {
+    res.status(400).json({ error: "Missing or invalid wallet address for upload challenge." });
+    return;
+  }
+
+  const challengeIpLimited = await isRateLimited({
+    scope: "challenge-ip",
+    identifier: ip,
+    maxRequests: MAX_CHALLENGES_PER_IP,
+  });
+  if (challengeIpLimited) {
+    res.status(429).json({ error: "Challenge rate limit exceeded. Retry later." });
+    return;
+  }
+  const challengeAddressLimited = await isRateLimited({
+    scope: "challenge-address",
+    identifier: address,
+    maxRequests: MAX_CHALLENGES_PER_ADDRESS,
+  });
+  if (challengeAddressLimited) {
+    res.status(429).json({ error: "Address challenge rate limit exceeded. Retry later." });
+    return;
+  }
+
+  const issuedAt = Date.now();
+  const expiresAt = issuedAt + CHALLENGE_TTL_SECONDS * 1000;
+  const challengeId = createChallengeId();
+  const origin = normalizeOrigin(req.headers?.origin || "") || "unknown";
+
+  const record = {
+    challengeId,
+    address,
+    ip,
+    origin,
+    issuedAt,
+    expiresAt,
+    uses: 0,
+  };
+  const storage = await saveChallengeRecord(record);
+
+  res.status(200).json({
+    ok: true,
+    challengeId,
+    address,
+    issuedAt,
+    expiresAt,
+    ttlSeconds: CHALLENGE_TTL_SECONDS,
+    storage,
+    message: buildUploadChallengeMessage(record),
+  });
 };
 
 export default async function handler(req, res) {
   try {
-    setCors(res);
+    setCors(req, res);
 
     if (req.method === "OPTIONS") {
       res.status(204).end();
@@ -200,9 +579,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    const ip = getClientIp(req);
-    if (isRateLimited(ip)) {
-      res.status(429).json({ error: "Rate limit exceeded. Please retry later." });
+    const requestOrigin = String(req.headers?.origin || "").trim();
+    if (requestOrigin && !isOriginAllowed(requestOrigin)) {
+      res.status(403).json({ error: "Origin not allowed for IPFS upload." });
       return;
     }
 
@@ -215,6 +594,50 @@ export default async function handler(req, res) {
 
     const requestContentType = String(req.headers["content-type"] || "").toLowerCase();
     const isDirectPngUpload = requestContentType.startsWith("image/png");
+    const parsedBody = isDirectPngUpload ? {} : parseJsonBody(req.body);
+
+    const action = String(parsedBody?.action || "").trim().toLowerCase();
+    if (action === "challenge") {
+      const challengeBodySize = readJsonBodySize(req.body);
+      if (challengeBodySize > JSON_ACTION_MAX_BODY_BYTES) {
+        res.status(413).json({ error: "Challenge payload too large." });
+        return;
+      }
+      const ip = getClientIp(req);
+      await handleChallengeRequest({ req, res, body: parsedBody, ip });
+      return;
+    }
+
+    const ip = getClientIp(req);
+    const challengePayload = extractChallengePayload(req, parsedBody);
+    const challengeCheck = await verifyUploadChallenge({
+      ...challengePayload,
+      requestIp: ip,
+    });
+    if (!challengeCheck.ok) {
+      res.status(challengeCheck.status).json({ error: challengeCheck.error });
+      return;
+    }
+
+    const ipRateLimited = await isRateLimited({
+      scope: "upload-ip",
+      identifier: ip,
+      maxRequests: MAX_UPLOADS_PER_IP,
+    });
+    if (ipRateLimited) {
+      res.status(429).json({ error: "Upload rate limit exceeded. Please retry later." });
+      return;
+    }
+    const walletRateLimited = await isRateLimited({
+      scope: "upload-address",
+      identifier: challengeCheck.address,
+      maxRequests: MAX_UPLOADS_PER_ADDRESS,
+    });
+    if (walletRateLimited) {
+      res.status(429).json({ error: "Wallet upload quota exceeded. Please retry later." });
+      return;
+    }
+
     let imageBuffer = null;
     let fileName = "token-image.png";
 
@@ -243,10 +666,9 @@ export default async function handler(req, res) {
         return;
       }
 
-      const body = parseJsonBody(req.body);
-      const dataBase64 = String(body?.dataBase64 || "").trim();
-      fileName = sanitizeFileName(body?.fileName || "token-image.png");
-      const contentType = String(body?.contentType || "").trim().toLowerCase();
+      const dataBase64 = String(parsedBody?.dataBase64 || "").trim();
+      fileName = sanitizeFileName(parsedBody?.fileName || "token-image.png");
+      const contentType = String(parsedBody?.contentType || "").trim().toLowerCase();
 
       if (!dataBase64) {
         res.status(400).json({ error: "Missing dataBase64" });
@@ -349,6 +771,7 @@ export default async function handler(req, res) {
       gatewayUrl,
       fileName,
       size: imageBuffer.length,
+      uploader: challengeCheck.address,
     });
   } catch (error) {
     const message = String(error?.message || "").trim();
@@ -374,3 +797,4 @@ export default async function handler(req, res) {
     });
   }
 }
+

@@ -3,6 +3,7 @@ import {
   buildPointsSummary,
   getLeaderboardRewardsConfig,
 } from "../../src/server/leaderboardRewardsLib.js";
+import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 import {
   computeLpData as computeLpDataShared,
   computePoints as computePointsShared,
@@ -564,6 +565,11 @@ const ingestBoostLiquidityActivitySource = async ({
 };
 
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
   const secrets = [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
     .map((value) => String(value || "").trim())
     .filter(Boolean);
@@ -573,24 +579,8 @@ export default async function handler(req, res) {
     });
     return;
   }
-  const authHeader = req.headers?.authorization || "";
-  const token = req.query?.token || "";
-
-  if (secrets.length) {
-    const matches = secrets.some(
-      (secret) =>
-        authHeader === `Bearer ${secret}` ||
-        authHeader === secret ||
-        token === secret
-    );
-    if (!matches) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-  }
-
-  if (req.method !== "POST" && req.method !== "GET") {
-    res.status(405).json({ error: "Method not allowed" });
+  if (!authorizeBearerRequest(req, secrets)) {
+    res.status(401).json({ error: "Unauthorized" });
     return;
   }
 

@@ -1,0 +1,95 @@
+name: Points Jobs Cron
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: points-jobs-cron
+  cancel-in-progress: false
+
+jobs:
+  run-authenticated-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Call protected API jobs
+        shell: bash
+        env:
+          POINTS_API_BASE: ${{ secrets.POINTS_API_BASE }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          POINTS_INGEST_TOKEN: ${{ secrets.POINTS_INGEST_TOKEN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          POINTS_SEASON_ID: ${{ vars.POINTS_SEASON_ID }}
+        run: |
+          set -euo pipefail
+
+          BASE_URL="${POINTS_API_BASE:-${API_BASE_URL:-}}"
+          TOKEN="${POINTS_INGEST_TOKEN:-${CRON_SECRET:-}}"
+
+          if [ -z "${BASE_URL}" ]; then
+            echo "Missing secret POINTS_API_BASE (or API_BASE_URL)." >&2
+            exit 1
+          fi
+          if [ -z "${TOKEN}" ]; then
+            echo "Missing secret POINTS_INGEST_TOKEN (or CRON_SECRET)." >&2
+            exit 1
+          fi
+          if [[ "${BASE_URL}" != http://* && "${BASE_URL}" != https://* ]]; then
+            echo "Invalid BASE_URL: ${BASE_URL}. Use full https://... URL." >&2
+            exit 1
+          fi
+
+          BASE_URL="${BASE_URL%/}"
+
+          call_endpoint() {
+            local name="$1"
+            local path="$2"
+            local body="$3"
+            local attempt
+            for attempt in 1 2 3; do
+              local tmp_file
+              tmp_file="$(mktemp)"
+              local status
+              status="$(curl --silent --show-error --location \
+                --output "${tmp_file}" \
+                --write-out "%{http_code}" \
+                --request POST \
+                --header "Authorization: Bearer ${TOKEN}" \
+                --header "Content-Type: application/json" \
+                --data "${body}" \
+                "${BASE_URL}${path}" || true)"
+
+              if [[ "${status}" =~ ^2[0-9][0-9]$ ]]; then
+                echo "[${name}] ok (HTTP ${status})"
+                cat "${tmp_file}"
+                echo
+                rm -f "${tmp_file}"
+                return 0
+              fi
+
+              echo "[${name}] failed attempt ${attempt}/3 (HTTP ${status})" >&2
+              cat "${tmp_file}" >&2 || true
+              echo >&2
+              rm -f "${tmp_file}"
+              if [ "${attempt}" -lt 3 ]; then
+                sleep $((attempt * 2))
+              fi
+            done
+            echo "[${name}] failed after retries" >&2
+            return 1
+          }
+
+          body='{}'
+          if [ -n "${POINTS_SEASON_ID:-}" ]; then
+            body="{\"seasonId\":\"${POINTS_SEASON_ID}\"}"
+          fi
+
+          call_endpoint "points-ingest" "/api/points/ingest" "${body}"
+          call_endpoint "points-recalc" "/api/points/recalc" "${body}"
+          call_endpoint "whitelist-recalc" "/api/whitelist-rewards/recalc" "${body}"
+

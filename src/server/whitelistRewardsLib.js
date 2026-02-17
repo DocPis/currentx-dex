@@ -1,4 +1,5 @@
 /* eslint-env node */
+import { authorizeBearerRequest } from "./requestAuth.js";
 
 const DEFAULT_SEASON_ID =
   String(process.env.POINTS_SEASON_ID || process.env.VITE_POINTS_SEASON_ID || "").trim();
@@ -207,17 +208,7 @@ export const getPresaleKey = (address) =>
   `${WHITELIST_KEY_PREFIX}${normalizeAddress(address)}`;
 
 export const authorizeRequest = (req, secret) => {
-  const secrets = Array.isArray(secret) ? secret : [secret];
-  const active = secrets.filter(Boolean);
-  if (!active.length) return true;
-  const authHeader = req.headers?.authorization || "";
-  const token = req.query?.token || "";
-  return active.some(
-    (entry) =>
-      authHeader === `Bearer ${entry}` ||
-      authHeader === entry ||
-      token === entry
-  );
+  return authorizeBearerRequest(req, secret);
 };
 
 export const scanWhitelistWallets = async (kv) => {
