@@ -14,6 +14,8 @@ import {
 const PAGE_LIMIT = 200;
 const CONCURRENCY = 4;
 const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_SWAP_PAGES_PER_WINDOW = 500;
+const MAX_LP_ACTIVITY_PAGES_PER_WINDOW = 500;
 const INGEST_DEFAULT_MAX_WINDOW_SECONDS = 10 * 60;
 const LP_DISCOVERY_DEFAULT_BACKFILL_SECONDS = 24 * 60 * 60;
 const CURSOR_NEAR_TIP_DEFAULT_SECONDS = 120;
@@ -287,11 +289,20 @@ const resolveWallet = (swap, isV3) => {
   return normalizeAddress(swap.sender) || normalizeAddress(swap.to);
 };
 
-const fetchSwapsPage = async ({ url, apiKey, start, end, isV3, includeBlock }) => {
+const fetchSwapsPage = async ({
+  url,
+  apiKey,
+  start,
+  end,
+  isV3,
+  includeBlock,
+  skip,
+}) => {
   const query = `
-    query Swaps($start: Int!, $end: Int!, $first: Int!) {
+    query Swaps($start: Int!, $end: Int!, $first: Int!, $skip: Int!) {
       swaps(
         first: $first
+        skip: $skip
         orderBy: timestamp
         orderDirection: asc
         where: { timestamp_gte: $start, timestamp_lte: $end }
@@ -309,6 +320,7 @@ const fetchSwapsPage = async ({ url, apiKey, start, end, isV3, includeBlock }) =
     start,
     end,
     first: PAGE_LIMIT,
+    skip: Math.max(0, Number(skip || 0)),
   });
   return data?.swaps || [];
 };
@@ -343,22 +355,23 @@ const ingestSource = async ({
   startBlock,
 }) => {
   const totals = new Map();
-  let cursor = startSec;
-  let done = false;
-  let iterations = 0;
   let includeBlock = Number.isFinite(startBlock);
+  let skip = 0;
+  let pages = 0;
+  let reachedEnd = false;
 
-  while (!done && iterations < 50) {
-    iterations += 1;
+  while (pages < MAX_SWAP_PAGES_PER_WINDOW) {
+    pages += 1;
     let swaps = [];
     try {
       swaps = await fetchSwapsPage({
         url,
         apiKey,
-        start: cursor,
+        start: startSec,
         end: endSec,
         isV3: source === "v3",
         includeBlock,
+        skip,
       });
     } catch (err) {
       if (includeBlock && isMissingFieldError(err)) {
@@ -366,23 +379,21 @@ const ingestSource = async ({
         swaps = await fetchSwapsPage({
           url,
           apiKey,
-          start: cursor,
+          start: startSec,
           end: endSec,
           isV3: source === "v3",
           includeBlock,
+          skip,
         });
       } else {
         throw err;
       }
     }
     if (!swaps.length) {
-      if (Number.isFinite(endSec) && endSec >= cursor) {
-        cursor = endSec + 1;
-      }
+      reachedEnd = true;
       break;
     }
 
-    let lastTs = cursor;
     swaps.forEach((swap) => {
       if (includeBlock && Number.isFinite(startBlock)) {
         const blockNumber = Number(swap?.transaction?.blockNumber ?? swap?.blockNumber);
@@ -393,26 +404,21 @@ const ingestSource = async ({
       const amount = Math.abs(Number(swap.amountUSD || 0));
       if (!Number.isFinite(amount) || amount <= 0) return;
       totals.set(wallet, (totals.get(wallet) || 0) + amount);
-      const ts = Number(swap.timestamp || 0);
-      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
     });
-
-    if (lastTs <= cursor) {
-      // Advance cursor past this time window when no valid rows survive filters.
-      if (Number.isFinite(endSec) && endSec >= cursor) {
-        cursor = endSec + 1;
-      }
-      done = true;
-    } else {
-      cursor = lastTs + 1; // move past the last timestamp
-    }
-
     if (swaps.length < PAGE_LIMIT) {
-      done = true;
+      reachedEnd = true;
+      break;
     }
+    skip += PAGE_LIMIT;
   }
 
-  return { totals, cursor };
+  if (!reachedEnd && pages >= MAX_SWAP_PAGES_PER_WINDOW) {
+    throw new Error(
+      `Swap pagination limit reached for ${source}; reduce ingest window`
+    );
+  }
+
+  return { totals, cursor: endSec + 1 };
 };
 
 const runWithConcurrency = async (items, limit, fn) => {
@@ -469,11 +475,13 @@ const fetchBoostLiquidityActivityPage = async ({
   apiKey,
   start,
   end,
+  skip,
 }) => {
   const query = `
-    query BoostLiquidityActivity($start: Int!, $end: Int!, $first: Int!) {
+    query BoostLiquidityActivity($start: Int!, $end: Int!, $first: Int!, $skip: Int!) {
       mints(
         first: $first
+        skip: $skip
         orderBy: timestamp
         orderDirection: asc
         where: { timestamp_gte: $start, timestamp_lte: $end }
@@ -490,6 +498,7 @@ const fetchBoostLiquidityActivityPage = async ({
       }
       burns(
         first: $first
+        skip: $skip
         orderBy: timestamp
         orderDirection: asc
         where: { timestamp_gte: $start, timestamp_lte: $end }
@@ -510,6 +519,7 @@ const fetchBoostLiquidityActivityPage = async ({
     start,
     end,
     first: PAGE_LIMIT,
+    skip: Math.max(0, Number(skip || 0)),
   });
   return {
     mints: data?.mints || [],
@@ -525,45 +535,37 @@ const ingestBoostLiquidityActivitySource = async ({
   addr,
 }) => {
   const wallets = new Set();
-  let cursor = startSec;
-  let done = false;
-  let iterations = 0;
+  let skip = 0;
+  let pages = 0;
+  let reachedEnd = false;
 
-  while (!done && iterations < 50) {
-    iterations += 1;
+  while (pages < MAX_LP_ACTIVITY_PAGES_PER_WINDOW) {
+    pages += 1;
     let mints = [];
     let burns = [];
     try {
       const page = await fetchBoostLiquidityActivityPage({
         url,
         apiKey,
-        start: cursor,
+        start: startSec,
         end: endSec,
+        skip,
       });
       mints = page?.mints || [];
       burns = page?.burns || [];
     } catch (err) {
       if (isMissingFieldError(err)) {
-        if (Number.isFinite(endSec) && endSec >= cursor) {
-          cursor = endSec + 1;
-        }
-        break;
+        return { wallets, cursor: endSec + 1 };
       }
       throw err;
     }
 
     const events = [...mints, ...burns];
     if (!events.length) {
-      if (Number.isFinite(endSec) && endSec >= cursor) {
-        cursor = endSec + 1;
-      }
+      reachedEnd = true;
       break;
     }
-
-    let lastTs = cursor;
     events.forEach((event) => {
-      const ts = Number(event?.timestamp || 0);
-      if (Number.isFinite(ts) && ts > lastTs) lastTs = ts;
       const token0 = normalizeAddress(event?.pool?.token0?.id);
       const token1 = normalizeAddress(event?.pool?.token1?.id);
       if (getBoostPairMultiplier(token0, token1, addr) < 2) return;
@@ -571,22 +573,18 @@ const ingestBoostLiquidityActivitySource = async ({
       if (!wallet) return;
       wallets.add(wallet);
     });
-
-    if (lastTs <= cursor) {
-      if (Number.isFinite(endSec) && endSec >= cursor) {
-        cursor = endSec + 1;
-      }
-      done = true;
-    } else {
-      cursor = lastTs + 1;
-    }
-
     if (mints.length < PAGE_LIMIT && burns.length < PAGE_LIMIT) {
-      done = true;
+      reachedEnd = true;
+      break;
     }
+    skip += PAGE_LIMIT;
   }
 
-  return { wallets, cursor };
+  if (!reachedEnd && pages >= MAX_LP_ACTIVITY_PAGES_PER_WINDOW) {
+    throw new Error("V3 LP activity pagination limit reached; reduce ingest window");
+  }
+
+  return { wallets, cursor: endSec + 1 };
 };
 
 export default async function handler(req, res) {
