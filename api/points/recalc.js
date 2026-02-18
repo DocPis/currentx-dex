@@ -191,20 +191,18 @@ export default async function handler(req, res) {
     const userRows = await readPipeline.exec();
 
     let priceMap = {};
-    if (!fastMode) {
-      try {
-        priceMap = await fetchTokenPrices({
-          url: v3Url,
-          apiKey: v3Key,
-          tokenIds: [addr.crx, addr.weth].filter(Boolean),
-        });
-      } catch {
-        priceMap = {};
-      }
-      if (addr.usdm) priceMap[addr.usdm] = 1;
-      if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
-        priceMap[addr.weth] = 0;
-      }
+    try {
+      priceMap = await fetchTokenPrices({
+        url: v3Url,
+        apiKey: v3Key,
+        tokenIds: [addr.crx, addr.weth].filter(Boolean),
+      });
+    } catch {
+      priceMap = {};
+    }
+    if (addr.usdm) priceMap[addr.usdm] = 1;
+    if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
+      priceMap[addr.weth] = 0;
     }
 
     const now = Date.now();
