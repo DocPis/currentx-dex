@@ -21,6 +21,8 @@ import {
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
 const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_LP_TIMEOUT_MS = 10_000;
+const MAX_LP_TIMEOUT_MS = 60_000;
 
 const clampNumber = (value, min, max, fallback) => {
   const num = Number(value);
@@ -51,6 +53,19 @@ const parseBool = (value) => {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
+const withTimeout = async (promise, timeoutMs, message) => {
+  const safeTimeout = Math.max(1000, Math.floor(Number(timeoutMs) || 0));
+  let timeoutId = null;
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), safeTimeout);
+    });
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -74,6 +89,7 @@ export default async function handler(req, res) {
   const cursorInput = body?.cursor ?? req.query?.cursor;
   const limitInput = body?.limit ?? req.query?.limit;
   const fastInput = body?.fast ?? req.query?.fast;
+  const lpTimeoutInput = body?.lpTimeoutMs ?? req.query?.lpTimeoutMs;
 
   const { seasonId, startBlock, startMs, missing: missingSeasonEnv } = getSeasonConfig();
   const targetSeason = seasonIdInput || seasonId;
@@ -101,6 +117,10 @@ export default async function handler(req, res) {
   const cursor = clampNumber(cursorInput, 0, Number.MAX_SAFE_INTEGER, 0);
   const limitParam = limitInput;
   const fastMode = parseBool(fastInput);
+  const lpTimeoutMs =
+    lpTimeoutInput === undefined || lpTimeoutInput === null || lpTimeoutInput === ""
+      ? DEFAULT_LP_TIMEOUT_MS
+      : clampNumber(lpTimeoutInput, 1000, MAX_LP_TIMEOUT_MS, DEFAULT_LP_TIMEOUT_MS);
   const limit =
     limitParam === undefined || limitParam === null || limitParam === ""
       ? null
@@ -169,10 +189,26 @@ export default async function handler(req, res) {
     const now = Date.now();
     const seasonBoostActive = now >= startMs;
     const concurrency = getConcurrency?.() || 4;
+    let lpFallbackCount = 0;
 
     const computed = await runWithConcurrency(wallets, concurrency, async (wallet, idx) => {
       const row = userRows?.[idx] || {};
       const volumeUsd = toNumberSafe(row?.volumeUsd) ?? 0;
+      const fallbackLpData = {
+        hasBoostLp: Number(row?.hasBoostLp || 0) > 0,
+        lpUsd: Math.max(0, toNumberSafe(row?.lpUsd) ?? 0),
+        lpUsdCrxEth: Math.max(0, toNumberSafe(row?.lpUsdCrxEth) ?? 0),
+        lpUsdCrxUsdm: Math.max(0, toNumberSafe(row?.lpUsdCrxUsdm) ?? 0),
+        lpInRangePct: Math.max(0, toNumberSafe(row?.lpInRangePct) ?? 0),
+        hasRangeData: Number(row?.hasRangeData || 0) > 0,
+        hasInRange: Number(row?.hasInRange || 0) > 0,
+        lpAgeSeconds: toNumberSafe(row?.lpAgeSeconds),
+      };
+      const lpCandidate =
+        Number(row?.lpCandidate || 0) > 0 ||
+        Number(row?.hasBoostLp || 0) > 0 ||
+        fallbackLpData.lpUsdCrxEth > 0 ||
+        fallbackLpData.lpUsdCrxUsdm > 0;
       const previousPoints = toNumberSafe(row?.points);
       const previousRank = toNumberSafe(row?.rank);
       const previousUpdatedAt = toNumberSafe(row?.updatedAt);
@@ -184,25 +220,27 @@ export default async function handler(req, res) {
         snapshot24hAtRaw > 0 &&
         now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
-      const lpData = fastMode
-        ? {
-            hasBoostLp: Number(row?.hasBoostLp || 0) > 0,
-            lpUsd: Math.max(0, toNumberSafe(row?.lpUsd) ?? 0),
-            lpUsdCrxEth: Math.max(0, toNumberSafe(row?.lpUsdCrxEth) ?? 0),
-            lpUsdCrxUsdm: Math.max(0, toNumberSafe(row?.lpUsdCrxUsdm) ?? 0),
-            lpInRangePct: Math.max(0, toNumberSafe(row?.lpInRangePct) ?? 0),
-            hasRangeData: Number(row?.hasRangeData || 0) > 0,
-            hasInRange: Number(row?.hasInRange || 0) > 0,
-            lpAgeSeconds: toNumberSafe(row?.lpAgeSeconds),
-          }
-        : await computeLpData({
-            url: v3Url,
-            apiKey: v3Key,
-            wallet,
-            addr,
-            priceMap,
-            startBlock,
-          });
+      let lpData = fallbackLpData;
+      if (!fastMode) {
+        try {
+          lpData = await withTimeout(
+            computeLpData({
+              url: v3Url,
+              apiKey: v3Key,
+              wallet,
+              addr,
+              priceMap,
+              startBlock,
+              allowOnchain: lpCandidate,
+            }),
+            lpTimeoutMs,
+            `LP compute timeout for ${wallet}`
+          );
+        } catch {
+          lpFallbackCount += 1;
+          lpData = fallbackLpData;
+        }
+      }
 
       const points = computePoints({
         volumeUsd,
@@ -256,6 +294,7 @@ export default async function handler(req, res) {
         lpPoints: points.lpPoints,
         lpInRangePct: lpData.lpInRangePct,
         hasBoostLp: lpData.hasBoostLp,
+        lpCandidate: lpCandidate || Boolean(lpData?.hasBoostLp),
         hasRangeData: lpData.hasRangeData,
         hasInRange: lpData.hasInRange,
         lpAgeSeconds: lpData.lpAgeSeconds,
@@ -290,6 +329,7 @@ export default async function handler(req, res) {
         lpPoints: entry.lpPoints,
         lpInRangePct: entry.lpInRangePct,
         hasBoostLp: entry.hasBoostLp ? 1 : 0,
+        lpCandidate: entry.lpCandidate ? 1 : "",
         hasRangeData: entry.hasRangeData ? 1 : 0,
         hasInRange: entry.hasInRange ? 1 : 0,
         prevPoints: Number.isFinite(entry.previousPoints) ? entry.previousPoints : "",
@@ -358,6 +398,8 @@ export default async function handler(req, res) {
       totalWallets: normalized.length,
       updatedAt: now,
       fastMode,
+      lpTimeoutMs,
+      lpFallbackCount,
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });

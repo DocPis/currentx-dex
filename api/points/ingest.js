@@ -666,6 +666,7 @@ export default async function handler(req, res) {
     if (v3Url) sources.push({ source: "v3", url: v3Url, apiKey: v3Key });
 
     const aggregated = new Map();
+    const lpCandidateWallets = new Set();
     const cursorsToSet = [];
     const sourceErrors = [];
     const failedSources = new Set();
@@ -735,6 +736,7 @@ export default async function handler(req, res) {
               });
             lpWallets.forEach((wallet) => {
               if (!wallet) return;
+              lpCandidateWallets.add(wallet);
               if (!aggregated.has(wallet)) aggregated.set(wallet, 0);
             });
             if (nextLpCursor && nextLpCursor > lpCursorStart) {
@@ -795,10 +797,13 @@ export default async function handler(req, res) {
       wallets.forEach((wallet) => {
         const userKey = keys.user(wallet);
         const increment = Number(aggregated.get(wallet) || 0);
-        volumeOnlyPipeline.hset(userKey, {
+        const isLpCandidate = lpCandidateWallets.has(wallet);
+        const patch = {
           address: wallet,
           updatedAt: now,
-        });
+        };
+        if (isLpCandidate) patch.lpCandidate = 1;
+        volumeOnlyPipeline.hset(userKey, patch);
         if (Number.isFinite(increment) && increment !== 0) {
           volumeOnlyPipeline.hincrbyfloat(userKey, "volumeUsd", increment);
         }
@@ -876,6 +881,10 @@ export default async function handler(req, res) {
         priceMap,
         startBlock,
       });
+      const isLpCandidate =
+        lpCandidateWallets.has(wallet) ||
+        Number(row?.lpCandidate || 0) > 0 ||
+        Boolean(lpData?.hasBoostLp);
 
       const points = computePointsShared({
         volumeUsd: currentVolume,
@@ -932,6 +941,7 @@ export default async function handler(req, res) {
         hasRangeData: lpData.hasRangeData,
         hasInRange: lpData.hasInRange,
         lpAgeSeconds: lpData.lpAgeSeconds,
+        lpCandidate: isLpCandidate,
       };
     });
 
@@ -964,6 +974,7 @@ export default async function handler(req, res) {
         lpPoints: entry.lpPoints,
         lpInRangePct: entry.lpInRangePct,
         hasBoostLp: entry.hasBoostLp ? 1 : 0,
+        lpCandidate: entry.lpCandidate ? 1 : "",
         hasRangeData: entry.hasRangeData ? 1 : 0,
         hasInRange: entry.hasInRange ? 1 : 0,
         prevPoints: Number.isFinite(entry.previousPoints) ? entry.previousPoints : "",

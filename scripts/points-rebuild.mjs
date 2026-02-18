@@ -8,6 +8,9 @@ const seasonId = String(env.POINTS_SEASON_ID || env.VITE_POINTS_SEASON_ID || "")
 const recalcLimit = Number.isFinite(Number(env.POINTS_RECALC_LIMIT))
   ? Math.max(1, Math.floor(Number(env.POINTS_RECALC_LIMIT)))
   : 500;
+const recalcLpTimeoutMs = Number.isFinite(Number(env.POINTS_RECALC_LP_TIMEOUT_MS))
+  ? Math.max(1000, Math.floor(Number(env.POINTS_RECALC_LP_TIMEOUT_MS)))
+  : null;
 const maxIngestRounds = Number.isFinite(Number(env.POINTS_MAX_INGEST_ROUNDS))
   ? Math.max(1, Math.floor(Number(env.POINTS_MAX_INGEST_ROUNDS)))
   : 240;
@@ -162,6 +165,9 @@ const run = async () => {
   if (ingestVolumeOnly) {
     console.log("[points-rebuild] ingest mode=volume-only");
   }
+  if (Number.isFinite(recalcLpTimeoutMs)) {
+    console.log(`[points-rebuild] recalcLpTimeoutMs=${recalcLpTimeoutMs}`);
+  }
 
   if (skipReset) {
     console.log("[points-rebuild] reset skipped (POINTS_SKIP_RESET=1).");
@@ -215,6 +221,7 @@ const run = async () => {
         cursor,
         limit: recalcLimit,
         fast: recalcFast ? 1 : "",
+        lpTimeoutMs: Number.isFinite(recalcLpTimeoutMs) ? recalcLpTimeoutMs : "",
       });
       const processed = Number(recalc?.processed || 0);
       const nextCursorRaw = recalc?.nextCursor;

@@ -9,6 +9,8 @@ const POINTS_DEFAULT_DIMINISHING_FACTOR = 0.25;
 const POINTS_DEFAULT_SCORING_MODE = "volume";
 const POINTS_DEFAULT_FEE_BPS = 30;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
+const DEFAULT_GRAPH_TIMEOUT_MS = 12_000;
+const DEFAULT_ONCHAIN_TIMEOUT_MS = 12_000;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -28,6 +30,7 @@ const DEFAULT_V3_FALLBACK_SUBGRAPHS = [
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v3/1.0.0/gn",
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
 ];
+const positionsQueryCache = new Map();
 
 const parseTime = (value) => {
   if (!value) return null;
@@ -499,22 +502,75 @@ const buildHeaders = (apiKey) => {
   return headers;
 };
 
+const parsePositiveInt = (value, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return fallback;
+  return Math.floor(num);
+};
+
+const getGraphTimeoutMs = () =>
+  Math.max(
+    1000,
+    Math.min(
+      120000,
+      parsePositiveInt(process.env.POINTS_GRAPH_TIMEOUT_MS, DEFAULT_GRAPH_TIMEOUT_MS)
+    )
+  );
+
+const getOnchainTimeoutMs = () =>
+  Math.max(
+    1000,
+    Math.min(
+      120000,
+      parsePositiveInt(process.env.POINTS_ONCHAIN_TIMEOUT_MS, DEFAULT_ONCHAIN_TIMEOUT_MS)
+    )
+  );
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const withTimeout = async (promise, timeoutMs, message) => {
+  const safeTimeout = Math.max(1000, Math.floor(Number(timeoutMs) || 0));
+  let timeoutId = null;
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), safeTimeout);
+    });
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
 
 export const postGraph = async (url, apiKey, query, variables) => {
   const urls = dedupeUrls(parseSubgraphUrls(url));
   if (!urls.length) {
     throw new Error("Subgraph URL not configured");
   }
+  const timeoutMs = getGraphTimeoutMs();
   let lastError = null;
   for (const candidate of urls) {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       try {
-        const res = await fetch(candidate, {
-          method: "POST",
-          headers: buildHeaders(apiKey),
-          body: JSON.stringify({ query, variables }),
-        });
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        let res;
+        try {
+          res = await fetch(candidate, {
+            method: "POST",
+            headers: buildHeaders(apiKey),
+            body: JSON.stringify({ query, variables }),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error?.name === "AbortError") {
+            const timeoutError = new Error(`Subgraph timeout after ${timeoutMs}ms`);
+            timeoutError.httpStatus = 0;
+            throw timeoutError;
+          }
+          throw error;
+        } finally {
+          clearTimeout(timeoutId);
+        }
         if (!res.ok) {
           const err = new Error(`Subgraph HTTP ${res.status}`);
           err.httpStatus = Number(res.status || 0);
@@ -528,7 +584,8 @@ export const postGraph = async (url, apiKey, query, variables) => {
       } catch (err) {
         lastError = err;
         const status = Number(err?.httpStatus || 0);
-        if (!GRAPH_RETRY_STATUSES.has(status) || attempt >= 4) {
+        const retriable = GRAPH_RETRY_STATUSES.has(status) || status === 0;
+        if (!retriable || attempt >= 4) {
           break;
         }
         const backoffMs = 1000 * (attempt + 1);
@@ -1008,23 +1065,36 @@ export const fetchPositions = async ({ url, apiKey, owner }) => {
     },
   ];
 
-  let selectedQuery = null;
+  const cacheKey = dedupeUrls(parseSubgraphUrls(url)).join(",");
+  const cachedQuery = positionsQueryCache.has(cacheKey)
+    ? positionsQueryCache.get(cacheKey)
+    : undefined;
+  let selectedQuery = cachedQuery === undefined ? null : cachedQuery;
 
-  for (const variant of queryVariants) {
-    try {
-      await postGraph(url, apiKey, variant.query, {
-        owner,
-        first: 1,
-        skip: 0,
-      });
-      selectedQuery = variant.query;
-      break;
-    } catch (err) {
-      const message = err?.message || "";
-      if (message.includes("Cannot query field") || message.includes("has no field")) {
-        continue;
+  if (selectedQuery === undefined) selectedQuery = null;
+
+  if (cachedQuery === undefined) {
+    for (const variant of queryVariants) {
+      try {
+        await postGraph(url, apiKey, variant.query, {
+          owner,
+          first: 1,
+          skip: 0,
+        });
+        selectedQuery = variant.query;
+        positionsQueryCache.set(cacheKey, selectedQuery);
+        break;
+      } catch (err) {
+        const message = err?.message || "";
+        if (message.includes("Cannot query field") || message.includes("has no field")) {
+          continue;
+        }
+        throw err;
       }
-      throw err;
+    }
+    if (!selectedQuery) {
+      positionsQueryCache.set(cacheKey, null);
+      return null;
     }
   }
 
@@ -1054,6 +1124,7 @@ export const computeLpData = async ({
   addr,
   priceMap,
   startBlock,
+  allowOnchain = true,
 }) => {
   const emptyData = () => ({
     hasBoostLp: false,
@@ -1114,18 +1185,25 @@ export const computeLpData = async ({
   const missingPoolData = !hasPoolPriceData(active);
 
   const needOnchain =
-    !positions ||
-    !positions.length ||
-    !active.length ||
-    !hasCreatedAtData(active) ||
-    missingPoolData;
+    allowOnchain &&
+    (
+      !positions ||
+      !positions.length ||
+      !active.length ||
+      !hasCreatedAtData(active) ||
+      missingPoolData
+    );
 
   if (needOnchain) {
-    const onchain = await fetchPositionsOnchain({
-      wallet,
-      addr,
-      startBlock,
-    }).catch(() => null);
+    const onchain = await withTimeout(
+      fetchPositionsOnchain({
+        wallet,
+        addr,
+        startBlock,
+      }).catch(() => null),
+      getOnchainTimeoutMs(),
+      "On-chain LP lookup timeout"
+    ).catch(() => null);
     const onchainActive = normalizeActive(onchain?.positions || []);
     if ((!active.length || missingPoolData) && onchainActive.length) {
       active = onchainActive;
