@@ -59,9 +59,14 @@ const LiveBuysFeed = ({
                 <button
                   type="button"
                   onClick={() => onSelectToken?.(item.tokenAddress)}
-                  className="text-left text-slate-200 transition hover:text-sky-300"
+                  className="inline-flex items-center gap-1.5 text-left text-slate-200 transition hover:text-sky-300"
                 >
-                  {item.tokenSymbol || item.tokenName || shortAddress(item.tokenAddress)}
+                  <span>{item.tokenSymbol || item.tokenName || shortAddress(item.tokenAddress)}</span>
+                  {item.tokenSymbol ? (
+                    <span className="text-[10px] font-semibold text-sky-300/90">
+                      ${item.tokenSymbol}
+                    </span>
+                  ) : null}
                 </button>
                 <span className="text-[10px] text-slate-500">{toTimeAgo(item.timestamp)}</span>
               </div>
