@@ -10,9 +10,19 @@ import {
   round6,
 } from "../../src/server/leaderboardRewardsLib.js";
 import { maybeTriggerPointsSelfHeal } from "../../src/server/pointsSelfHeal.js";
+import {
+  computeLpData,
+  computePoints,
+  fetchTokenPrices,
+  getAddressConfig,
+  getSeasonConfig as getPointsSeasonRuntimeConfig,
+  getSubgraphConfig,
+} from "../../src/server/pointsLib.js";
 
 const SCAN_BATCH_SIZE = 1000;
 const MAX_SCAN_ROUNDS = 2000;
+const USER_LP_REFRESH_COOLDOWN_MS = 15 * 60 * 1000;
+const USER_LP_REFRESH_TIMEOUT_MS = 20_000;
 
 const pickEnvValue = (...values) => {
   for (const value of values) {
@@ -231,6 +241,162 @@ const buildSummaryFromLeaderboard = async ({
   return parsePointsSummaryRow(summary);
 };
 
+const withTimeout = async (promise, timeoutMs, message) => {
+  const safeTimeout = Math.max(1000, Math.floor(Number(timeoutMs) || 0));
+  let timeoutId = null;
+  try {
+    const timeoutPromise = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(message)), safeTimeout);
+    });
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
+const maybeRefreshMissingLpForUser = async ({
+  address,
+  userRow,
+  keys,
+  nowMs,
+}) => {
+  if (!userRow || !address) return userRow;
+
+  const currentLpUsd = toNumber(userRow?.lpUsd, 0);
+  const currentLpEth = toNumber(userRow?.lpUsdCrxEth, 0);
+  const currentLpUsdm = toNumber(userRow?.lpUsdCrxUsdm, 0);
+  if (currentLpUsd > 0 || currentLpEth > 0 || currentLpUsdm > 0) {
+    return userRow;
+  }
+
+  const lastRefreshAt = toNumber(userRow?.lpRefreshAt, 0);
+  if (
+    Number.isFinite(lastRefreshAt) &&
+    lastRefreshAt > 0 &&
+    nowMs - lastRefreshAt < USER_LP_REFRESH_COOLDOWN_MS
+  ) {
+    return userRow;
+  }
+
+  const addr = getAddressConfig();
+  const { startMs, startBlock } = getPointsSeasonRuntimeConfig();
+  const { v3Url, v3Key } = getSubgraphConfig();
+  if (!v3Url || addr?.missing?.length) {
+    await kv.hset(keys.user, { lpRefreshAt: nowMs });
+    return {
+      ...userRow,
+      lpRefreshAt: nowMs,
+    };
+  }
+
+  let priceMap = {};
+  try {
+    priceMap = await fetchTokenPrices({
+      url: v3Url,
+      apiKey: v3Key,
+      tokenIds: [addr.crx, addr.weth].filter(Boolean),
+    });
+  } catch {
+    priceMap = {};
+  }
+  if (addr.usdm) priceMap[addr.usdm] = 1;
+  if (addr.weth && !Number.isFinite(Number(priceMap?.[addr.weth]))) {
+    priceMap[addr.weth] = 0;
+  }
+
+  let lpData = null;
+  try {
+    lpData = await withTimeout(
+      computeLpData({
+        url: v3Url,
+        apiKey: v3Key,
+        wallet: address,
+        addr,
+        priceMap,
+        startBlock,
+        allowOnchain: true,
+        allowStakerScan: true,
+      }),
+      USER_LP_REFRESH_TIMEOUT_MS,
+      `User LP refresh timeout for ${address}`
+    );
+  } catch {
+    lpData = null;
+  }
+
+  if (!lpData) {
+    await kv.hset(keys.user, { lpRefreshAt: nowMs });
+    return {
+      ...userRow,
+      lpRefreshAt: nowMs,
+    };
+  }
+
+  const volumeUsd = Math.max(0, toNumber(userRow?.volumeUsd, 0));
+  const seasonBoostActive = Number.isFinite(startMs) ? nowMs >= startMs : true;
+  const points = computePoints({
+    volumeUsd,
+    lpUsdTotal: lpData.lpUsd,
+    lpUsdCrxEth: lpData.lpUsdCrxEth,
+    lpUsdCrxUsdm: lpData.lpUsdCrxUsdm,
+    boostEnabled: seasonBoostActive,
+  });
+  const lpCandidate =
+    Number(userRow?.lpCandidate || 0) > 0 ||
+    Boolean(lpData?.hasBoostLp) ||
+    Number(lpData?.lpUsd || 0) > 0;
+
+  const patch = {
+    address,
+    volumeUsd,
+    rawVolumeUsd: points.rawVolumeUsd,
+    effectiveVolumeUsd: points.effectiveVolumeUsd,
+    scoringMode: points.scoringMode,
+    scoringFeeBps: points.feeBps,
+    volumeCapUsd: points.volumeCapUsd,
+    diminishingFactor: points.diminishingFactor,
+    points: points.totalPoints,
+    basePoints: points.basePoints,
+    bonusPoints: points.bonusPoints,
+    boostedVolumeUsd: points.boostedVolumeUsd,
+    boostedVolumeCap: points.boostedVolumeCap,
+    multiplier: points.effectiveMultiplier,
+    baseMultiplier: points.effectiveMultiplier,
+    lpUsd: points.lpUsd,
+    lpUsdCrxEth: points.lpUsdCrxEth,
+    lpUsdCrxUsdm: points.lpUsdCrxUsdm,
+    lpPoints: points.lpPoints,
+    lpInRangePct: lpData.lpInRangePct,
+    hasBoostLp: lpData.hasBoostLp ? 1 : 0,
+    lpCandidate: lpCandidate ? 1 : "",
+    hasRangeData: lpData.hasRangeData ? 1 : 0,
+    hasInRange: lpData.hasInRange ? 1 : 0,
+    lpAgeSeconds: lpData.lpAgeSeconds ?? "",
+    lpRefreshAt: nowMs,
+    updatedAt: nowMs,
+  };
+
+  const writePipeline = kv.pipeline();
+  writePipeline.hset(keys.user, patch);
+  writePipeline.zadd(keys.leaderboard, {
+    score: points.totalPoints,
+    member: address,
+  });
+  await writePipeline.exec();
+
+  const rankRaw = await kv.zrevrank(keys.leaderboard, address);
+  const rank = Number(rankRaw);
+  if (Number.isFinite(rank)) {
+    await kv.hset(keys.user, { rank: rank + 1 });
+  }
+
+  return {
+    ...userRow,
+    ...patch,
+    rank: Number.isFinite(rank) ? rank + 1 : userRow?.rank,
+  };
+};
+
 export default async function handler(req, res) {
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
@@ -271,7 +437,7 @@ export default async function handler(req, res) {
   const rewardsConfig = getLeaderboardRewardsConfig(targetSeason);
 
   try {
-    const [userRow, summaryRow, rewardRow, updatedAtRaw] = await Promise.all([
+    const [rawUserRow, summaryRow, rewardRow, updatedAtRaw] = await Promise.all([
       kv.hgetall(keys.user),
       kv.hgetall(keys.summary),
       kv.hgetall(keys.rewardUser),
@@ -289,7 +455,7 @@ export default async function handler(req, res) {
       // best effort self-heal; never block user response
     });
 
-    if (!userRow) {
+    if (!rawUserRow) {
       res.status(200).json({
         seasonId: targetSeason,
         address: normalized,
@@ -298,6 +464,14 @@ export default async function handler(req, res) {
       });
       return;
     }
+
+    let userRow = rawUserRow;
+    userRow = await maybeRefreshMissingLpForUser({
+      address: normalized,
+      userRow,
+      keys,
+      nowMs,
+    });
 
     const leaderboardEntries = await kv.zrange(keys.leaderboard, 0, -1, {
       rev: true,

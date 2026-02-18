@@ -241,7 +241,7 @@ export default async function handler(req, res) {
               priceMap,
               startBlock,
               allowOnchain: lpPolicy.allowOnchain,
-              allowStakerScan: lpCandidate,
+              allowStakerScan: lpPolicy.allowOnchain,
             }),
             lpComputeTimeoutMs,
             `LP compute timeout for ${wallet}`
