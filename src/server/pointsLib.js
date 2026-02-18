@@ -11,6 +11,8 @@ const POINTS_DEFAULT_FEE_BPS = 30;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_GRAPH_TIMEOUT_MS = 12_000;
 const DEFAULT_ONCHAIN_TIMEOUT_MS = 12_000;
+const DEFAULT_ONCHAIN_CALL_TIMEOUT_MS = 4_000;
+const DEFAULT_ONCHAIN_POOL_TIMEOUT_MS = 2_500;
 const DEFAULT_STAKER_SCAN_TIMEOUT_MS = 3_500;
 const DEFAULT_LP_AGE_TIMEOUT_MS = 2_500;
 const MAX_INFERRED_TOKEN_USD = 1_000_000_000;
@@ -292,12 +294,26 @@ const fetchPositionsOnchain = async ({
   const provider = getRpcProvider(rpcUrl);
   if (!provider) return null;
   const manager = new Contract(positionManager, POSITION_MANAGER_ABI, provider);
-  const balanceRaw = await manager.balanceOf(wallet);
+  const onchainCallTimeoutMs = getOnchainCallTimeoutMs();
+  const onchainPoolTimeoutMs = getOnchainPoolTimeoutMs();
+  const balanceRaw = await withTimeout(
+    manager.balanceOf(wallet),
+    onchainCallTimeoutMs,
+    `On-chain balance lookup timeout for ${wallet}`
+  ).catch(() => 0n);
   const count = Math.min(Number(balanceRaw || 0), MAX_ONCHAIN_POSITIONS);
   const walletIds = count
-    ? await Promise.all(
-        Array.from({ length: count }, (_, idx) => manager.tokenOfOwnerByIndex(wallet, idx))
-      )
+    ? (
+        await Promise.all(
+          Array.from({ length: count }, (_, idx) =>
+            withTimeout(
+              manager.tokenOfOwnerByIndex(wallet, idx),
+              onchainCallTimeoutMs,
+              `On-chain token index timeout for ${wallet}#${idx}`
+            ).catch(() => null)
+          )
+        )
+      ).filter((tokenId) => tokenId !== null && tokenId !== undefined)
     : [];
   const mapPosition = (pos, tokenId) => {
     const token0 = normalizeAddress(pos?.token0 || "");
@@ -320,9 +336,19 @@ const fetchPositionsOnchain = async ({
   };
 
   const walletPositions = walletIds.length
-    ? await Promise.all(walletIds.map((tokenId) => manager.positions(tokenId)))
+    ? await Promise.all(
+        walletIds.map((tokenId) =>
+          withTimeout(
+            manager.positions(tokenId),
+            onchainCallTimeoutMs,
+            `On-chain position lookup timeout for token ${BigInt(tokenId).toString()}`
+          ).catch(() => null)
+        )
+      )
     : [];
-  let normalized = walletPositions.map((pos, idx) => mapPosition(pos, walletIds[idx]));
+  let normalized = walletPositions
+    .map((pos, idx) => (pos ? mapPosition(pos, walletIds[idx]) : null))
+    .filter(Boolean);
 
   const hasWalletBoost = normalized.some(
     (pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr)
@@ -349,10 +375,18 @@ const fetchPositionsOnchain = async ({
 
       if (extraTokenIds.length) {
         const extraPositions = await Promise.all(
-          extraTokenIds.map((tokenId) => manager.positions(tokenId))
+          extraTokenIds.map((tokenId) =>
+            withTimeout(
+              manager.positions(tokenId),
+              onchainCallTimeoutMs,
+              `On-chain staker position timeout for token ${tokenId.toString()}`
+            ).catch(() => null)
+          )
         );
         normalized = normalized.concat(
-          extraPositions.map((pos, idx) => mapPosition(pos, extraTokenIds[idx]))
+          extraPositions
+            .map((pos, idx) => (pos ? mapPosition(pos, extraTokenIds[idx]) : null))
+            .filter(Boolean)
         );
       }
     }
@@ -371,7 +405,14 @@ const fetchPositionsOnchain = async ({
   );
   if (tokensToLoadDecimals.length) {
     const decimalsRows = await Promise.all(
-      tokensToLoadDecimals.map(async (token) => [token, await readTokenDecimals(provider, token)])
+      tokensToLoadDecimals.map(async (token) => [
+        token,
+        await withTimeout(
+          readTokenDecimals(provider, token),
+          onchainCallTimeoutMs,
+          `On-chain token decimals timeout for ${token}`
+        ).catch(() => 18),
+      ])
     );
     const decimalsMap = Object.fromEntries(decimalsRows);
     normalized = normalized.map((pos) => ({
@@ -394,13 +435,26 @@ const fetchPositionsOnchain = async ({
     Array.from(uniquePools.values()).map(async (pos) => {
       const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
       try {
-        let poolAddress = await factoryContract.getPool(pos.token0, pos.token1, pos.fee);
+        let poolAddress = await withTimeout(
+          factoryContract.getPool(pos.token0, pos.token1, pos.fee),
+          onchainPoolTimeoutMs,
+          `On-chain getPool timeout for ${key}`
+        ).catch(() => ZERO_ADDRESS);
         if (!poolAddress || poolAddress === ZERO_ADDRESS) {
-          poolAddress = await factoryContract.getPool(pos.token1, pos.token0, pos.fee);
+          poolAddress = await withTimeout(
+            factoryContract.getPool(pos.token1, pos.token0, pos.fee),
+            onchainPoolTimeoutMs,
+            `On-chain getPool reverse timeout for ${key}`
+          ).catch(() => ZERO_ADDRESS);
         }
         if (!poolAddress || poolAddress === ZERO_ADDRESS) return null;
         const pool = new Contract(poolAddress, UNIV3_POOL_ABI, provider);
-        const slot0 = await pool.slot0();
+        const slot0 = await withTimeout(
+          pool.slot0(),
+          onchainPoolTimeoutMs,
+          `On-chain slot0 timeout for ${poolAddress}`
+        ).catch(() => null);
+        if (!slot0) return null;
         return [
           key,
           {
@@ -426,6 +480,11 @@ const fetchPositionsOnchain = async ({
     if (state) {
       pos.poolSqrt = state.sqrtPriceX96;
       pos.poolTick = Number.isFinite(state.tick) ? state.tick : null;
+      return;
+    }
+    // Fallback: keep LP valuation available when slot0 RPC is slow.
+    if (Number.isFinite(pos.tickLower) && Number.isFinite(pos.tickUpper)) {
+      pos.poolTick = Math.floor((Number(pos.tickLower) + Number(pos.tickUpper)) / 2);
     }
   });
 
@@ -597,6 +656,30 @@ const getOnchainTimeoutMs = () =>
     )
   );
 
+const getOnchainCallTimeoutMs = () =>
+  Math.max(
+    500,
+    Math.min(
+      getOnchainTimeoutMs(),
+      parsePositiveInt(
+        process.env.POINTS_ONCHAIN_CALL_TIMEOUT_MS,
+        DEFAULT_ONCHAIN_CALL_TIMEOUT_MS
+      )
+    )
+  );
+
+const getOnchainPoolTimeoutMs = () =>
+  Math.max(
+    500,
+    Math.min(
+      getOnchainTimeoutMs(),
+      parsePositiveInt(
+        process.env.POINTS_ONCHAIN_POOL_TIMEOUT_MS,
+        DEFAULT_ONCHAIN_POOL_TIMEOUT_MS
+      )
+    )
+  );
+
 const getStakerScanTimeoutMs = () =>
   Math.max(
     500,
@@ -670,7 +753,9 @@ export const postGraph = async (url, apiKey, query, variables) => {
         }
         const json = await res.json();
         if (json.errors?.length) {
-          throw new Error(json.errors[0]?.message || "Subgraph error");
+          const graphError = new Error(json.errors[0]?.message || "Subgraph error");
+          graphError.httpStatus = 400;
+          throw graphError;
         }
         return json.data;
       } catch (err) {
