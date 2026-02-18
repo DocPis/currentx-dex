@@ -90,6 +90,15 @@ const buildTokenMaps = () => {
 };
 
 const TOKEN_MAPS = buildTokenMaps();
+const normalizeAddress = (value) => String(value || "").trim().toLowerCase();
+const WHITELISTED_TOKEN_IDS = new Set(
+  Object.values(TOKENS || {})
+    .map((token) => normalizeAddress(token?.address))
+    .filter((address) => /^0x[a-f0-9]{40}$/u.test(address))
+);
+const isWhitelistedPoolForTvl = (pool) =>
+  WHITELISTED_TOKEN_IDS.has(normalizeAddress(pool?.token0Id)) &&
+  WHITELISTED_TOKEN_IDS.has(normalizeAddress(pool?.token1Id));
 
 const resolveTokenMeta = (tokenId, symbol) => {
   if (tokenId) {
@@ -150,10 +159,11 @@ export default function PoolsSection({ onSelectPool }) {
     const list = [];
     v3Pools.forEach((pool) => {
       const roll = v3RollingData[pool.id?.toLowerCase?.() || ""] || {};
-      const liquidityUsd =
+      const rawLiquidityUsd =
         roll.tvlUsd !== undefined && roll.tvlUsd !== null
           ? roll.tvlUsd
           : pool.tvlUsd ?? null;
+      const liquidityUsd = isWhitelistedPoolForTvl(pool) ? rawLiquidityUsd : null;
       const volume24hUsd =
         roll.volumeUsd !== undefined && roll.volumeUsd !== null
           ? roll.volumeUsd
@@ -190,10 +200,11 @@ export default function PoolsSection({ onSelectPool }) {
     });
     v2Pools.forEach((pool) => {
       const roll = v2RollingData[pool.id?.toLowerCase?.() || ""] || {};
-      const liquidityUsd =
+      const rawLiquidityUsd =
         roll.tvlUsd !== undefined && roll.tvlUsd !== null
           ? roll.tvlUsd
           : pool.tvlUsd ?? null;
+      const liquidityUsd = isWhitelistedPoolForTvl(pool) ? rawLiquidityUsd : null;
       const volume24hUsd =
         roll.volumeUsd !== undefined && roll.volumeUsd !== null
           ? roll.volumeUsd
