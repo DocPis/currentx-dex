@@ -1,5 +1,10 @@
 import { kv } from "@vercel/kv";
 import { acquireKvLock, releaseKvLock } from "../../src/server/kvLock.js";
+import {
+  normalizeTimestampMs,
+  shouldRunPeriodicTask,
+  summarizeLpFallback,
+} from "../../src/server/pointsJobsGuardrails.js";
 import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 
 const LOCK_TTL_SECONDS = 8 * 60;
@@ -11,6 +16,14 @@ const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_INGEST_ROUNDS = 6;
 const DEFAULT_MAX_RECALC_ROUNDS = 4;
 const DEFAULT_RECALC_LIMIT = 40;
+const DEFAULT_FAST_LP_TIMEOUT_MS = 10_000;
+const DEFAULT_DEEP_RECALC_ENABLED = true;
+const DEFAULT_DEEP_RECALC_INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_DEEP_RECALC_ROUNDS = 1;
+const DEFAULT_DEEP_RECALC_LIMIT = 12;
+const DEFAULT_DEEP_LP_TIMEOUT_MS = 15_000;
+const DEFAULT_LP_FALLBACK_WARN_RATIO = 0.35;
+const DEFAULT_LP_FALLBACK_WARN_MIN_PROCESSED = 10;
 const DEFAULT_MAX_RUNTIME_MS = 50_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -19,6 +32,18 @@ const parsePositiveInt = (value, fallback) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) return fallback;
   return Math.floor(num);
+};
+
+const parseNonNegativeInt = (value, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return fallback;
+  return Math.floor(num);
+};
+
+const parseRatio = (value, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(1, Math.max(0, num));
 };
 
 const parseBool = (value, fallback = true) => {
@@ -45,6 +70,66 @@ const getRecalcLimit = () =>
   Math.max(
     1,
     Math.min(1000, parsePositiveInt(process.env.POINTS_JOBS_RECALC_LIMIT, DEFAULT_RECALC_LIMIT))
+  );
+
+const getFastLpTimeoutMs = () =>
+  Math.max(
+    1000,
+    Math.min(
+      60_000,
+      parsePositiveInt(process.env.POINTS_JOBS_FAST_LP_TIMEOUT_MS, DEFAULT_FAST_LP_TIMEOUT_MS)
+    )
+  );
+
+const getDeepRecalcEnabled = () =>
+  parseBool(process.env.POINTS_JOBS_DEEP_RECALC, DEFAULT_DEEP_RECALC_ENABLED);
+
+const getDeepRecalcIntervalMs = () =>
+  Math.max(
+    0,
+    Math.min(
+      24 * 60 * 60 * 1000,
+      parseNonNegativeInt(
+        process.env.POINTS_JOBS_DEEP_RECALC_INTERVAL_MS,
+        DEFAULT_DEEP_RECALC_INTERVAL_MS
+      )
+    )
+  );
+
+const getDeepRecalcRounds = () =>
+  Math.max(
+    1,
+    Math.min(12, parsePositiveInt(process.env.POINTS_JOBS_DEEP_RECALC_ROUNDS, DEFAULT_DEEP_RECALC_ROUNDS))
+  );
+
+const getDeepRecalcLimit = () =>
+  Math.max(
+    1,
+    Math.min(250, parsePositiveInt(process.env.POINTS_JOBS_DEEP_RECALC_LIMIT, DEFAULT_DEEP_RECALC_LIMIT))
+  );
+
+const getDeepLpTimeoutMs = () =>
+  Math.max(
+    1000,
+    Math.min(
+      60_000,
+      parsePositiveInt(process.env.POINTS_JOBS_DEEP_LP_TIMEOUT_MS, DEFAULT_DEEP_LP_TIMEOUT_MS)
+    )
+  );
+
+const getLpFallbackWarnRatio = () =>
+  parseRatio(process.env.POINTS_LP_FALLBACK_WARN_RATIO, DEFAULT_LP_FALLBACK_WARN_RATIO);
+
+const getLpFallbackWarnMinProcessed = () =>
+  Math.max(
+    1,
+    Math.min(
+      1000,
+      parsePositiveInt(
+        process.env.POINTS_LP_FALLBACK_WARN_MIN_PROCESSED,
+        DEFAULT_LP_FALLBACK_WARN_MIN_PROCESSED
+      )
+    )
   );
 
 const getMaxRuntimeMs = () =>
@@ -87,6 +172,9 @@ const getJobStateKeys = (seasonId) => {
   return {
     stateSeasonId,
     recalcCursor: `${base}:recalc:cursor`,
+    deepRecalcCursor: `${base}:recalc:deep:cursor`,
+    deepRecalcLastRunAt: `${base}:recalc:deep:last-run-at`,
+    lpFallbackAlert: `${base}:recalc:lp-fallback-alert`,
   };
 };
 
@@ -242,9 +330,18 @@ export default async function handler(req, res) {
   const maxIngestRounds = getMaxIngestRounds();
   const maxRecalcRounds = getMaxRecalcRounds();
   const recalcLimit = getRecalcLimit();
+  const fastLpTimeoutMs = getFastLpTimeoutMs();
+  const deepRecalcEnabled = getDeepRecalcEnabled();
+  const deepRecalcIntervalMs = getDeepRecalcIntervalMs();
+  const deepRecalcRounds = getDeepRecalcRounds();
+  const deepRecalcLimit = getDeepRecalcLimit();
+  const deepLpTimeoutMs = getDeepLpTimeoutMs();
+  const lpFallbackWarnRatio = getLpFallbackWarnRatio();
+  const lpFallbackWarnMinProcessed = getLpFallbackWarnMinProcessed();
   const maxRuntimeMs = getMaxRuntimeMs();
   const jobStartedAt = Date.now();
   const runtimeExceeded = () => Date.now() - jobStartedAt >= maxRuntimeMs;
+  const alerts = [];
 
   const runEndpoint = async ({ name, path, body, required }) => {
     const startedAt = Date.now();
@@ -287,6 +384,33 @@ export default async function handler(req, res) {
     }
   };
 
+  const trackLpFallbackAlert = ({ recalcResult, mode, round, cursorStart }) => {
+    const payload = recalcResult?.payload || {};
+    const summary = summarizeLpFallback({
+      processed: payload?.processed,
+      fallbackCount: payload?.lpFallbackCount,
+      warnRatio: lpFallbackWarnRatio,
+      minProcessed: lpFallbackWarnMinProcessed,
+    });
+    if (!summary.warning) return;
+    const alert = {
+      kind: "lp_fallback_ratio",
+      mode,
+      round,
+      cursorStart: normalizeCursor(cursorStart),
+      processed: summary.processed,
+      fallbackCount: summary.fallbackCount,
+      fallbackRate: Number(summary.fallbackRate.toFixed(6)),
+      thresholdRatio: summary.warnRatio,
+      minProcessed: summary.minProcessed,
+      emittedAt: Date.now(),
+    };
+    alerts.push(alert);
+    console.warn(
+      `[points-jobs] LP fallback warning mode=${mode} round=${round} cursor=${alert.cursorStart} processed=${alert.processed} fallbacks=${alert.fallbackCount} rate=${alert.fallbackRate}`
+    );
+  };
+
   try {
     let ingestRoundsExecuted = 0;
     let ingestStoppedReason = "complete";
@@ -318,14 +442,117 @@ export default async function handler(req, res) {
     let recalcDone = false;
     let recalcStoppedReason = "max_rounds";
 
+    const deepLastRunRaw = await kv.get(stateKeys.deepRecalcLastRunAt);
+    const deepLastRunAt = normalizeTimestampMs(deepLastRunRaw);
+    const deepRecalcDue = shouldRunPeriodicTask({
+      enabled: deepRecalcEnabled,
+      nowMs: Date.now(),
+      lastRunAtMs: deepLastRunAt,
+      intervalMs: deepRecalcIntervalMs,
+    });
+    let deepRecalcRan = false;
+    let deepRecalcCursorStart = 0;
+    let deepRecalcCursorNext = 0;
+    let deepRecalcRoundsExecuted = 0;
+    let deepRecalcDone = false;
+    let deepRecalcStoppedReason = deepRecalcEnabled ? "interval_not_elapsed" : "disabled";
+
+    if (deepRecalcDue) {
+      deepRecalcStoppedReason = "max_rounds";
+      const deepStoredCursorRaw = await kv.get(stateKeys.deepRecalcCursor);
+      let deepCursor = normalizeCursor(deepStoredCursorRaw);
+      deepRecalcCursorStart = deepCursor;
+      deepRecalcCursorNext = deepCursor;
+
+      for (let round = 1; round <= deepRecalcRounds; round += 1) {
+        if (runtimeExceeded()) {
+          deepRecalcStoppedReason = "runtime_budget";
+          break;
+        }
+
+        const deepBody = seasonId
+          ? {
+              seasonId,
+              fast: false,
+              limit: deepRecalcLimit,
+              cursor: deepCursor,
+              lpTimeoutMs: deepLpTimeoutMs,
+            }
+          : {
+              fast: false,
+              limit: deepRecalcLimit,
+              cursor: deepCursor,
+              lpTimeoutMs: deepLpTimeoutMs,
+            };
+
+        const deepResult = await runEndpoint({
+          name: `points-recalc-deep#${round}`,
+          path: "/api/points/recalc",
+          body: deepBody,
+          required: true,
+        });
+        if (!deepResult?.ok) return;
+
+        deepRecalcRan = true;
+        deepRecalcRoundsExecuted = round;
+        trackLpFallbackAlert({
+          recalcResult: deepResult,
+          mode: "deep",
+          round,
+          cursorStart: deepCursor,
+        });
+
+        const payload = deepResult?.payload || {};
+        const processed = Number(payload?.processed || 0);
+        const done = Boolean(payload?.done);
+        const nextCursorRaw = payload?.nextCursor;
+        const nextCursor = normalizeCursor(nextCursorRaw);
+        const hasNextCursor =
+          nextCursorRaw !== null &&
+          nextCursorRaw !== undefined &&
+          nextCursorRaw !== "" &&
+          Number.isFinite(Number(nextCursorRaw));
+
+        if (done || !hasNextCursor) {
+          deepRecalcDone = true;
+          deepCursor = 0;
+          deepRecalcCursorNext = 0;
+          await kv.set(stateKeys.deepRecalcCursor, 0);
+          deepRecalcStoppedReason = done ? "sweep_complete" : "missing_next_cursor";
+          break;
+        }
+
+        if (nextCursor <= deepCursor) {
+          deepCursor = 0;
+          deepRecalcCursorNext = 0;
+          await kv.set(stateKeys.deepRecalcCursor, 0);
+          deepRecalcStoppedReason = "cursor_stall";
+          break;
+        }
+
+        deepCursor = nextCursor;
+        deepRecalcCursorNext = deepCursor;
+        await kv.set(stateKeys.deepRecalcCursor, deepCursor);
+
+        if (processed <= 0) {
+          deepRecalcStoppedReason = "no_progress";
+          break;
+        }
+      }
+
+      if (deepRecalcRan) {
+        await kv.set(stateKeys.deepRecalcLastRunAt, Date.now());
+      }
+    }
+
     for (let round = 1; round <= maxRecalcRounds; round += 1) {
       if (runtimeExceeded()) {
         recalcStoppedReason = "runtime_budget";
         break;
       }
       const recalcBody = seasonId
-        ? { seasonId, fast: true, limit: recalcLimit, cursor: recalcCursor }
-        : { fast: true, limit: recalcLimit, cursor: recalcCursor };
+        ? { seasonId, fast: true, limit: recalcLimit, cursor: recalcCursor, lpTimeoutMs: fastLpTimeoutMs }
+        : { fast: true, limit: recalcLimit, cursor: recalcCursor, lpTimeoutMs: fastLpTimeoutMs };
       const recalcResult = await runEndpoint({
         name: `points-recalc#${round}`,
         path: "/api/points/recalc",
@@ -334,6 +561,12 @@ export default async function handler(req, res) {
       });
       if (!recalcResult?.ok) return;
       recalcRoundsExecuted = round;
+      trackLpFallbackAlert({
+        recalcResult,
+        mode: "fast",
+        round,
+        cursorStart: recalcCursor,
+      });
 
       const payload = recalcResult?.payload || {};
       const processed = Number(payload?.processed || 0);
@@ -370,6 +603,12 @@ export default async function handler(req, res) {
       }
     }
 
+    if (alerts.length) {
+      await kv.set(stateKeys.lpFallbackAlert, JSON.stringify(alerts[alerts.length - 1]), {
+        ex: 24 * 60 * 60,
+      });
+    }
+
     if (includeWhitelist) {
       if (!runtimeExceeded()) {
         await runEndpoint({
@@ -396,6 +635,12 @@ export default async function handler(req, res) {
       maxIngestRounds,
       maxRecalcRounds,
       recalcLimit,
+      fastLpTimeoutMs,
+      deepRecalcEnabled,
+      deepRecalcIntervalMs,
+      deepRecalcRounds,
+      deepRecalcLimit,
+      deepLpTimeoutMs,
       maxRuntimeMs,
       ingestRoundsExecuted,
       ingestStoppedReason,
@@ -404,6 +649,15 @@ export default async function handler(req, res) {
       recalcStoppedReason,
       recalcCursorStart,
       recalcCursorNext: recalcCursor,
+      deepRecalcRan,
+      deepRecalcRoundsExecuted,
+      deepRecalcDone,
+      deepRecalcStoppedReason,
+      deepRecalcCursorStart,
+      deepRecalcCursorNext,
+      lpFallbackWarnRatio,
+      lpFallbackWarnMinProcessed,
+      alerts,
       calls,
       executedAt: Date.now(),
     });

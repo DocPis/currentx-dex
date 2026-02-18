@@ -22,12 +22,15 @@ import {
   getLpPriorityTimeoutMs,
   resolveLpRecalcPolicy,
 } from "../../src/server/pointsRecalcPolicy.js";
+import { summarizeLpFallback } from "../../src/server/pointsJobsGuardrails.js";
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
 const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_LP_TIMEOUT_MS = 10_000;
 const MAX_LP_TIMEOUT_MS = 60_000;
+const DEFAULT_LP_FALLBACK_WARN_RATIO = 0.35;
+const DEFAULT_LP_FALLBACK_WARN_MIN_PROCESSED = 10;
 
 const clampNumber = (value, min, max, fallback) => {
   const num = Number(value);
@@ -132,6 +135,17 @@ export default async function handler(req, res) {
       : clampNumber(limitParam, 1, MAX_LIMIT, DEFAULT_LIMIT);
   const lpPriorityRankLimit = getLpPriorityRankLimit();
   const lpPriorityTimeoutMs = getLpPriorityTimeoutMs(lpTimeoutMs, MAX_LP_TIMEOUT_MS);
+  const lpFallbackWarnRatio = (() => {
+    const num = Number(process.env.POINTS_LP_FALLBACK_WARN_RATIO);
+    if (!Number.isFinite(num)) return DEFAULT_LP_FALLBACK_WARN_RATIO;
+    return Math.min(1, Math.max(0, num));
+  })();
+  const lpFallbackWarnMinProcessed = clampNumber(
+    process.env.POINTS_LP_FALLBACK_WARN_MIN_PROCESSED,
+    1,
+    10_000,
+    DEFAULT_LP_FALLBACK_WARN_MIN_PROCESSED
+  );
 
   try {
     const allMembers = await kv.zrange(keys.leaderboard, 0, -1);
@@ -400,6 +414,17 @@ export default async function handler(req, res) {
     await kv.hset(keys.summary, summary);
     const nextCursor =
       cursor + wallets.length >= normalized.length ? null : cursor + wallets.length;
+    const lpFallbackSummary = summarizeLpFallback({
+      processed: wallets.length,
+      fallbackCount: lpFallbackCount,
+      warnRatio: lpFallbackWarnRatio,
+      minProcessed: lpFallbackWarnMinProcessed,
+    });
+    if (lpFallbackSummary.warning) {
+      console.warn(
+        `[points/recalc] high lp fallback ratio season=${targetSeason} cursor=${cursor} processed=${lpFallbackSummary.processed} fallbacks=${lpFallbackSummary.fallbackCount} rate=${lpFallbackSummary.fallbackRate.toFixed(3)}`
+      );
+    }
 
     res.status(200).json({
       ok: true,
@@ -415,6 +440,10 @@ export default async function handler(req, res) {
       lpPriorityRankLimit,
       lpPriorityTimeoutMs,
       lpFallbackCount,
+      lpFallbackRate: lpFallbackSummary.fallbackRate,
+      lpFallbackWarning: lpFallbackSummary.warning,
+      lpFallbackWarnRatio: lpFallbackSummary.warnRatio,
+      lpFallbackWarnMinProcessed: lpFallbackSummary.minProcessed,
     });
   } catch (err) {
     res.status(500).json({ error: err?.message || "Server error" });
