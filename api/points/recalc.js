@@ -17,6 +17,11 @@ import {
   runWithConcurrency,
   toNumberSafe,
 } from "../../src/server/pointsLib.js";
+import {
+  getLpPriorityRankLimit,
+  getLpPriorityTimeoutMs,
+  resolveLpRecalcPolicy,
+} from "../../src/server/pointsRecalcPolicy.js";
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
@@ -125,6 +130,8 @@ export default async function handler(req, res) {
     limitParam === undefined || limitParam === null || limitParam === ""
       ? null
       : clampNumber(limitParam, 1, MAX_LIMIT, DEFAULT_LIMIT);
+  const lpPriorityRankLimit = getLpPriorityRankLimit();
+  const lpPriorityTimeoutMs = getLpPriorityTimeoutMs(lpTimeoutMs, MAX_LP_TIMEOUT_MS);
 
   try {
     const allMembers = await kv.zrange(keys.leaderboard, 0, -1);
@@ -204,11 +211,12 @@ export default async function handler(req, res) {
         hasInRange: Number(row?.hasInRange || 0) > 0,
         lpAgeSeconds: toNumberSafe(row?.lpAgeSeconds),
       };
-      const lpCandidate =
-        Number(row?.lpCandidate || 0) > 0 ||
-        Number(row?.hasBoostLp || 0) > 0 ||
-        fallbackLpData.lpUsdCrxEth > 0 ||
-        fallbackLpData.lpUsdCrxUsdm > 0;
+      const lpPolicy = resolveLpRecalcPolicy({
+        row,
+        fastMode,
+        priorityRankLimit: lpPriorityRankLimit,
+      });
+      const lpCandidate = lpPolicy.lpCandidate;
       const previousPoints = toNumberSafe(row?.points);
       const previousRank = toNumberSafe(row?.rank);
       const previousUpdatedAt = toNumberSafe(row?.updatedAt);
@@ -221,7 +229,8 @@ export default async function handler(req, res) {
         now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
       let lpData = fallbackLpData;
-      if (!fastMode) {
+      if (lpPolicy.shouldRefreshLp) {
+        const lpComputeTimeoutMs = lpPolicy.isPriorityRank ? lpPriorityTimeoutMs : lpTimeoutMs;
         try {
           lpData = await withTimeout(
             computeLpData({
@@ -231,9 +240,10 @@ export default async function handler(req, res) {
               addr,
               priceMap,
               startBlock,
-              allowOnchain: lpCandidate,
+              allowOnchain: lpPolicy.allowOnchain,
+              allowStakerScan: lpCandidate,
             }),
-            lpTimeoutMs,
+            lpComputeTimeoutMs,
             `LP compute timeout for ${wallet}`
           );
         } catch {
@@ -294,7 +304,10 @@ export default async function handler(req, res) {
         lpPoints: points.lpPoints,
         lpInRangePct: lpData.lpInRangePct,
         hasBoostLp: lpData.hasBoostLp,
-        lpCandidate: lpCandidate || Boolean(lpData?.hasBoostLp),
+        lpCandidate:
+          lpCandidate ||
+          Boolean(lpData?.hasBoostLp) ||
+          Number(lpData?.lpUsd || 0) > 0,
         hasRangeData: lpData.hasRangeData,
         hasInRange: lpData.hasInRange,
         lpAgeSeconds: lpData.lpAgeSeconds,
@@ -399,6 +412,8 @@ export default async function handler(req, res) {
       updatedAt: now,
       fastMode,
       lpTimeoutMs,
+      lpPriorityRankLimit,
+      lpPriorityTimeoutMs,
       lpFallbackCount,
     });
   } catch (err) {

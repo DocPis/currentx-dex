@@ -254,7 +254,12 @@ const fetchStakerPositionIdsForOwner = async ({
   return tokenIds;
 };
 
-const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
+const fetchPositionsOnchain = async ({
+  wallet,
+  addr,
+  startBlock,
+  allowStakerScan = true,
+}) => {
   const { rpcUrl, factory, positionManager, staker, stakerDeployBlock } = getOnchainConfig();
   if (!rpcUrl || !factory || !positionManager) return null;
   const provider = getRpcProvider(rpcUrl);
@@ -296,7 +301,7 @@ const fetchPositionsOnchain = async ({ wallet, addr, startBlock }) => {
     (pos) => pos.liquidity > 0n && isBoostPair(pos.token0, pos.token1, addr)
   );
 
-  if ((!normalized.length || !hasWalletBoost) && staker) {
+  if (allowStakerScan && (!normalized.length || !hasWalletBoost) && staker) {
     const stakerTokenIds = await fetchStakerPositionIdsForOwner({
       provider,
       staker,
@@ -1125,6 +1130,7 @@ export const computeLpData = async ({
   priceMap,
   startBlock,
   allowOnchain = true,
+  allowStakerScan = true,
 }) => {
   const emptyData = () => ({
     hasBoostLp: false,
@@ -1200,6 +1206,7 @@ export const computeLpData = async ({
         wallet,
         addr,
         startBlock,
+        allowStakerScan,
       }).catch(() => null),
       getOnchainTimeoutMs(),
       "On-chain LP lookup timeout"

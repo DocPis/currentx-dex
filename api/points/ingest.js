@@ -22,7 +22,6 @@ const CURSOR_NEAR_TIP_DEFAULT_SECONDS = 120;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 
 
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const DEFAULT_V2_FALLBACK_SUBGRAPHS = [
   "https://gateway.thegraph.com/api/subgraphs/id/3berhRZGzFfAhEB5HZGHEsMAfQ2AQpDk2WyVr5Nnkjyv",
   "https://api.goldsky.com/api/public/project_cmlbj5xkhtfha01z0caladt37/subgraphs/currentx-v2/1.0.0/gn",
@@ -458,31 +457,6 @@ const toNumberSafe = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
-const ETH_ALIAS_ADDRESSES = new Set([
-  ZERO_ADDRESS,
-  "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-]);
-
-const isWethLike = (token, addr) => {
-  const normalized = normalizeAddress(token);
-  if (!normalized) return false;
-  if (addr?.weth && normalized === addr.weth) return true;
-  return ETH_ALIAS_ADDRESSES.has(normalized);
-};
-
-const getBoostPairMultiplier = (token0, token1, addr) => {
-  const a = normalizeAddress(token0);
-  const b = normalizeAddress(token1);
-  if (!a || !b) return 1;
-  const hasCrx = a === addr.crx || b === addr.crx;
-  if (!hasCrx) return 1;
-  const hasUsdm = a === addr.usdm || b === addr.usdm;
-  if (hasUsdm) return 3;
-  const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
-  if (hasWeth) return 2;
-  return 1;
-};
-
 const resolveLiquidityActor = (event) =>
   normalizeAddress(event?.origin) ||
   normalizeAddress(event?.sender) ||
@@ -550,7 +524,6 @@ const ingestBoostLiquidityActivitySource = async ({
   apiKey,
   startSec,
   endSec,
-  addr,
 }) => {
   const wallets = new Set();
   let skip = 0;
@@ -584,9 +557,6 @@ const ingestBoostLiquidityActivitySource = async ({
       break;
     }
     events.forEach((event) => {
-      const token0 = normalizeAddress(event?.pool?.token0?.id);
-      const token1 = normalizeAddress(event?.pool?.token1?.id);
-      if (getBoostPairMultiplier(token0, token1, addr) < 2) return;
       const wallet = resolveLiquidityActor(event);
       if (!wallet) return;
       wallets.add(wallet);
@@ -732,7 +702,6 @@ export default async function handler(req, res) {
                 apiKey: src.apiKey,
                 startSec: lpCursorStart,
                 endSec: lpEndSec,
-                addr,
               });
             lpWallets.forEach((wallet) => {
               if (!wallet) return;
@@ -884,6 +853,7 @@ export default async function handler(req, res) {
       const isLpCandidate =
         lpCandidateWallets.has(wallet) ||
         Number(row?.lpCandidate || 0) > 0 ||
+        Number(row?.lpUsd || 0) > 0 ||
         Boolean(lpData?.hasBoostLp);
 
       const points = computePointsShared({
@@ -941,7 +911,7 @@ export default async function handler(req, res) {
         hasRangeData: lpData.hasRangeData,
         hasInRange: lpData.hasInRange,
         lpAgeSeconds: lpData.lpAgeSeconds,
-        lpCandidate: isLpCandidate,
+        lpCandidate: isLpCandidate || Number(lpData?.lpUsd || 0) > 0,
       };
     });
 

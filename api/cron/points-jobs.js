@@ -9,6 +9,9 @@ const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_INGEST_ROUNDS = 6;
+const DEFAULT_MAX_RECALC_ROUNDS = 4;
+const DEFAULT_RECALC_LIMIT = 250;
+const DEFAULT_MAX_RUNTIME_MS = 50_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -31,6 +34,52 @@ const getMaxIngestRounds = () =>
     1,
     Math.min(48, parsePositiveInt(process.env.POINTS_JOBS_MAX_INGEST_ROUNDS, DEFAULT_MAX_INGEST_ROUNDS))
   );
+
+const getMaxRecalcRounds = () =>
+  Math.max(
+    1,
+    Math.min(48, parsePositiveInt(process.env.POINTS_JOBS_MAX_RECALC_ROUNDS, DEFAULT_MAX_RECALC_ROUNDS))
+  );
+
+const getRecalcLimit = () =>
+  Math.max(
+    1,
+    Math.min(1000, parsePositiveInt(process.env.POINTS_JOBS_RECALC_LIMIT, DEFAULT_RECALC_LIMIT))
+  );
+
+const getMaxRuntimeMs = () =>
+  Math.max(
+    15_000,
+    Math.min(
+      5 * 60 * 1000,
+      parsePositiveInt(process.env.POINTS_JOBS_MAX_RUNTIME_MS, DEFAULT_MAX_RUNTIME_MS)
+    )
+  );
+
+const normalizeCursor = (value) => {
+  let cursor = Number(value);
+  if (!Number.isFinite(cursor) || cursor < 0) return 0;
+  // Safety guard in case a millis timestamp is accidentally written.
+  if (cursor > 1e12) cursor = Math.floor(cursor / 1000);
+  return Math.max(0, Math.floor(cursor));
+};
+
+const resolveSeasonStateId = (seasonId) => {
+  const fallback = String(
+    process.env.POINTS_SEASON_ID || process.env.VITE_POINTS_SEASON_ID || "default"
+  ).trim();
+  const normalized = String(seasonId || "").trim();
+  return normalized || fallback || "default";
+};
+
+const getJobStateKeys = (seasonId) => {
+  const stateSeasonId = resolveSeasonStateId(seasonId);
+  const base = `points:${stateSeasonId}:jobs`;
+  return {
+    stateSeasonId,
+    recalcCursor: `${base}:recalc:cursor`,
+  };
+};
 
 const getSecrets = () =>
   [process.env.POINTS_INGEST_TOKEN, process.env.CRON_SECRET]
@@ -143,6 +192,7 @@ export default async function handler(req, res) {
     body?.includeWhitelist ?? req.query?.includeWhitelist,
     true
   );
+  const stateKeys = getJobStateKeys(seasonId);
 
   const token = getInternalToken();
   const baseUrl = resolveBaseUrl(req);
@@ -153,7 +203,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const lockKey = `points:cron:jobs:lock:${seasonId || "default"}`;
+  const lockKey = `points:cron:jobs:lock:${stateKeys.stateSeasonId}`;
   let lockToken = "";
   let lockUnavailable = false;
   try {
@@ -178,9 +228,13 @@ export default async function handler(req, res) {
 
   const calls = [];
   const ingestBody = seasonId ? { seasonId } : {};
-  const recalcBody = seasonId ? { seasonId, fast: true, limit: 500 } : { fast: true, limit: 500 };
   const whitelistBody = seasonId ? { seasonId } : {};
   const maxIngestRounds = getMaxIngestRounds();
+  const maxRecalcRounds = getMaxRecalcRounds();
+  const recalcLimit = getRecalcLimit();
+  const maxRuntimeMs = getMaxRuntimeMs();
+  const jobStartedAt = Date.now();
+  const runtimeExceeded = () => Date.now() - jobStartedAt >= maxRuntimeMs;
 
   const runEndpoint = async ({ name, path, body, required }) => {
     const startedAt = Date.now();
@@ -224,7 +278,13 @@ export default async function handler(req, res) {
   };
 
   try {
+    let ingestRoundsExecuted = 0;
+    let ingestStoppedReason = "complete";
     for (let round = 1; round <= maxIngestRounds; round += 1) {
+      if (runtimeExceeded()) {
+        ingestStoppedReason = "runtime_budget";
+        break;
+      }
       const ingestResult = await runEndpoint({
         name: `points-ingest#${round}`,
         path: "/api/points/ingest",
@@ -232,33 +292,108 @@ export default async function handler(req, res) {
         required: true,
       });
       if (!ingestResult?.ok) return;
+      ingestRoundsExecuted = round;
       const ingestedWallets = Number(ingestResult?.payload?.ingestedWallets || 0);
       const cursorUpdates = Number(ingestResult?.payload?.cursorUpdates || 0);
-      if (ingestedWallets <= 0 && cursorUpdates <= 0) break;
+      if (ingestedWallets <= 0 && cursorUpdates <= 0) {
+        ingestStoppedReason = "source_idle";
+        break;
+      }
     }
 
-    const recalcResult = await runEndpoint({
-      name: "points-recalc",
-      path: "/api/points/recalc",
-      body: recalcBody,
-      required: true,
-    });
-    if (!recalcResult?.ok) return;
+    const storedCursorRaw = await kv.get(stateKeys.recalcCursor);
+    let recalcCursor = normalizeCursor(storedCursorRaw);
+    const recalcCursorStart = recalcCursor;
+    let recalcRoundsExecuted = 0;
+    let recalcDone = false;
+    let recalcStoppedReason = "max_rounds";
+
+    for (let round = 1; round <= maxRecalcRounds; round += 1) {
+      if (runtimeExceeded()) {
+        recalcStoppedReason = "runtime_budget";
+        break;
+      }
+      const recalcBody = seasonId
+        ? { seasonId, fast: true, limit: recalcLimit, cursor: recalcCursor }
+        : { fast: true, limit: recalcLimit, cursor: recalcCursor };
+      const recalcResult = await runEndpoint({
+        name: `points-recalc#${round}`,
+        path: "/api/points/recalc",
+        body: recalcBody,
+        required: true,
+      });
+      if (!recalcResult?.ok) return;
+      recalcRoundsExecuted = round;
+
+      const payload = recalcResult?.payload || {};
+      const processed = Number(payload?.processed || 0);
+      const done = Boolean(payload?.done);
+      const nextCursorRaw = payload?.nextCursor;
+      const nextCursor = normalizeCursor(nextCursorRaw);
+      const hasNextCursor =
+        nextCursorRaw !== null &&
+        nextCursorRaw !== undefined &&
+        nextCursorRaw !== "" &&
+        Number.isFinite(Number(nextCursorRaw));
+
+      if (done || !hasNextCursor) {
+        recalcDone = true;
+        recalcCursor = 0;
+        await kv.set(stateKeys.recalcCursor, 0);
+        recalcStoppedReason = done ? "sweep_complete" : "missing_next_cursor";
+        break;
+      }
+
+      if (nextCursor <= recalcCursor) {
+        recalcCursor = 0;
+        await kv.set(stateKeys.recalcCursor, 0);
+        recalcStoppedReason = "cursor_stall";
+        break;
+      }
+
+      recalcCursor = nextCursor;
+      await kv.set(stateKeys.recalcCursor, recalcCursor);
+
+      if (processed <= 0) {
+        recalcStoppedReason = "no_progress";
+        break;
+      }
+    }
 
     if (includeWhitelist) {
-      await runEndpoint({
-        name: "whitelist-recalc",
-        path: "/api/whitelist-rewards/recalc",
-        body: whitelistBody,
-        required: false,
-      });
+      if (!runtimeExceeded()) {
+        await runEndpoint({
+          name: "whitelist-recalc",
+          path: "/api/whitelist-rewards/recalc",
+          body: whitelistBody,
+          required: false,
+        });
+      } else {
+        calls.push({
+          name: "whitelist-recalc",
+          ok: true,
+          skipped: true,
+          reason: "runtime_budget",
+        });
+      }
     }
 
     res.status(200).json({
       ok: true,
       seasonId: seasonId || null,
+      stateSeasonId: stateKeys.stateSeasonId,
       lockUnavailable,
       maxIngestRounds,
+      maxRecalcRounds,
+      recalcLimit,
+      maxRuntimeMs,
+      ingestRoundsExecuted,
+      ingestStoppedReason,
+      recalcRoundsExecuted,
+      recalcDone,
+      recalcStoppedReason,
+      recalcCursorStart,
+      recalcCursorNext: recalcCursor,
       calls,
       executedAt: Date.now(),
     });
