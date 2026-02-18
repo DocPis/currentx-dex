@@ -585,7 +585,9 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
         if (seasonOverride) params.set("seasonId", seasonOverride);
         if (page) params.set("page", String(page));
         const suffix = params.toString();
-        const res = await fetch(`/api/points/leaderboard${suffix ? `?${suffix}` : ""}`);
+        const res = await fetch(`/api/points/leaderboard${suffix ? `?${suffix}` : ""}`, {
+          cache: "no-store",
+        });
         const raw = await res.text().catch(() => "");
         let payload = {};
         try {
@@ -646,6 +648,9 @@ export const useLeaderboard = (seasonId, page = 0, enabled = true) => {
       return payload;
     },
     staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: true,
+    refetchOnWindowFocus: true,
     retry: 1,
   });
 

@@ -228,6 +228,7 @@ const buildSummaryFromEntries = async ({
 };
 
 export default async function handler(req, res) {
+  res.setHeader("Cache-Control", "no-store, max-age=0");
   if (req.method !== "GET") {
     res.status(405).json({ error: "Method not allowed" });
     return;
