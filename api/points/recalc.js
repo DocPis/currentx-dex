@@ -281,6 +281,33 @@ export default async function handler(req, res) {
           lpFallbackCount += 1;
           lpData = fallbackLpData;
         }
+
+        // Fast-mode guardrail: don't wipe previously known LP on transient zero refreshes.
+        // A full/deep recalc (fast=false) still allows real zero LP states to be written.
+        const fallbackLpUsd = Math.max(0, Number(fallbackLpData?.lpUsd || 0));
+        const computedLpUsd = Math.max(0, Number(lpData?.lpUsd || 0));
+        if (fastMode && fallbackLpUsd > 0 && computedLpUsd <= 0) {
+          try {
+            const retryData = await withTimeout(
+              computeLpData({
+                url: v3Url,
+                apiKey: v3Key,
+                wallet,
+                addr,
+                priceMap,
+                startBlock,
+                allowOnchain: true,
+                allowStakerScan: true,
+              }),
+              lpPriorityTimeoutMs,
+              `LP retry timeout for ${wallet}`
+            );
+            const retryLpUsd = Math.max(0, Number(retryData?.lpUsd || 0));
+            lpData = retryLpUsd > 0 ? retryData : fallbackLpData;
+          } catch {
+            lpData = fallbackLpData;
+          }
+        }
       }
 
       const points = computePoints({
