@@ -1096,6 +1096,15 @@ const getBoostPairMultiplier = (token0, token1, addr) => {
 
 export const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
   if (!url || !tokenIds.length) return {};
+  const ids = Array.from(
+    new Set(
+      (tokenIds || [])
+        .map((token) => normalizeAddress(token))
+        .filter(Boolean)
+    )
+  );
+  if (!ids.length) return {};
+
   const query = `
     query TokenPrices($ids: [Bytes!]!) {
       tokens(where: { id_in: $ids }) {
@@ -1107,16 +1116,43 @@ export const fetchTokenPrices = async ({ url, apiKey, tokenIds }) => {
       }
     }
   `;
-  const data = await postGraph(url, apiKey, query, { ids: tokenIds });
-  const bundle = data?.bundles?.[0] || {};
-  const ethPrice = Number(bundle.ethPriceUSD || bundle.ethPrice || 0);
-  const out = {};
-  (data?.tokens || []).forEach((token) => {
-    const derived = Number(token?.derivedETH || 0);
-    if (!Number.isFinite(derived) || derived <= 0 || !ethPrice) return;
-    out[normalizeAddress(token.id)] = derived * ethPrice;
-  });
-  return out;
+
+  const buildPriceMap = (data) => {
+    const bundle = data?.bundles?.[0] || {};
+    const ethPrice = Number(bundle.ethPriceUSD || bundle.ethPrice || 0);
+    if (!Number.isFinite(ethPrice) || ethPrice <= 0) return {};
+    const out = {};
+    (data?.tokens || []).forEach((token) => {
+      const normalized = normalizeAddress(token?.id);
+      const derived = Number(token?.derivedETH || 0);
+      if (!normalized || !Number.isFinite(derived) || derived <= 0) return;
+      out[normalized] = derived * ethPrice;
+    });
+    return out;
+  };
+
+  const urls = dedupeUrls(parseSubgraphUrls(url));
+  if (!urls.length) return {};
+
+  let best = {};
+  let lastError = null;
+
+  for (const candidate of urls) {
+    try {
+      const data = await postGraph(candidate, apiKey, query, { ids });
+      const candidatePrices = buildPriceMap(data);
+      if (Object.keys(candidatePrices).length > Object.keys(best).length) {
+        best = candidatePrices;
+      }
+      if (Object.keys(best).length >= ids.length) break;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (Object.keys(best).length) return best;
+  if (lastError) throw lastError;
+  return {};
 };
 
 export const fetchPositions = async ({ url, apiKey, owner }) => {
@@ -1358,7 +1394,14 @@ export const computeLpData = async ({
         Number.isFinite(pos?.poolTick)
     );
 
-  let positions = url ? await fetchPositions({ url, apiKey, owner: wallet }) : null;
+  let positions = null;
+  if (url) {
+    try {
+      positions = await fetchPositions({ url, apiKey, owner: wallet });
+    } catch {
+      positions = null;
+    }
+  }
   let active = normalizeActive(positions);
   const missingPoolData = !hasPoolPriceData(active);
 
