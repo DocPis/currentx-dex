@@ -537,6 +537,16 @@ const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
   return raw || "Quote unavailable right now. Retry or switch RPC.";
 };
 
+const isNoRouteQuoteError = (message) => {
+  const lower = String(message || "").trim().toLowerCase();
+  if (!lower) return false;
+  return (
+    lower.includes("no route available for this pair") ||
+    lower.includes("no v2 route available for this pair") ||
+    lower.includes("no v3 route available for this pair")
+  );
+};
+
 import { getActiveNetworkConfig } from "../../shared/config/networks";
 
 export default function SwapSection({ balances, address, chainId, onBalancesRefresh }) {
@@ -2338,12 +2348,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (quoteLockedUntil && now < quoteLockedUntil) {
         return;
       }
-      setQuoteError("");
       if (
         !activeInputAmount ||
         Number.isNaN(Number(activeInputAmount)) ||
         isIncompleteAmount(activeInputAmount)
       ) {
+        setQuoteError("");
         resetQuoteState();
         return;
       }
@@ -2398,6 +2408,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         if (isExactOut) {
           setAmountIn(formattedIn);
         }
+        setQuoteError("");
         setQuoteOut(isExactOut ? formattedOut : formattedOut);
         setQuoteOutRaw(directWei);
         setPriceImpact(0);
@@ -2462,6 +2473,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               return;
             }
 
+            setQuoteError("");
             const formattedOut = trimTrailingZeros(formatUnits(amountOut, buyDecimals));
             setQuoteOut(formattedOut);
             setQuoteOutRaw(amountOut);
@@ -3258,7 +3270,9 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   : routePreference === "v3"
                     ? "No V3 route available for this pair."
                     : "No route available for this pair.";
-            setQuoteError(msg);
+            if (!(hadQuote && isNoRouteQuoteError(msg))) {
+              setQuoteError(msg);
+            }
             return;
           }
 
