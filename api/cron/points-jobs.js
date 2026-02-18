@@ -10,7 +10,7 @@ const MAX_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_INGEST_ROUNDS = 6;
 const DEFAULT_MAX_RECALC_ROUNDS = 4;
-const DEFAULT_RECALC_LIMIT = 250;
+const DEFAULT_RECALC_LIMIT = 40;
 const DEFAULT_MAX_RUNTIME_MS = 50_000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
