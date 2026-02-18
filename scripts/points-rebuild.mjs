@@ -11,6 +11,7 @@ const recalcLimit = Number.isFinite(Number(env.POINTS_RECALC_LIMIT))
 const recalcLpTimeoutMs = Number.isFinite(Number(env.POINTS_RECALC_LP_TIMEOUT_MS))
   ? Math.max(1000, Math.floor(Number(env.POINTS_RECALC_LP_TIMEOUT_MS)))
   : null;
+const REBUILD_RECALC_ASSUMED_CONCURRENCY = 4;
 const maxIngestRounds = Number.isFinite(Number(env.POINTS_MAX_INGEST_ROUNDS))
   ? Math.max(1, Math.floor(Number(env.POINTS_MAX_INGEST_ROUNDS)))
   : 240;
@@ -212,6 +213,20 @@ const run = async () => {
     console.log("[points-rebuild] recalc skipped (POINTS_SKIP_RECALC=1).");
   } else {
     console.log("[points-rebuild] recalc loop...");
+    const effectiveRecalcLimit = (() => {
+      if (recalcFast || !Number.isFinite(recalcLpTimeoutMs)) return recalcLimit;
+      const safeBudgetMs = Math.max(1000, Math.floor(callTimeoutMs * 0.65));
+      const estimatedWallets = Math.max(
+        1,
+        Math.floor((safeBudgetMs * REBUILD_RECALC_ASSUMED_CONCURRENCY) / recalcLpTimeoutMs)
+      );
+      return Math.max(1, Math.min(recalcLimit, estimatedWallets));
+    })();
+    if (effectiveRecalcLimit !== recalcLimit) {
+      console.log(
+        `[points-rebuild] recalc limit adjusted ${recalcLimit} -> ${effectiveRecalcLimit} (timeout-safe)`
+      );
+    }
     let cursor = 0;
     let rounds = 0;
     while (true) {
@@ -219,7 +234,7 @@ const run = async () => {
       const recalc = await callJson("/api/points/recalc", {
         seasonId,
         cursor,
-        limit: recalcLimit,
+        limit: effectiveRecalcLimit,
         fast: recalcFast ? 1 : "",
         lpTimeoutMs: Number.isFinite(recalcLpTimeoutMs) ? recalcLpTimeoutMs : "",
       });
