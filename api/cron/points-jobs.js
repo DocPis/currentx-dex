@@ -5,7 +5,7 @@ import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 const LOCK_TTL_SECONDS = 8 * 60;
 const LOCK_RETRIES = 2;
 const LOCK_RETRY_DELAY_MS = 250;
-const REQUEST_TIMEOUT_MS = 45_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
 const MAX_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_MAX_INGEST_ROUNDS = 6;
@@ -53,6 +53,15 @@ const getMaxRuntimeMs = () =>
     Math.min(
       5 * 60 * 1000,
       parsePositiveInt(process.env.POINTS_JOBS_MAX_RUNTIME_MS, DEFAULT_MAX_RUNTIME_MS)
+    )
+  );
+
+const getRequestTimeoutMs = () =>
+  Math.max(
+    10_000,
+    Math.min(
+      5 * 60 * 1000,
+      parsePositiveInt(process.env.POINTS_JOBS_REQUEST_TIMEOUT_MS, DEFAULT_REQUEST_TIMEOUT_MS)
     )
   );
 
@@ -117,10 +126,11 @@ const resolveBaseUrl = (req) => {
 };
 
 const postJsonWithRetry = async ({ name, url, token, body }) => {
+  const requestTimeoutMs = getRequestTimeoutMs();
   let lastError = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     try {
       const res = await fetch(url, {
         method: "POST",
