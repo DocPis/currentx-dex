@@ -27,7 +27,7 @@ import { summarizeLpFallback } from "../../src/server/pointsJobsGuardrails.js";
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
 const SNAPSHOT_WINDOW_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_LP_TIMEOUT_MS = 10_000;
+const DEFAULT_LP_TIMEOUT_MS = 15_000;
 const MAX_LP_TIMEOUT_MS = 60_000;
 const DEFAULT_LP_FALLBACK_WARN_RATIO = 0.35;
 const DEFAULT_LP_FALLBACK_WARN_MIN_PROCESSED = 10;
