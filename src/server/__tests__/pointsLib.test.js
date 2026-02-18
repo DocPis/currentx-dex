@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchTokenPrices, isBoostPair } from "../pointsLib.js";
-import {
-  CRX_ADDRESS as CANONICAL_CRX_ADDRESS,
-  USDM_ADDRESS as CANONICAL_USDM_ADDRESS,
-} from "../../shared/config/addresses.js";
 
 const TOKEN_A = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TOKEN_B = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const CANONICAL_CRX_ADDRESS = "0xbd5e387fa453cebf03b1a6a9dfe2a828b93aa95b";
+const CANONICAL_USDM_ADDRESS = "0xfafddbb3fc7688494971a79cc65dca3ef82079e7";
 
 const asJsonResponse = (payload, status = 200) =>
   new Response(JSON.stringify(payload), {

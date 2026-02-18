@@ -3,11 +3,6 @@ import {
   buildPointsSummary,
   getLeaderboardRewardsConfig,
 } from "../../src/server/leaderboardRewardsLib.js";
-import {
-  CRX_ADDRESS as CANONICAL_CRX_ADDRESS,
-  USDM_ADDRESS as CANONICAL_USDM_ADDRESS,
-  WETH_ADDRESS as CANONICAL_WETH_ADDRESS,
-} from "../../src/shared/config/addresses.js";
 import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 import {
   computeLpData,
@@ -28,6 +23,10 @@ import {
   resolveLpRecalcPolicy,
 } from "../../src/server/pointsRecalcPolicy.js";
 import { summarizeLpFallback } from "../../src/server/pointsJobsGuardrails.js";
+
+const CANONICAL_WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
+const CANONICAL_USDM_ADDRESS = "0xfafddbb3fc7688494971a79cc65dca3ef82079e7";
+const CANONICAL_CRX_ADDRESS = "0xbd5e387fa453cebf03b1a6a9dfe2a828b93aa95b";
 
 const DEFAULT_LIMIT = 250;
 const MAX_LIMIT = 1000;
