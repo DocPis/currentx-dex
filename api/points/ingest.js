@@ -842,6 +842,13 @@ export default async function handler(req, res) {
         snapshot24hAtRaw > 0 &&
         now - snapshot24hAtRaw < SNAPSHOT_WINDOW_MS;
 
+      const stakerScanLikelyNeeded =
+        lpCandidateWallets.has(wallet) ||
+        Number(row?.lpCandidate || 0) > 0 ||
+        Number(row?.lpUsdCrxEth || 0) > 0 ||
+        Number(row?.lpUsdCrxUsdm || 0) > 0 ||
+        Number(row?.hasBoostLp || 0) > 0;
+
       const lpData = await computeLpDataShared({
         url: v3Url,
         apiKey: v3Key,
@@ -849,6 +856,7 @@ export default async function handler(req, res) {
         addr,
         priceMap,
         startBlock,
+        allowStakerScan: stakerScanLikelyNeeded,
       });
       const isLpCandidate =
         lpCandidateWallets.has(wallet) ||

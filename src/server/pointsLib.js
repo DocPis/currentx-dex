@@ -11,6 +11,8 @@ const POINTS_DEFAULT_FEE_BPS = 30;
 const GRAPH_RETRY_STATUSES = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_GRAPH_TIMEOUT_MS = 12_000;
 const DEFAULT_ONCHAIN_TIMEOUT_MS = 12_000;
+const DEFAULT_STAKER_SCAN_TIMEOUT_MS = 3_500;
+const DEFAULT_LP_AGE_TIMEOUT_MS = 2_500;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -302,12 +304,16 @@ const fetchPositionsOnchain = async ({
   );
 
   if (allowStakerScan && (!normalized.length || !hasWalletBoost) && staker) {
-    const stakerTokenIds = await fetchStakerPositionIdsForOwner({
-      provider,
-      staker,
-      owner: wallet,
-      fromBlock: stakerDeployBlock,
-    }).catch(() => []);
+    const stakerTokenIds = await withTimeout(
+      fetchStakerPositionIdsForOwner({
+        provider,
+        staker,
+        owner: wallet,
+        fromBlock: stakerDeployBlock,
+      }),
+      getStakerScanTimeoutMs(),
+      `Staker LP lookup timeout for ${wallet}`
+    ).catch(() => []);
 
     if (stakerTokenIds.length) {
       const seen = new Set(walletIds.map((tokenId) => BigInt(tokenId).toString()));
@@ -367,13 +373,17 @@ const fetchPositionsOnchain = async ({
     }
   });
 
-  const lpAgeSeconds = await fetchLpAgeSecondsOnchain({
-    provider,
-    wallet,
-    tokenIds: normalized.map((pos) => pos.tokenId).filter(Boolean),
-    positionManager,
-    startBlock,
-  });
+  const lpAgeSeconds = await withTimeout(
+    fetchLpAgeSecondsOnchain({
+      provider,
+      wallet,
+      tokenIds: normalized.map((pos) => pos.tokenId).filter(Boolean),
+      positionManager,
+      startBlock,
+    }),
+    getLpAgeLookupTimeoutMs(),
+    `LP age lookup timeout for ${wallet}`
+  ).catch(() => null);
 
   return { positions: normalized, lpAgeSeconds };
 };
@@ -528,6 +538,27 @@ const getOnchainTimeoutMs = () =>
     Math.min(
       120000,
       parsePositiveInt(process.env.POINTS_ONCHAIN_TIMEOUT_MS, DEFAULT_ONCHAIN_TIMEOUT_MS)
+    )
+  );
+
+const getStakerScanTimeoutMs = () =>
+  Math.max(
+    500,
+    Math.min(
+      getOnchainTimeoutMs(),
+      parsePositiveInt(
+        process.env.POINTS_STAKER_SCAN_TIMEOUT_MS,
+        DEFAULT_STAKER_SCAN_TIMEOUT_MS
+      )
+    )
+  );
+
+const getLpAgeLookupTimeoutMs = () =>
+  Math.max(
+    500,
+    Math.min(
+      getOnchainTimeoutMs(),
+      parsePositiveInt(process.env.POINTS_LP_AGE_TIMEOUT_MS, DEFAULT_LP_AGE_TIMEOUT_MS)
     )
   );
 
