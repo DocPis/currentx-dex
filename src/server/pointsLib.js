@@ -13,6 +13,8 @@ const DEFAULT_GRAPH_TIMEOUT_MS = 12_000;
 const DEFAULT_ONCHAIN_TIMEOUT_MS = 12_000;
 const DEFAULT_STAKER_SCAN_TIMEOUT_MS = 3_500;
 const DEFAULT_LP_AGE_TIMEOUT_MS = 2_500;
+const MAX_INFERRED_TOKEN_USD = 1_000_000_000;
+const PRICE_INFERENCE_MAX_PASSES = 3;
 
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
@@ -135,6 +137,7 @@ const getOnchainConfig = () => {
 };
 
 const providerCache = new Map();
+const tokenDecimalsCache = new Map();
 const getRpcProvider = (rpcUrl) => {
   if (!rpcUrl) return null;
   if (providerCache.has(rpcUrl)) return providerCache.get(rpcUrl);
@@ -147,6 +150,9 @@ const POSITION_MANAGER_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
   "function positions(uint256 tokenId) view returns (uint96 nonce,address operator,address token0,address token1,uint24 fee,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 feeGrowthInside0LastX128,uint256 feeGrowthInside1LastX128,uint128 tokensOwed0,uint128 tokensOwed1)",
+];
+const ERC20_METADATA_ABI = [
+  "function decimals() view returns (uint8)",
 ];
 const UNIV3_FACTORY_ABI = [
   "function getPool(address tokenA, address tokenB, uint24 fee) view returns (address)",
@@ -163,6 +169,25 @@ const parseAddressTopic = (topic) => {
   const value = String(topic).toLowerCase().replace(/^0x/, "");
   if (value.length < 40) return "";
   return `0x${value.slice(-40)}`;
+};
+
+const isValidAddress = (value) =>
+  /^0x[a-f0-9]{40}$/u.test(String(value || "").toLowerCase());
+
+const readTokenDecimals = async (provider, tokenAddress) => {
+  const token = normalizeAddress(tokenAddress);
+  if (!isValidAddress(token) || token === ZERO_ADDRESS) return 18;
+  if (tokenDecimalsCache.has(token)) return tokenDecimalsCache.get(token);
+  try {
+    const contract = new Contract(token, ERC20_METADATA_ABI, provider);
+    const decimals = Number(await contract.decimals());
+    const safe = Number.isFinite(decimals) && decimals >= 0 && decimals <= 36 ? decimals : 18;
+    tokenDecimalsCache.set(token, safe);
+    return safe;
+  } catch {
+    tokenDecimalsCache.set(token, 18);
+    return 18;
+  }
 };
 
 const fetchLogsInChunks = async ({
@@ -337,6 +362,25 @@ const fetchPositionsOnchain = async ({
     return { positions: [], lpAgeSeconds: null };
   }
 
+  const tokensToLoadDecimals = Array.from(
+    new Set(
+      normalized
+        .flatMap((pos) => [normalizeAddress(pos?.token0), normalizeAddress(pos?.token1)])
+        .filter((token) => isValidAddress(token) && token !== ZERO_ADDRESS)
+    )
+  );
+  if (tokensToLoadDecimals.length) {
+    const decimalsRows = await Promise.all(
+      tokensToLoadDecimals.map(async (token) => [token, await readTokenDecimals(provider, token)])
+    );
+    const decimalsMap = Object.fromEntries(decimalsRows);
+    normalized = normalized.map((pos) => ({
+      ...pos,
+      decimals0: Number.isFinite(decimalsMap[pos.token0]) ? decimalsMap[pos.token0] : 18,
+      decimals1: Number.isFinite(decimalsMap[pos.token1]) ? decimalsMap[pos.token1] : 18,
+    }));
+  }
+
   const factoryContract = new Contract(factory, UNIV3_FACTORY_ABI, provider);
   const uniquePools = new Map();
   normalized.forEach((pos) => {
@@ -346,23 +390,35 @@ const fetchPositionsOnchain = async ({
   });
 
   const poolState = new Map();
-  for (const pos of uniquePools.values()) {
-    let poolAddress = await factoryContract.getPool(pos.token0, pos.token1, pos.fee);
-    if (!poolAddress || poolAddress === ZERO_ADDRESS) {
-      poolAddress = await factoryContract.getPool(pos.token1, pos.token0, pos.fee);
-    }
-    if (!poolAddress || poolAddress === ZERO_ADDRESS) continue;
-    try {
-      const pool = new Contract(poolAddress, UNIV3_POOL_ABI, provider);
-      const slot0 = await pool.slot0();
-      poolState.set(`${pos.token0}:${pos.token1}:${pos.fee}`, {
-        sqrtPriceX96: slot0?.sqrtPriceX96 ?? null,
-        tick: Number(slot0?.tick ?? 0),
-      });
-    } catch {
-      // ignore pool fetch errors
-    }
-  }
+  const poolRows = await Promise.all(
+    Array.from(uniquePools.values()).map(async (pos) => {
+      const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
+      try {
+        let poolAddress = await factoryContract.getPool(pos.token0, pos.token1, pos.fee);
+        if (!poolAddress || poolAddress === ZERO_ADDRESS) {
+          poolAddress = await factoryContract.getPool(pos.token1, pos.token0, pos.fee);
+        }
+        if (!poolAddress || poolAddress === ZERO_ADDRESS) return null;
+        const pool = new Contract(poolAddress, UNIV3_POOL_ABI, provider);
+        const slot0 = await pool.slot0();
+        return [
+          key,
+          {
+            sqrtPriceX96: slot0?.sqrtPriceX96 ?? null,
+            tick: Number(slot0?.tick ?? 0),
+          },
+        ];
+      } catch {
+        return null;
+      }
+    })
+  );
+  poolRows.forEach((row) => {
+    if (!row) return;
+    const [key, value] = row;
+    if (!key || !value) return;
+    poolState.set(key, value);
+  });
 
   normalized.forEach((pos) => {
     const key = `${pos.token0}:${pos.token1}:${pos.fee}`;
@@ -1277,6 +1333,59 @@ export const computeLpData = async ({
     } catch {
       // ignore token pricing fallback errors
     }
+  }
+
+  const inferPairPriceRatioFromTick = (pos) => {
+    if (!Number.isFinite(pos?.poolTick)) return null;
+    const decimals0 = Number.isFinite(pos?.decimals0) ? Number(pos.decimals0) : 18;
+    const decimals1 = Number.isFinite(pos?.decimals1) ? Number(pos.decimals1) : 18;
+    const ratioRaw = Math.pow(1.0001, Number(pos.poolTick));
+    if (!Number.isFinite(ratioRaw) || ratioRaw <= 0) return null;
+    const scale = Math.pow(10, decimals0 - decimals1);
+    if (!Number.isFinite(scale) || scale <= 0) return null;
+    const ratio = ratioRaw * scale; // token1 per token0
+    if (!Number.isFinite(ratio) || ratio <= 0) return null;
+    return ratio;
+  };
+
+  // Expand token USD coverage from active pools when one side is already priced.
+  for (let pass = 0; pass < PRICE_INFERENCE_MAX_PASSES; pass += 1) {
+    let changed = false;
+    active.forEach((pos) => {
+      const token0 = normalizeAddress(pos?.token0);
+      const token1 = normalizeAddress(pos?.token1);
+      if (!token0 || !token1) return;
+      const ratio = inferPairPriceRatioFromTick(pos);
+      if (!Number.isFinite(ratio) || ratio <= 0) return;
+
+      const known0 = Number(mergedPriceMap[token0]);
+      const known1 = Number(mergedPriceMap[token1]);
+      const has0 = Number.isFinite(known0) && known0 > 0;
+      const has1 = Number.isFinite(known1) && known1 > 0;
+
+      if (has0 && !has1) {
+        const inferred1 = known0 / ratio;
+        if (
+          Number.isFinite(inferred1) &&
+          inferred1 > 0 &&
+          inferred1 <= MAX_INFERRED_TOKEN_USD
+        ) {
+          mergedPriceMap[token1] = inferred1;
+          changed = true;
+        }
+      } else if (!has0 && has1) {
+        const inferred0 = known1 * ratio;
+        if (
+          Number.isFinite(inferred0) &&
+          inferred0 > 0 &&
+          inferred0 <= MAX_INFERRED_TOKEN_USD
+        ) {
+          mergedPriceMap[token0] = inferred0;
+          changed = true;
+        }
+      }
+    });
+    if (!changed) break;
   }
 
   let lpUsd = 0;
