@@ -3,6 +3,11 @@ import {
   buildPointsSummary,
   getLeaderboardRewardsConfig,
 } from "../../src/server/leaderboardRewardsLib.js";
+import {
+  CRX_ADDRESS as CANONICAL_CRX_ADDRESS,
+  USDM_ADDRESS as CANONICAL_USDM_ADDRESS,
+  WETH_ADDRESS as CANONICAL_WETH_ADDRESS,
+} from "../../src/shared/config/addresses.js";
 import { authorizeBearerRequest } from "../../src/server/requestAuth.js";
 import {
   computeLpData,
@@ -191,19 +196,34 @@ export default async function handler(req, res) {
     const userRows = await readPipeline.exec();
 
     let priceMap = {};
+    const anchorTokenIds = Array.from(
+      new Set(
+        [addr.crx, addr.weth, CANONICAL_CRX_ADDRESS, CANONICAL_WETH_ADDRESS]
+          .map((token) => normalizeAddress(token))
+          .filter(Boolean)
+      )
+    );
     try {
       priceMap = await fetchTokenPrices({
         url: v3Url,
         apiKey: v3Key,
-        tokenIds: [addr.crx, addr.weth].filter(Boolean),
+        tokenIds: anchorTokenIds,
       });
     } catch {
       priceMap = {};
     }
-    if (addr.usdm) priceMap[addr.usdm] = 1;
-    if (addr.weth && !Number.isFinite(priceMap[addr.weth])) {
-      priceMap[addr.weth] = 0;
-    }
+    [addr.usdm, CANONICAL_USDM_ADDRESS]
+      .map((token) => normalizeAddress(token))
+      .filter(Boolean)
+      .forEach((token) => {
+        priceMap[token] = 1;
+      });
+    [addr.weth, CANONICAL_WETH_ADDRESS]
+      .map((token) => normalizeAddress(token))
+      .filter(Boolean)
+      .forEach((token) => {
+        if (!Number.isFinite(priceMap[token])) priceMap[token] = 0;
+      });
 
     const now = Date.now();
     const seasonBoostActive = now >= startMs;

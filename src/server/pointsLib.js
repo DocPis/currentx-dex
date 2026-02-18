@@ -1,5 +1,10 @@
 ﻿/* eslint-env node */
 import { Contract, JsonRpcProvider, id, toBeHex, zeroPadValue } from "ethers";
+import {
+  CRX_ADDRESS as CANONICAL_CRX_ADDRESS,
+  USDM_ADDRESS as CANONICAL_USDM_ADDRESS,
+  WETH_ADDRESS as CANONICAL_WETH_ADDRESS,
+} from "../shared/config/addresses.js";
 
 const PAGE_LIMIT = 200;
 const MAX_POSITIONS = 200;
@@ -611,9 +616,27 @@ export const getSubgraphConfig = () => {
 
 export const getAddressConfig = () => {
   const normalize = (v) => (v ? String(v).toLowerCase() : "");
-  const crx = normalize(pickEnvValue(process.env.POINTS_CRX_ADDRESS, process.env.VITE_CRX_ADDRESS));
-  const weth = normalize(pickEnvValue(process.env.POINTS_WETH_ADDRESS, process.env.VITE_WETH_ADDRESS));
-  const usdm = normalize(pickEnvValue(process.env.POINTS_USDM_ADDRESS, process.env.VITE_USDM_ADDRESS));
+  const crx = normalize(
+    pickEnvValue(
+      process.env.POINTS_CRX_ADDRESS,
+      process.env.VITE_CRX_ADDRESS,
+      CANONICAL_CRX_ADDRESS
+    )
+  );
+  const weth = normalize(
+    pickEnvValue(
+      process.env.POINTS_WETH_ADDRESS,
+      process.env.VITE_WETH_ADDRESS,
+      CANONICAL_WETH_ADDRESS
+    )
+  );
+  const usdm = normalize(
+    pickEnvValue(
+      process.env.POINTS_USDM_ADDRESS,
+      process.env.VITE_USDM_ADDRESS,
+      CANONICAL_USDM_ADDRESS
+    )
+  );
   const missing = [];
   if (!crx) missing.push("POINTS_CRX_ADDRESS");
   if (!weth) missing.push("POINTS_WETH_ADDRESS");
@@ -1068,16 +1091,32 @@ const isWethLike = (token, addr) => {
   const normalized = normalizeAddress(token);
   if (!normalized) return false;
   if (addr?.weth && normalized === addr.weth) return true;
+  if (CANONICAL_WETH_ADDRESS && normalized === normalizeAddress(CANONICAL_WETH_ADDRESS)) {
+    return true;
+  }
   return ETH_ALIAS_ADDRESSES.has(normalized);
+};
+
+const matchAnyAddress = (token, ...candidates) => {
+  const normalized = normalizeAddress(token);
+  if (!normalized) return false;
+  return candidates.some((candidate) => {
+    const addr = normalizeAddress(candidate);
+    return Boolean(addr) && addr === normalized;
+  });
 };
 
 export const isBoostPair = (token0, token1, addr) => {
   const a = normalizeAddress(token0);
   const b = normalizeAddress(token1);
   if (!a || !b) return false;
-  const hasCrx = a === addr.crx || b === addr.crx;
+  const hasCrx =
+    matchAnyAddress(a, addr?.crx, CANONICAL_CRX_ADDRESS) ||
+    matchAnyAddress(b, addr?.crx, CANONICAL_CRX_ADDRESS);
   const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
-  const hasUsdm = a === addr.usdm || b === addr.usdm;
+  const hasUsdm =
+    matchAnyAddress(a, addr?.usdm, CANONICAL_USDM_ADDRESS) ||
+    matchAnyAddress(b, addr?.usdm, CANONICAL_USDM_ADDRESS);
   return hasCrx && (hasWeth || hasUsdm);
 };
 
@@ -1085,9 +1124,13 @@ const getBoostPairMultiplier = (token0, token1, addr) => {
   const a = normalizeAddress(token0);
   const b = normalizeAddress(token1);
   if (!a || !b) return 1;
-  const hasCrx = a === addr.crx || b === addr.crx;
+  const hasCrx =
+    matchAnyAddress(a, addr?.crx, CANONICAL_CRX_ADDRESS) ||
+    matchAnyAddress(b, addr?.crx, CANONICAL_CRX_ADDRESS);
   if (!hasCrx) return 1;
-  const hasUsdm = a === addr.usdm || b === addr.usdm;
+  const hasUsdm =
+    matchAnyAddress(a, addr?.usdm, CANONICAL_USDM_ADDRESS) ||
+    matchAnyAddress(b, addr?.usdm, CANONICAL_USDM_ADDRESS);
   if (hasUsdm) return 3;
   const hasWeth = isWethLike(a, addr) || isWethLike(b, addr);
   if (hasWeth) return 2;
@@ -1435,7 +1478,12 @@ export const computeLpData = async ({
   if (!active.length) return emptyData();
 
   const mergedPriceMap = { ...(priceMap || {}) };
-  if (addr?.usdm) mergedPriceMap[addr.usdm] = 1;
+  [addr?.usdm, CANONICAL_USDM_ADDRESS]
+    .map((token) => normalizeAddress(token))
+    .filter(Boolean)
+    .forEach((token) => {
+      mergedPriceMap[token] = 1;
+    });
   const missingTokenIds = Array.from(
     new Set(
       active
