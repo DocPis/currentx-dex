@@ -8,7 +8,7 @@ import {
 
 const DASHBOARD_REFETCH_MS = 5 * 60 * 1000;
 
-// Start the protocol TVL counter from Feb 6, 2026 (UTC midnight) and keep counting forward.
+// Fallback start for protocol TVL when whitelist-origin history is not available.
 const TVL_START_DATE = Date.UTC(2026, 1, 6);
 // Start protocol volume/fees from Feb 4, 2026 (UTC midnight).
 const VOLUME_START_DATE = Date.UTC(2026, 1, 4);
@@ -19,6 +19,14 @@ const getHistoryDays = () =>
     1000,
     Math.max(30, Math.ceil((Date.now() - HISTORY_START_DATE) / 86400000) + 2)
   );
+
+const toPositiveDate = (entry) => {
+  const tvl = Number(entry?.tvlUsd);
+  const date = Number(entry?.date);
+  if (!Number.isFinite(tvl) || tvl <= 0) return null;
+  if (!Number.isFinite(date) || date <= 0) return null;
+  return date;
+};
 
 export function useDashboardData() {
   const query = useQuery({
@@ -31,12 +39,17 @@ export function useDashboardData() {
         fetchTopPairsBreakdownCombined(4),
       ]);
       const safeHistory = Array.isArray(history) ? history : [];
+      const tvlOriginDate =
+        safeHistory
+          .map(toPositiveDate)
+          .filter((value) => value !== null)
+          .sort((a, b) => a - b)[0] || TVL_START_DATE;
       return {
         stats: stats || null,
         tvlHistory: safeHistory,
         volumeHistory: safeHistory,
         topPairs: Array.isArray(topPairs) ? topPairs : [],
-        tvlStartDate: TVL_START_DATE,
+        tvlStartDate: tvlOriginDate,
         volumeStartDate: VOLUME_START_DATE,
       };
     },

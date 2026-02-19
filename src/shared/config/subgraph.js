@@ -1296,12 +1296,306 @@ const mergeProtocolHistory = (v2 = [], v3 = []) => {
     .sort((a, b) => b.date - a.date);
 };
 
+const WHITELIST_HISTORY_CHUNK_SIZE = 12;
+
+const isQueryShapeUnsupported = (message = "") => {
+  const msg = String(message || "").toLowerCase();
+  return (
+    isSchemaFieldMissing(message) ||
+    msg.includes("unknown argument") ||
+    msg.includes("not defined by type") ||
+    msg.includes("is not a valid")
+  );
+};
+
+const toDayIdFromSubgraphDate = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  // Most subgraphs return `date` in unix seconds; keep a ms fallback for safety.
+  if (num >= 1e11) return Math.floor(num / 86400000);
+  return Math.floor(num / 86400);
+};
+
+const addDayTvl = (targetMap, dayId, tvlValue) => {
+  if (!targetMap || !Number.isFinite(dayId) || dayId <= 0) return;
+  const tvl = Number(tvlValue);
+  if (!Number.isFinite(tvl) || tvl < 0) return;
+  targetMap.set(dayId, (targetMap.get(dayId) || 0) + tvl);
+};
+
+const splitIntoChunks = (items = [], size = WHITELIST_HISTORY_CHUNK_SIZE) => {
+  const out = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+};
+
+const fetchWhitelistedPoolIds = async (fetchPage) => {
+  const ids = new Set();
+  let skip = 0;
+  for (let page = 0; page < SUBGRAPH_POOL_PAGE_MAX; page += 1) {
+    const rows = await fetchPage({
+      limit: SUBGRAPH_POOL_PAGE_SIZE,
+      skip,
+    }).catch(() => []);
+    if (!Array.isArray(rows) || !rows.length) break;
+    rows.forEach((row) => {
+      if (!isWhitelistedPairOrPool(row)) return;
+      const id = normalizeAddress(row?.id);
+      if (!id) return;
+      ids.add(id);
+    });
+    if (rows.length < SUBGRAPH_POOL_PAGE_SIZE) break;
+    skip += SUBGRAPH_POOL_PAGE_SIZE;
+  }
+  return Array.from(ids);
+};
+
+const fetchV2WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
+  const totals = new Map();
+  if (SUBGRAPH_MISSING_KEY) return totals;
+
+  const ids = Array.from(new Set((poolIds || []).filter(Boolean).map(normalizeAddress)));
+  if (!ids.length) return totals;
+
+  const fetchCount = Math.min(1000, Math.max(days * 2, days + 5));
+  const chunks = splitIntoChunks(ids);
+  const candidates = ["pairAddress", "pair"];
+  const fieldOrder =
+    v2PoolsDayField && candidates.includes(v2PoolsDayField)
+      ? [v2PoolsDayField, ...candidates.filter((field) => field !== v2PoolsDayField)]
+      : candidates;
+
+  const runChunk = async (chunk, field) => {
+    const query = `
+      query V2WhitelistTvlHistory {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: pairDayDatas(
+            first: ${fetchCount}
+            orderBy: date
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            date
+            reserveUSD
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
+    const res = await postSubgraph(query);
+    chunk.forEach((id, idx) => {
+      const rows = res?.[`p${idx}`] || [];
+      rows.forEach((row) => {
+        const dayId = toDayIdFromSubgraphDate(row?.date);
+        addDayTvl(totals, dayId, row?.reserveUSD);
+      });
+    });
+  };
+
+  let resolvedField = null;
+  if (chunks.length) {
+    for (const field of fieldOrder) {
+      try {
+        await runChunk(chunks[0], field);
+        resolvedField = field;
+        break;
+      } catch (err) {
+        if (isQueryShapeUnsupported(err?.message || "")) {
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+  if (!resolvedField) return totals;
+
+  for (let i = 1; i < chunks.length; i += 1) {
+    try {
+      await runChunk(chunks[i], resolvedField);
+    } catch {
+      // Keep partial history if some chunks fail.
+    }
+  }
+
+  return totals;
+};
+
+const fetchV3WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
+  const totals = new Map();
+  if (SUBGRAPH_V3_MISSING_KEY) return totals;
+
+  const ids = Array.from(new Set((poolIds || []).filter(Boolean).map(normalizeAddress)));
+  if (!ids.length) return totals;
+
+  const fetchCount = Math.min(1000, Math.max(days * 2, days + 5));
+  const chunks = splitIntoChunks(ids);
+  const candidates = ["pool", "poolAddress"];
+  const fieldOrder =
+    v3PoolsDayField && candidates.includes(v3PoolsDayField)
+      ? [v3PoolsDayField, ...candidates.filter((field) => field !== v3PoolsDayField)]
+      : candidates;
+  const selectVariants = [
+    {
+      select: `
+        date
+        totalValueLockedUSD
+      `,
+      pickTvl: (row) => row?.totalValueLockedUSD,
+    },
+    {
+      select: `
+        date
+        tvlUSD
+      `,
+      pickTvl: (row) => row?.tvlUSD,
+    },
+  ];
+
+  const runChunk = async (chunk, field, selectVariant) => {
+    const query = `
+      query V3WhitelistTvlHistory {
+        ${chunk
+          .map(
+            (id, idx) => `
+          p${idx}: poolDayDatas(
+            first: ${fetchCount}
+            orderBy: date
+            orderDirection: desc
+            where: { ${field}: "${id}" }
+          ) {
+            ${selectVariant.select}
+          }
+        `
+          )
+          .join("\n")}
+      }
+    `;
+    const res = await postSubgraphV3(query);
+    chunk.forEach((id, idx) => {
+      const rows = res?.[`p${idx}`] || [];
+      rows.forEach((row) => {
+        const dayId = toDayIdFromSubgraphDate(row?.date);
+        addDayTvl(totals, dayId, selectVariant.pickTvl(row));
+      });
+    });
+  };
+
+  let resolvedField = null;
+  let resolvedSelect = null;
+  if (chunks.length) {
+    let matched = false;
+    for (const selectVariant of selectVariants) {
+      for (const field of fieldOrder) {
+        try {
+          await runChunk(chunks[0], field, selectVariant);
+          resolvedField = field;
+          resolvedSelect = selectVariant;
+          matched = true;
+          break;
+        } catch (err) {
+          if (isQueryShapeUnsupported(err?.message || "")) {
+            continue;
+          }
+          throw err;
+        }
+      }
+      if (matched) break;
+    }
+  }
+  if (!resolvedField || !resolvedSelect) return totals;
+
+  for (let i = 1; i < chunks.length; i += 1) {
+    try {
+      await runChunk(chunks[i], resolvedField, resolvedSelect);
+    } catch {
+      // Keep partial history if some chunks fail.
+    }
+  }
+
+  return totals;
+};
+
+const buildDenseWhitelistedTvlHistory = (dayTotals = new Map(), days = 7) => {
+  if (!(dayTotals instanceof Map) || !dayTotals.size) return [];
+
+  const safeDays = Math.max(1, Math.min(Number(days) || 7, 1000));
+  const todayDayId = Math.floor(Date.now() / 86400000);
+  const startDayId = todayDayId - safeDays + 1;
+  const asc = [];
+  let lastKnown = null;
+
+  for (let dayId = startDayId; dayId <= todayDayId; dayId += 1) {
+    const raw = dayTotals.get(dayId);
+    if (Number.isFinite(raw) && raw > 0) {
+      lastKnown = raw;
+    }
+    asc.push({
+      date: dayId * 86400000,
+      tvlUsd: lastKnown !== null ? lastKnown : 0,
+    });
+  }
+
+  return asc.reverse();
+};
+
+const fetchWhitelistedTvlHistoryCombined = async (days = 7) => {
+  const safeDays = Math.max(1, Math.min(Number(days) || 7, 1000));
+
+  const [v2Ids, v3Ids] = await Promise.all([
+    fetchWhitelistedPoolIds(fetchV2PoolsPage).catch(() => []),
+    fetchWhitelistedPoolIds(fetchV3PoolsPage).catch(() => []),
+  ]);
+
+  if (!v2Ids.length && !v3Ids.length) return [];
+
+  const [v2Totals, v3Totals] = await Promise.all([
+    fetchV2WhitelistedTvlDayTotals(v2Ids, safeDays).catch(() => new Map()),
+    fetchV3WhitelistedTvlDayTotals(v3Ids, safeDays).catch(() => new Map()),
+  ]);
+
+  const combined = new Map(v2Totals);
+  v3Totals.forEach((value, dayId) => {
+    addDayTvl(combined, dayId, value);
+  });
+
+  return buildDenseWhitelistedTvlHistory(combined, safeDays);
+};
+
+const applyWhitelistedTvlHistory = (history = [], whitelistHistory = []) => {
+  if (!Array.isArray(history) || !history.length) return history;
+  if (!Array.isArray(whitelistHistory) || !whitelistHistory.length) return history;
+
+  const whitelistByDay = new Map(
+    whitelistHistory.map((entry) => [
+      Math.floor(Number(entry?.date || 0) / 86400000),
+      Number(entry?.tvlUsd || 0),
+    ])
+  );
+
+  return history.map((entry) => {
+    const dayId = Math.floor(Number(entry?.date || 0) / 86400000);
+    const whitelistTvl = whitelistByDay.get(dayId);
+    if (!Number.isFinite(whitelistTvl)) return entry;
+    return {
+      ...entry,
+      tvlUsd: whitelistTvl,
+    };
+  });
+};
+
 export async function fetchProtocolHistoryCombined(days = 7) {
-  const [v2, v3] = await Promise.all([
+  const [v2, v3, whitelistTvlHistory] = await Promise.all([
     fetchProtocolHistory(days),
     fetchProtocolHistoryV3(days),
+    fetchWhitelistedTvlHistoryCombined(days).catch(() => []),
   ]);
-  return mergeProtocolHistory(v2, v3);
+  const mergedHistory = mergeProtocolHistory(v2, v3);
+  return applyWhitelistedTvlHistory(mergedHistory, whitelistTvlHistory);
 }
 
 // Fetch latest on-chain activity (swaps, mints, burns) sorted by timestamp desc
