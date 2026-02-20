@@ -467,7 +467,8 @@ const errMsg = (error, fallback) => {
   if (decodedRevert) return decodedRevert;
   if (lower.includes("insufficient funds")) return "Insufficient ETH for value + gas.";
   if (lower.includes("missing revert data")) {
-    return "Contract call failed without revert data. Check wallet network, vault minimum duration, reward config, and creator buy settings.";
+    if (fallback) return fallback;
+    return "Contract call failed without revert data. Check wallet network and contract requirements.";
   }
   if (lower.includes("execution reverted")) return raw || "Transaction reverted by contract.";
   return raw || fallback || "Transaction failed.";
@@ -856,6 +857,8 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   const [vaultTokenMeta, setVaultTokenMeta] = useState(null);
   const [vaultWalletBalanceRaw, setVaultWalletBalanceRaw] = useState(null);
   const [vaultAllowanceRaw, setVaultAllowanceRaw] = useState(null);
+  const [vaultSelectedAllocation, setVaultSelectedAllocation] = useState(null);
+  const [vaultSelectedAllocationLoading, setVaultSelectedAllocationLoading] = useState(false);
   const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [locker, setLocker] = useState({
@@ -988,6 +991,20 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const symbol = String(vaultTokenMeta.symbol || "TOKEN");
     return `${formatAmount(vaultDepositAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
   }, [vaultDepositAmountRaw, vaultTokenMeta]);
+  const vaultSelectedLockActive = useMemo(() => {
+    const amount = toBigIntSafe(vaultSelectedAllocation?.amountRaw);
+    const endTime = Number(vaultSelectedAllocation?.endTime ?? 0);
+    if (amount === null || amount <= 0n) return false;
+    if (!Number.isFinite(endTime) || endTime <= 0) return false;
+    return endTime > Math.floor(Date.now() / 1000);
+  }, [vaultSelectedAllocation]);
+  const vaultSelectedLockNotice = useMemo(() => {
+    if (!vaultSelectedLockActive) return "";
+    const unlock = formatDate(vaultSelectedAllocation?.endTime);
+    const admin = String(vaultSelectedAllocation?.admin || "");
+    const adminLabel = isAddress(admin) ? shorten(admin) : "--";
+    return `Token already locked until ${unlock}${adminLabel !== "--" ? ` (admin ${adminLabel})` : ""}.`;
+  }, [vaultSelectedAllocation, vaultSelectedLockActive]);
 
   const vaultWalletSupplyPct = useMemo(() => {
     if (vaultWalletBalanceRaw === null || vaultLockAmountRaw === null || vaultLockAmountRaw <= 0n) return null;
@@ -1389,6 +1406,38 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       cancelled = true;
     };
   }, [address, contracts.vault, vaultForm.token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = String(vaultForm.token || "").trim();
+    if (!isAddress(token) || !isAddress(contracts.vault)) {
+      setVaultSelectedAllocation(null);
+      setVaultSelectedAllocationLoading(false);
+      return () => {};
+    }
+    setVaultSelectedAllocationLoading(true);
+    const provider = getReadOnlyProvider(false, true);
+    const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
+    vault
+      .allocation(token)
+      .then((allocation) => {
+        if (cancelled) return;
+        setVaultSelectedAllocation({
+          amountRaw: toBigIntSafe(allocation?.amount),
+          endTime: Number(allocation?.endTime ?? 0),
+          admin: String(allocation?.admin || ""),
+        });
+        setVaultSelectedAllocationLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setVaultSelectedAllocation(null);
+        setVaultSelectedAllocationLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contracts.vault, vaultForm.token]);
 
   useEffect(() => {
     if (protocol.weth && !isAddress(deployForm.pairedToken)) {
@@ -2224,6 +2273,18 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
         throw new Error("Wallet balance is below approved amount. Approve again with a lower amount.");
       }
       const now = Math.floor(Date.now() / 1000);
+      const vaultRead = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
+      const existingAllocation = await vaultRead.allocation(token).catch(() => null);
+      const existingAmount = toBigIntSafe(existingAllocation?.amount);
+      const existingEndTime = Number(existingAllocation?.endTime ?? 0);
+      if (
+        existingAmount !== null &&
+        existingAmount > 0n &&
+        Number.isFinite(existingEndTime) &&
+        existingEndTime > now
+      ) {
+        throw new Error(`This token already has an active vault lock until ${formatDate(existingEndTime)}.`);
+      }
       const lockDaysRaw = String(vaultForm.depositLockDays || "").trim();
       const lockDays = Number(lockDaysRaw);
       if (!vaultLockDayOptions.includes(lockDaysRaw) || !Number.isFinite(lockDays) || lockDays <= 0) {
@@ -2240,6 +2301,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       if (!isAddress(admin)) throw new Error("Deposit admin is invalid.");
 
       const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
+      await vault.deposit.staticCall(token, amount, unlockTime, admin);
       const tx = await vault.deposit(token, amount, unlockTime, admin);
       const receipt = await tx.wait();
       const [nextBalance, nextAllowance] = await Promise.all([
@@ -2251,7 +2313,15 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Deposit completed." });
       await refreshVaultLocks();
     } catch (error) {
-      setVaultAction({ loadingKey: "", error: errMsg(error, "Deposit failed."), hash: "", message: "" });
+      setVaultAction({
+        loadingKey: "",
+        error: errMsg(
+          error,
+          "Vault lock failed without revert reason. Check approved amount, wallet balance, lock duration, and whether this token already has an active lock."
+        ),
+        hash: "",
+        message: "",
+      });
     }
   };
 
@@ -3654,6 +3724,16 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   <div>Current allowance: {vaultAllowanceLabel}</div>
                   <div>Wallet ownership of supply: {vaultWalletSupplyPct === null ? "--" : formatPct(vaultWalletSupplyPct)}</div>
                 </div>
+                {vaultSelectedAllocationLoading ? (
+                  <div className="rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-2 text-xs text-slate-300/80">
+                    Checking vault lock status...
+                  </div>
+                ) : null}
+                {!vaultSelectedAllocationLoading && vaultSelectedLockActive ? (
+                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                    {vaultSelectedLockNotice}
+                  </div>
+                ) : null}
                 <AddressField
                   label="Admin wallet"
                   value={vaultForm.depositAdmin}
@@ -3698,15 +3778,21 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                       onClick={handleVaultApprove}
                       disabled={
                         vaultAction.loadingKey === "approve" ||
+                        vaultSelectedAllocationLoading ||
+                        vaultSelectedLockActive ||
                         (Boolean(address) && vaultApproveAmountRaw === null)
                       }
                       className={CYAN_BUTTON_CLASS}
                     >
                       {vaultAction.loadingKey === "approve"
                         ? "Approving..."
-                        : vaultApproveMode === "50"
-                          ? "Approve 50% balance"
-                          : "Approve max balance"}
+                        : vaultSelectedAllocationLoading
+                          ? "Checking..."
+                          : vaultSelectedLockActive
+                            ? "Already locked"
+                            : vaultApproveMode === "50"
+                              ? "Approve 50% balance"
+                              : "Approve max balance"}
                     </button>
                   </div>
                 </div>
@@ -3739,11 +3825,19 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                     onClick={handleVaultDeposit}
                     disabled={
                       vaultAction.loadingKey === "deposit" ||
+                      vaultSelectedAllocationLoading ||
+                      vaultSelectedLockActive ||
                       vaultDepositAmountRaw === null
                     }
                     className={PRIMARY_BUTTON_CLASS}
                   >
-                    {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Lock"}
+                    {vaultAction.loadingKey === "deposit"
+                      ? "Depositing..."
+                      : vaultSelectedAllocationLoading
+                        ? "Checking lock..."
+                        : vaultSelectedLockActive
+                          ? "Already locked"
+                          : "Lock"}
                   </button>
                 </div>
               </div>

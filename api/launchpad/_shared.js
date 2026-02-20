@@ -238,6 +238,26 @@ const priceFromPoolTick = (pool, tokenIs0) => {
   return tokenIs0 ? token1Price : token0Price;
 };
 
+// Some subgraph deployments can overstate totalValueLockedUSD for thin/out-of-range pools.
+// Use WETH-side liquidity as a conservative cap: effective TVL <= 2 * WETH-side USD value.
+const liquidityFromPool = ({ pool, wethAddress, ethPriceUSD }) => {
+  const rawTvlUsd = Math.max(0, toNumber(pool?.totalValueLockedUSD, 0));
+  const token0 = toLower(pool?.token0?.id);
+  const token1 = toLower(pool?.token1?.id);
+  const wethIs0 = token0 === wethAddress;
+  const wethIs1 = token1 === wethAddress;
+  const wethAmount = wethIs0
+    ? Math.max(0, toNumber(pool?.totalValueLockedToken0, 0))
+    : wethIs1
+      ? Math.max(0, toNumber(pool?.totalValueLockedToken1, 0))
+      : 0;
+  const wethSideUsd = wethAmount > 0 && ethPriceUSD > 0 ? wethAmount * ethPriceUSD : 0;
+  const conservativeCap = wethSideUsd > 0 ? wethSideUsd * 2 : 0;
+  if (conservativeCap > 0 && rawTvlUsd > 0) return Math.min(rawTvlUsd, conservativeCap);
+  if (conservativeCap > 0) return conservativeCap;
+  return rawTvlUsd;
+};
+
 const supplyToNumber = (raw, decimals) => {
   try {
     return Number(formatUnits(BigInt(raw || 0n), Number(decimals || 18)));
@@ -652,12 +672,12 @@ const buildSnapshot = async () => {
     query Pools($weth: Bytes!, $scan: Int!) {
       bundle(id: "1") { ethPriceUSD }
       by0: pools(first: $scan, orderBy: createdAtTimestamp, orderDirection: desc, where: { token0: $weth }) {
-        id feeTier createdAtTimestamp totalValueLockedUSD volumeUSD token0Price token1Price tick
+        id feeTier createdAtTimestamp totalValueLockedUSD totalValueLockedToken0 totalValueLockedToken1 volumeUSD token0Price token1Price tick
         token0 { id name symbol decimals derivedETH totalSupply }
         token1 { id name symbol decimals derivedETH totalSupply }
       }
       by1: pools(first: $scan, orderBy: createdAtTimestamp, orderDirection: desc, where: { token1: $weth }) {
-        id feeTier createdAtTimestamp totalValueLockedUSD volumeUSD token0Price token1Price tick
+        id feeTier createdAtTimestamp totalValueLockedUSD totalValueLockedToken0 totalValueLockedToken1 volumeUSD token0Price token1Price tick
         token0 { id name symbol decimals derivedETH totalSupply }
         token1 { id name symbol decimals derivedETH totalSupply }
       }
@@ -688,6 +708,7 @@ const buildSnapshot = async () => {
     const priceUSD = refPriceEth > 0 && ethPriceUSD > 0 ? refPriceEth * ethPriceUSD : 0;
     const supply = supplyToNumber(tokenEntity?.totalSupply || "0", decimals);
     const createdAt = new Date(toNumber(pool?.createdAtTimestamp, 0) * 1000).toISOString();
+    const liquidityUSD = liquidityFromPool({ pool, wethAddress: weth, ethPriceUSD });
     const card = {
       address: tokenAddress,
       name: String(tokenEntity?.name || tokenEntity?.symbol || "Token"),
@@ -702,7 +723,7 @@ const buildSnapshot = async () => {
       market: {
         priceUSD: priceUSD || 0,
         mcapUSD: priceUSD > 0 ? priceUSD * supply : 0,
-        liquidityUSD: Math.max(0, toNumber(pool?.totalValueLockedUSD, 0)),
+        liquidityUSD,
         volume24hUSD: 0,
         change1h: 0,
         change24h: 0,
