@@ -21,6 +21,7 @@ import {
   UNIV3_POSITION_MANAGER_ABI,
 } from "../../shared/config/abis";
 import { fetchLaunchpadTokenDetail } from "../../services/launchpad/launchpadApi";
+import TokenCard from "../../components/launchpad/my-tokens/TokenCard";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const DAY = 86400;
@@ -3254,122 +3255,42 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                 ? `${shorten(vaultAdmin)}${vaultAdmin.toLowerCase() === String(address || "").toLowerCase() ? " (you)" : ""}`
                 : "--";
               const vaultStatusLabel = vaultStatus === "active" ? "Active" : vaultStatus === "ended" ? "Ended" : "No lock";
-              const vaultStatusClass =
-                vaultStatus === "active"
-                  ? "border-emerald-400/45 bg-emerald-500/15 text-emerald-100"
-                  : vaultStatus === "ended"
-                    ? "border-amber-400/45 bg-amber-500/15 text-amber-100"
-                    : "border-slate-600/70 bg-slate-900/70 text-slate-300";
+              const vaultStatusTone = vaultStatus === "active" ? "good" : vaultStatus === "ended" ? "warn" : "neutral";
               const lpLocked = Boolean(item.lpLocked);
-              const lpStatusClass = lpLocked
-                ? "border-cyan-300/50 bg-cyan-500/15 text-cyan-100"
-                : "border-slate-600/70 bg-slate-900/70 text-slate-300";
+              const marketDataLabel = market ? "Available" : "Unavailable";
+              const explorerHref = validTokenAddress && EXPLORER_BASE_URL ? `${EXPLORER_BASE_URL}/token/${tokenAddress}` : "";
+              const shortAddress = validTokenAddress ? shorten(tokenAddress) : tokenAddress || "--";
+              const copiedAddress = copiedSummaryKey === copyKey;
 
               return (
-                <div key={`${item.token}-${item.positionId}`} className={`${TONED_PANEL_CLASS} p-3`}>
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-slate-700/70 bg-slate-900/70">
-                      {item.logo ? (
-                        <img src={item.logo} alt={`${item.symbol || "TOKEN"} logo`} className="h-full w-full object-cover" />
-                      ) : (
-                        <span className="text-xs font-semibold text-slate-200">
-                          {String(item.symbol || "T")
-                            .slice(0, 2)
-                            .toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-slate-100">{item.name || "Token"}</div>
-                      <div className="text-xs text-slate-300/80">{item.symbol || "TOKEN"}</div>
-                    </div>
-                  </div>
-                  <div className="mt-2 text-xs text-slate-400/75">Address</div>
-                  <div className="font-mono text-sm break-all text-slate-100">{tokenAddress || "--"}</div>
-                  <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Position ID</div>
-                      <div className="font-mono text-slate-100">{item.positionId || "--"}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Your balance</div>
-                      <div className="text-slate-100">{walletBalanceLabel}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">% of supply (you)</div>
-                      <div className="text-slate-100">{walletSupplyPctLabel}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Total supply</div>
-                      <div className="text-slate-100">{totalSupplyLabel}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Price</div>
-                      <div className="text-slate-100">{formatUsdCompact(market?.priceUSD)}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">MCap</div>
-                      <div className="text-slate-100">{formatUsdCompact(market?.mcapUSD)}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Liquidity</div>
-                      <div className="text-slate-100">{formatUsdCompact(market?.liquidityUSD)}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2">
-                      <div className="text-slate-400/80">Volume 24h</div>
-                      <div className="text-slate-100">{formatUsdCompact(market?.volume24hUSD)}</div>
-                    </div>
-                  </div>
-
-                  <div className="mt-2 grid gap-2 xl:grid-cols-2">
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-300/80">Creator vault</span>
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${vaultStatusClass}`}>
-                          {vaultStatusLabel}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-slate-300/85">Locked amount: {vaultAmountLabel}</div>
-                      <div className="text-slate-300/85">Unlock date: {vaultEndLabel}</div>
-                      <div className="text-slate-300/85">Remaining: {vaultRemainingLabel}</div>
-                      <div className="text-slate-300/85">Admin: {vaultAdminLabel}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-700/55 bg-slate-900/35 px-2 py-2 text-xs">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-slate-300/80">LP locker</span>
-                        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${lpStatusClass}`}>
-                          {lpLocked ? "LP locked" : "Not locked"}
-                        </span>
-                      </div>
-                      <div className="mt-1 text-slate-300/85">Position ID: {item.positionId || "--"}</div>
-                      <div className="text-slate-300/85">Market data: {market ? "Available" : "Unavailable"}</div>
-                    </div>
-                  </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {validTokenAddress ? (
-                      <button
-                        type="button"
-                        onClick={() => handleCopySummaryValue(copyKey, tokenAddress)}
-                        className={SOFT_BUTTON_CLASS}
-                      >
-                        {copiedSummaryKey === copyKey ? "Copied" : "Copy address"}
-                      </button>
-                    ) : null}
-                    {validTokenAddress && EXPLORER_BASE_URL ? (
-                      <a
-                        href={`${EXPLORER_BASE_URL}/token/${tokenAddress}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className={SOFT_BUTTON_CLASS}
-                      >
-                        View on {EXPLORER_LABEL}
-                      </a>
-                    ) : null}
-                  </div>
-                </div>
+                <TokenCard
+                  key={`${item.token}-${item.positionId}`}
+                  name={item.name || "Token"}
+                  symbol={symbol}
+                  logo={String(item.logo || "")}
+                  tokenAddress={tokenAddress}
+                  shortAddress={shortAddress}
+                  explorerHref={explorerHref}
+                  explorerLabel={EXPLORER_LABEL}
+                  copiedAddress={copiedAddress}
+                  onCopyAddress={validTokenAddress ? () => handleCopySummaryValue(copyKey, tokenAddress) : null}
+                  vaultStatusLabel={vaultStatusLabel}
+                  vaultStatusTone={vaultStatusTone}
+                  lpLocked={lpLocked}
+                  walletBalanceLabel={walletBalanceLabel}
+                  walletSupplyPctLabel={walletSupplyPctLabel}
+                  totalSupplyLabel={totalSupplyLabel}
+                  priceLabel={formatUsdCompact(market?.priceUSD)}
+                  mcapLabel={formatUsdCompact(market?.mcapUSD)}
+                  liquidityLabel={formatUsdCompact(market?.liquidityUSD)}
+                  volume24hLabel={formatUsdCompact(market?.volume24hUSD)}
+                  vaultAmountLabel={vaultAmountLabel}
+                  vaultEndLabel={vaultEndLabel}
+                  vaultRemainingLabel={vaultRemainingLabel}
+                  vaultAdminLabel={vaultAdminLabel}
+                  positionId={item.positionId || "--"}
+                  marketDataLabel={marketDataLabel}
+                />
               );
             })}
           </div>
