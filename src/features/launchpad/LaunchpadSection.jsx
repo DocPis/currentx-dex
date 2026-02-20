@@ -3710,12 +3710,11 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                     onClick={handleVaultDeposit}
                     disabled={
                       vaultAction.loadingKey === "deposit" ||
-                      vaultLockAmountRaw === null ||
-                      (Boolean(address) && vaultHasFullSupply === false)
+                      vaultLockAmountRaw === null
                     }
                     className={PRIMARY_BUTTON_CLASS}
                   >
-                    {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Lock 100% supply"}
+                    {vaultAction.loadingKey === "deposit" ? "Depositing..." : "Lock"}
                   </button>
                 </div>
               </div>
