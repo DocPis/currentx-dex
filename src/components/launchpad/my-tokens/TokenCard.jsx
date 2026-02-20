@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { Copy, ExternalLink, Lock } from "lucide-react";
 import LpLockedBadge from "../LpLockedBadge";
 import StatusBadge from "./StatusBadge";
@@ -20,47 +20,57 @@ export default function TokenCard({
   explorerLabel,
   copiedAddress,
   onCopyAddress,
-  vaultStatusLabel,
-  vaultStatusTone,
+  vaultStatusValue,
   lpLocked,
   walletBalanceLabel,
+  walletBalanceTitle,
   walletSupplyPctLabel,
   totalSupplyLabel,
+  totalSupplyTitle,
+  positionLabel,
+  positionTitle,
   priceLabel,
+  priceTitle,
   mcapLabel,
+  mcapTitle,
   liquidityLabel,
+  liquidityTitle,
   volume24hLabel,
+  volume24hTitle,
   vaultAmountLabel,
+  vaultAmountTitle,
   vaultEndLabel,
   vaultRemainingLabel,
   vaultAdminLabel,
-  positionId,
+  detailsOpen,
+  onToggleDetails,
   marketDataLabel,
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(false);
+  const vaultLocked = vaultStatusValue === "active";
+  const vaultStatusLabel = vaultLocked ? "Vault: locked" : "Vault: none";
 
   const vaultRows = useMemo(
     () =>
       [
-        { key: "amount", label: "Locked amount", value: vaultAmountLabel },
+        { key: "amount", label: "Locked amount", value: vaultAmountLabel, title: vaultAmountTitle || vaultAmountLabel },
         { key: "unlock", label: "Unlock date", value: vaultEndLabel },
         { key: "remaining", label: "Remaining", value: vaultRemainingLabel },
         { key: "admin", label: "Admin", value: vaultAdminLabel },
       ].filter((row) => !hideRow(row.value)),
-    [vaultAdminLabel, vaultAmountLabel, vaultEndLabel, vaultRemainingLabel]
+    [vaultAdminLabel, vaultAmountLabel, vaultAmountTitle, vaultEndLabel, vaultRemainingLabel]
   );
 
   const lpRows = useMemo(
     () =>
       [
-        { key: "position", label: "Position ID", value: positionId },
         { key: "market", label: "Market data", value: marketDataLabel },
       ].filter((row) => !hideRow(row.value)),
-    [marketDataLabel, positionId]
+    [marketDataLabel]
   );
+  const hasDetails = vaultRows.length > 0 || lpRows.length > 0;
 
   return (
-    <article className="rounded-xl border border-slate-700/60 bg-slate-900/45 p-3">
+    <article className="overflow-hidden rounded-xl border border-slate-700/60 bg-slate-900/45 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-start gap-3">
@@ -120,65 +130,63 @@ export default function TokenCard({
 
         <div className="flex flex-none items-center gap-1">
           <StatusBadge
-            label={`Vault ${vaultStatusLabel || "No lock"}`}
-            tone={vaultStatusTone || "neutral"}
-            icon={<Lock className="h-3.5 w-3.5" aria-hidden />}
+            label={vaultStatusLabel}
+            tone={vaultLocked ? "good" : "neutral"}
+            icon={vaultLocked ? <Lock className="h-3.5 w-3.5" aria-hidden /> : null}
             title={`Vault status: ${vaultStatusLabel || "No lock"}`}
           />
-          {lpLocked ? (
-            <LpLockedBadge />
-          ) : (
-            <StatusBadge label="LP open" tone="neutral" title="LP not locked" />
-          )}
+          {lpLocked ? <LpLockedBadge /> : <StatusBadge label="LP: —" tone="neutral" title="LP not locked" />}
         </div>
       </div>
 
       <div className="mt-3 grid gap-2 lg:grid-cols-2">
         <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2">
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">Holdings</div>
-          <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-            <StatItem label="Your balance" value={walletBalanceLabel} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <StatItem label="Your balance" value={walletBalanceLabel} valueTitle={walletBalanceTitle} />
             <StatItem label="% supply (you)" value={walletSupplyPctLabel} />
-            <StatItem label="Total supply" value={totalSupplyLabel} />
+            <StatItem label="Total supply" value={totalSupplyLabel} valueTitle={totalSupplyTitle} />
+            <StatItem label="Position ID" value={positionLabel} valueTitle={positionTitle} />
           </div>
         </div>
 
         <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2">
           <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">Market</div>
           <div className="grid gap-2 sm:grid-cols-2">
-            <StatItem label="Price" value={priceLabel} />
-            <StatItem label="MCap" value={mcapLabel} />
-            <StatItem label="Liquidity" value={liquidityLabel} />
-            <StatItem label="Volume 24h" value={volume24hLabel} />
+            <StatItem label="Price" value={priceLabel} valueTitle={priceTitle} />
+            <StatItem label="MCap" value={mcapLabel} valueTitle={mcapTitle} />
+            <StatItem label="Liquidity" value={liquidityLabel} valueTitle={liquidityTitle} />
+            <StatItem label="Volume 24h" value={volume24hLabel} valueTitle={volume24hTitle} />
           </div>
         </div>
       </div>
 
-      <TokenActions detailsOpen={detailsOpen} onToggleDetails={() => setDetailsOpen((prev) => !prev)} />
+      {hasDetails ? <TokenActions detailsOpen={detailsOpen} onToggleDetails={onToggleDetails} /> : null}
 
-      {detailsOpen ? (
+      {detailsOpen && hasDetails ? (
         <div className="mt-2 grid gap-2 lg:grid-cols-2">
-          <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2 text-xs">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">Creator vault</div>
-            {vaultRows.length ? (
+          {vaultRows.length ? (
+            <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2 text-xs">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">Creator vault</div>
               <div className="space-y-1.5">
                 {vaultRows.map((row) => (
                   <div key={row.key} className="flex items-start justify-between gap-2">
                     <span className="text-slate-400/80">{row.label}</span>
-                    <span className="max-w-[70%] truncate text-right text-slate-100" title={String(row.value || "")}>
+                    <span
+                      className="max-w-[70%] truncate text-right text-slate-100"
+                      title={String(row.title || row.value || "")}
+                    >
                       {row.value}
                     </span>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="text-slate-400/80">No vault details available.</div>
-            )}
-          </div>
+            </div>
+          ) : null}
 
-          <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2 text-xs">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">LP locker</div>
-            {lpRows.length ? (
+          {lpRows.length ? (
+            <div className="rounded-lg border border-slate-700/55 bg-slate-900/30 p-2 text-xs">
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400/90">LP locker</div>
               <div className="space-y-1.5">
                 {lpRows.map((row) => (
                   <div key={row.key} className="flex items-start justify-between gap-2">
@@ -189,13 +197,10 @@ export default function TokenCard({
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="text-slate-400/80">No LP details available.</div>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </article>
   );
 }
-

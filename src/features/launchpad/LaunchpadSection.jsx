@@ -507,6 +507,30 @@ const formatUsdCompact = (value) => {
   return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 };
 
+const formatUsdFull = (value) => {
+  const amount = Number(value ?? NaN);
+  if (!Number.isFinite(amount) || amount < 0) return "--";
+  return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 6 })}`;
+};
+
+const formatTokenAmountCompact = (value, decimals = 18) => {
+  try {
+    const amount = Number(formatUnits(value ?? 0n, decimals));
+    if (!Number.isFinite(amount)) return "--";
+    const abs = Math.abs(amount);
+    if (abs === 0) return "0";
+    if (abs >= 1_000_000_000_000) return `${trimTrailingZeros((amount / 1_000_000_000_000).toFixed(2))}T`;
+    if (abs >= 1_000_000_000) return `${trimTrailingZeros((amount / 1_000_000_000).toFixed(2))}B`;
+    if (abs >= 1_000_000) return `${trimTrailingZeros((amount / 1_000_000).toFixed(2))}M`;
+    if (abs >= 1_000) return `${trimTrailingZeros((amount / 1_000).toFixed(2))}K`;
+    if (abs >= 1) return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    if (abs >= 0.0001) return amount.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    return "<0.0001";
+  } catch {
+    return "--";
+  }
+};
+
 const buildTokenMap = () => {
   const out = {};
   Object.values(TOKENS || {}).forEach((token) => {
@@ -870,6 +894,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   const [highlightedField, setHighlightedField] = useState("");
   const [cidCopied, setCidCopied] = useState(false);
   const [copiedSummaryKey, setCopiedSummaryKey] = useState("");
+  const [deploymentDetailsOpen, setDeploymentDetailsOpen] = useState({});
   const [summaryAdvancedOpen, setSummaryAdvancedOpen] = useState(() => launchpadUiMemory.summaryAdvanced);
   const [formAdvancedOpen, setFormAdvancedOpen] = useState(() => launchpadUiMemory.formAdvanced);
 
@@ -1234,6 +1259,35 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setDeployForm((prev) => ({ ...prev, pairedToken: protocol.weth }));
     }
   }, [deployForm.pairedToken, protocol.weth]);
+
+  useEffect(() => {
+    setDeploymentDetailsOpen((prev) => {
+      const allowed = new Set(
+        (deployments || []).map((item) => {
+          const token = String(item?.token || "").trim().toLowerCase();
+          const position = String(item?.positionId || "");
+          return `${token}-${position}`;
+        })
+      );
+      const next = {};
+      let changed = false;
+      Object.entries(prev || {}).forEach(([key, value]) => {
+        if (allowed.has(key)) next[key] = Boolean(value);
+        else changed = true;
+      });
+      if (!changed && Object.keys(next).length === Object.keys(prev || {}).length) return prev;
+      return next;
+    });
+  }, [deployments]);
+
+  const toggleDeploymentDetails = useCallback((key) => {
+    const normalized = String(key || "").trim();
+    if (!normalized) return;
+    setDeploymentDetailsOpen((prev) => ({
+      ...prev,
+      [normalized]: !prev?.[normalized],
+    }));
+  }, []);
 
   const uploadPngToIpfs = useCallback(async ({ dataBase64, fileName, fileBytes }) => {
     try {
@@ -3234,30 +3288,38 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
               const tokenAddress = String(item.token || "").trim();
               const validTokenAddress = isAddress(tokenAddress);
               const copyKey = `deployment-token-${tokenAddress.toLowerCase()}`;
+              const detailsKey = `${tokenAddress.toLowerCase()}-${String(item.positionId || "")}`;
+              const detailsOpen = Boolean(deploymentDetailsOpen?.[detailsKey]);
               const symbol = String(item.symbol || "TOKEN");
               const decimals = Number(item.decimals || 18);
               const totalSupplyRaw = toBigIntSafe(item.totalSupplyRaw);
               const walletBalanceRaw = toBigIntSafe(item.walletBalanceRaw);
               const walletBalanceLabel =
-                walletBalanceRaw !== null ? `${formatAmount(walletBalanceRaw, decimals, 6)} ${symbol}` : "--";
+                walletBalanceRaw !== null ? `${formatTokenAmountCompact(walletBalanceRaw, decimals)} ${symbol}` : "--";
+              const walletBalanceTitle =
+                walletBalanceRaw !== null ? `${formatAmount(walletBalanceRaw, decimals, 8)} ${symbol}` : "--";
               const walletSupplyPctLabel = formatPercent(item.walletSupplyPct, 2);
               const totalSupplyLabel =
-                totalSupplyRaw !== null ? `${formatAmount(totalSupplyRaw, decimals, 2)} ${symbol}` : "--";
+                totalSupplyRaw !== null ? `${formatTokenAmountCompact(totalSupplyRaw, decimals)} ${symbol}` : "--";
+              const totalSupplyTitle =
+                totalSupplyRaw !== null ? `${formatAmount(totalSupplyRaw, decimals, 8)} ${symbol}` : "--";
               const market = item.market && typeof item.market === "object" ? item.market : null;
               const vaultStatus = String(item.vaultStatus || "none");
               const vaultAmountRaw = toBigIntSafe(item.vaultAmountRaw);
               const vaultAmountLabel =
-                vaultAmountRaw !== null && vaultAmountRaw > 0n ? `${formatAmount(vaultAmountRaw, decimals, 6)} ${symbol}` : "--";
+                vaultAmountRaw !== null && vaultAmountRaw > 0n
+                  ? `${formatTokenAmountCompact(vaultAmountRaw, decimals)} ${symbol}`
+                  : "--";
+              const vaultAmountTitle =
+                vaultAmountRaw !== null && vaultAmountRaw > 0n ? `${formatAmount(vaultAmountRaw, decimals, 8)} ${symbol}` : "--";
               const vaultEndLabel = Number(item.vaultEndTime || 0) > 0 ? formatDate(item.vaultEndTime) : "--";
               const vaultRemainingLabel = Number(item.vaultEndTime || 0) > 0 ? formatRemainingFromUnix(item.vaultEndTime) : "--";
               const vaultAdmin = String(item.vaultAdmin || "").trim();
               const vaultAdminLabel = isAddress(vaultAdmin)
                 ? `${shorten(vaultAdmin)}${vaultAdmin.toLowerCase() === String(address || "").toLowerCase() ? " (you)" : ""}`
                 : "--";
-              const vaultStatusLabel = vaultStatus === "active" ? "Active" : vaultStatus === "ended" ? "Ended" : "No lock";
-              const vaultStatusTone = vaultStatus === "active" ? "good" : vaultStatus === "ended" ? "warn" : "neutral";
               const lpLocked = Boolean(item.lpLocked);
-              const marketDataLabel = market ? "Available" : "Unavailable";
+              const marketDataLabel = market ? "Available" : "";
               const explorerHref = validTokenAddress && EXPLORER_BASE_URL ? `${EXPLORER_BASE_URL}/token/${tokenAddress}` : "";
               const shortAddress = validTokenAddress ? shorten(tokenAddress) : tokenAddress || "--";
               const copiedAddress = copiedSummaryKey === copyKey;
@@ -3274,21 +3336,30 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   explorerLabel={EXPLORER_LABEL}
                   copiedAddress={copiedAddress}
                   onCopyAddress={validTokenAddress ? () => handleCopySummaryValue(copyKey, tokenAddress) : null}
-                  vaultStatusLabel={vaultStatusLabel}
-                  vaultStatusTone={vaultStatusTone}
+                  vaultStatusValue={vaultStatus}
                   lpLocked={lpLocked}
                   walletBalanceLabel={walletBalanceLabel}
+                  walletBalanceTitle={walletBalanceTitle}
                   walletSupplyPctLabel={walletSupplyPctLabel}
                   totalSupplyLabel={totalSupplyLabel}
+                  totalSupplyTitle={totalSupplyTitle}
+                  positionLabel={item.positionId || "--"}
+                  positionTitle={String(item.positionId || "--")}
                   priceLabel={formatUsdCompact(market?.priceUSD)}
+                  priceTitle={formatUsdFull(market?.priceUSD)}
                   mcapLabel={formatUsdCompact(market?.mcapUSD)}
+                  mcapTitle={formatUsdFull(market?.mcapUSD)}
                   liquidityLabel={formatUsdCompact(market?.liquidityUSD)}
+                  liquidityTitle={formatUsdFull(market?.liquidityUSD)}
                   volume24hLabel={formatUsdCompact(market?.volume24hUSD)}
+                  volume24hTitle={formatUsdFull(market?.volume24hUSD)}
                   vaultAmountLabel={vaultAmountLabel}
+                  vaultAmountTitle={vaultAmountTitle}
                   vaultEndLabel={vaultEndLabel}
                   vaultRemainingLabel={vaultRemainingLabel}
                   vaultAdminLabel={vaultAdminLabel}
-                  positionId={item.positionId || "--"}
+                  detailsOpen={detailsOpen}
+                  onToggleDetails={() => toggleDeploymentDetails(detailsKey)}
                   marketDataLabel={marketDataLabel}
                 />
               );
