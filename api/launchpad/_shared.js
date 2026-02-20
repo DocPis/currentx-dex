@@ -5,9 +5,15 @@ const DEFAULT_V3_URLS = [
   "https://gateway.thegraph.com/api/subgraphs/id/Hw24iWxGzMM5HvZqENyBQpA6hwdUTQzCSK5e5BfCXyHd",
 ];
 const DEFAULT_WETH = "0x4200000000000000000000000000000000000006";
+const DEFAULT_CURRENTX = "0xb1dfc63cbe9305fa6a8fe97b4c72241148e451d1";
+const DEFAULT_LP_LOCKER = "0xc43b8a818c9dad3c3f04230c4033131fe040408f";
+const DEFAULT_CURRENTX_DEPLOY_BLOCK = 8_000_000;
 const DEFAULT_RPC = "https://mainnet.megaeth.com/rpc";
 const SNAPSHOT_TTL_MS = 20_000;
 const META_TTL_MS = 10 * 60 * 1000;
+const LP_LOCK_EVENT_CACHE_TTL_MS = 20_000;
+const LP_LOCK_OWNER_CACHE_TTL_MS = 20_000;
+const LP_LOCK_LOG_BLOCK_SPAN = 300_000;
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/u;
 
 const ERC20_META_ABI = [
@@ -21,6 +27,11 @@ const ERC20_META_ABI = [
   "function metadata() view returns (string)",
   "function context() view returns (string)",
 ];
+const CURRENTX_LAUNCH_ABI = [
+  "function positionManager() view returns (address)",
+  "event TokenCreated(address indexed tokenAddress, address indexed creatorAdmin, address indexed interfaceAdmin, address creatorRewardRecipient, address interfaceRewardRecipient, uint256 positionId, string name, string symbol, int24 startingTickIfToken0IsNewToken, string metadata, uint256 amountTokensBought, uint256 vaultDuration, uint8 vaultPercentage, address msgSender)",
+];
+const POSITION_MANAGER_ABI = ["function ownerOf(uint256 tokenId) view returns (address)"];
 
 const toLower = (v) => String(v || "").toLowerCase();
 const toNumber = (v, fallback = 0) => {
@@ -37,16 +48,39 @@ const IPFS_CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[0-9a-z]{20,})$/iu;
 const DEFAULT_ONLY_LAUNCHPAD_TOKENS = true;
 
 const getWeth = () => toLower(process.env.LAUNCHPAD_WETH_ADDRESS || process.env.VITE_WETH_ADDRESS || DEFAULT_WETH);
+const getCurrentX = () => {
+  const candidates = [
+    process.env.LAUNCHPAD_CURRENTX_ADDRESS,
+    process.env.CURRENTX_ADDRESS,
+    process.env.VITE_CURRENTX_ADDRESS,
+    DEFAULT_CURRENTX,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim().toLowerCase();
+    if (ADDRESS_RE.test(value)) return value;
+  }
+  return "";
+};
+const getCurrentXDeployBlock = () => {
+  const raw = Number(
+    process.env.LAUNCHPAD_CURRENTX_DEPLOY_BLOCK ||
+      process.env.CURRENTX_DEPLOY_BLOCK ||
+      process.env.VITE_CURRENTX_DEPLOY_BLOCK
+  );
+  return Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : DEFAULT_CURRENTX_DEPLOY_BLOCK;
+};
 const getLpLocker = () => {
-  const raw = String(
-    process.env.LAUNCHPAD_LP_LOCKER_V2_ADDRESS ||
-      process.env.LAUNCHPAD_LP_LOCKER_ADDRESS ||
-      process.env.VITE_LP_LOCKER_V2_ADDRESS ||
-      ""
-  )
-    .trim()
-    .toLowerCase();
-  return ADDRESS_RE.test(raw) ? raw : "";
+  const candidates = [
+    process.env.LAUNCHPAD_LP_LOCKER_V2_ADDRESS,
+    process.env.LAUNCHPAD_LP_LOCKER_ADDRESS,
+    process.env.VITE_LP_LOCKER_V2_ADDRESS,
+    DEFAULT_LP_LOCKER,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim().toLowerCase();
+    if (ADDRESS_RE.test(value)) return value;
+  }
+  return "";
 };
 const getRpcUrl = () => {
   const list = [
@@ -130,9 +164,37 @@ const getStore = () => {
       snapshot: { ts: 0, value: null },
       meta: new Map(),
       provider: null,
+      lpLock: {
+        currentx: "",
+        latestBlock: -1,
+        refreshedAt: 0,
+        positionManager: "",
+        tokenToPosition: new Map(),
+        positionToOwner: new Map(),
+      },
     };
   }
-  return globalThis[k];
+  const store = globalThis[k];
+  if (!store.snapshot) store.snapshot = { ts: 0, value: null };
+  if (!(store.meta instanceof Map)) store.meta = new Map();
+  if (!store.lpLock || typeof store.lpLock !== "object") {
+    store.lpLock = {
+      currentx: "",
+      latestBlock: -1,
+      refreshedAt: 0,
+      positionManager: "",
+      tokenToPosition: new Map(),
+      positionToOwner: new Map(),
+    };
+  }
+  if (!(store.lpLock.tokenToPosition instanceof Map)) store.lpLock.tokenToPosition = new Map();
+  if (!(store.lpLock.positionToOwner instanceof Map)) store.lpLock.positionToOwner = new Map();
+  if (!Number.isFinite(Number(store.lpLock.latestBlock))) store.lpLock.latestBlock = -1;
+  if (!Number.isFinite(Number(store.lpLock.refreshedAt))) store.lpLock.refreshedAt = 0;
+  if (typeof store.lpLock.currentx !== "string") store.lpLock.currentx = "";
+  if (typeof store.lpLock.positionManager !== "string") store.lpLock.positionManager = "";
+  if (!("provider" in store)) store.provider = null;
+  return store;
 };
 
 const getProvider = () => {
@@ -445,6 +507,144 @@ const resolveLockedPools = async (poolIds = []) => {
   return { available: false, lockedPools: new Set() };
 };
 
+const readTokenCreatedLogs = async (provider, currentx, topic0, fromBlock, toBlock) => {
+  const startBlock = Math.max(0, Number(fromBlock) || 0);
+  const endBlock = Math.max(startBlock, Number(toBlock) || startBlock);
+  const logs = [];
+  for (let start = startBlock; start <= endBlock; start += LP_LOCK_LOG_BLOCK_SPAN) {
+    const end = Math.min(endBlock, start + LP_LOCK_LOG_BLOCK_SPAN - 1);
+    const chunk = await provider.getLogs({
+      address: currentx,
+      fromBlock: start,
+      toBlock: end,
+      topics: [topic0],
+    });
+    if (Array.isArray(chunk) && chunk.length) logs.push(...chunk);
+  }
+  return logs;
+};
+
+const refreshOnchainLpLockCache = async () => {
+  const currentx = getCurrentX();
+  if (!currentx) return { available: false, currentx: "" };
+
+  const store = getStore();
+  const cache = store.lpLock;
+  if (cache.currentx !== currentx) {
+    cache.currentx = currentx;
+    cache.latestBlock = -1;
+    cache.refreshedAt = 0;
+    cache.positionManager = "";
+    cache.tokenToPosition = new Map();
+    cache.positionToOwner = new Map();
+  }
+
+  const provider = getProvider();
+  const latestBlock = await provider.getBlockNumber();
+  const freshEnough = Date.now() - Number(cache.refreshedAt || 0) < LP_LOCK_EVENT_CACHE_TTL_MS;
+  if (freshEnough && Number(cache.latestBlock || -1) >= latestBlock && ADDRESS_RE.test(cache.positionManager || "")) {
+    return { available: true, currentx };
+  }
+
+  const currentxContract = new Contract(currentx, CURRENTX_LAUNCH_ABI, provider);
+  const topic0 = currentxContract.interface.getEvent("TokenCreated").topicHash;
+  const fromBlock = Number(cache.latestBlock) >= 0 ? Number(cache.latestBlock) + 1 : getCurrentXDeployBlock();
+  if (fromBlock <= latestBlock) {
+    const logs = await readTokenCreatedLogs(provider, currentx, topic0, fromBlock, latestBlock);
+    logs.forEach((log) => {
+      try {
+        const parsed = currentxContract.interface.parseLog(log);
+        const tokenAddress = toLower(parsed?.args?.tokenAddress);
+        const positionId = parsed?.args?.positionId != null ? BigInt(parsed.args.positionId).toString() : "";
+        if (!tokenAddress || !positionId) return;
+        cache.tokenToPosition.set(tokenAddress, positionId);
+      } catch {
+        // ignore malformed logs
+      }
+    });
+  }
+
+  if (!ADDRESS_RE.test(cache.positionManager || "")) {
+    try {
+      const resolvedPositionManager = toLower(await currentxContract.positionManager());
+      cache.positionManager = ADDRESS_RE.test(resolvedPositionManager) ? resolvedPositionManager : "";
+    } catch {
+      cache.positionManager = "";
+    }
+  }
+
+  cache.latestBlock = latestBlock;
+  cache.refreshedAt = Date.now();
+  if (!ADDRESS_RE.test(cache.positionManager || "")) return { available: false, currentx };
+  return { available: true, currentx };
+};
+
+const resolveLockedTokensOnchain = async (tokenAddresses = []) => {
+  const locker = getLpLocker();
+  const normalizedTokens = dedupe((tokenAddresses || []).map((address) => toLower(address)).filter(Boolean));
+  if (!locker || !normalizedTokens.length) {
+    return { available: false, lockedTokens: new Set() };
+  }
+
+  try {
+    const status = await refreshOnchainLpLockCache();
+    if (!status.available) return { available: false, lockedTokens: new Set() };
+
+    const store = getStore();
+    const cache = store.lpLock;
+    const positionManagerAddress = toLower(cache.positionManager || "");
+    if (!ADDRESS_RE.test(positionManagerAddress)) {
+      return { available: false, lockedTokens: new Set() };
+    }
+
+    const tokenPositionPairs = normalizedTokens
+      .map((tokenAddress) => ({
+        tokenAddress,
+        positionId: String(cache.tokenToPosition.get(tokenAddress) || "").trim(),
+      }))
+      .filter((item) => item.positionId);
+
+    if (!tokenPositionPairs.length) {
+      return { available: true, lockedTokens: new Set() };
+    }
+
+    const now = Date.now();
+    const uniquePositions = dedupe(tokenPositionPairs.map((item) => item.positionId).filter(Boolean));
+    const stalePositions = uniquePositions.filter((positionId) => {
+      const cachedOwner = cache.positionToOwner.get(positionId);
+      if (!cachedOwner || typeof cachedOwner !== "object") return true;
+      return now - Number(cachedOwner.ts || 0) > LP_LOCK_OWNER_CACHE_TTL_MS;
+    });
+
+    if (stalePositions.length) {
+      const positionManager = new Contract(positionManagerAddress, POSITION_MANAGER_ABI, getProvider());
+      const resolvedOwners = await mapLimit(stalePositions, 8, async (positionId) => {
+        try {
+          const owner = toLower(await positionManager.ownerOf(BigInt(positionId)));
+          return { positionId, owner };
+        } catch {
+          return { positionId, owner: "" };
+        }
+      });
+
+      resolvedOwners.forEach(({ positionId, owner }) => {
+        cache.positionToOwner.set(String(positionId), { owner: toLower(owner || ""), ts: now });
+      });
+    }
+
+    const lockedTokens = new Set();
+    tokenPositionPairs.forEach(({ tokenAddress, positionId }) => {
+      const ownerData = cache.positionToOwner.get(positionId);
+      const owner = toLower(ownerData?.owner || "");
+      if (owner && owner === locker) lockedTokens.add(tokenAddress);
+    });
+
+    return { available: true, lockedTokens };
+  } catch {
+    return { available: false, lockedTokens: new Set() };
+  }
+};
+
 const buildSnapshot = async () => {
   const weth = getWeth();
   const scan = Math.max(30, Math.min(400, Number(process.env.LAUNCHPAD_POOL_SCAN_LIMIT || 220)));
@@ -629,6 +829,9 @@ const buildSnapshot = async () => {
       : [],
     resolveLockedPools(poolIds),
   ]);
+  const onchainLockStatus = !lockStatus?.available
+    ? await resolveLockedTokensOnchain(Array.from(tokenMap.keys()))
+    : { available: false, lockedTokens: new Set() };
 
   const dayByPool = groupByPool(dayData);
   const hourByPool = groupByPool(hourData);
@@ -681,6 +884,8 @@ const buildSnapshot = async () => {
     if (lockStatus?.available) {
       const poolsForToken = tokenPools[address] || [];
       token.lpLocked = poolsForToken.some((poolId) => lockStatus.lockedPools.has(toLower(poolId)));
+    } else if (onchainLockStatus?.available) {
+      token.lpLocked = onchainLockStatus.lockedTokens.has(toLower(address));
     }
   });
 
