@@ -855,6 +855,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
   });
   const [vaultTokenMeta, setVaultTokenMeta] = useState(null);
   const [vaultWalletBalanceRaw, setVaultWalletBalanceRaw] = useState(null);
+  const [vaultAllowanceRaw, setVaultAllowanceRaw] = useState(null);
   const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [locker, setLocker] = useState({
@@ -973,17 +974,26 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const symbol = String(vaultTokenMeta.symbol || "TOKEN");
     return `${formatAmount(vaultApproveAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
   }, [vaultApproveAmountRaw, vaultTokenMeta]);
+  const vaultAllowanceLabel = useMemo(() => {
+    if (!vaultTokenMeta || vaultAllowanceRaw === null) return "--";
+    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
+    return `${formatAmount(vaultAllowanceRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
+  }, [vaultAllowanceRaw, vaultTokenMeta]);
+  const vaultDepositAmountRaw = useMemo(() => {
+    if (vaultAllowanceRaw === null || vaultAllowanceRaw <= 0n) return null;
+    return vaultAllowanceRaw;
+  }, [vaultAllowanceRaw]);
+  const vaultDepositAmountLabel = useMemo(() => {
+    if (!vaultTokenMeta || vaultDepositAmountRaw === null) return "--";
+    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
+    return `${formatAmount(vaultDepositAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
+  }, [vaultDepositAmountRaw, vaultTokenMeta]);
 
   const vaultWalletSupplyPct = useMemo(() => {
     if (vaultWalletBalanceRaw === null || vaultLockAmountRaw === null || vaultLockAmountRaw <= 0n) return null;
     const bps = Number((vaultWalletBalanceRaw * 10000n) / vaultLockAmountRaw);
     if (!Number.isFinite(bps)) return null;
     return bps / 100;
-  }, [vaultWalletBalanceRaw, vaultLockAmountRaw]);
-
-  const vaultHasFullSupply = useMemo(() => {
-    if (vaultWalletBalanceRaw === null || vaultLockAmountRaw === null) return null;
-    return vaultWalletBalanceRaw >= vaultLockAmountRaw;
   }, [vaultWalletBalanceRaw, vaultLockAmountRaw]);
 
   useEffect(() => {
@@ -1356,6 +1366,29 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       cancelled = true;
     };
   }, [address, vaultForm.token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const token = String(vaultForm.token || "").trim();
+    const wallet = String(address || "").trim();
+    if (!isAddress(token) || !isAddress(wallet) || !isAddress(contracts.vault)) {
+      setVaultAllowanceRaw(null);
+      return () => {};
+    }
+    const provider = getReadOnlyProvider(false, true);
+    const erc20 = new Contract(token, ERC20_ABI, provider);
+    erc20
+      .allowance(wallet, contracts.vault)
+      .then((value) => {
+        if (!cancelled) setVaultAllowanceRaw(toBigIntSafe(value));
+      })
+      .catch(() => {
+        if (!cancelled) setVaultAllowanceRaw(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [address, contracts.vault, vaultForm.token]);
 
   useEffect(() => {
     if (protocol.weth && !isAddress(deployForm.pairedToken)) {
@@ -2150,6 +2183,8 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       }
       const tx = await erc20.approve(contracts.vault, amount);
       const receipt = await tx.wait();
+      const nextAllowance = toBigIntSafe(await erc20.allowance(address, contracts.vault).catch(() => null));
+      setVaultAllowanceRaw(nextAllowance ?? amount);
       const modeLabel = normalizeVaultApproveMode(vaultForm.approveMode) === "50" ? "50%" : "max";
       setVaultAction({
         loadingKey: "",
@@ -2174,33 +2209,19 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const token = String(vaultForm.token || "").trim();
       if (!isAddress(token)) throw new Error("Token address is invalid.");
       if (!isAddress(contracts.vault)) throw new Error("Vault address is invalid.");
-      const meta = await resolveTokenMeta(vaultForm.token, provider);
-      const amount = toBigIntSafe(meta?.totalSupplyRaw);
-      if (amount === null || amount <= 0n) {
-        throw new Error("Unable to resolve token total supply for 100% lock.");
-      }
       const erc20 = new Contract(token, ERC20_ABI, provider);
-      const erc20WithSigner = new Contract(token, ERC20_ABI, signer);
-      const walletBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
-      if (walletBalance !== null && walletBalance < amount) {
-        throw new Error("Insufficient wallet balance for vault deposit.");
+      const [walletBalance, allowance] = await Promise.all([
+        erc20.balanceOf(address).catch(() => null),
+        erc20.allowance(address, contracts.vault).catch(() => null),
+      ]);
+      const walletBalanceRaw = toBigIntSafe(walletBalance);
+      const allowanceRaw = toBigIntSafe(allowance);
+      if (allowanceRaw === null || allowanceRaw <= 0n) {
+        throw new Error("No approved amount found. Run Approve first.");
       }
-      const allowance = toBigIntSafe(await erc20.allowance(address, contracts.vault).catch(() => null));
-      if (allowance !== null && allowance < amount) {
-        setVaultAction({
-          loadingKey: "deposit",
-          error: "",
-          hash: "",
-          message: "Allowance is below required amount. Approving required amount...",
-        });
-        const approvalTx = await erc20WithSigner.approve(contracts.vault, amount);
-        const approvalReceipt = await approvalTx.wait();
-        setVaultAction({
-          loadingKey: "deposit",
-          error: "",
-          hash: approvalReceipt.hash || approvalTx.hash || "",
-          message: "Approval confirmed. Sending deposit...",
-        });
+      const amount = allowanceRaw;
+      if (walletBalanceRaw === null || walletBalanceRaw < amount) {
+        throw new Error("Wallet balance is below approved amount. Approve again with a lower amount.");
       }
       const now = Math.floor(Date.now() / 1000);
       const lockDaysRaw = String(vaultForm.depositLockDays || "").trim();
@@ -2221,8 +2242,12 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
       const tx = await vault.deposit(token, amount, unlockTime, admin);
       const receipt = await tx.wait();
-      const nextBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
-      if (nextBalance !== null) setVaultWalletBalanceRaw(nextBalance);
+      const [nextBalance, nextAllowance] = await Promise.all([
+        erc20.balanceOf(address).catch(() => null),
+        erc20.allowance(address, contracts.vault).catch(() => null),
+      ]);
+      setVaultWalletBalanceRaw(toBigIntSafe(nextBalance));
+      setVaultAllowanceRaw(toBigIntSafe(nextAllowance));
       setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Deposit completed." });
       await refreshVaultLocks();
     } catch (error) {
@@ -3610,7 +3635,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
             <div className={`${TONED_PANEL_CLASS} p-3`}>
               <div className="text-sm font-semibold text-slate-100">Deposit token into vault</div>
               <div className="mt-1 text-xs text-slate-300/75">
-                Lock amount is fixed at 100% of the selected token supply.
+                Lock amount uses the current approved allowance for this token.
               </div>
 
               <div className="mt-3 space-y-3">
@@ -3626,6 +3651,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                 </div>
                 <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-300/85">
                   <div>Wallet balance: {vaultWalletBalanceLabel}</div>
+                  <div>Current allowance: {vaultAllowanceLabel}</div>
                   <div>Wallet ownership of supply: {vaultWalletSupplyPct === null ? "--" : formatPct(vaultWalletSupplyPct)}</div>
                 </div>
                 <AddressField
@@ -3703,6 +3729,9 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                     ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
                     : "--"}
                 </div>
+                <div className="text-xs text-slate-300/85">
+                  Lock amount: {vaultDepositAmountLabel}
+                </div>
 
                 <div className="flex justify-end">
                   <button
@@ -3710,7 +3739,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                     onClick={handleVaultDeposit}
                     disabled={
                       vaultAction.loadingKey === "deposit" ||
-                      vaultLockAmountRaw === null
+                      vaultDepositAmountRaw === null
                     }
                     className={PRIMARY_BUTTON_CLASS}
                   >
