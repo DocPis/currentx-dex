@@ -81,6 +81,21 @@ const normalizePoolIds = (ids = []) =>
     )
   );
 const buildPoolIdsKey = (ids = []) => ids.slice().sort().join(",");
+const PRIMARY_TABS = [
+  { id: "dashboard", label: "Dashboard" },
+  { id: "swap", label: "Swap" },
+  { id: "liquidity", label: "Liquidity" },
+  { id: "pools", label: "Pools" },
+  { id: "points", label: "Points" },
+  { id: "farms", label: "Farms" },
+  { id: "megavault", label: "MegaVault" },
+  { id: "bridge", label: "Bridge" },
+];
+const BASE_TAB_BUTTON_CLASS =
+  "relative inline-flex items-center py-3 font-display text-[11px] font-medium leading-none tracking-[0.005em] text-white/75 transition-colors duration-[120ms] ease-out after:absolute after:bottom-0 after:left-0 after:h-px after:w-full after:origin-center after:scale-x-0 after:bg-slate-300/80 after:transition-transform after:duration-[120ms] after:ease-out after:content-[''] focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#070b16] sm:text-xs";
+const ACTIVE_TAB_BUTTON_CLASS =
+  "text-white after:h-[2px] after:scale-x-100 after:bg-[#7ea0b8]/80";
+const INACTIVE_TAB_BUTTON_CLASS = "hover:text-white hover:after:scale-x-100";
 
 export default function App() {
   const queryClient = useQueryClient();
@@ -396,37 +411,51 @@ export default function App() {
 
       {/* Tabs */}
       <div className="cx-fade-up border-b border-slate-800/80 bg-[#070b16] px-4 sm:px-6">
-        <div className="flex w-full flex-wrap items-center justify-center gap-x-3.5 gap-y-0 text-xs sm:text-sm">
-          {[
-            { id: "dashboard", label: "Dashboard" },
-            { id: "swap", label: "Swap" },
-            { id: "liquidity", label: "Liquidity" },
-            { id: "pools", label: "Pools" },
-            { id: "points", label: "Points" },
-            { id: "farms", label: "Farms" },
-            { id: "megavault", label: "MegaVault" },
-            { id: "bridge", label: "Bridge" },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => handleTabClick(item.id)}
-              onMouseEnter={() => {
-                preloadSection(item.id);
-                prefetchTabData(item.id);
-              }}
-              onFocus={() => {
-                preloadSection(item.id);
-                prefetchTabData(item.id);
-              }}
-              className={`relative inline-flex py-3 font-display text-[11px] font-medium tracking-[0.005em] leading-none text-white/75 transition-colors duration-[120ms] ease-out after:absolute after:bottom-0 after:left-0 after:h-px after:w-full after:origin-center after:scale-x-0 after:bg-slate-300/80 after:transition-transform after:duration-[120ms] after:ease-out after:content-[''] sm:text-xs ${
-                tab === item.id
-                  ? "text-white after:h-[2px] after:scale-x-100 after:bg-[#7ea0b8]/80"
-                  : "hover:text-white hover:after:scale-x-100"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
+        <div className="flex w-full flex-wrap items-center gap-x-3.5 gap-y-0 text-xs sm:text-sm">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-0">
+            {PRIMARY_TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleTabClick(item.id)}
+                onMouseEnter={() => {
+                  preloadSection(item.id);
+                  prefetchTabData(item.id);
+                }}
+                onFocus={() => {
+                  preloadSection(item.id);
+                  prefetchTabData(item.id);
+                }}
+                aria-current={tab === item.id ? "page" : undefined}
+                className={`${BASE_TAB_BUTTON_CLASS} ${
+                  tab === item.id ? ACTIVE_TAB_BUTTON_CLASS : INACTIVE_TAB_BUTTON_CLASS
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => navigateLaunchpad("/launchpad/market")}
+            onMouseEnter={() => {
+              preloadSection("launchpad");
+              prefetchTabData("launchpad");
+            }}
+            onFocus={() => {
+              preloadSection("launchpad");
+              prefetchTabData("launchpad");
+            }}
+            aria-current={tab === "launchpad" ? "page" : undefined}
+            className={`ml-auto flex flex-none items-center gap-2 whitespace-nowrap ${BASE_TAB_BUTTON_CLASS} ${
+              tab === "launchpad" ? ACTIVE_TAB_BUTTON_CLASS : INACTIVE_TAB_BUTTON_CLASS
+            }`}
+          >
+            <span>Launchpad</span>
+            <span className="inline-flex h-4 items-center rounded-full border border-rose-400/45 bg-rose-500/12 px-1.5 text-[9px] font-semibold uppercase leading-none tracking-[0.08em] text-rose-200">
+              NEW
+            </span>
+          </button>
         </div>
       </div>
 
