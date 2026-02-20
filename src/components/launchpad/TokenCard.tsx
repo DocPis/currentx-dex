@@ -1,4 +1,5 @@
 import React from "react";
+import { Lock } from "lucide-react";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatUsd, shortAddress } from "../../services/launchpad/utils";
 import PriceSparkline from "./PriceSparkline";
@@ -29,6 +30,12 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
             className="flex items-center gap-2 text-left"
           >
             <span className="font-display text-sm font-semibold text-slate-100">{token.name}</span>
+            {token.lpLocked === true ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/35 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200">
+                <Lock className="h-3 w-3" aria-hidden />
+                LP locked
+              </span>
+            ) : null}
           </button>
           <div className="mt-1 text-xs text-slate-400">
             ${token.symbol} - {shortAddress(token.address)}

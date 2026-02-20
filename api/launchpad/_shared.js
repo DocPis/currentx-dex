@@ -8,6 +8,7 @@ const DEFAULT_WETH = "0x4200000000000000000000000000000000000006";
 const DEFAULT_RPC = "https://mainnet.megaeth.com/rpc";
 const SNAPSHOT_TTL_MS = 20_000;
 const META_TTL_MS = 10 * 60 * 1000;
+const ADDRESS_RE = /^0x[0-9a-f]{40}$/u;
 
 const ERC20_META_ABI = [
   "function name() view returns (string)",
@@ -36,6 +37,17 @@ const IPFS_CID_RE = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[0-9a-z]{20,})$/iu;
 const DEFAULT_ONLY_LAUNCHPAD_TOKENS = true;
 
 const getWeth = () => toLower(process.env.LAUNCHPAD_WETH_ADDRESS || process.env.VITE_WETH_ADDRESS || DEFAULT_WETH);
+const getLpLocker = () => {
+  const raw = String(
+    process.env.LAUNCHPAD_LP_LOCKER_V2_ADDRESS ||
+      process.env.LAUNCHPAD_LP_LOCKER_ADDRESS ||
+      process.env.VITE_LP_LOCKER_V2_ADDRESS ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+  return ADDRESS_RE.test(raw) ? raw : "";
+};
 const getRpcUrl = () => {
   const list = [
     process.env.LAUNCHPAD_RPC_URL,
@@ -380,6 +392,59 @@ const normalizeTrade = (swap, tokenAddress, tokenIs0) => {
   };
 };
 
+const toLockedPoolSet = (rows = []) => {
+  const out = new Set();
+  (rows || []).forEach((row) => {
+    const poolId = toLower(row?.pool?.id);
+    if (!poolId) return;
+    out.add(poolId);
+  });
+  return out;
+};
+
+const resolveLockedPools = async (poolIds = []) => {
+  const locker = getLpLocker();
+  const normalizedPoolIds = dedupe((poolIds || []).map((poolId) => toLower(poolId)).filter(Boolean));
+  if (!locker || !normalizedPoolIds.length) {
+    return { available: false, lockedPools: new Set() };
+  }
+
+  const first = Math.min(5000, Math.max(200, normalizedPoolIds.length * 10));
+  const attempts = [
+    {
+      query: `
+        query LockedPools($owner: Bytes!, $ids: [Bytes!], $first: Int!) {
+          positions(first: $first, where: { owner: $owner, pool_in: $ids }) {
+            pool { id }
+          }
+        }
+      `,
+    },
+    {
+      query: `
+        query LockedPoolsNested($owner: Bytes!, $ids: [Bytes!], $first: Int!) {
+          positions(first: $first, where: { owner: $owner, pool_: { id_in: $ids } }) {
+            pool { id }
+          }
+        }
+      `,
+    },
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const data = await graph(attempt.query, { owner: locker, ids: normalizedPoolIds, first });
+      if (Array.isArray(data?.positions)) {
+        return { available: true, lockedPools: toLockedPoolSet(data.positions) };
+      }
+    } catch {
+      // try next schema variant
+    }
+  }
+
+  return { available: false, lockedPools: new Set() };
+};
+
 const buildSnapshot = async () => {
   const weth = getWeth();
   const scan = Math.max(30, Math.min(400, Number(process.env.LAUNCHPAD_POOL_SCAN_LIMIT || 220)));
@@ -491,7 +556,8 @@ const buildSnapshot = async () => {
   }
 
   const poolIds = Object.keys(poolSide);
-  const [dayData, hourData, recentSwaps] = await Promise.all([
+  const volume24hSince = Math.floor(Date.now() / 1000) - 24 * 3600;
+  const [dayData, hourData, hour24VolumeData, recentSwaps, lockStatus] = await Promise.all([
     poolIds.length
       ? graph(
           `
@@ -519,6 +585,28 @@ const buildSnapshot = async () => {
     poolIds.length
       ? graph(
           `
+            query Hour24Volume($ids: [Bytes!], $since: Int!, $first: Int!) {
+              poolHourDatas(
+                first: $first
+                orderBy: periodStartUnix
+                orderDirection: desc
+                where: { pool_in: $ids, periodStartUnix_gte: $since }
+              ) {
+                pool { id }
+                volumeUSD
+              }
+            }
+          `,
+          {
+            ids: poolIds,
+            since: volume24hSince,
+            first: Math.min(5000, Math.max(600, poolIds.length * 30)),
+          }
+        ).then((x) => x?.poolHourDatas || [])
+      : [],
+    poolIds.length
+      ? graph(
+          `
             query Swaps($ids: [Bytes!], $since: Int!, $first: Int!) {
               swaps(
                 first: $first
@@ -539,11 +627,20 @@ const buildSnapshot = async () => {
           }
         ).then((x) => x?.swaps || [])
       : [],
+    resolveLockedPools(poolIds),
   ]);
 
   const dayByPool = groupByPool(dayData);
   const hourByPool = groupByPool(hourData);
+  const volume24hByPool = new Map();
   const buysByToken = new Map();
+
+  hour24VolumeData.forEach((row) => {
+    const poolId = toLower(row?.pool?.id);
+    if (!poolId) return;
+    const volume = Math.max(0, toNumber(row?.volumeUSD, 0));
+    volume24hByPool.set(poolId, (volume24hByPool.get(poolId) || 0) + volume);
+  });
 
   tokenMap.forEach((token, address) => {
     const dayRows = dayByPool.get(token.__poolId) || [];
@@ -556,7 +653,7 @@ const buildSnapshot = async () => {
     const prevDayPrice = priceFromRow(prevDay, token.__tokenIs0);
     const hourPrice = priceFromRow(latestHour, token.__tokenIs0);
     const prevHourPrice = priceFromRow(prevHour, token.__tokenIs0);
-    token.market.volume24hUSD = Math.max(0, toNumber(latestDay?.volumeUSD, token.market.volume24hUSD));
+    token.market.volume24hUSD = Math.max(0, toNumber(volume24hByPool.get(token.__poolId), 0));
     token.market.change24h = prevDayPrice > 0 && dayPrice > 0 ? ((dayPrice - prevDayPrice) / prevDayPrice) * 100 : 0;
     token.market.change1h = prevHourPrice > 0 && hourPrice > 0 ? ((hourPrice - prevHourPrice) / prevHourPrice) * 100 : 0;
     token.sparkline = hourRows
@@ -581,6 +678,10 @@ const buildSnapshot = async () => {
 
   tokenMap.forEach((token, address) => {
     token.buysPerMinute = Number(((buysByToken.get(address) || 0) / 60).toFixed(4));
+    if (lockStatus?.available) {
+      const poolsForToken = tokenPools[address] || [];
+      token.lpLocked = poolsForToken.some((poolId) => lockStatus.lockedPools.has(toLower(poolId)));
+    }
   });
 
   const tokens = Array.from(tokenMap.values()).map((token) => {

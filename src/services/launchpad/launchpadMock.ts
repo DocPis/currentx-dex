@@ -37,7 +37,10 @@ const LOGOS = [
 ];
 
 const TOKEN_BLUEPRINTS: Array<
-  Pick<LaunchpadTokenCard, "name" | "symbol" | "tags" | "description" | "website" | "socials"> & {
+  Pick<
+    LaunchpadTokenCard,
+    "name" | "symbol" | "tags" | "description" | "website" | "socials" | "lpLocked"
+  > & {
     volatility: number;
     liquidityUSD: number;
     volume24hUSD: number;
@@ -282,6 +285,7 @@ const TOKENS: LaunchpadTokenCard[] = TOKEN_BLUEPRINTS.map((blueprint, index) => 
       poolFeeBps: 30,
       creatorAllocationPct: 3 + (index % 6),
     },
+    lpLocked: blueprint.lpLocked ?? index % 2 === 0,
     buysPerMinute: blueprint.buysPerMinute,
     sparkline: buildSparkline(blueprint.priceUSD, blueprint.volatility),
     market: {

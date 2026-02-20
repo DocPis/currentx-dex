@@ -37,6 +37,7 @@ export interface LaunchpadTokenCard extends LaunchpadToken {
     poolFeeBps?: number;
     creatorAllocationPct?: number;
   };
+  lpLocked?: boolean;
 }
 
 export interface LaunchpadTrade {

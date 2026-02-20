@@ -1323,6 +1323,42 @@ const addDayTvl = (targetMap, dayId, tvlValue) => {
   targetMap.set(dayId, (targetMap.get(dayId) || 0) + tvl);
 };
 
+// Build a dense per-pool daily TVL series across the requested window.
+// Some subgraphs omit poolDayDatas entries for days without updates, so we carry
+// forward the last known pool TVL to avoid undercounting protocol TVL for that day.
+const addDensePoolTvlRows = (targetMap, rows = [], pickTvl, days = 7) => {
+  const safeDays = Math.max(1, Math.min(Number(days) || 7, 1000));
+  const todayDayId = Math.floor(Date.now() / 86400000);
+  const startDayId = todayDayId - safeDays + 1;
+
+  const tvlByDay = new Map();
+  (rows || []).forEach((row) => {
+    const dayId = toDayIdFromSubgraphDate(row?.date);
+    if (!Number.isFinite(dayId) || dayId <= 0) return;
+    const tvl = Number(pickTvl?.(row));
+    if (!Number.isFinite(tvl) || tvl < 0) return;
+    if (!tvlByDay.has(dayId)) tvlByDay.set(dayId, tvl);
+  });
+
+  let lastKnown = null;
+  let baselineDay = null;
+  tvlByDay.forEach((value, dayId) => {
+    if (dayId >= startDayId) return;
+    if (baselineDay === null || dayId > baselineDay) {
+      baselineDay = dayId;
+      lastKnown = value;
+    }
+  });
+
+  for (let dayId = startDayId; dayId <= todayDayId; dayId += 1) {
+    if (tvlByDay.has(dayId)) {
+      lastKnown = Number(tvlByDay.get(dayId));
+    }
+    if (lastKnown === null) continue;
+    addDayTvl(targetMap, dayId, lastKnown);
+  }
+};
+
 const splitIntoChunks = (items = [], size = WHITELIST_HISTORY_CHUNK_SIZE) => {
   const out = [];
   for (let i = 0; i < items.length; i += size) {
@@ -1390,10 +1426,7 @@ const fetchV2WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
     const res = await postSubgraph(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      rows.forEach((row) => {
-        const dayId = toDayIdFromSubgraphDate(row?.date);
-        addDayTvl(totals, dayId, row?.reserveUSD);
-      });
+      addDensePoolTvlRows(totals, rows, (row) => row?.reserveUSD, days);
     });
   };
 
@@ -1478,10 +1511,7 @@ const fetchV3WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
     const res = await postSubgraphV3(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      rows.forEach((row) => {
-        const dayId = toDayIdFromSubgraphDate(row?.date);
-        addDayTvl(totals, dayId, selectVariant.pickTvl(row));
-      });
+      addDensePoolTvlRows(totals, rows, selectVariant.pickTvl, days);
     });
   };
 
