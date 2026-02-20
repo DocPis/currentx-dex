@@ -22,7 +22,7 @@ const launchpadViews = [
   { id: "market", label: "Market", hint: "Browse and trade launched tokens" },
   { id: "create", label: "Create Token", hint: "Deploy a new token" },
   { id: "deployments", label: "My Tokens", hint: "View your deployed tokens" },
-  { id: "vault", label: "Vault", hint: "Active locks + deposit" },
+  { id: "vault", label: "Vault", hint: "Active locks + status" },
   { id: "locker", label: "Locker", hint: "LP pair + collect fees" },
 ] as const;
 

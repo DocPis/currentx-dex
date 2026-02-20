@@ -180,7 +180,6 @@ const REWARD_TYPE_OPTIONS = [
   { value: "both", label: "Both" },
 ];
 const VAULT_PERCENT_PRESETS = ["5", "15", "30"];
-const VAULT_LOCK_DAY_PRESETS = ["30", "90", "180"];
 const LOCKUP_DAY_PRESETS = ["30", "90", "180"];
 const VESTING_DAY_PRESETS = ["30", "90", "180"];
 const CREATOR_BUY_ETH_PRESETS = ["0.1", "0.5", "1"];
@@ -268,27 +267,6 @@ const toBigIntSafe = (value) => {
   } catch {
     return null;
   }
-};
-
-const normalizeVaultApproveMode = (value) => {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized === "50" ? "50" : "max";
-};
-
-const computeVaultApproveAmount = (walletBalanceRaw, approveMode) => {
-  const balance = toBigIntSafe(walletBalanceRaw);
-  if (balance === null || balance <= 0n) return null;
-  const mode = normalizeVaultApproveMode(approveMode);
-  if (mode === "50") {
-    const half = balance / 2n;
-    return half > 0n ? half : null;
-  }
-  return balance;
-};
-
-const formatPct = (value, digits = 2) => {
-  if (!Number.isFinite(Number(value))) return "--";
-  return `${Number(value).toFixed(digits)}%`;
 };
 
 const formatDate = (unix) => {
@@ -806,9 +784,6 @@ const defaultDeployForm = () => ({
 
 const defaultVaultForm = () => ({
   token: "",
-  depositLockDays: "30",
-  depositAdmin: "",
-  approveMode: "max",
 });
 
 const LAUNCHPAD_VIEWS = new Set(["create", "deployments", "vault", "locker"]);
@@ -855,11 +830,8 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     minimumVaultTime: 0n,
   });
   const [vaultTokenMeta, setVaultTokenMeta] = useState(null);
-  const [vaultWalletBalanceRaw, setVaultWalletBalanceRaw] = useState(null);
-  const [vaultAllowanceRaw, setVaultAllowanceRaw] = useState(null);
   const [vaultSelectedAllocation, setVaultSelectedAllocation] = useState(null);
   const [vaultSelectedAllocationLoading, setVaultSelectedAllocationLoading] = useState(false);
-  const [vaultAction, setVaultAction] = useState({ loadingKey: "", error: "", hash: "", message: "" });
 
   const [locker, setLocker] = useState({
     loading: false,
@@ -937,60 +909,6 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     return Math.max(1, Math.ceil(seconds / DAY));
   }, [vaultLocks.minimumVaultTime]);
 
-  const vaultLockDayOptions = useMemo(() => {
-    const base = VAULT_LOCK_DAY_PRESETS.map((value) => Number(value))
-      .filter((value) => Number.isFinite(value) && value > 0)
-      .sort((a, b) => a - b);
-    const eligible = base.filter((value) => value >= minimumVaultLockDays);
-    if (eligible.length > 0) return eligible.map((value) => String(value));
-    return [String(base[base.length - 1] || 180)];
-  }, [minimumVaultLockDays]);
-
-  const vaultUnlockPreview = useMemo(() => {
-    const lockDays = Number(String(vaultForm.depositLockDays || "").trim());
-    if (!Number.isFinite(lockDays) || lockDays <= 0) return "--";
-    const unlockMs = Date.now() + lockDays * DAY * 1000;
-    const unlockDate = new Date(unlockMs);
-    if (Number.isNaN(unlockDate.getTime())) return "--";
-    return unlockDate.toLocaleString();
-  }, [vaultForm.depositLockDays]);
-
-  const vaultLockAmountRaw = useMemo(() => {
-    const raw = toBigIntSafe(vaultTokenMeta?.totalSupplyRaw);
-    if (raw === null || raw <= 0n) return null;
-    return raw;
-  }, [vaultTokenMeta]);
-
-  const vaultWalletBalanceLabel = useMemo(() => {
-    if (!vaultTokenMeta || vaultWalletBalanceRaw === null) return "--";
-    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
-    return `${formatAmount(vaultWalletBalanceRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
-  }, [vaultTokenMeta, vaultWalletBalanceRaw]);
-
-  const vaultApproveMode = normalizeVaultApproveMode(vaultForm.approveMode);
-  const vaultApproveAmountRaw = useMemo(
-    () => computeVaultApproveAmount(vaultWalletBalanceRaw, vaultApproveMode),
-    [vaultWalletBalanceRaw, vaultApproveMode]
-  );
-  const vaultApproveAmountLabel = useMemo(() => {
-    if (!vaultTokenMeta || vaultApproveAmountRaw === null) return "--";
-    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
-    return `${formatAmount(vaultApproveAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
-  }, [vaultApproveAmountRaw, vaultTokenMeta]);
-  const vaultAllowanceLabel = useMemo(() => {
-    if (!vaultTokenMeta || vaultAllowanceRaw === null) return "--";
-    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
-    return `${formatAmount(vaultAllowanceRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
-  }, [vaultAllowanceRaw, vaultTokenMeta]);
-  const vaultDepositAmountRaw = useMemo(() => {
-    if (vaultAllowanceRaw === null || vaultAllowanceRaw <= 0n) return null;
-    return vaultAllowanceRaw;
-  }, [vaultAllowanceRaw]);
-  const vaultDepositAmountLabel = useMemo(() => {
-    if (!vaultTokenMeta || vaultDepositAmountRaw === null) return "--";
-    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
-    return `${formatAmount(vaultDepositAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
-  }, [vaultDepositAmountRaw, vaultTokenMeta]);
   const vaultSelectedLockActive = useMemo(() => {
     const amount = toBigIntSafe(vaultSelectedAllocation?.amountRaw);
     const endTime = Number(vaultSelectedAllocation?.endTime ?? 0);
@@ -998,28 +916,23 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     if (!Number.isFinite(endTime) || endTime <= 0) return false;
     return endTime > Math.floor(Date.now() / 1000);
   }, [vaultSelectedAllocation]);
+  const vaultSelectedLockAmountLabel = useMemo(() => {
+    const amount = toBigIntSafe(vaultSelectedAllocation?.amountRaw);
+    if (!vaultTokenMeta || amount === null || amount <= 0n) return "--";
+    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
+    return `${formatAmount(amount, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
+  }, [vaultSelectedAllocation, vaultTokenMeta]);
+  const vaultSelectedLockAdminLabel = useMemo(() => {
+    const admin = String(vaultSelectedAllocation?.admin || "");
+    if (!isAddress(admin)) return "--";
+    return `${shorten(admin)} (${admin})`;
+  }, [vaultSelectedAllocation]);
   const vaultSelectedLockNotice = useMemo(() => {
     if (!vaultSelectedLockActive) return "";
     const unlock = formatDate(vaultSelectedAllocation?.endTime);
-    const admin = String(vaultSelectedAllocation?.admin || "");
-    const adminLabel = isAddress(admin) ? shorten(admin) : "--";
-    return `Token already locked until ${unlock}${adminLabel !== "--" ? ` (admin ${adminLabel})` : ""}.`;
+    const adminLabel = vaultSelectedLockAdminLabel === "--" ? "" : ` (admin ${shorten(String(vaultSelectedAllocation?.admin || ""))})`;
+    return `Token already locked until ${unlock}${adminLabel}.`;
   }, [vaultSelectedAllocation, vaultSelectedLockActive]);
-
-  const vaultWalletSupplyPct = useMemo(() => {
-    if (vaultWalletBalanceRaw === null || vaultLockAmountRaw === null || vaultLockAmountRaw <= 0n) return null;
-    const bps = Number((vaultWalletBalanceRaw * 10000n) / vaultLockAmountRaw);
-    if (!Number.isFinite(bps)) return null;
-    return bps / 100;
-  }, [vaultWalletBalanceRaw, vaultLockAmountRaw]);
-
-  useEffect(() => {
-    setVaultForm((prev) => {
-      const current = String(prev.depositLockDays || "").trim();
-      if (vaultLockDayOptions.includes(current)) return prev;
-      return { ...prev, depositLockDays: vaultLockDayOptions[0] || "30" };
-    });
-  }, [vaultLockDayOptions]);
 
   const resolveTokenMeta = useCallback(async (tokenAddress, providerOverride) => {
     if (!isAddress(tokenAddress)) return null;
@@ -1319,7 +1232,6 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       interfaceRewardRecipient: prev.interfaceRewardRecipient || protocolRewardRecipient,
       teamRewardRecipient: prev.teamRewardRecipient || protocolRewardRecipient,
     }));
-    setVaultForm((prev) => ({ ...prev, depositAdmin: prev.depositAdmin || address }));
   }, [address]);
 
   useEffect(() => {
@@ -1360,52 +1272,6 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       cancelled = true;
     };
   }, [resolveTokenMeta, vaultForm.token]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const token = String(vaultForm.token || "").trim();
-    const wallet = String(address || "").trim();
-    if (!isAddress(token) || !isAddress(wallet)) {
-      setVaultWalletBalanceRaw(null);
-      return () => {};
-    }
-    const provider = getReadOnlyProvider(false, true);
-    const erc20 = new Contract(token, ERC20_ABI, provider);
-    erc20
-      .balanceOf(wallet)
-      .then((value) => {
-        if (!cancelled) setVaultWalletBalanceRaw(toBigIntSafe(value));
-      })
-      .catch(() => {
-        if (!cancelled) setVaultWalletBalanceRaw(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [address, vaultForm.token]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const token = String(vaultForm.token || "").trim();
-    const wallet = String(address || "").trim();
-    if (!isAddress(token) || !isAddress(wallet) || !isAddress(contracts.vault)) {
-      setVaultAllowanceRaw(null);
-      return () => {};
-    }
-    const provider = getReadOnlyProvider(false, true);
-    const erc20 = new Contract(token, ERC20_ABI, provider);
-    erc20
-      .allowance(wallet, contracts.vault)
-      .then((value) => {
-        if (!cancelled) setVaultAllowanceRaw(toBigIntSafe(value));
-      })
-      .catch(() => {
-        if (!cancelled) setVaultAllowanceRaw(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [address, contracts.vault, vaultForm.token]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2212,119 +2078,6 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     }
   };
 
-  const handleVaultApprove = async () => {
-    if (!address) {
-      if (typeof onConnect === "function") onConnect();
-      return;
-    }
-    try {
-      setVaultAction({ loadingKey: "approve", error: "", hash: "", message: "Approving vault..." });
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const token = String(vaultForm.token || "").trim();
-      if (!isAddress(token)) throw new Error("Token address is invalid.");
-      if (!isAddress(contracts.vault)) throw new Error("Vault address is invalid.");
-      const erc20 = new Contract(token, ERC20_ABI, signer);
-      const walletBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
-      const amount = computeVaultApproveAmount(walletBalance, vaultForm.approveMode);
-      if (amount === null || amount <= 0n) {
-        throw new Error("Wallet balance is too low for selected approve amount.");
-      }
-      const tx = await erc20.approve(contracts.vault, amount);
-      const receipt = await tx.wait();
-      const nextAllowance = toBigIntSafe(await erc20.allowance(address, contracts.vault).catch(() => null));
-      setVaultAllowanceRaw(nextAllowance ?? amount);
-      const modeLabel = normalizeVaultApproveMode(vaultForm.approveMode) === "50" ? "50%" : "max";
-      setVaultAction({
-        loadingKey: "",
-        error: "",
-        hash: receipt.hash || tx.hash || "",
-        message: `Allowance updated (${modeLabel} of wallet balance).`,
-      });
-    } catch (error) {
-      setVaultAction({ loadingKey: "", error: errMsg(error, "Approve failed."), hash: "", message: "" });
-    }
-  };
-
-  const handleVaultDeposit = async () => {
-    if (!address) {
-      if (typeof onConnect === "function") onConnect();
-      return;
-    }
-    try {
-      setVaultAction({ loadingKey: "deposit", error: "", hash: "", message: "Depositing..." });
-      const provider = await getProvider();
-      const signer = await provider.getSigner();
-      const token = String(vaultForm.token || "").trim();
-      if (!isAddress(token)) throw new Error("Token address is invalid.");
-      if (!isAddress(contracts.vault)) throw new Error("Vault address is invalid.");
-      const erc20 = new Contract(token, ERC20_ABI, provider);
-      const [walletBalance, allowance] = await Promise.all([
-        erc20.balanceOf(address).catch(() => null),
-        erc20.allowance(address, contracts.vault).catch(() => null),
-      ]);
-      const walletBalanceRaw = toBigIntSafe(walletBalance);
-      const allowanceRaw = toBigIntSafe(allowance);
-      if (allowanceRaw === null || allowanceRaw <= 0n) {
-        throw new Error("No approved amount found. Run Approve first.");
-      }
-      const amount = allowanceRaw;
-      if (walletBalanceRaw === null || walletBalanceRaw < amount) {
-        throw new Error("Wallet balance is below approved amount. Approve again with a lower amount.");
-      }
-      const now = Math.floor(Date.now() / 1000);
-      const vaultRead = new Contract(contracts.vault, CURRENTX_VAULT_ABI, provider);
-      const existingAllocation = await vaultRead.allocation(token).catch(() => null);
-      const existingAmount = toBigIntSafe(existingAllocation?.amount);
-      const existingEndTime = Number(existingAllocation?.endTime ?? 0);
-      if (
-        existingAmount !== null &&
-        existingAmount > 0n &&
-        Number.isFinite(existingEndTime) &&
-        existingEndTime > now
-      ) {
-        throw new Error(`This token already has an active vault lock until ${formatDate(existingEndTime)}.`);
-      }
-      const lockDaysRaw = String(vaultForm.depositLockDays || "").trim();
-      const lockDays = Number(lockDaysRaw);
-      if (!vaultLockDayOptions.includes(lockDaysRaw) || !Number.isFinite(lockDays) || lockDays <= 0) {
-        throw new Error("Select a lock duration: 30, 90, or 180 days.");
-      }
-      const unlockTime = now + lockDays * DAY;
-      if (unlockTime <= now) throw new Error("Unlock date must be in the future.");
-      const minTime = Number(vaultLocks.minimumVaultTime || 0n);
-      if (minTime > 0 && unlockTime - now < minTime) {
-        const minimumDays = Math.ceil(minTime / DAY);
-        throw new Error(`Lock duration must be at least ${minimumDays} days.`);
-      }
-      const admin = vaultForm.depositAdmin || address;
-      if (!isAddress(admin)) throw new Error("Deposit admin is invalid.");
-
-      const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
-      await vault.deposit.staticCall(token, amount, unlockTime, admin);
-      const tx = await vault.deposit(token, amount, unlockTime, admin);
-      const receipt = await tx.wait();
-      const [nextBalance, nextAllowance] = await Promise.all([
-        erc20.balanceOf(address).catch(() => null),
-        erc20.allowance(address, contracts.vault).catch(() => null),
-      ]);
-      setVaultWalletBalanceRaw(toBigIntSafe(nextBalance));
-      setVaultAllowanceRaw(toBigIntSafe(nextAllowance));
-      setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Deposit completed." });
-      await refreshVaultLocks();
-    } catch (error) {
-      setVaultAction({
-        loadingKey: "",
-        error: errMsg(
-          error,
-          "Vault lock failed without revert reason. Check approved amount, wallet balance, lock duration, and whether this token already has an active lock."
-        ),
-        hash: "",
-        message: "",
-      });
-    }
-  };
-
   const handleCollectLocker = async () => {
     if (!address) {
       if (typeof onConnect === "function") onConnect();
@@ -2352,7 +2105,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     { id: "market", label: "Market", hint: "Browse and trade launched tokens" },
     { id: "create", label: "Create Token", hint: "Deploy a new token" },
     { id: "deployments", label: "My Tokens", hint: "View your deployed tokens" },
-    { id: "vault", label: "Vault", hint: "Active locks + deposit" },
+    { id: "vault", label: "Vault", hint: "Active locks + status" },
     { id: "locker", label: "Locker", hint: "LP pair + collect fees" },
   ];
 
@@ -3622,7 +3375,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
           <div className="flex items-center justify-between">
             <div>
               <div className="font-display text-lg font-semibold">CurrentxVault</div>
-              <div className="text-xs text-slate-300/70">Active locks and new vault deposits.</div>
+              <div className="text-xs text-slate-300/70">Active locks and vault status (read-only).</div>
             </div>
             <button
               type="button"
@@ -3703,9 +3456,9 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
             </div>
 
             <div className={`${TONED_PANEL_CLASS} p-3`}>
-              <div className="text-sm font-semibold text-slate-100">Deposit token into vault</div>
+              <div className="text-sm font-semibold text-slate-100">Vault status inspector</div>
               <div className="mt-1 text-xs text-slate-300/75">
-                Lock amount uses the current approved allowance for this token.
+                Manual wallet lock is disabled because vault `deposit` is factory-only.
               </div>
 
               <div className="mt-3 space-y-3">
@@ -3719,131 +3472,41 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   Token meta:{" "}
                   {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
                 </div>
-                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-300/85">
-                  <div>Wallet balance: {vaultWalletBalanceLabel}</div>
-                  <div>Current allowance: {vaultAllowanceLabel}</div>
-                  <div>Wallet ownership of supply: {vaultWalletSupplyPct === null ? "--" : formatPct(vaultWalletSupplyPct)}</div>
-                </div>
                 {vaultSelectedAllocationLoading ? (
                   <div className="rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-2 text-xs text-slate-300/80">
                     Checking vault lock status...
                   </div>
                 ) : null}
-                {!vaultSelectedAllocationLoading && vaultSelectedLockActive ? (
-                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                    {vaultSelectedLockNotice}
+                {!vaultSelectedAllocationLoading && !isAddress(vaultForm.token) ? (
+                  <div className="rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-2 text-xs text-slate-300/80">
+                    Enter a token address to inspect vault lock status.
                   </div>
                 ) : null}
-                <AddressField
-                  label="Admin wallet"
-                  value={vaultForm.depositAdmin}
-                  onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
-                  required
-                />
-
-                <div className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-xs text-slate-300/80">Approve amount uses selected wallet balance mode.</div>
-                    <div className="inline-flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setVaultForm((prev) => ({ ...prev, approveMode: "50" }))}
-                        className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
-                          vaultApproveMode === "50"
-                            ? "border-cyan-300/65 bg-cyan-400/15 text-cyan-100"
-                            : "border-slate-600/70 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100"
-                        }`}
-                      >
-                        50%
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setVaultForm((prev) => ({ ...prev, approveMode: "max" }))}
-                        className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
-                          vaultApproveMode === "max"
-                            ? "border-cyan-300/65 bg-cyan-400/15 text-cyan-100"
-                            : "border-slate-600/70 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100"
-                        }`}
-                      >
-                        Max
-                      </button>
-                    </div>
+                {!vaultSelectedAllocationLoading && isAddress(vaultForm.token) && vaultSelectedLockActive ? (
+                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
+                    <div>{vaultSelectedLockNotice}</div>
+                    <div className="mt-1">Locked amount: {vaultSelectedLockAmountLabel}</div>
+                    <div>Unlock date: {formatDate(vaultSelectedAllocation?.endTime)}</div>
+                    <div>Admin: {vaultSelectedLockAdminLabel}</div>
                   </div>
-                  <div className="text-xs text-cyan-100/90">
-                    Approve amount: {vaultApproveAmountLabel}
+                ) : null}
+                {!vaultSelectedAllocationLoading && isAddress(vaultForm.token) && !vaultSelectedLockActive ? (
+                  <div className="rounded-xl border border-slate-700/55 bg-slate-900/35 px-3 py-2 text-xs text-slate-300/85">
+                    No active lock found for this token.
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={handleVaultApprove}
-                      disabled={
-                        vaultAction.loadingKey === "approve" ||
-                        vaultSelectedAllocationLoading ||
-                        vaultSelectedLockActive ||
-                        (Boolean(address) && vaultApproveAmountRaw === null)
-                      }
-                      className={CYAN_BUTTON_CLASS}
-                    >
-                      {vaultAction.loadingKey === "approve"
-                        ? "Approving..."
-                        : vaultSelectedAllocationLoading
-                          ? "Checking..."
-                          : vaultSelectedLockActive
-                            ? "Already locked"
-                            : vaultApproveMode === "50"
-                              ? "Approve 50% balance"
-                              : "Approve max balance"}
-                    </button>
+                ) : null}
+
+                <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-300/85">
+                  <div>
+                    Minimum lock period: {minimumVaultLockDays > 0 ? `${minimumVaultLockDays} days` : "--"}
                   </div>
-                </div>
-
-                <div className="text-xs text-slate-300/80">Lock duration (days)</div>
-                <SelectorPills
-                  value={vaultLockDayOptions.includes(String(vaultForm.depositLockDays || "")) ? String(vaultForm.depositLockDays || "") : ""}
-                  onChange={(value) => setVaultForm((prev) => ({ ...prev, depositLockDays: value }))}
-                  columns={4}
-                  options={vaultLockDayOptions.map((value) => ({ value, label: `${value} days` }))}
-                />
-
-                <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-                  Unlock preview: {vaultUnlockPreview}
-                </div>
-
-                <div className="text-[11px] text-slate-400/80">
-                  Minimum lock:{" "}
-                  {Number(vaultLocks.minimumVaultTime || 0n) > 0
-                    ? `${Math.ceil(Number(vaultLocks.minimumVaultTime || 0n) / DAY)} days`
-                    : "--"}
-                </div>
-                <div className="text-xs text-slate-300/85">
-                  Lock amount: {vaultDepositAmountLabel}
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleVaultDeposit}
-                    disabled={
-                      vaultAction.loadingKey === "deposit" ||
-                      vaultSelectedAllocationLoading ||
-                      vaultSelectedLockActive ||
-                      vaultDepositAmountRaw === null
-                    }
-                    className={PRIMARY_BUTTON_CLASS}
-                  >
-                    {vaultAction.loadingKey === "deposit"
-                      ? "Depositing..."
-                      : vaultSelectedAllocationLoading
-                        ? "Checking lock..."
-                        : vaultSelectedLockActive
-                          ? "Already locked"
-                          : "Lock"}
-                  </button>
+                  <div className="mt-1">
+                    Vault deposits are executed only by CurrentX factory during token creation.
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-          <ActionInfo state={vaultAction} />
         </div>
 
         <div className={`${PANEL_CLASS} ${activeView === "locker" ? "cx-panel-enter" : "hidden"}`}>
