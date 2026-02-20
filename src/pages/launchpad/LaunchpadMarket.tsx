@@ -10,7 +10,7 @@ import {
 } from "../../services/launchpad/hooks";
 import type { LaunchpadFilter, LaunchpadSort } from "../../services/launchpad/types";
 
-type StudioView = "create" | "deployments" | "vault" | "locker";
+type StudioView = "create" | "deployments" | "locker";
 
 interface LaunchpadMarketProps {
   onOpenToken: (tokenAddress: string) => void;
@@ -22,7 +22,6 @@ const launchpadViews = [
   { id: "market", label: "Market", hint: "Browse and trade launched tokens" },
   { id: "create", label: "Create Token", hint: "Deploy a new token" },
   { id: "deployments", label: "My Tokens", hint: "View your deployed tokens" },
-  { id: "vault", label: "Vault", hint: "Active locks + status" },
   { id: "locker", label: "Locker", hint: "LP pair + collect fees" },
 ] as const;
 
@@ -120,7 +119,7 @@ const LaunchpadMarket = ({ onOpenToken, onBuyToken, onOpenStudio }: LaunchpadMar
           <div className="mt-3 text-xs text-slate-500">{total.toLocaleString()} tokens indexed</div>
         </header>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {launchpadViews.map((view, index) => {
             const isMarket = view.id === "market";
             return (

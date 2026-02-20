@@ -13,7 +13,6 @@ const DEFAULT_STUDIO_VIEW = "create";
 const getStudioPath = (studioView = DEFAULT_STUDIO_VIEW) => {
   const normalized = String(studioView || "").toLowerCase();
   if (normalized === "deployments") return "/launchpad/my-tokens";
-  if (normalized === "vault") return "/launchpad/vault";
   if (normalized === "locker") return "/launchpad/locker";
   return "/launchpad/create";
 };
@@ -33,7 +32,7 @@ const parseLaunchpadPath = (path = "") => {
     return { view: "legacy", tokenAddress: "", studioView: "deployments", tradeIntent: null };
   }
   if (cleaned === "/launchpad/vault") {
-    return { view: "legacy", tokenAddress: "", studioView: "vault", tradeIntent: null };
+    return { view: "legacy", tokenAddress: "", studioView: "create", tradeIntent: null };
   }
   if (cleaned === "/launchpad/locker") {
     return { view: "legacy", tokenAddress: "", studioView: "locker", tradeIntent: null };
