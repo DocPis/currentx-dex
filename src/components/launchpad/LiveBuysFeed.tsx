@@ -17,6 +17,21 @@ const heatClass = (amountUSD: number) => {
   return "bg-emerald-400";
 };
 
+const tradeKey = (item: LaunchpadTrade, index: number) => {
+  const eventId = String(item?.eventId || "").trim().toLowerCase();
+  if (eventId) return eventId;
+  return [
+    String(item?.txHash || "").trim().toLowerCase(),
+    String(item?.tokenAddress || "").trim().toLowerCase(),
+    String(item?.timestamp || "").trim(),
+    String(item?.side || "").trim(),
+    String(Number(item?.amountUSD || 0)),
+    String(item?.amountOut || "").trim(),
+    String(Math.floor(Number(item?.blockNumber || 0))),
+    String(index),
+  ].join(":");
+};
+
 const LiveBuysFeed = ({
   items,
   isLoading = false,
@@ -50,9 +65,9 @@ const LiveBuysFeed = ({
         </div>
       ) : (
         <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-          {items.map((item) => (
+          {items.map((item, index) => (
             <div
-              key={item.txHash}
+              key={tradeKey(item, index)}
               className="rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-2 text-xs"
             >
               <div className="flex items-center justify-between gap-2">

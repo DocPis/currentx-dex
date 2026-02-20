@@ -23,7 +23,27 @@ import type {
 const DEFAULT_PAGE_SIZE = 24;
 const LIVE_POLL_MS = 4500;
 
-const normalizeHash = (value: string) => String(value || "").toLowerCase();
+const normalizeHash = (value: unknown) => String(value || "").toLowerCase();
+
+const tradeIdentity = (trade?: LaunchpadTrade | null) => {
+  if (!trade) return "";
+  const eventId = normalizeHash(trade.eventId);
+  if (eventId) return `event:${eventId}`;
+
+  const txHash = normalizeHash(trade.txHash);
+  if (!txHash) return "";
+  return [
+    "tx",
+    txHash,
+    normalizeHash(trade.tokenAddress),
+    String(trade.timestamp || ""),
+    String(trade.side || ""),
+    String(Number(trade.amountUSD || 0)),
+    String(trade.amountIn || ""),
+    String(trade.amountOut || ""),
+    String(Math.floor(Number(trade.blockNumber || 0))),
+  ].join(":");
+};
 
 const serializeWsParams = (params?: Record<string, string | number | boolean | undefined>) =>
   JSON.stringify(
@@ -50,7 +70,7 @@ const mergeTrades = (
 ): LaunchpadTrade[] => {
   const map = new Map<string, LaunchpadTrade>();
   [...incoming, ...current].forEach((item) => {
-    const key = normalizeHash(item.txHash);
+    const key = tradeIdentity(item);
     if (!key || map.has(key)) return;
     map.set(key, item);
   });
@@ -69,13 +89,7 @@ const areTradesEqual = (a: LaunchpadTrade[], b: LaunchpadTrade[]) => {
   for (let i = 0; i < a.length; i += 1) {
     const left = a[i];
     const right = b[i];
-    if (
-      normalizeHash(left?.txHash) !== normalizeHash(right?.txHash) ||
-      normalizeHash(left?.tokenAddress) !== normalizeHash(right?.tokenAddress) ||
-      String(left?.side || "") !== String(right?.side || "") ||
-      String(left?.timestamp || "") !== String(right?.timestamp || "") ||
-      Number(left?.amountUSD || 0) !== Number(right?.amountUSD || 0)
-    ) {
+    if (tradeIdentity(left) !== tradeIdentity(right)) {
       return false;
     }
   }

@@ -309,8 +309,10 @@ const createTrade = (token: LaunchpadTokenCard, side: "BUY" | "SELL", timestamp:
   seq += 1;
   const amountUSD = Math.max(22, Number((token.market.priceUSD * (1200 + (seq % 15) * 140)).toFixed(2)));
   const amountOut = Number((amountUSD / Math.max(token.market.priceUSD, 0.0000001)).toFixed(6));
+  const txHash = `0x${hashNumber(`${token.address}:${timestamp}:${seq}`).toString(16).padStart(64, "0")}`;
   return {
-    txHash: `0x${hashNumber(`${token.address}:${timestamp}:${seq}`).toString(16).padStart(64, "0")}`,
+    eventId: `${txHash}:0`,
+    txHash,
     tokenAddress: token.address,
     side,
     amountIn: amountUSD.toFixed(2),

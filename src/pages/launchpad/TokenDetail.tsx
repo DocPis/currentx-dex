@@ -57,6 +57,54 @@ const buildPricePath = (candles: LaunchpadCandle[], width: number, height: numbe
     .join(" ");
 };
 
+const activityRowKey = (
+  item: {
+    eventId?: string;
+    txHash?: string;
+    tokenAddress?: string;
+    timestamp?: string;
+    side?: string;
+    amountUSD?: number;
+    amountOut?: string;
+    blockNumber?: number;
+  },
+  index: number
+) => {
+  const eventId = String(item?.eventId || "").trim().toLowerCase();
+  if (eventId) return eventId;
+  return [
+    String(item?.txHash || "").trim().toLowerCase(),
+    String(item?.tokenAddress || "").trim().toLowerCase(),
+    String(item?.timestamp || "").trim(),
+    String(item?.side || "").trim(),
+    String(Number(item?.amountUSD || 0)),
+    String(item?.amountOut || "").trim(),
+    String(Math.floor(Number(item?.blockNumber || 0))),
+    String(index),
+  ].join(":");
+};
+
+const safeHttpUrl = (value: string): string => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const candidates = [raw];
+  if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(raw) && !raw.includes(" ")) {
+    candidates.push(`https://${raw}`);
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      const protocol = String(parsed.protocol || "").toLowerCase();
+      if (protocol !== "http:" && protocol !== "https:") continue;
+      if (!String(parsed.hostname || "").trim()) continue;
+      return parsed.toString();
+    } catch {
+      // ignore invalid urls
+    }
+  }
+  return "";
+};
+
 interface TokenDetailProps {
   tokenAddress: string;
   address?: string | null;
@@ -257,6 +305,7 @@ const TokenDetail = ({
 
   const isPositive = Number(token.market.change24h || 0) >= 0;
   const tokenExplorerUrl = `${EXPLORER_BASE_URL}/token/${token.address}`;
+  const websiteHref = safeHttpUrl(token.website || "");
 
   return (
     <section className="px-4 py-6 pb-44 sm:px-6 lg:pb-6">
@@ -454,9 +503,9 @@ const TokenDetail = ({
               </div>
 
               <div className="space-y-2">
-                {activity.items.map((item) => (
+                {activity.items.map((item, index) => (
                   <div
-                    key={item.txHash}
+                    key={activityRowKey(item, index)}
                     className="grid grid-cols-[72px_minmax(0,1fr)_130px] items-center gap-2 rounded-xl border border-slate-800/70 bg-slate-900/55 px-3 py-2 text-xs"
                   >
                     <span
@@ -499,9 +548,9 @@ const TokenDetail = ({
                 <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2">
                   <dt className="text-slate-500">Website</dt>
                   <dd className="mt-1 text-slate-200">
-                    {token.website ? (
-                      <a href={token.website} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-100">
-                        {token.website.replace(/^https?:\/\//u, "")}
+                    {websiteHref ? (
+                      <a href={websiteHref} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-100">
+                        {websiteHref.replace(/^https?:\/\//u, "")}
                       </a>
                     ) : (
                       "--"

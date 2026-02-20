@@ -208,9 +208,6 @@ export const fetchLaunchpadTokenDetail = async (
           return false;
         };
 
-        // Map 404s to `null` (token genuinely missing) instead of treating them as hard errors.
-        if (error instanceof LaunchpadApiError && error.status === 404) return null;
-
         // If the dynamic route isn't available (or doesn't pass the param), retry via query string.
         if (shouldTryQueryFallback(error)) {
           const fallbackUrl = buildUrl("/api/launchpad/tokens", { address: tokenAddress });

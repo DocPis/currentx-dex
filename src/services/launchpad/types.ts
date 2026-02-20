@@ -41,6 +41,7 @@ export interface LaunchpadTokenCard extends LaunchpadToken {
 }
 
 export interface LaunchpadTrade {
+  eventId?: string;
   txHash: string;
   tokenAddress: string;
   tokenName?: string;

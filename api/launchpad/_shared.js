@@ -9,12 +9,14 @@ const DEFAULT_CURRENTX = "0xb1dfc63cbe9305fa6a8fe97b4c72241148e451d1";
 const DEFAULT_LP_LOCKER = "0xc43b8a818c9dad3c3f04230c4033131fe040408f";
 const DEFAULT_CURRENTX_DEPLOY_BLOCK = 8_000_000;
 const DEFAULT_RPC = "https://mainnet.megaeth.com/rpc";
+const DEFAULT_GRAPH_TIMEOUT_MS = 10_000;
 const SNAPSHOT_TTL_MS = 20_000;
 const META_TTL_MS = 10 * 60 * 1000;
 const LP_LOCK_EVENT_CACHE_TTL_MS = 20_000;
 const LP_LOCK_OWNER_CACHE_TTL_MS = 20_000;
 const LP_LOCK_LOG_BLOCK_SPAN = 300_000;
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/u;
+const HTTP_URL_PROTOCOL_RE = /^https?:$/u;
 
 const ERC20_META_ABI = [
   "function name() view returns (string)",
@@ -114,6 +116,17 @@ const getGraphCfg = () => {
   return { urls, key };
 };
 
+const getGraphTimeoutMs = () => {
+  const raw = Number(
+    process.env.LAUNCHPAD_SUBGRAPH_TIMEOUT_MS ||
+      process.env.SUBGRAPH_TIMEOUT_MS ||
+      process.env.VITE_SUBGRAPH_TIMEOUT_MS ||
+      DEFAULT_GRAPH_TIMEOUT_MS
+  );
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_GRAPH_TIMEOUT_MS;
+  return Math.max(1_000, Math.floor(raw));
+};
+
 const graphNeedsAuth = (url) => {
   const lower = String(url || "").toLowerCase();
   return lower.includes("thegraph.com") || lower.includes("gateway");
@@ -134,10 +147,17 @@ const graphError = (error) => {
 
 const graph = async (query, variables = {}) => {
   const { urls, key } = getGraphCfg();
+  const timeoutMs = getGraphTimeoutMs();
   if (!urls.length) throw new Error("Missing launchpad subgraph URL");
   let last = null;
   for (const url of urls) {
+    let timeoutId = null;
     try {
+      const controller =
+        typeof AbortController !== "undefined" ? new AbortController() : null;
+      if (controller) {
+        timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      }
       const res = await fetch(url, {
         method: "POST",
         headers: {
@@ -145,13 +165,21 @@ const graph = async (query, variables = {}) => {
           ...(key && graphNeedsAuth(url) ? { Authorization: `Bearer ${key}` } : {}),
         },
         body: JSON.stringify({ query, variables }),
+        ...(controller ? { signal: controller.signal } : {}),
       });
       if (!res.ok) throw new Error(`Subgraph HTTP ${res.status}`);
       const json = await res.json();
       if (json?.errors?.length) throw new Error(String(json.errors[0]?.message || "Subgraph error"));
       return json?.data || {};
     } catch (e) {
-      last = e;
+      if (e?.name === "AbortError") {
+        last = new Error(`Subgraph timeout after ${timeoutMs}ms`);
+      } else {
+        last = e;
+      }
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = null;
     }
   }
   throw new Error(graphError(last));
@@ -258,6 +286,199 @@ const liquidityFromPool = ({ pool, wethAddress, ethPriceUSD }) => {
   return rawTvlUsd;
 };
 
+const resolveTokenMarketFromSubgraph = async (tokenAddress, snapshotEthPriceUSD = 0) => {
+  const tokenKey = toLower(tokenAddress);
+  const weth = getWeth();
+  if (!ADDRESS_RE.test(tokenKey) || !ADDRESS_RE.test(weth) || tokenKey === weth) return null;
+
+  const first = Math.max(10, Math.min(120, Number(process.env.LAUNCHPAD_TOKEN_POOL_SCAN_LIMIT || 60)));
+  const poolsData = await graph(
+    `
+      query TokenPools($token: Bytes!, $weth: Bytes!, $first: Int!) {
+        bundle(id: "1") { ethPriceUSD }
+        by0: pools(
+          first: $first
+          orderBy: totalValueLockedUSD
+          orderDirection: desc
+          where: { token0: $token, token1: $weth }
+        ) {
+          id feeTier createdAtTimestamp totalValueLockedUSD totalValueLockedToken0 totalValueLockedToken1 token0Price token1Price tick
+          token0 { id decimals totalSupply }
+          token1 { id decimals totalSupply }
+        }
+        by1: pools(
+          first: $first
+          orderBy: totalValueLockedUSD
+          orderDirection: desc
+          where: { token0: $weth, token1: $token }
+        ) {
+          id feeTier createdAtTimestamp totalValueLockedUSD totalValueLockedToken0 totalValueLockedToken1 token0Price token1Price tick
+          token0 { id decimals totalSupply }
+          token1 { id decimals totalSupply }
+        }
+      }
+    `,
+    { token: tokenKey, weth, first }
+  );
+
+  const ethPriceUSD = Math.max(0, toNumber(poolsData?.bundle?.ethPriceUSD, toNumber(snapshotEthPriceUSD, 0)));
+  const rawPools = [...(poolsData?.by0 || []), ...(poolsData?.by1 || [])];
+  if (!rawPools.length) return null;
+
+  const poolsById = new Map();
+  rawPools.forEach((pool) => {
+    const id = toLower(pool?.id);
+    if (!id || poolsById.has(id)) return;
+    poolsById.set(id, pool);
+  });
+  const pools = Array.from(poolsById.values());
+
+  let best = null;
+  pools.forEach((pool) => {
+    const token0 = toLower(pool?.token0?.id);
+    const token1 = toLower(pool?.token1?.id);
+    const tokenIs0 = token0 === tokenKey && token1 === weth;
+    const tokenIs1 = token1 === tokenKey && token0 === weth;
+    if (!tokenIs0 && !tokenIs1) return;
+
+    const tokenEntity = tokenIs0 ? pool?.token0 : pool?.token1;
+    const decimals = Number(tokenEntity?.decimals || 18);
+    const supply = supplyToNumber(tokenEntity?.totalSupply || "0", decimals);
+    const poolPriceEth = tokenIs0 ? toNumber(pool?.token1Price, 0) : toNumber(pool?.token0Price, 0);
+    const tickPriceEth = priceFromPoolTick(pool, Boolean(tokenIs0));
+    const refPriceEth = poolPriceEth > 0 ? poolPriceEth : tickPriceEth;
+    const priceUSD = refPriceEth > 0 && ethPriceUSD > 0 ? refPriceEth * ethPriceUSD : 0;
+    const liquidityUSD = liquidityFromPool({ pool, wethAddress: weth, ethPriceUSD });
+    const score = Math.max(liquidityUSD, toNumber(pool?.totalValueLockedUSD, 0));
+
+    if (!best || score > best.score) {
+      best = {
+        score,
+        poolId: toLower(pool?.id),
+        tokenIs0: Boolean(tokenIs0),
+        supply,
+        priceUSD,
+        liquidityUSD,
+        createdAt: new Date(toNumber(pool?.createdAtTimestamp, 0) * 1000).toISOString(),
+      };
+    }
+  });
+
+  if (!best?.poolId) return null;
+
+  let volume24hUSD = 0;
+  let change1h = 0;
+  let change24h = 0;
+  let sparkline = best.priceUSD > 0 ? [best.priceUSD] : [0];
+
+  try {
+    const since = Math.floor(Date.now() / 1000) - 24 * 3600;
+    const stats = await graph(
+      `
+        query TokenPoolStats($ids: [Bytes!], $since: Int!, $first: Int!) {
+          hours: poolHourDatas(
+            first: $first
+            orderBy: periodStartUnix
+            orderDirection: desc
+            where: { pool_in: $ids, periodStartUnix_gte: $since }
+          ) {
+            pool { id }
+            periodStartUnix
+            volumeUSD
+            open
+            high
+            low
+            close
+            token0Price
+            token1Price
+          }
+          days: poolDayDatas(
+            first: 2
+            orderBy: date
+            orderDirection: desc
+            where: { pool_in: $ids }
+          ) {
+            pool { id }
+            date
+            volumeUSD
+            open
+            high
+            low
+            close
+            token0Price
+            token1Price
+          }
+        }
+      `,
+      { ids: [best.poolId], since, first: 96 }
+    );
+
+    const hours = (stats?.hours || []).filter((row) => toLower(row?.pool?.id) === best.poolId);
+    const days = (stats?.days || []).filter((row) => toLower(row?.pool?.id) === best.poolId);
+
+    hours.forEach((row) => {
+      volume24hUSD += Math.max(0, toNumber(row?.volumeUSD, 0));
+    });
+
+    const hoursDesc = hours
+      .slice()
+      .sort((a, b) => toNumber(b?.periodStartUnix, 0) - toNumber(a?.periodStartUnix, 0));
+    const latestHour = hoursDesc[0] || null;
+    const prevHour = hoursDesc[1] || null;
+
+    const daysDesc = days
+      .slice()
+      .sort((a, b) => toNumber(b?.date, 0) - toNumber(a?.date, 0));
+    const latestDay = daysDesc[0] || null;
+    const prevDay = daysDesc[1] || null;
+
+    const hourPrice = priceFromRow(latestHour, best.tokenIs0);
+    const prevHourPrice = priceFromRow(prevHour, best.tokenIs0);
+    const dayPrice = priceFromRow(latestDay, best.tokenIs0);
+    const prevDayPrice = priceFromRow(prevDay, best.tokenIs0);
+
+    if (prevHourPrice > 0 && hourPrice > 0) {
+      change1h = ((hourPrice - prevHourPrice) / prevHourPrice) * 100;
+    }
+    if (prevDayPrice > 0 && dayPrice > 0) {
+      change24h = ((dayPrice - prevDayPrice) / prevDayPrice) * 100;
+    }
+
+    const hourSparkline = hours
+      .slice()
+      .sort((a, b) => toNumber(a?.periodStartUnix, 0) - toNumber(b?.periodStartUnix, 0))
+      .map((row) => priceFromRow(row, best.tokenIs0))
+      .filter((value) => value > 0)
+      .slice(-30)
+      .map((value) => (ethPriceUSD > 0 ? value * ethPriceUSD : value));
+    if (hourSparkline.length) sparkline = hourSparkline;
+
+    if (best.priceUSD <= 0) {
+      const latestEth = dayPrice > 0 ? dayPrice : hourPrice > 0 ? hourPrice : 0;
+      if (latestEth > 0 && ethPriceUSD > 0) {
+        best.priceUSD = latestEth * ethPriceUSD;
+      }
+    }
+  } catch {
+    // Keep base market values when time-series queries are unavailable.
+  }
+
+  const mcapUSD = best.priceUSD > 0 && best.supply > 0 ? best.priceUSD * best.supply : 0;
+  return {
+    createdAt: best.createdAt,
+    sparkline,
+    market: {
+      priceUSD: best.priceUSD || 0,
+      mcapUSD,
+      liquidityUSD: best.liquidityUSD || 0,
+      volume24hUSD: volume24hUSD || 0,
+      change1h: Number.isFinite(change1h) ? change1h : 0,
+      change24h: Number.isFinite(change24h) ? change24h : 0,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+};
+
 const supplyToNumber = (raw, decimals) => {
   try {
     return Number(formatUnits(BigInt(raw || 0n), Number(decimals || 18)));
@@ -305,6 +526,39 @@ const parseBoolean = (value, fallback = false) => {
   if (["1", "true", "yes", "on"].includes(raw)) return true;
   if (["0", "false", "no", "off"].includes(raw)) return false;
   return fallback;
+};
+
+const sanitizeExternalUrl = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const candidates = [raw];
+  if (!/^[a-z][a-z0-9+.-]*:\/\//iu.test(raw) && !raw.includes(" ")) {
+    candidates.push(`https://${raw}`);
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      const protocol = String(parsed.protocol || "").toLowerCase();
+      if (!HTTP_URL_PROTOCOL_RE.test(protocol)) continue;
+      if (!String(parsed.hostname || "").trim()) continue;
+      return parsed.toString();
+    } catch {
+      // ignore malformed urls
+    }
+  }
+  return "";
+};
+
+const sanitizeSocialLinks = (socials = {}) => {
+  if (!socials || typeof socials !== "object") return {};
+  const x = sanitizeExternalUrl(socials.x || "");
+  const telegram = sanitizeExternalUrl(socials.telegram || "");
+  const discord = sanitizeExternalUrl(socials.discord || "");
+  return {
+    ...(x ? { x } : {}),
+    ...(telegram ? { telegram } : {}),
+    ...(discord ? { discord } : {}),
+  };
 };
 
 const isLaunchpadContext = (context) => {
@@ -461,8 +715,13 @@ const normalizeTrade = (swap, tokenAddress, tokenIs0) => {
   const tokenAmount = toNumber(tokenIs0 ? swap?.amount0 : swap?.amount1, 0);
   if (!tokenAmount) return null;
   const pairAmount = toNumber(tokenIs0 ? swap?.amount1 : swap?.amount0, 0);
+  const txHash = String(swap?.transaction?.id || swap?.id || "").split("-")[0];
+  const eventId =
+    String(swap?.id || "").trim() ||
+    `${txHash}:${Math.floor(toNumber(swap?.timestamp, 0))}:${Math.abs(toNumber(tokenAmount, 0)).toString()}`;
   return {
-    txHash: String(swap?.transaction?.id || swap?.id || "").split("-")[0],
+    eventId,
+    txHash,
     tokenAddress: toLower(tokenAddress),
     side: tokenAmount < 0 ? "BUY" : "SELL",
     amountIn: Math.abs(pairAmount).toString(),
@@ -488,7 +747,7 @@ const resolveLockedPools = async (poolIds = []) => {
   const locker = getLpLocker();
   const normalizedPoolIds = dedupe((poolIds || []).map((poolId) => toLower(poolId)).filter(Boolean));
   if (!locker || !normalizedPoolIds.length) {
-    return { available: false, lockedPools: new Set() };
+    return { available: false, maybeTruncated: false, lockedPools: new Set() };
   }
 
   const first = Math.min(5000, Math.max(200, normalizedPoolIds.length * 10));
@@ -517,14 +776,20 @@ const resolveLockedPools = async (poolIds = []) => {
     try {
       const data = await graph(attempt.query, { owner: locker, ids: normalizedPoolIds, first });
       if (Array.isArray(data?.positions)) {
-        return { available: true, lockedPools: toLockedPoolSet(data.positions) };
+        return {
+          available: true,
+          // If we hit the query cap, the result set may be incomplete. Let callers decide
+          // whether to merge in an on-chain fallback to avoid false negatives.
+          maybeTruncated: data.positions.length >= first,
+          lockedPools: toLockedPoolSet(data.positions),
+        };
       }
     } catch {
       // try next schema variant
     }
   }
 
-  return { available: false, lockedPools: new Set() };
+  return { available: false, maybeTruncated: false, lockedPools: new Set() };
 };
 
 const readTokenCreatedLogs = async (provider, currentx, topic0, fromBlock, toBlock) => {
@@ -850,7 +1115,8 @@ const buildSnapshot = async () => {
       : [],
     resolveLockedPools(poolIds),
   ]);
-  const onchainLockStatus = !lockStatus?.available
+  const shouldResolveOnchainLocks = !lockStatus?.available || lockStatus?.maybeTruncated === true;
+  const onchainLockStatus = shouldResolveOnchainLocks
     ? await resolveLockedTokensOnchain(Array.from(tokenMap.keys()))
     : { available: false, lockedTokens: new Set() };
 
@@ -902,12 +1168,15 @@ const buildSnapshot = async () => {
 
   tokenMap.forEach((token, address) => {
     token.buysPerMinute = Number(((buysByToken.get(address) || 0) / 60).toFixed(4));
+    let lpLocked = false;
     if (lockStatus?.available) {
       const poolsForToken = tokenPools[address] || [];
-      token.lpLocked = poolsForToken.some((poolId) => lockStatus.lockedPools.has(toLower(poolId)));
-    } else if (onchainLockStatus?.available) {
-      token.lpLocked = onchainLockStatus.lockedTokens.has(toLower(address));
+      lpLocked = poolsForToken.some((poolId) => lockStatus.lockedPools.has(toLower(poolId)));
     }
+    if (onchainLockStatus?.available) {
+      lpLocked = lpLocked || onchainLockStatus.lockedTokens.has(toLower(address));
+    }
+    token.lpLocked = lpLocked;
   });
 
   const tokens = Array.from(tokenMap.values()).map((token) => {
@@ -1020,8 +1289,71 @@ export const hydrateTokenLogos = async (tokens = []) => {
 export const getTokenDetail = async (address) => {
   const snapshot = await getTokensSnapshot();
   const key = toLower(address);
-  const token = (snapshot.tokens || []).find((x) => toLower(x.address) === key);
-  if (!token) return null;
+  if (!ADDRESS_RE.test(key)) return null;
+
+  let token = (snapshot.tokens || []).find((x) => toLower(x.address) === key);
+  if (!token) {
+    let context = null;
+    try {
+      const contextRaw = await readTokenContextMeta(key);
+      context = parseJson(contextRaw);
+    } catch {
+      context = null;
+    }
+    if (!isLaunchpadContext(context)) return null;
+
+    const creatorEntry = Array.isArray(context?.rewardRecipients)
+      ? context.rewardRecipients.find((r) => r?.role === "creator")
+      : null;
+    const fallbackCreator =
+      String(creatorEntry?.admin || creatorEntry?.recipient || "")
+        .trim()
+        .toLowerCase() || "";
+    const fallbackLaunchParams = {
+      poolFeeBps: toNumber(context?.poolConfiguration?.fixedPoolFee, 30),
+      creatorAllocationPct: toNumber(context?.creatorVault?.vaultPercentage, 0),
+      initialMcapUSD:
+        toNumber(context?.poolConfiguration?.startingMarketCapEth, 0) > 0
+          ? toNumber(context.poolConfiguration.startingMarketCapEth, 0) * toNumber(snapshot.ethPriceUSD, 0)
+          : 0,
+    };
+    const fallbackMarket = await resolveTokenMarketFromSubgraph(key, snapshot?.ethPriceUSD || 0).catch(() => null);
+
+    let lpLocked = false;
+    try {
+      const lockStatus = await resolveLockedTokensOnchain([key]);
+      lpLocked = Boolean(lockStatus?.available && lockStatus.lockedTokens.has(key));
+    } catch {
+      lpLocked = false;
+    }
+
+    token = {
+      address: key,
+      name: String(context?.name || context?.tokenName || "Token"),
+      symbol: String(context?.symbol || "TKN"),
+      decimals: 18,
+      logoUrl: logoFrom(key),
+      createdAt: String(fallbackMarket?.createdAt || snapshot?.updatedAt || new Date().toISOString()),
+      creator: fallbackCreator || "0x0000000000000000000000000000000000000000",
+      tags: ["launchpad"],
+      buysPerMinute: 0,
+      sparkline: Array.isArray(fallbackMarket?.sparkline) && fallbackMarket.sparkline.length ? fallbackMarket.sparkline : [0],
+      market:
+        fallbackMarket?.market && typeof fallbackMarket.market === "object"
+          ? fallbackMarket.market
+          : {
+              priceUSD: 0,
+              mcapUSD: 0,
+              liquidityUSD: 0,
+              volume24hUSD: 0,
+              change1h: 0,
+              change24h: 0,
+              updatedAt: new Date().toISOString(),
+            },
+      launchParams: fallbackLaunchParams,
+      lpLocked,
+    };
+  }
 
   const store = getStore();
   const cached = store.meta.get(key);
@@ -1049,12 +1381,12 @@ export const getTokenDetail = async (address) => {
     try {
       const links = metadata?.links || {};
       description = String(metadata?.description || "").trim();
-      website = String(metadata?.website || links.website || "").trim();
-      socials = {
-        x: String(links.x || metadata?.x || "").trim() || undefined,
-        telegram: String(links.telegram || metadata?.telegram || "").trim() || undefined,
-        discord: String(links.discord || metadata?.discord || "").trim() || undefined,
-      };
+      website = sanitizeExternalUrl(metadata?.website || links.website || "");
+      socials = sanitizeSocialLinks({
+        x: links.x || metadata?.x || "",
+        telegram: links.telegram || metadata?.telegram || "",
+        discord: links.discord || metadata?.discord || "",
+      });
     } catch {
       // ignore invalid/malformed metadata shape
     }
@@ -1101,11 +1433,22 @@ export const getTokenDetail = async (address) => {
     decimals: Number.isFinite(meta?.decimals) ? meta.decimals : token.decimals,
     logoUrl: logoFrom(token.address, meta?.image || ""),
     description: meta?.description || token.description || "",
-    website: meta?.website || token.website || "",
-    socials: { ...(token.socials || {}), ...(meta?.socials || {}) },
+    website: sanitizeExternalUrl(meta?.website || token.website || ""),
+    socials: sanitizeSocialLinks({ ...(token.socials || {}), ...(meta?.socials || {}) }),
     creator: meta?.creator || token.creator,
     launchParams: { ...(token.launchParams || {}), ...(meta?.launchParams || {}) },
   };
+  if (!out.market || typeof out.market !== "object") {
+    out.market = {
+      priceUSD: 0,
+      mcapUSD: 0,
+      liquidityUSD: 0,
+      volume24hUSD: 0,
+      change1h: 0,
+      change24h: 0,
+      updatedAt: new Date().toISOString(),
+    };
+  }
   if (meta?.totalSupply && out.market?.priceUSD > 0) {
     const supply = supplyToNumber(meta.totalSupply, out.decimals);
     if (supply > 0) out.market.mcapUSD = supply * out.market.priceUSD;
