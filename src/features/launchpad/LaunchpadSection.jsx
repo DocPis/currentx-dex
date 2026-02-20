@@ -2226,6 +2226,12 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const value = Number(protocol.maxCreatorReward);
     return Number.isFinite(value) ? value : null;
   }, [protocol.maxCreatorReward]);
+  const maxVaultPercentageUi = useMemo(() => {
+    if (protocol.maxVaultPercentage == null) return null;
+    const value = Number(protocol.maxVaultPercentage);
+    return Number.isFinite(value) ? value : null;
+  }, [protocol.maxVaultPercentage]);
+  const vaultMaxPercentLabel = maxVaultPercentageUi != null ? String(maxVaultPercentageUi) : "30";
   const allocatedRewards = useMemo(() => {
     const creator = Number.parseFloat(String(deployForm.creatorReward || "0"));
     if (!Number.isFinite(creator)) return 0;
@@ -3110,6 +3116,9 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
               >
                 <div className="text-xs text-slate-300/75">
                   What this does: locks a percentage of creator allocation in vesting.
+                </div>
+                <div className="rounded-lg border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
+                  Vault percentage is calculated on total token supply. Current on-chain cap: up to {vaultMaxPercentLabel}% of total supply.
                 </div>
                 {!vaultEnabled ? (
                   <div className="rounded-xl border border-slate-700/60 bg-slate-900/45 px-3 py-2 text-sm text-slate-300/80">
