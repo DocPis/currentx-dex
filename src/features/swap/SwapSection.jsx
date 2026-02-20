@@ -38,7 +38,7 @@ import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 import { applyTokenAliases } from "../../shared/config/tokens";
 import { findActualOutput } from "./swapReceiptUtils";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB", "CROWN"];
 const MAX_ROUTE_CANDIDATES = 12;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
