@@ -957,12 +957,6 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     return raw;
   }, [vaultTokenMeta]);
 
-  const vaultLockAmountLabel = useMemo(() => {
-    if (!vaultLockAmountRaw || !vaultTokenMeta) return "--";
-    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
-    return `${formatAmount(vaultLockAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
-  }, [vaultLockAmountRaw, vaultTokenMeta]);
-
   const vaultWalletBalanceLabel = useMemo(() => {
     if (!vaultTokenMeta || vaultWalletBalanceRaw === null) return "--";
     const symbol = String(vaultTokenMeta.symbol || "TOKEN");
@@ -2189,10 +2183,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const erc20WithSigner = new Contract(token, ERC20_ABI, signer);
       const walletBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
       if (walletBalance !== null && walletBalance < amount) {
-        const pct = Number((walletBalance * 10000n) / amount) / 100;
-        throw new Error(
-          `Connected wallet holds ${formatPct(pct)} of supply. 100% supply is required to lock.`
-        );
+        throw new Error("Insufficient wallet balance for vault deposit.");
       }
       const allowance = toBigIntSafe(await erc20.allowance(address, contracts.vault).catch(() => null));
       if (allowance !== null && allowance < amount) {
@@ -3633,41 +3624,16 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   Token meta:{" "}
                   {vaultTokenMeta ? `${vaultTokenMeta.symbol} (${vaultTokenMeta.decimals} decimals)` : "--"}
                 </div>
-                <div className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100">
-                  Amount to lock (fixed): 100% of supply: {vaultLockAmountLabel}
-                </div>
                 <div className="rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2 text-xs text-slate-300/85">
                   <div>Wallet balance: {vaultWalletBalanceLabel}</div>
                   <div>Wallet ownership of supply: {vaultWalletSupplyPct === null ? "--" : formatPct(vaultWalletSupplyPct)}</div>
                 </div>
-                {address && vaultHasFullSupply === false ? (
-                  <div className="rounded-xl border border-amber-500/45 bg-amber-500/15 px-3 py-2 text-xs text-amber-100">
-                    This wallet does not hold 100% of supply, so vault lock cannot proceed.
-                  </div>
-                ) : null}
-
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div className="space-y-1">
-                    <div className="text-xs text-slate-300/80">Lock duration (days)</div>
-                    <select
-                      value={vaultForm.depositLockDays}
-                      onChange={(e) => setVaultForm((prev) => ({ ...prev, depositLockDays: e.target.value }))}
-                      className={INPUT_CLASS}
-                    >
-                      {vaultLockDayOptions.map((value) => (
-                        <option key={`vault-lock-${value}`} value={value}>
-                          {value} days
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <AddressField
-                    label="Admin wallet"
-                    value={vaultForm.depositAdmin}
-                    onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
-                    required
-                  />
-                </div>
+                <AddressField
+                  label="Admin wallet"
+                  value={vaultForm.depositAdmin}
+                  onChange={(value) => setVaultForm((prev) => ({ ...prev, depositAdmin: value }))}
+                  required
+                />
 
                 <div className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -3719,6 +3685,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   </div>
                 </div>
 
+                <div className="text-xs text-slate-300/80">Lock duration (days)</div>
                 <SelectorPills
                   value={vaultLockDayOptions.includes(String(vaultForm.depositLockDays || "")) ? String(vaultForm.depositLockDays || "") : ""}
                   onChange={(value) => setVaultForm((prev) => ({ ...prev, depositLockDays: value }))}
