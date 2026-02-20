@@ -406,10 +406,18 @@ export default function App() {
             { id: "farms", label: "Farms" },
             { id: "megavault", label: "MegaVault" },
             { id: "bridge", label: "Bridge" },
+            { id: "launchpad", label: "Launchpad", isNew: true },
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => handleTabClick(item.id)}
+              type="button"
+              onClick={() => {
+                if (item.id === "launchpad") {
+                  navigateLaunchpad("/launchpad/market");
+                  return;
+                }
+                handleTabClick(item.id);
+              }}
               onMouseEnter={() => {
                 preloadSection(item.id);
                 prefetchTabData(item.id);
@@ -418,13 +426,19 @@ export default function App() {
                 preloadSection(item.id);
                 prefetchTabData(item.id);
               }}
-              className={`relative inline-flex py-3 font-display text-[11px] font-medium tracking-[0.005em] leading-none text-white/75 transition-colors duration-[120ms] ease-out after:absolute after:bottom-0 after:left-0 after:h-px after:w-full after:origin-center after:scale-x-0 after:bg-slate-300/80 after:transition-transform after:duration-[120ms] after:ease-out after:content-[''] sm:text-xs ${
+              aria-current={tab === item.id ? "page" : undefined}
+              className={`relative inline-flex items-center gap-2 whitespace-nowrap py-3 font-display text-[11px] font-medium tracking-[0.005em] leading-none text-white/75 transition-colors duration-[120ms] ease-out after:absolute after:bottom-0 after:left-0 after:h-px after:w-full after:origin-center after:scale-x-0 after:bg-slate-300/80 after:transition-transform after:duration-[120ms] after:ease-out after:content-[''] focus-visible:rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-[#070b16] sm:text-xs ${
                 tab === item.id
                   ? "text-white after:h-[2px] after:scale-x-100 after:bg-[#7ea0b8]/80"
                   : "hover:text-white hover:after:scale-x-100"
               }`}
             >
-              {item.label}
+              <span>{item.label}</span>
+              {item.isNew && (
+                <span className="inline-flex shrink-0 items-center rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wider text-white/80 ring-1 ring-white/15 -translate-y-px">
+                  NEW
+                </span>
+              )}
             </button>
           ))}
         </div>
