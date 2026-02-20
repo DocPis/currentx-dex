@@ -15,6 +15,7 @@ const META_TTL_MS = 10 * 60 * 1000;
 const LP_LOCK_EVENT_CACHE_TTL_MS = 20_000;
 const LP_LOCK_OWNER_CACHE_TTL_MS = 20_000;
 const LP_LOCK_LOG_BLOCK_SPAN = 300_000;
+const LP_LOCK_RECENT_FALLBACK_WINDOW_MS = 6 * 60 * 60 * 1000;
 const ADDRESS_RE = /^0x[0-9a-f]{40}$/u;
 const HTTP_URL_PROTOCOL_RE = /^https?:$/u;
 
@@ -1115,9 +1116,20 @@ const buildSnapshot = async () => {
       : [],
     resolveLockedPools(poolIds),
   ]);
-  const shouldResolveOnchainLocks = !lockStatus?.available || lockStatus?.maybeTruncated === true;
+  const tokenAddresses = Array.from(tokenMap.keys());
+  const nowMs = Date.now();
+  const recentTokenAddresses = tokenAddresses.filter((address) => {
+    const createdAtMs = Date.parse(String(tokenMap.get(address)?.createdAt || ""));
+    return Number.isFinite(createdAtMs) && nowMs - createdAtMs <= LP_LOCK_RECENT_FALLBACK_WINDOW_MS;
+  });
+  const shouldResolveOnchainLocks =
+    !lockStatus?.available || lockStatus?.maybeTruncated === true || recentTokenAddresses.length > 0;
+  const onchainLockCandidates =
+    !lockStatus?.available || lockStatus?.maybeTruncated === true
+      ? tokenAddresses
+      : recentTokenAddresses;
   const onchainLockStatus = shouldResolveOnchainLocks
-    ? await resolveLockedTokensOnchain(Array.from(tokenMap.keys()))
+    ? await resolveLockedTokensOnchain(onchainLockCandidates)
     : { available: false, lockedTokens: new Set() };
 
   const dayByPool = groupByPool(dayData);

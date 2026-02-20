@@ -15,6 +15,7 @@ import xbtcLogo from "../../tokens/xbtc.png";
 import btcbLogo from "../../tokens/btcb.svg";
 import wusdLogo from "../../tokens/wusd.png";
 import wusdcLogo from "../../tokens/wusdc.png";
+import krownCreditsLogo from "../../tokens/krowncredits.png";
 import defaultTokenLogo from "../../tokens/token-placeholder megaeth.svg";
 // placeholder for xBTC logo; wire later
 // import xbtcLogo from "../../tokens/xbtc.png";
@@ -209,6 +210,13 @@ const RAW_TOKENS = {
     address: null, // set per network via env
     decimals: 6,
     logo: wusdcLogo,
+  },
+  CROWN: {
+    symbol: "CROWN",
+    name: "Crown",
+    address: "0xf7d2F0d0b0517CBDbf87C86910ce10FaAab3589D",
+    decimals: 18,
+    logo: krownCreditsLogo,
   },
 };
 
