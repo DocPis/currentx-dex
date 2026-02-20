@@ -270,6 +270,22 @@ const toBigIntSafe = (value) => {
   }
 };
 
+const normalizeVaultApproveMode = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized === "50" ? "50" : "max";
+};
+
+const computeVaultApproveAmount = (walletBalanceRaw, approveMode) => {
+  const balance = toBigIntSafe(walletBalanceRaw);
+  if (balance === null || balance <= 0n) return null;
+  const mode = normalizeVaultApproveMode(approveMode);
+  if (mode === "50") {
+    const half = balance / 2n;
+    return half > 0n ? half : null;
+  }
+  return balance;
+};
+
 const formatPct = (value, digits = 2) => {
   if (!Number.isFinite(Number(value))) return "--";
   return `${Number(value).toFixed(digits)}%`;
@@ -791,6 +807,7 @@ const defaultVaultForm = () => ({
   token: "",
   depositLockDays: "30",
   depositAdmin: "",
+  approveMode: "max",
 });
 
 const LAUNCHPAD_VIEWS = new Set(["create", "deployments", "vault", "locker"]);
@@ -951,6 +968,17 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
     const symbol = String(vaultTokenMeta.symbol || "TOKEN");
     return `${formatAmount(vaultWalletBalanceRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
   }, [vaultTokenMeta, vaultWalletBalanceRaw]);
+
+  const vaultApproveMode = normalizeVaultApproveMode(vaultForm.approveMode);
+  const vaultApproveAmountRaw = useMemo(
+    () => computeVaultApproveAmount(vaultWalletBalanceRaw, vaultApproveMode),
+    [vaultWalletBalanceRaw, vaultApproveMode]
+  );
+  const vaultApproveAmountLabel = useMemo(() => {
+    if (!vaultTokenMeta || vaultApproveAmountRaw === null) return "--";
+    const symbol = String(vaultTokenMeta.symbol || "TOKEN");
+    return `${formatAmount(vaultApproveAmountRaw, vaultTokenMeta.decimals || 18, 6)} ${symbol}`;
+  }, [vaultApproveAmountRaw, vaultTokenMeta]);
 
   const vaultWalletSupplyPct = useMemo(() => {
     if (vaultWalletBalanceRaw === null || vaultLockAmountRaw === null || vaultLockAmountRaw <= 0n) return null;
@@ -2117,15 +2145,24 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setVaultAction({ loadingKey: "approve", error: "", hash: "", message: "Approving vault..." });
       const provider = await getProvider();
       const signer = await provider.getSigner();
-      const meta = await resolveTokenMeta(vaultForm.token, provider);
-      const amount = toBigIntSafe(meta?.totalSupplyRaw);
+      const token = String(vaultForm.token || "").trim();
+      if (!isAddress(token)) throw new Error("Token address is invalid.");
+      if (!isAddress(contracts.vault)) throw new Error("Vault address is invalid.");
+      const erc20 = new Contract(token, ERC20_ABI, signer);
+      const walletBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
+      const amount = computeVaultApproveAmount(walletBalance, vaultForm.approveMode);
       if (amount === null || amount <= 0n) {
-        throw new Error("Unable to resolve token total supply for 100% lock.");
+        throw new Error("Wallet balance is too low for selected approve amount.");
       }
-      const erc20 = new Contract(vaultForm.token, ERC20_ABI, signer);
       const tx = await erc20.approve(contracts.vault, amount);
       const receipt = await tx.wait();
-      setVaultAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Allowance updated." });
+      const modeLabel = normalizeVaultApproveMode(vaultForm.approveMode) === "50" ? "50%" : "max";
+      setVaultAction({
+        loadingKey: "",
+        error: "",
+        hash: receipt.hash || tx.hash || "",
+        message: `Allowance updated (${modeLabel} of wallet balance).`,
+      });
     } catch (error) {
       setVaultAction({ loadingKey: "", error: errMsg(error, "Approve failed."), hash: "", message: "" });
     }
@@ -2140,18 +2177,39 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setVaultAction({ loadingKey: "deposit", error: "", hash: "", message: "Depositing..." });
       const provider = await getProvider();
       const signer = await provider.getSigner();
+      const token = String(vaultForm.token || "").trim();
+      if (!isAddress(token)) throw new Error("Token address is invalid.");
+      if (!isAddress(contracts.vault)) throw new Error("Vault address is invalid.");
       const meta = await resolveTokenMeta(vaultForm.token, provider);
       const amount = toBigIntSafe(meta?.totalSupplyRaw);
       if (amount === null || amount <= 0n) {
         throw new Error("Unable to resolve token total supply for 100% lock.");
       }
-      const erc20 = new Contract(vaultForm.token, ERC20_ABI, provider);
+      const erc20 = new Contract(token, ERC20_ABI, provider);
+      const erc20WithSigner = new Contract(token, ERC20_ABI, signer);
       const walletBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
       if (walletBalance !== null && walletBalance < amount) {
         const pct = Number((walletBalance * 10000n) / amount) / 100;
         throw new Error(
           `Connected wallet holds ${formatPct(pct)} of supply. 100% supply is required to lock.`
         );
+      }
+      const allowance = toBigIntSafe(await erc20.allowance(address, contracts.vault).catch(() => null));
+      if (allowance !== null && allowance < amount) {
+        setVaultAction({
+          loadingKey: "deposit",
+          error: "",
+          hash: "",
+          message: "Allowance is below required amount. Approving required amount...",
+        });
+        const approvalTx = await erc20WithSigner.approve(contracts.vault, amount);
+        const approvalReceipt = await approvalTx.wait();
+        setVaultAction({
+          loadingKey: "deposit",
+          error: "",
+          hash: approvalReceipt.hash || approvalTx.hash || "",
+          message: "Approval confirmed. Sending deposit...",
+        });
       }
       const now = Math.floor(Date.now() / 1000);
       const lockDaysRaw = String(vaultForm.depositLockDays || "").trim();
@@ -2170,7 +2228,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       if (!isAddress(admin)) throw new Error("Deposit admin is invalid.");
 
       const vault = new Contract(contracts.vault, CURRENTX_VAULT_ABI, signer);
-      const tx = await vault.deposit(vaultForm.token, amount, unlockTime, admin);
+      const tx = await vault.deposit(token, amount, unlockTime, admin);
       const receipt = await tx.wait();
       const nextBalance = toBigIntSafe(await erc20.balanceOf(address).catch(() => null));
       if (nextBalance !== null) setVaultWalletBalanceRaw(nextBalance);
@@ -3611,16 +3669,54 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
                   />
                 </div>
 
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
-                  <div className="text-xs text-slate-300/80">Approve uses 100% of token supply.</div>
-                  <button
-                    type="button"
-                    onClick={handleVaultApprove}
-                    disabled={vaultAction.loadingKey === "approve" || vaultLockAmountRaw === null}
-                    className={CYAN_BUTTON_CLASS}
-                  >
-                    {vaultAction.loadingKey === "approve" ? "Approving..." : "Approve full supply"}
-                  </button>
+                <div className="space-y-2 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-xs text-slate-300/80">Approve amount uses selected wallet balance mode.</div>
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setVaultForm((prev) => ({ ...prev, approveMode: "50" }))}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                          vaultApproveMode === "50"
+                            ? "border-cyan-300/65 bg-cyan-400/15 text-cyan-100"
+                            : "border-slate-600/70 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                        }`}
+                      >
+                        50%
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setVaultForm((prev) => ({ ...prev, approveMode: "max" }))}
+                        className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                          vaultApproveMode === "max"
+                            ? "border-cyan-300/65 bg-cyan-400/15 text-cyan-100"
+                            : "border-slate-600/70 bg-slate-900/60 text-slate-300 hover:border-slate-500 hover:text-slate-100"
+                        }`}
+                      >
+                        Max
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-cyan-100/90">
+                    Approve amount: {vaultApproveAmountLabel}
+                  </div>
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleVaultApprove}
+                      disabled={
+                        vaultAction.loadingKey === "approve" ||
+                        (Boolean(address) && vaultApproveAmountRaw === null)
+                      }
+                      className={CYAN_BUTTON_CLASS}
+                    >
+                      {vaultAction.loadingKey === "approve"
+                        ? "Approving..."
+                        : vaultApproveMode === "50"
+                          ? "Approve 50% balance"
+                          : "Approve max balance"}
+                    </button>
+                  </div>
                 </div>
 
                 <SelectorPills

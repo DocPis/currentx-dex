@@ -1,9 +1,9 @@
 import React from "react";
 import type { LaunchpadTokenCard } from "../../services/launchpad/types";
 import { formatPercent, formatUsd, shortAddress } from "../../services/launchpad/utils";
+import LpLockedBadge from "./LpLockedBadge";
 import PriceSparkline from "./PriceSparkline";
 import TokenLogo from "./TokenLogo";
-import TokenStatusBadge from "./TokenStatusBadge";
 
 interface TokenCardProps {
   token: LaunchpadTokenCard;
@@ -15,7 +15,7 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
   const changeUp = Number(token.market?.change24h || 0) >= 0;
 
   return (
-    <article className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.5)] backdrop-blur transition hover:border-slate-600/80 hover:bg-slate-900/65">
+    <article className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4 shadow-[0_14px_34px_rgba(2,6,23,0.5)] backdrop-blur transition hover:border-slate-600/80 hover:bg-slate-900/65">
       <div className="flex items-start gap-3">
         <TokenLogo
           address={token.address}
@@ -27,10 +27,10 @@ const TokenCard = ({ token, onOpen, onBuy }: TokenCardProps) => {
           <button
             type="button"
             onClick={() => onOpen?.(token)}
-            className="flex min-w-0 items-center gap-2 text-left"
+            className="flex w-full min-w-0 items-center gap-2 text-left"
           >
-            <span className="truncate font-display text-sm font-semibold text-slate-100">{token.name}</span>
-            {token.lpLocked === true ? <TokenStatusBadge variant="lpLocked" /> : null}
+            <span className="min-w-0 flex-1 truncate font-display text-sm font-semibold text-slate-100">{token.name}</span>
+            {token.lpLocked === true ? <LpLockedBadge /> : null}
           </button>
           <div className="mt-1 text-xs text-slate-400">
             ${token.symbol} - {shortAddress(token.address)}
