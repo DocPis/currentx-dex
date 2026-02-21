@@ -100,6 +100,23 @@ const isWhitelistedPoolForTvl = (pool) =>
   WHITELISTED_TOKEN_IDS.has(normalizeAddress(pool?.token0Id)) &&
   WHITELISTED_TOKEN_IDS.has(normalizeAddress(pool?.token1Id));
 
+const toFiniteNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const pickPoolLiquidityUsd = (poolTvlUsd, rollingTvlUsd) => {
+  const base = toFiniteNumber(poolTvlUsd);
+  const rolling = toFiniteNumber(rollingTvlUsd);
+
+  // Prefer live pool TVL; use rolling TVL only as fallback when base TVL is missing.
+  if (base !== null && base > 0) return base;
+  if (rolling !== null && rolling > 0) return rolling;
+  if (base !== null && base === 0) return 0;
+  if (rolling !== null && rolling === 0) return 0;
+  return null;
+};
+
 const resolveTokenMeta = (tokenId, symbol) => {
   if (tokenId) {
     const match = TOKEN_MAPS.byAddress[tokenId.toLowerCase()];
@@ -159,10 +176,7 @@ export default function PoolsSection({ onSelectPool }) {
     const list = [];
     v3Pools.forEach((pool) => {
       const roll = v3RollingData[pool.id?.toLowerCase?.() || ""] || {};
-      const rawLiquidityUsd =
-        roll.tvlUsd !== undefined && roll.tvlUsd !== null
-          ? roll.tvlUsd
-          : pool.tvlUsd ?? null;
+      const rawLiquidityUsd = pickPoolLiquidityUsd(pool.tvlUsd, roll.tvlUsd);
       const liquidityUsd = isWhitelistedPoolForTvl(pool) ? rawLiquidityUsd : null;
       const volume24hUsd =
         roll.volumeUsd !== undefined && roll.volumeUsd !== null
@@ -200,10 +214,7 @@ export default function PoolsSection({ onSelectPool }) {
     });
     v2Pools.forEach((pool) => {
       const roll = v2RollingData[pool.id?.toLowerCase?.() || ""] || {};
-      const rawLiquidityUsd =
-        roll.tvlUsd !== undefined && roll.tvlUsd !== null
-          ? roll.tvlUsd
-          : pool.tvlUsd ?? null;
+      const rawLiquidityUsd = pickPoolLiquidityUsd(pool.tvlUsd, roll.tvlUsd);
       const liquidityUsd = isWhitelistedPoolForTvl(pool) ? rawLiquidityUsd : null;
       const volume24hUsd =
         roll.volumeUsd !== undefined && roll.volumeUsd !== null
