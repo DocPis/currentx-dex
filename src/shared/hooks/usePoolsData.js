@@ -11,7 +11,7 @@ import {
 } from "../config/subgraph";
 
 const PAGE_SIZE = 50;
-const REFRESH_MS = 5 * 60 * 1000;
+const REFRESH_MS = 60 * 1000;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const POOLS_CACHE_KEY = "cx_pools_cache_v2";
 
