@@ -10,6 +10,7 @@ const SORT_KEYS = {
   APR: "apr",
 };
 const LOW_TVL_THRESHOLD = 50;
+const BEST_APR_MIN_TVL_USD = LOW_TVL_THRESHOLD;
 const PROTOCOL_INTEL_FILTERS = [
   { id: "all", label: "All Pools" },
   { id: "highest-apr", label: "Highest APR" },
@@ -306,6 +307,9 @@ export default function PoolsSection({ onSelectPool }) {
   const bestAprPool = useMemo(() => {
     let best = null;
     combinedPools.forEach((pool) => {
+      if (!Number.isFinite(pool?.liquidityUsd) || pool.liquidityUsd < BEST_APR_MIN_TVL_USD) {
+        return;
+      }
       if (!Number.isFinite(pool?.apr) || pool.apr <= 0) return;
       if (!best || pool.apr > best.apr) best = pool;
     });
@@ -468,7 +472,14 @@ export default function PoolsSection({ onSelectPool }) {
     switch (intelFilter) {
       case "highest-apr":
         return ranked
-          .sort((a, b) => (Number(b.pool?.apr) || -1) - (Number(a.pool?.apr) || -1))
+          .filter(
+            (entry) =>
+              Number.isFinite(entry.pool?.liquidityUsd) &&
+              entry.pool.liquidityUsd >= BEST_APR_MIN_TVL_USD &&
+              Number.isFinite(entry.pool?.apr) &&
+              entry.pool.apr > 0
+          )
+          .sort((a, b) => b.pool.apr - a.pool.apr)
           .slice(0, 20)
           .map((entry) => entry.pool);
       case "highest-efficiency":
