@@ -47,12 +47,16 @@ const APPROVAL_CACHE_KEY = "cx_approval_cache_v1";
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
-const V3_FEE_TIERS = [500, 3000, 10000];
-const V3_FEE_PRIORITY = [3000, 500, 10000];
+const V3_FEE_TIERS_FALLBACK = [100, 500, 3000, 10000];
+const V3_FEE_PRIORITY = [3000, 500, 100, 10000];
+const V3_FEE_PRIORITY_INDEX = new Map(
+  V3_FEE_PRIORITY.map((fee, idx) => [fee, idx])
+);
+const V3_FEE_DISCOVERY_CACHE_MS = 60 * 1000;
 const MAX_V3_HOPS = 3;
 const MAX_V3_PATHS = 30;
 const MAX_V3_ROUTE_CANDIDATES = 24;
-const MAX_V3_FEE_OPTIONS = 3;
+const MAX_V3_FEE_OPTIONS = 4;
 const MAX_V3_COMBOS_PER_PATH = 9;
 const FAST_QUOTE_BUDGET_MS = 1400;
 const V3_QUOTE_BATCH_SIZE = 4;
@@ -72,6 +76,28 @@ const STABLE_SYMBOLS = new Set([
   "SUSDE",
   "STCUSD",
 ]);
+const sortV3FeeTiers = (fees = []) => {
+  const unique = [];
+  const seen = new Set();
+  (fees || []).forEach((feeRaw) => {
+    const fee = Number(feeRaw);
+    if (!Number.isFinite(fee) || fee <= 0) return;
+    if (seen.has(fee)) return;
+    seen.add(fee);
+    unique.push(fee);
+  });
+  if (!unique.length) return [...V3_FEE_TIERS_FALLBACK];
+  return unique.sort((a, b) => {
+    const rankA = V3_FEE_PRIORITY_INDEX.get(a);
+    const rankB = V3_FEE_PRIORITY_INDEX.get(b);
+    const hasRankA = Number.isFinite(rankA);
+    const hasRankB = Number.isFinite(rankB);
+    if (hasRankA && hasRankB) return rankA - rankB;
+    if (hasRankA) return -1;
+    if (hasRankB) return 1;
+    return a - b;
+  });
+};
 const UR_COMMANDS = {
   V3_SWAP_EXACT_IN: 0x00,
   V3_SWAP_EXACT_OUT: 0x01,
@@ -677,6 +703,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const quoteInFlightRef = useRef(false);
   const lastQuoteKeyRef = useRef("");
   const routeCandidateCacheRef = useRef(new Map());
+  const v3FeeTiersCacheRef = useRef(new Map());
   const lastFullQuoteAtRef = useRef(0);
   const lastRouteMetaRef = useRef(null);
   const lastRouteKeyRef = useRef("");
@@ -1290,109 +1317,254 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [tokenRegistry]
   );
 
-  const listV3Pools = useCallback(async (factory, tokenA, tokenB) => {
-    if (!factory || !tokenA || !tokenB) return [];
+  const getEnabledV3FeeTiers = useCallback(async (factory) => {
+    if (!factory) return [...V3_FEE_TIERS_FALLBACK];
     const factoryAddr =
       factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
-    const provider = factory?.runner || factory?.provider;
-    const iface = new Interface(UNIV3_FACTORY_ABI);
-    const calls = V3_FEE_TIERS.map((fee) => ({
-      target: factoryAddr,
-      callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
-    }));
-    try {
-      const res = await multicall(calls, provider);
-      const parsed = res
-        .map((r, idx) => {
-          if (!r?.success) return null;
+    const provider = factory?.runner || factory?.provider || getReadOnlyProvider();
+    if (!factoryAddr || !provider) return [...V3_FEE_TIERS_FALLBACK];
+    const cacheKey = `v3-fees:${factoryAddr.toLowerCase()}`;
+    const now = Date.now();
+    const cached = v3FeeTiersCacheRef.current.get(cacheKey);
+    const cachedFees =
+      Array.isArray(cached?.value) && cached.value.length
+        ? sortV3FeeTiers(cached.value)
+        : [...V3_FEE_TIERS_FALLBACK];
+    const cachedToBlock = Number.isFinite(cached?.toBlock)
+      ? Number(cached.toBlock)
+      : null;
+    if (cached && now - cached.ts < V3_FEE_DISCOVERY_CACHE_MS) {
+      if (cached.promise) return cached.promise;
+      if (Array.isArray(cached.value) && cached.value.length) return cached.value;
+    }
+
+    let discoveredToBlock = cachedToBlock;
+    const loadPromise = (async () => {
+      const iface = new Interface(UNIV3_FACTORY_ABI);
+      const enabledFeeSet = new Set(cachedFees);
+      const feeEvent = iface.getEvent("FeeAmountEnabled");
+      if (feeEvent) {
+        try {
+          const latestBlock = await provider.getBlockNumber();
+          if (Number.isFinite(latestBlock) && latestBlock >= 0) {
+            discoveredToBlock = latestBlock;
+            const fromBlock = Number.isFinite(cachedToBlock)
+              ? Math.max(0, cachedToBlock - 25)
+              : 0;
+            const fetchLogsInRange = async (fromBlock, toBlock, depth = 0) => {
+              try {
+                return await provider.getLogs({
+                  address: factoryAddr,
+                  topics: [feeEvent.topicHash],
+                  fromBlock,
+                  toBlock,
+                });
+              } catch {
+                if (fromBlock >= toBlock || depth >= 18) return [];
+                const mid = Math.floor((fromBlock + toBlock) / 2);
+                const left = await fetchLogsInRange(fromBlock, mid, depth + 1);
+                const right = await fetchLogsInRange(mid + 1, toBlock, depth + 1);
+                return [...left, ...right];
+              }
+            };
+            const logs = await fetchLogsInRange(fromBlock, latestBlock);
+            logs.forEach((log) => {
+              try {
+                const parsed = iface.parseLog(log);
+                const fee = Number(parsed?.args?.fee ?? parsed?.args?.[0]);
+                if (Number.isFinite(fee) && fee > 0) {
+                  enabledFeeSet.add(fee);
+                }
+              } catch {
+                // ignore malformed logs
+              }
+            });
+          }
+        } catch {
+          // ignore log discovery failures; fallback probes below still apply
+        }
+      }
+
+      const candidateFees = sortV3FeeTiers(Array.from(enabledFeeSet));
+      if (!candidateFees.length) return [...V3_FEE_TIERS_FALLBACK];
+
+      const calls = candidateFees.map((fee) => ({
+        target: factoryAddr,
+        callData: iface.encodeFunctionData("feeAmountTickSpacing", [fee]),
+      }));
+      try {
+        const res = await multicall(calls, provider);
+        const verified = [];
+        res.forEach((row, idx) => {
+          if (!row?.success) return;
           try {
-            const pool = iface.decodeFunctionResult("getPool", r.returnData)[0];
-            if (pool && pool !== ZERO_ADDRESS) {
-              return { fee: V3_FEE_TIERS[idx], pool };
+            const spacingRaw = iface.decodeFunctionResult(
+              "feeAmountTickSpacing",
+              row.returnData
+            )[0];
+            const spacing = Number(spacingRaw || 0);
+            if (Number.isFinite(spacing) && spacing > 0) {
+              verified.push(candidateFees[idx]);
             }
           } catch {
             // ignore decode failures
           }
-          return null;
-        })
-        .filter(Boolean);
-      if (parsed.length) return parsed;
-    } catch {
-      // ignore multicall failures and fall back to direct RPCs
-    }
-    const results = await Promise.all(
-      V3_FEE_TIERS.map(async (fee) => {
-        try {
-          const pool = await factory.getPool(tokenA, tokenB, fee);
-          if (pool && pool !== ZERO_ADDRESS) {
-            return { fee, pool };
+        });
+        const sorted = sortV3FeeTiers(verified);
+        if (sorted.length) return sorted;
+      } catch {
+        // ignore multicall failures and probe directly below
+      }
+
+      const directProbe = await Promise.all(
+        candidateFees.map(async (fee) => {
+          try {
+            const spacingRaw = await factory.feeAmountTickSpacing(fee);
+            const spacing = Number(spacingRaw || 0);
+            return Number.isFinite(spacing) && spacing > 0 ? fee : null;
+          } catch {
+            return null;
           }
-        } catch {
-          // ignore fee probe errors
-        }
-        return null;
-      })
-    );
-    return results.filter(Boolean);
+        })
+      );
+      const resolved = sortV3FeeTiers(directProbe.filter(Boolean));
+      return resolved.length ? resolved : [...V3_FEE_TIERS_FALLBACK];
+    })();
+
+    v3FeeTiersCacheRef.current.set(cacheKey, { ts: now, promise: loadPromise });
+    try {
+      const resolved = await loadPromise;
+      v3FeeTiersCacheRef.current.set(cacheKey, {
+        ts: Date.now(),
+        value: resolved,
+        toBlock: discoveredToBlock,
+      });
+      return resolved;
+    } catch {
+      v3FeeTiersCacheRef.current.delete(cacheKey);
+      return [...V3_FEE_TIERS_FALLBACK];
+    }
   }, []);
 
-  const getV3PoolsForPairs = useCallback(async (factory, pairs) => {
-    const poolMap = new Map();
-    if (!factory || !Array.isArray(pairs) || !pairs.length) return poolMap;
-    const factoryAddr =
-      factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
-    const provider = factory?.runner || factory?.provider;
-    const iface = new Interface(UNIV3_FACTORY_ABI);
-    const calls = [];
-    const meta = [];
-    pairs.forEach(([tokenA, tokenB]) => {
-      if (!tokenA || !tokenB) return;
-      V3_FEE_TIERS.forEach((fee) => {
-        calls.push({
-          target: factoryAddr,
-          callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
+  const listV3Pools = useCallback(
+    async (factory, tokenA, tokenB, feeTiersInput = null) => {
+      if (!factory || !tokenA || !tokenB) return [];
+      const feeTiers =
+        Array.isArray(feeTiersInput) && feeTiersInput.length
+          ? sortV3FeeTiers(feeTiersInput)
+          : await getEnabledV3FeeTiers(factory);
+      if (!feeTiers.length) return [];
+      const factoryAddr =
+        factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
+      const provider = factory?.runner || factory?.provider;
+      const iface = new Interface(UNIV3_FACTORY_ABI);
+      const calls = feeTiers.map((fee) => ({
+        target: factoryAddr,
+        callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
+      }));
+      try {
+        const res = await multicall(calls, provider);
+        const parsed = res
+          .map((row, idx) => {
+            if (!row?.success) return null;
+            try {
+              const pool = iface.decodeFunctionResult("getPool", row.returnData)[0];
+              if (pool && pool !== ZERO_ADDRESS) {
+                return { fee: feeTiers[idx], pool };
+              }
+            } catch {
+              // ignore decode failures
+            }
+            return null;
+          })
+          .filter(Boolean);
+        if (parsed.length) return parsed;
+      } catch {
+        // ignore multicall failures and fall back to direct RPCs
+      }
+      const results = await Promise.all(
+        feeTiers.map(async (fee) => {
+          try {
+            const pool = await factory.getPool(tokenA, tokenB, fee);
+            if (pool && pool !== ZERO_ADDRESS) {
+              return { fee, pool };
+            }
+          } catch {
+            // ignore fee probe errors
+          }
+          return null;
+        })
+      );
+      return results.filter(Boolean);
+    },
+    [getEnabledV3FeeTiers]
+  );
+
+  const getV3PoolsForPairs = useCallback(
+    async (factory, pairs, feeTiersInput = null) => {
+      const poolMap = new Map();
+      if (!factory || !Array.isArray(pairs) || !pairs.length) return poolMap;
+      const feeTiers =
+        Array.isArray(feeTiersInput) && feeTiersInput.length
+          ? sortV3FeeTiers(feeTiersInput)
+          : await getEnabledV3FeeTiers(factory);
+      if (!feeTiers.length) return poolMap;
+      const factoryAddr =
+        factory?.target || factory?.address || UNIV3_FACTORY_ADDRESS;
+      const provider = factory?.runner || factory?.provider;
+      const iface = new Interface(UNIV3_FACTORY_ABI);
+      const calls = [];
+      const meta = [];
+      pairs.forEach(([tokenA, tokenB]) => {
+        if (!tokenA || !tokenB) return;
+        feeTiers.forEach((fee) => {
+          calls.push({
+            target: factoryAddr,
+            callData: iface.encodeFunctionData("getPool", [tokenA, tokenB, fee]),
+          });
+          meta.push({ tokenA, tokenB, fee });
         });
-        meta.push({ tokenA, tokenB, fee });
       });
-    });
-    if (!calls.length) return poolMap;
-    try {
-      const res = await multicall(calls, provider);
-      res.forEach((r, idx) => {
-        if (!r?.success) return;
-        const { tokenA, tokenB, fee } = meta[idx];
-        try {
-          const pool = iface.decodeFunctionResult("getPool", r.returnData)[0];
-          if (!pool || pool === ZERO_ADDRESS) return;
-          const aLower = tokenA.toLowerCase();
-          const bLower = tokenB.toLowerCase();
-          const key = `${aLower}-${bLower}`;
-          const revKey = `${bLower}-${aLower}`;
-          const entry = poolMap.get(key) || [];
-          entry.push({ fee, pool });
-          poolMap.set(key, entry);
-          const revEntry = poolMap.get(revKey) || [];
-          revEntry.push({ fee, pool });
-          poolMap.set(revKey, revEntry);
-        } catch {
-          // ignore decode failures
-        }
-      });
+      if (!calls.length) return poolMap;
+      try {
+        const res = await multicall(calls, provider);
+        res.forEach((row, idx) => {
+          if (!row?.success) return;
+          const { tokenA, tokenB, fee } = meta[idx];
+          try {
+            const pool = iface.decodeFunctionResult("getPool", row.returnData)[0];
+            if (!pool || pool === ZERO_ADDRESS) return;
+            const aLower = tokenA.toLowerCase();
+            const bLower = tokenB.toLowerCase();
+            const key = `${aLower}-${bLower}`;
+            const revKey = `${bLower}-${aLower}`;
+            const entry = poolMap.get(key) || [];
+            entry.push({ fee, pool });
+            poolMap.set(key, entry);
+            const revEntry = poolMap.get(revKey) || [];
+            revEntry.push({ fee, pool });
+            poolMap.set(revKey, revEntry);
+          } catch {
+            // ignore decode failures
+          }
+        });
+        return poolMap;
+      } catch {
+        // ignore multicall failures and fall back to per-pair calls
+      }
+      for (const [tokenA, tokenB] of pairs) {
+        if (!tokenA || !tokenB) continue;
+        const pools = await listV3Pools(factory, tokenA, tokenB, feeTiers);
+        if (!pools.length) continue;
+        const aLower = tokenA.toLowerCase();
+        const bLower = tokenB.toLowerCase();
+        poolMap.set(`${aLower}-${bLower}`, pools);
+        poolMap.set(`${bLower}-${aLower}`, pools);
+      }
       return poolMap;
-    } catch {
-      // ignore multicall failures and fall back to per-pair calls
-    }
-    for (const [tokenA, tokenB] of pairs) {
-      if (!tokenA || !tokenB) continue;
-      const pools = await listV3Pools(factory, tokenA, tokenB);
-      if (!pools.length) continue;
-      const aLower = tokenA.toLowerCase();
-      const bLower = tokenB.toLowerCase();
-      poolMap.set(`${aLower}-${bLower}`, pools);
-      poolMap.set(`${bLower}-${aLower}`, pools);
-    }
-    return poolMap;
-  }, [listV3Pools]);
+    },
+    [getEnabledV3FeeTiers, listV3Pools]
+  );
 
   const getV2PairsForMids = useCallback(async (factory, tokenA, tokenB, mids) => {
     const factoryAddr =
@@ -1582,9 +1754,14 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             pairs.push([tokenList[i], tokenList[j]]);
           }
         }
-        const poolMap = await getV3PoolsForPairs(factory, pairs);
+        const enabledFeeTiers = await getEnabledV3FeeTiers(factory);
+        const poolMap = await getV3PoolsForPairs(factory, pairs, enabledFeeTiers);
         const feePriorityIndex = new Map(
-          V3_FEE_PRIORITY.map((fee, idx) => [fee, idx])
+          sortV3FeeTiers(enabledFeeTiers).map((fee, idx) => [fee, idx])
+        );
+        const maxFeeOptionsPerEdge = Math.max(
+          MAX_V3_FEE_OPTIONS,
+          Array.isArray(enabledFeeTiers) ? enabledFeeTiers.length : 0
         );
         const getPools = (tokenA, tokenB) =>
           poolMap.get(`${tokenA.toLowerCase()}-${tokenB.toLowerCase()}`) || [];
@@ -1637,7 +1814,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               valid = false;
               break;
             }
-            edgePools.push(pools.slice(0, MAX_V3_FEE_OPTIONS));
+            edgePools.push(pools.slice(0, maxFeeOptionsPerEdge));
           }
           if (!valid) continue;
           let combos = [{ fees: [], pools: [] }];
@@ -1688,6 +1865,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     [
       buyMeta?.address,
       buyToken,
+      getEnabledV3FeeTiers,
       getRouteCandidates,
       getV3PoolsForPairs,
       hasV3Support,
