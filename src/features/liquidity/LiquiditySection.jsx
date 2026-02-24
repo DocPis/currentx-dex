@@ -56,16 +56,19 @@ const SYNC_TOPIC =
 const V3_MIN_TICK = -887272;
 const V3_MAX_TICK = 887272;
 const V3_FEE_OPTIONS = [
+  { fee: 100, label: "0.01%" },
   { fee: 500, label: "0.05%" },
   { fee: 3000, label: "0.30%" },
   { fee: 10000, label: "1.00%" },
 ];
 const V3_FEE_DESCRIPTIONS = {
+  100: "Ultra-low fee - ideal for tightly pegged pairs",
   500: "Low fee - best for correlated pairs",
   3000: "Balanced - default for most pairs",
   10000: "High fee - better for volatile pairs",
 };
 const V3_TICK_SPACING = {
+  100: 1,
   500: 10,
   3000: 60,
   10000: 200,
@@ -1296,7 +1299,8 @@ export default function LiquiditySection({
   );
   const selectedV3FeeOption = useMemo(() => {
     const matched = V3_FEE_OPTIONS.find((opt) => Number(opt.fee) === Number(v3FeeTier));
-    return matched || V3_FEE_OPTIONS[1];
+    const defaultOption = V3_FEE_OPTIONS.find((opt) => Number(opt.fee) === 3000);
+    return matched || defaultOption || V3_FEE_OPTIONS[0];
   }, [v3FeeTier]);
 
   useEffect(() => {
