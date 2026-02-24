@@ -144,6 +144,12 @@ const poolMatchesSearch = (pool, term) => {
   return hay.includes(term);
 };
 
+const isLowTvlPool = (pool) => {
+  const liquidity = Number(pool?.liquidityUsd);
+  if (!Number.isFinite(liquidity)) return true;
+  return liquidity < LOW_TVL_THRESHOLD;
+};
+
 export default function PoolsSection({ onSelectPool }) {
   const [searchTerm, setSearchTerm] = useState("");
   const {
@@ -331,10 +337,7 @@ export default function PoolsSection({ onSelectPool }) {
       list = list.filter((pool) => poolMatchesSearch(pool, searchLower));
     }
     if (hideLowTvl) {
-      list = list.filter((pool) => {
-        if (!Number.isFinite(pool.liquidityUsd)) return true;
-        return pool.liquidityUsd >= LOW_TVL_THRESHOLD;
-      });
+      list = list.filter((pool) => !isLowTvlPool(pool));
     }
     return list;
   }, [combinedPools, searchLower, hideLowTvl]);

@@ -516,10 +516,14 @@ const friendlySwapError = (e) => {
   return raw || "Swap failed. Try again or change RPC.";
 };
 
-const friendlyQuoteError = (e, sellSymbol, buySymbol) => {
+const friendlyQuoteError = (e, sellSymbol, buySymbol, opts = {}) => {
   const raw = e?.message || "";
   const lower = raw.toLowerCase();
+  const isExactOut = Boolean(opts?.isExactOut);
   if (lower.includes("missing revert data") || lower.includes("call_exception")) {
+    if (isExactOut) {
+      return `Requested output is too high for current liquidity on ${sellSymbol}/${buySymbol}. Try a smaller output.`;
+    }
     return `No pool found for ${sellSymbol}/${buySymbol} on the selected network. Create it first or try another pair.`;
   }
   if (lower.includes("could not find") || lower.includes("not found")) {
@@ -2758,7 +2762,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
             nowTs - lastFullQuoteAtRef.current > 3000;
 
           if (cachedRoute && isRouteCompatible(cachedRoute)) {
-            const fastRoute = await fastQuoteRoute(cachedRoute);
+            let fastRoute = null;
+            try {
+              fastRoute = await fastQuoteRoute(cachedRoute);
+            } catch {
+              fastRoute = null;
+            }
             if (fastRoute) {
               applyQuoteFromRoute(fastRoute, false);
               if (!shouldFullQuote) {
@@ -3270,8 +3279,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
                   : routePreference === "v3"
                     ? "No V3 route available for this pair."
                     : "No route available for this pair.";
-            if (!(hadQuote && isNoRouteQuoteError(msg))) {
+            if (!(hadQuote && isNoRouteQuoteError(msg) && !isExactOut)) {
               setQuoteError(msg);
+            }
+            if (isExactOut) {
+              resetQuoteState();
             }
             return;
           }
@@ -3279,7 +3291,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           applyQuoteFromRoute(selectedRoute, true);
         } catch (e) {
           if (cancelled) return;
-          setQuoteError(friendlyQuoteError(e, displaySellSymbol, displayBuySymbol));
+          setQuoteError(
+            friendlyQuoteError(e, displaySellSymbol, displayBuySymbol, { isExactOut })
+          );
+          if (isExactOut) {
+            resetQuoteState();
+          }
         } finally {
           if (inFlightSet) {
             quoteInFlightRef.current = false;
