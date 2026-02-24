@@ -14,6 +14,8 @@ const PAGE_SIZE = 50;
 const REFRESH_MS = 60 * 1000;
 const CACHE_TTL_MS = 30 * 60 * 1000;
 const POOLS_CACHE_KEY = "cx_pools_cache_v2";
+const ROLLING_HOURLY_PRIMARY_LIMIT_V2 = 32;
+const ROLLING_HOURLY_PRIMARY_LIMIT_V3 = 48;
 
 const getNextPageParam = (lastPage, pages) =>
   lastPage && lastPage.length === PAGE_SIZE ? pages.length * PAGE_SIZE : undefined;
@@ -57,6 +59,23 @@ const normalizePoolIds = (ids = []) =>
         .filter(Boolean)
     )
   );
+
+const toFinitePositiveNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+};
+
+const pickTopPoolIdsByTvl = (pools = [], limit = 0) => {
+  if (!Array.isArray(pools) || !pools.length || !Number.isFinite(limit) || limit <= 0) {
+    return [];
+  }
+  const top = pools
+    .slice()
+    .sort((a, b) => toFinitePositiveNumber(b?.tvlUsd) - toFinitePositiveNumber(a?.tvlUsd))
+    .slice(0, limit)
+    .map((pool) => pool?.id);
+  return normalizePoolIds(top);
+};
 
 const buildIdsKey = (ids = []) => ids.slice().sort().join(",");
 
@@ -170,8 +189,24 @@ export function usePoolsData(options = {}) {
 
   const v2Ids = useMemo(() => normalizePoolIds(v2Pools.map((p) => p.id)), [v2Pools]);
   const v3Ids = useMemo(() => normalizePoolIds(v3Pools.map((p) => p.id)), [v3Pools]);
+  const v2HourlyPrimaryIds = useMemo(
+    () => pickTopPoolIdsByTvl(v2Pools, ROLLING_HOURLY_PRIMARY_LIMIT_V2),
+    [v2Pools]
+  );
+  const v3HourlyPrimaryIds = useMemo(
+    () => pickTopPoolIdsByTvl(v3Pools, ROLLING_HOURLY_PRIMARY_LIMIT_V3),
+    [v3Pools]
+  );
   const v2IdsKey = useMemo(() => buildIdsKey(v2Ids), [v2Ids]);
   const v3IdsKey = useMemo(() => buildIdsKey(v3Ids), [v3Ids]);
+  const v2HourlyPrimaryIdsKey = useMemo(
+    () => buildIdsKey(v2HourlyPrimaryIds),
+    [v2HourlyPrimaryIds]
+  );
+  const v3HourlyPrimaryIdsKey = useMemo(
+    () => buildIdsKey(v3HourlyPrimaryIds),
+    [v3HourlyPrimaryIds]
+  );
   const cachedV2Rolling = useMemo(
     () => pickRollingEntries(cachedPools?.v2RollingData, v2Ids),
     [cachedPools, v2Ids]
@@ -199,12 +234,25 @@ export function usePoolsData(options = {}) {
     );
     const idsToFetch = v2Ids.filter((id) => !hasOwn(seed, id));
     if (!idsToFetch.length) return seed;
-    const dayData = await fetchV2PoolsDayData(idsToFetch);
-    const missingIds = idsToFetch.filter((id) => !dayData[id]);
-    if (!missingIds.length) return mergeRollingData(seed, dayData);
-    const hourData = await fetchV2PoolsHourData(missingIds, 24);
-    return mergeRollingData(seed, mergeRollingData(dayData, hourData));
-  }, [v2Ids]);
+    const fetchSet = new Set(idsToFetch);
+    const primaryHourlyIds = v2HourlyPrimaryIds.filter((id) => fetchSet.has(id));
+    const primaryHourData = primaryHourlyIds.length
+      ? await fetchV2PoolsHourData(primaryHourlyIds, 24)
+      : {};
+    const covered = new Set(Object.keys(primaryHourData || {}));
+    const remainingIds = idsToFetch.filter((id) => !covered.has(id));
+    if (!remainingIds.length) return mergeRollingData(seed, primaryHourData);
+    const dayData = await fetchV2PoolsDayData(remainingIds);
+    const missingIds = remainingIds.filter((id) => !dayData[id]);
+    if (!missingIds.length) {
+      return mergeRollingData(seed, mergeRollingData(primaryHourData, dayData));
+    }
+    const fallbackHourData = await fetchV2PoolsHourData(missingIds, 24);
+    return mergeRollingData(
+      seed,
+      mergeRollingData(primaryHourData, mergeRollingData(dayData, fallbackHourData))
+    );
+  }, [v2Ids, v2HourlyPrimaryIds]);
 
   const fetchV3Rolling24h = useCallback(async () => {
     if (!v3Ids.length) return {};
@@ -216,15 +264,28 @@ export function usePoolsData(options = {}) {
     );
     const idsToFetch = v3Ids.filter((id) => !hasOwn(seed, id));
     if (!idsToFetch.length) return seed;
-    const dayData = await fetchV3PoolsDayData(idsToFetch);
-    const missingIds = idsToFetch.filter((id) => !dayData[id]);
-    if (!missingIds.length) return mergeRollingData(seed, dayData);
-    const hourData = await fetchV3PoolsHourData(missingIds, 24);
-    return mergeRollingData(seed, mergeRollingData(dayData, hourData));
-  }, [v3Ids]);
+    const fetchSet = new Set(idsToFetch);
+    const primaryHourlyIds = v3HourlyPrimaryIds.filter((id) => fetchSet.has(id));
+    const primaryHourData = primaryHourlyIds.length
+      ? await fetchV3PoolsHourData(primaryHourlyIds, 24)
+      : {};
+    const covered = new Set(Object.keys(primaryHourData || {}));
+    const remainingIds = idsToFetch.filter((id) => !covered.has(id));
+    if (!remainingIds.length) return mergeRollingData(seed, primaryHourData);
+    const dayData = await fetchV3PoolsDayData(remainingIds);
+    const missingIds = remainingIds.filter((id) => !dayData[id]);
+    if (!missingIds.length) {
+      return mergeRollingData(seed, mergeRollingData(primaryHourData, dayData));
+    }
+    const fallbackHourData = await fetchV3PoolsHourData(missingIds, 24);
+    return mergeRollingData(
+      seed,
+      mergeRollingData(primaryHourData, mergeRollingData(dayData, fallbackHourData))
+    );
+  }, [v3Ids, v3HourlyPrimaryIds]);
 
   const v2RollingQuery = useQuery({
-    queryKey: ["pools", "v2-roll-24h", v2IdsKey],
+    queryKey: ["pools", "v2-roll-24h", v2IdsKey, v2HourlyPrimaryIdsKey],
     queryFn: fetchV2Rolling24h,
     enabled: v2Enabled && v2Ids.length > 0,
     initialData: hasCachedV2Rolling ? cachedV2Rolling : undefined,
@@ -237,7 +298,7 @@ export function usePoolsData(options = {}) {
   });
 
   const v3RollingQuery = useQuery({
-    queryKey: ["pools", "v3-roll-24h", v3IdsKey],
+    queryKey: ["pools", "v3-roll-24h", v3IdsKey, v3HourlyPrimaryIdsKey],
     queryFn: fetchV3Rolling24h,
     enabled: v3Ids.length > 0,
     initialData: hasCachedV3Rolling ? cachedV3Rolling : undefined,
