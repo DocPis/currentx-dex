@@ -1326,19 +1326,40 @@ const addDayTvl = (targetMap, dayId, tvlValue) => {
 // Build a dense per-pool daily TVL series across the requested window.
 // Some subgraphs omit poolDayDatas entries for days without updates, so we carry
 // forward the last known pool TVL to avoid undercounting protocol TVL for that day.
-const addDensePoolTvlRows = (targetMap, rows = [], pickTvl, days = 7) => {
+const addDensePoolTvlRows = (
+  targetMap,
+  rows = [],
+  pickTvl,
+  days = 7,
+  { liveTvlUsd } = {}
+) => {
   const safeDays = Math.max(1, Math.min(Number(days) || 7, 1000));
   const todayDayId = Math.floor(Date.now() / 86400000);
   const startDayId = todayDayId - safeDays + 1;
+  const liveTvlNum = Number(liveTvlUsd);
+  const hasLiveTvl = Number.isFinite(liveTvlNum) && liveTvlNum >= 0;
 
   const tvlByDay = new Map();
+  let latestObservedDayId = null;
   (rows || []).forEach((row) => {
     const dayId = toDayIdFromSubgraphDate(row?.date);
     if (!Number.isFinite(dayId) || dayId <= 0) return;
     const tvl = Number(pickTvl?.(row));
     if (!Number.isFinite(tvl) || tvl < 0) return;
     if (!tvlByDay.has(dayId)) tvlByDay.set(dayId, tvl);
+    if (latestObservedDayId === null || dayId > latestObservedDayId) {
+      latestObservedDayId = dayId;
+    }
   });
+  const latestObservedFromRows = latestObservedDayId;
+
+  // Align today's point with live pool TVL when available.
+  if (hasLiveTvl) {
+    tvlByDay.set(todayDayId, liveTvlNum);
+    if (latestObservedDayId === null || todayDayId > latestObservedDayId) {
+      latestObservedDayId = todayDayId;
+    }
+  }
 
   let lastKnown = null;
   let baselineDay = null;
@@ -1350,7 +1371,21 @@ const addDensePoolTvlRows = (targetMap, rows = [], pickTvl, days = 7) => {
     }
   });
 
+  const stopCarryAfterLastObserved =
+    hasLiveTvl &&
+    liveTvlNum <= 0 &&
+    Number.isFinite(latestObservedFromRows) &&
+    latestObservedFromRows >= startDayId;
+
   for (let dayId = startDayId; dayId <= todayDayId; dayId += 1) {
+    if (
+      stopCarryAfterLastObserved &&
+      dayId > latestObservedFromRows &&
+      !tvlByDay.has(dayId)
+    ) {
+      lastKnown = null;
+      continue;
+    }
     if (tvlByDay.has(dayId)) {
       lastKnown = Number(tvlByDay.get(dayId));
     }
@@ -1367,8 +1402,8 @@ const splitIntoChunks = (items = [], size = WHITELIST_HISTORY_CHUNK_SIZE) => {
   return out;
 };
 
-const fetchWhitelistedPoolIds = async (fetchPage) => {
-  const ids = new Set();
+const fetchWhitelistedPoolsMeta = async (fetchPage) => {
+  const poolsById = new Map();
   let skip = 0;
   for (let page = 0; page < SUBGRAPH_POOL_PAGE_MAX; page += 1) {
     const rows = await fetchPage({
@@ -1380,20 +1415,41 @@ const fetchWhitelistedPoolIds = async (fetchPage) => {
       if (!isWhitelistedPairOrPool(row)) return;
       const id = normalizeAddress(row?.id);
       if (!id) return;
-      ids.add(id);
+      const tvlUsd = toNumberSafe(row?.tvlUsd);
+      const existing = poolsById.get(id);
+      if (!existing || tvlUsd > existing.tvlUsd) {
+        poolsById.set(id, { id, tvlUsd });
+      }
     });
     if (rows.length < SUBGRAPH_POOL_PAGE_SIZE) break;
     skip += SUBGRAPH_POOL_PAGE_SIZE;
   }
-  return Array.from(ids);
+  return Array.from(poolsById.values());
 };
 
-const fetchV2WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
+const fetchV2WhitelistedTvlDayTotals = async (poolEntries = [], days = 7) => {
   const totals = new Map();
   if (SUBGRAPH_MISSING_KEY) return totals;
 
-  const ids = Array.from(new Set((poolIds || []).filter(Boolean).map(normalizeAddress)));
+  const entries = Array.isArray(poolEntries) ? poolEntries : [];
+  const ids = Array.from(
+    new Set(
+      entries
+        .map((entry) => normalizeAddress(typeof entry === "string" ? entry : entry?.id))
+        .filter(Boolean)
+    )
+  );
   if (!ids.length) return totals;
+  const liveTvlById = new Map();
+  entries.forEach((entry) => {
+    const id = normalizeAddress(typeof entry === "string" ? entry : entry?.id);
+    if (!id) return;
+    const tvlUsd = toNumberSafe(entry?.tvlUsd);
+    const prev = liveTvlById.get(id);
+    if (prev === undefined || tvlUsd > prev) {
+      liveTvlById.set(id, tvlUsd);
+    }
+  });
 
   const fetchCount = Math.min(1000, Math.max(days * 2, days + 5));
   const chunks = splitIntoChunks(ids);
@@ -1426,7 +1482,9 @@ const fetchV2WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
     const res = await postSubgraph(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      addDensePoolTvlRows(totals, rows, (row) => row?.reserveUSD, days);
+      addDensePoolTvlRows(totals, rows, (row) => row?.reserveUSD, days, {
+        liveTvlUsd: liveTvlById.get(id),
+      });
     });
   };
 
@@ -1458,12 +1516,29 @@ const fetchV2WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
   return totals;
 };
 
-const fetchV3WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
+const fetchV3WhitelistedTvlDayTotals = async (poolEntries = [], days = 7) => {
   const totals = new Map();
   if (SUBGRAPH_V3_MISSING_KEY) return totals;
 
-  const ids = Array.from(new Set((poolIds || []).filter(Boolean).map(normalizeAddress)));
+  const entries = Array.isArray(poolEntries) ? poolEntries : [];
+  const ids = Array.from(
+    new Set(
+      entries
+        .map((entry) => normalizeAddress(typeof entry === "string" ? entry : entry?.id))
+        .filter(Boolean)
+    )
+  );
   if (!ids.length) return totals;
+  const liveTvlById = new Map();
+  entries.forEach((entry) => {
+    const id = normalizeAddress(typeof entry === "string" ? entry : entry?.id);
+    if (!id) return;
+    const tvlUsd = toNumberSafe(entry?.tvlUsd);
+    const prev = liveTvlById.get(id);
+    if (prev === undefined || tvlUsd > prev) {
+      liveTvlById.set(id, tvlUsd);
+    }
+  });
 
   const fetchCount = Math.min(1000, Math.max(days * 2, days + 5));
   const chunks = splitIntoChunks(ids);
@@ -1511,7 +1586,9 @@ const fetchV3WhitelistedTvlDayTotals = async (poolIds = [], days = 7) => {
     const res = await postSubgraphV3(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      addDensePoolTvlRows(totals, rows, selectVariant.pickTvl, days);
+      addDensePoolTvlRows(totals, rows, selectVariant.pickTvl, days, {
+        liveTvlUsd: liveTvlById.get(id),
+      });
     });
   };
 
@@ -1576,16 +1653,16 @@ const buildDenseWhitelistedTvlHistory = (dayTotals = new Map(), days = 7) => {
 const fetchWhitelistedTvlHistoryCombined = async (days = 7) => {
   const safeDays = Math.max(1, Math.min(Number(days) || 7, 1000));
 
-  const [v2Ids, v3Ids] = await Promise.all([
-    fetchWhitelistedPoolIds(fetchV2PoolsPage).catch(() => []),
-    fetchWhitelistedPoolIds(fetchV3PoolsPage).catch(() => []),
+  const [v2Pools, v3Pools] = await Promise.all([
+    fetchWhitelistedPoolsMeta(fetchV2PoolsPage).catch(() => []),
+    fetchWhitelistedPoolsMeta(fetchV3PoolsPage).catch(() => []),
   ]);
 
-  if (!v2Ids.length && !v3Ids.length) return [];
+  if (!v2Pools.length && !v3Pools.length) return [];
 
   const [v2Totals, v3Totals] = await Promise.all([
-    fetchV2WhitelistedTvlDayTotals(v2Ids, safeDays).catch(() => new Map()),
-    fetchV3WhitelistedTvlDayTotals(v3Ids, safeDays).catch(() => new Map()),
+    fetchV2WhitelistedTvlDayTotals(v2Pools, safeDays).catch(() => new Map()),
+    fetchV3WhitelistedTvlDayTotals(v3Pools, safeDays).catch(() => new Map()),
   ]);
 
   const combined = new Map(v2Totals);
