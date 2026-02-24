@@ -271,21 +271,23 @@ export default function PoolsSection({ onSelectPool }) {
     let hasTvlChange = false;
 
     combinedPools.forEach((pool) => {
-      if (Number.isFinite(pool?.liquidityUsd) && pool.liquidityUsd >= 0) {
+      const includeInProtocol =
+        Number.isFinite(pool?.liquidityUsd) && pool.liquidityUsd >= 0;
+      if (includeInProtocol) {
         tvl += pool.liquidityUsd;
         hasTvl = true;
-      }
-      if (Number.isFinite(pool?.volume24hUsd) && pool.volume24hUsd >= 0) {
-        volume24h += pool.volume24hUsd;
-        hasVolume = true;
-      }
-      if (Number.isFinite(pool?.fees24hUsd) && pool.fees24hUsd >= 0) {
-        fees24h += pool.fees24hUsd;
-        hasFees = true;
-      }
-      if (Number.isFinite(pool?.tvlChange24hUsd)) {
-        tvlChange24h += pool.tvlChange24hUsd;
-        hasTvlChange = true;
+        if (Number.isFinite(pool?.volume24hUsd) && pool.volume24hUsd >= 0) {
+          volume24h += pool.volume24hUsd;
+          hasVolume = true;
+        }
+        if (Number.isFinite(pool?.fees24hUsd) && pool.fees24hUsd >= 0) {
+          fees24h += pool.fees24hUsd;
+          hasFees = true;
+        }
+        if (Number.isFinite(pool?.tvlChange24hUsd)) {
+          tvlChange24h += pool.tvlChange24hUsd;
+          hasTvlChange = true;
+        }
       }
     });
 
