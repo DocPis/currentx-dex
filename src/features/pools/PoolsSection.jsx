@@ -62,6 +62,12 @@ const formatPercent = (num, digits = 2) => {
   if (!Number.isFinite(num)) return "--";
   return `${trimTrailingZeros(num.toFixed(digits))}%`;
 };
+const formatPercentCapped = (num, digits = 2, cap = 999) => {
+  if (!Number.isFinite(num)) return "--";
+  if (num > cap) return `>${cap}%`;
+  if (num < -cap) return `<-${cap}%`;
+  return formatPercent(num, digits);
+};
 const formatSignedPercent = (num, digits = 2) => {
   if (!Number.isFinite(num)) return "--";
   const sign = num > 0 ? "+" : num < 0 ? "-" : "";
@@ -965,6 +971,17 @@ export default function PoolsSection({ onSelectPool }) {
                 .map((badge) => badge.label)
                 .join(", ");
               const hiddenContextCount = Math.max(0, contextBadges.length - 2);
+              const liquidityLabel = formatUsd(pool.liquidityUsd);
+              const volumeLabel =
+                pool.volume24hUsd !== null ? formatUsd(pool.volume24hUsd) : "--";
+              const turnoverLabel = Number.isFinite(insight?.turnover24hPct)
+                ? formatPercentCapped(insight.turnover24hPct)
+                : "--";
+              const feesLabel = pool.fees24hUsd !== null ? formatUsd(pool.fees24hUsd) : "--";
+              const aprLabel =
+                pool.apr !== null && Number.isFinite(pool.apr)
+                  ? formatPercentCapped(pool.apr, 2)
+                  : "--";
               return (
                 <button
                   key={poolKey}
@@ -1025,8 +1042,8 @@ export default function PoolsSection({ onSelectPool }) {
                       </div>
                     </div>
 
-                    <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      <div>{formatUsd(pool.liquidityUsd)}</div>
+                    <div className="md:col-span-2 min-w-0 text-right text-sm text-slate-100">
+                      <div className="truncate" title={liquidityLabel}>{liquidityLabel}</div>
                       <div className="mt-1 inline-flex w-full items-center justify-end gap-1 text-[10px] text-slate-500">
                         <span className="uppercase tracking-wide">Depth</span>
                         <span className="inline-flex h-1.5 w-14 rounded-full bg-slate-800 overflow-hidden">
@@ -1048,10 +1065,10 @@ export default function PoolsSection({ onSelectPool }) {
                           : "--"}
                       </div>
                     </div>
-                    <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      <div className="inline-flex w-full items-center justify-end gap-2">
-                        <span>
-                          {pool.volume24hUsd !== null ? formatUsd(pool.volume24hUsd) : "--"}
+                    <div className="md:col-span-2 min-w-0 text-right text-sm text-slate-100">
+                      <div className="inline-flex w-full min-w-0 items-center justify-end gap-2">
+                        <span className="min-w-0 truncate" title={volumeLabel}>
+                          {volumeLabel}
                         </span>
                         <span className="hidden md:inline-flex h-1.5 w-12 rounded-full bg-slate-800 overflow-hidden">
                           <span
@@ -1065,22 +1082,22 @@ export default function PoolsSection({ onSelectPool }) {
                           />
                         </span>
                       </div>
-                      <div className="mt-1 text-[10px] text-slate-500">
-                        Turnover{" "}
-                        {Number.isFinite(insight?.turnover24hPct)
-                          ? formatPercent(insight.turnover24hPct)
-                          : "--"}
+                      <div className="mt-1 flex min-w-0 items-center justify-end gap-1 text-[10px] text-slate-500">
+                        <span className="shrink-0">Turnover</span>
+                        <span className="min-w-0 truncate text-right" title={turnoverLabel}>
+                          {turnoverLabel}
+                        </span>
                       </div>
                     </div>
-                    <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      {pool.fees24hUsd !== null ? formatUsd(pool.fees24hUsd) : "--"}
+                    <div className="md:col-span-2 min-w-0 text-right text-sm text-slate-100">
+                      <div className="truncate" title={feesLabel}>{feesLabel}</div>
                     </div>
-                    <div className="md:col-span-2 text-right text-sm text-slate-100">
-                      <div className="inline-flex w-full items-center justify-end gap-2">
-                        <span className="text-base font-semibold">
-                          {pool.apr !== null ? `${pool.apr.toFixed(2)}%` : "--"}
+                    <div className="md:col-span-2 min-w-0 text-right text-sm text-slate-100">
+                      <div className="inline-flex w-full min-w-0 items-center justify-end gap-2">
+                        <span className="min-w-0 truncate text-base font-semibold" title={aprLabel}>
+                          {aprLabel}
                         </span>
-                        <span className="hidden md:inline-flex text-[11px] font-medium text-slate-500 group-hover:text-sky-300 transition">
+                        <span className="hidden shrink-0 md:inline-flex text-[11px] font-medium text-slate-500 group-hover:text-sky-300 transition">
                           Open {"\u2192"}
                         </span>
                       </div>
