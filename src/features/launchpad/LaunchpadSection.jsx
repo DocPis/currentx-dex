@@ -841,7 +841,13 @@ const normalizeLaunchpadView = (value) => {
   return LAUNCHPAD_VIEWS.has(normalized) ? normalized : "create";
 };
 
-export default function LaunchpadSection({ address, onConnect, initialView = "create", onOpenMarket }) {
+export default function LaunchpadSection({
+  address,
+  onConnect,
+  onBalancesRefresh,
+  initialView = "create",
+  onOpenMarket,
+}) {
   const [contracts] = useState({
     currentx: CURRENTX_ADDRESS || "",
     vault: CURRENTX_VAULT_ADDRESS || "",
@@ -1223,6 +1229,15 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       setLocker((prev) => ({ ...prev, error: errMsg(error, "Unable to load selected reward info."), tokenReward: null }));
     }
   }, [contracts.locker, locker.selectedId, resolveTokenMeta]);
+
+  const refreshBalancesPostTx = useCallback(async () => {
+    if (!address || typeof onBalancesRefresh !== "function") return;
+    try {
+      await onBalancesRefresh(address, { silent: true, postTx: true });
+    } catch {
+      // ignore balance refresh errors
+    }
+  }, [address, onBalancesRefresh]);
 
   useEffect(() => {
     if (!address) return;
@@ -2049,7 +2064,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
 
       setDeployResult({ tokenAddress, positionId, txHash: receipt.hash || tx.hash || "" });
       setDeployAction({ loading: false, error: "", hash: receipt.hash || tx.hash || "", message: "Token deployed." });
-      await Promise.all([refreshDeployments(), refreshLocker()]);
+      await Promise.all([refreshDeployments(), refreshLocker(), refreshBalancesPostTx()]);
     } catch (error) {
       console.error("[launchpad][deploy] failed", error);
       setDeployAction({ loading: false, error: errMsg(error, "Deploy failed."), hash: "", message: "" });
@@ -2073,7 +2088,7 @@ export default function LaunchpadSection({ address, onConnect, initialView = "cr
       const tx = await lockerContract.collectRewards(BigInt(locker.selectedId));
       const receipt = await tx.wait();
       setLockerAction({ loadingKey: "", error: "", hash: receipt.hash || tx.hash || "", message: "Fees collected." });
-      await refreshLockerReward();
+      await Promise.all([refreshLockerReward(), refreshBalancesPostTx()]);
     } catch (error) {
       setLockerAction({ loadingKey: "", error: errMsg(error, "Collect failed."), hash: "", message: "" });
     }

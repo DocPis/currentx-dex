@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import LaunchpadMarket from "../../pages/launchpad/LaunchpadMarket";
 import TokenDetail from "../../pages/launchpad/TokenDetail";
 import LegacyLaunchpadSection from "./LaunchpadSection";
@@ -58,6 +58,14 @@ export default function LaunchpadMarketplaceSection({
   onNavigate,
 }) {
   const parsed = useMemo(() => parseLaunchpadPath(routePath), [routePath]);
+  const refreshBalancesPostTx = useCallback(async () => {
+    if (!address || typeof onBalancesRefresh !== "function") return;
+    try {
+      await onBalancesRefresh(address, { silent: true, postTx: true });
+    } catch {
+      // ignore balance refresh errors
+    }
+  }, [address, onBalancesRefresh]);
 
   // When navigating from a long scrollable list (market) into a shorter detail view,
   // keep the UX predictable by resetting scroll. Otherwise the user can land "below"
@@ -78,7 +86,7 @@ export default function LaunchpadMarketplaceSection({
         address={address}
         initialTradeSide={parsed.tradeIntent === "buy" ? "buy" : undefined}
         onConnect={onConnect}
-        onRefreshBalances={onBalancesRefresh}
+        onRefreshBalances={refreshBalancesPostTx}
         onBack={() => onNavigate?.("/launchpad/market")}
         onOpenToken={(tokenAddress) => onNavigate?.(`/launchpad/${tokenAddress}`)}
       />
@@ -99,6 +107,7 @@ export default function LaunchpadMarketplaceSection({
     <LegacyLaunchpadSection
       address={address}
       onConnect={onConnect}
+      onBalancesRefresh={onBalancesRefresh}
       initialView={parsed.studioView}
       onOpenMarket={() => onNavigate?.("/launchpad/market")}
     />

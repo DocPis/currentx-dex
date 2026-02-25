@@ -503,7 +503,11 @@ export default function App() {
             />
           )}
           {tab === "farms" && (
-            <Farms address={address} onConnect={handleConnect} />
+            <Farms
+              address={address}
+              onConnect={handleConnect}
+              onBalancesRefresh={refresh}
+            />
           )}
           {tab === "megavault" && (
             <MegaVaultSection address={address} onConnectWallet={handleConnect} />

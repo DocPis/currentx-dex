@@ -101,7 +101,7 @@ const runWithConcurrency = async (items = [], limit = 4, worker) => {
   return out;
 };
 
-export default function Farms({ address, onConnect }) {
+export default function Farms({ address, onConnect, onBalancesRefresh }) {
   return (
     <div className="w-full px-4 sm:px-6 lg:px-10 py-8 text-slate-100">
       <div className="flex items-center justify-between flex-wrap gap-3 mb-6">
@@ -113,12 +113,16 @@ export default function Farms({ address, onConnect }) {
         </div>
       </div>
 
-      <V3StakerList address={address} onConnect={onConnect} />
+      <V3StakerList
+        address={address}
+        onConnect={onConnect}
+        onBalancesRefresh={onBalancesRefresh}
+      />
     </div>
   );
 }
 
-function V3StakerList({ address, onConnect }) {
+function V3StakerList({ address, onConnect, onBalancesRefresh }) {
   const [incentives, setIncentives] = useState([]);
   const [positions, setPositions] = useState([]);
   const [depositInfo, setDepositInfo] = useState({});
@@ -359,6 +363,19 @@ function V3StakerList({ address, onConnect }) {
       }
     }
   }, [loadIncentives, loadPositions]);
+
+  const refreshBalancesPostTx = useCallback(async () => {
+    if (!address || typeof onBalancesRefresh !== "function") return;
+    try {
+      await onBalancesRefresh(address, { silent: true, postTx: true });
+    } catch {
+      // ignore balance refresh errors
+    }
+  }, [address, onBalancesRefresh]);
+
+  const refreshAfterTx = useCallback(async () => {
+    await Promise.allSettled([refreshAll(), refreshBalancesPostTx()]);
+  }, [refreshAll, refreshBalancesPostTx]);
 
   useEffect(() => {
     let cancelled = false;
@@ -699,7 +716,7 @@ function V3StakerList({ address, onConnect }) {
         startTime: "",
         endTime: "",
       }));
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setCreateError(e?.message || "Create incentive failed");
     } finally {
@@ -735,7 +752,7 @@ function V3StakerList({ address, onConnect }) {
         error: "",
         hash: receipt?.hash || tx.hash,
       });
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setAction({
         loading: false,
@@ -771,7 +788,7 @@ function V3StakerList({ address, onConnect }) {
         error: "",
         hash: receipt?.hash || tx.hash,
       });
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setAction({
         loading: false,
@@ -803,7 +820,7 @@ function V3StakerList({ address, onConnect }) {
         error: "",
         hash: receipt?.hash || tx.hash,
       });
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setAction({
         loading: false,
@@ -828,7 +845,7 @@ function V3StakerList({ address, onConnect }) {
         error: "",
         hash: receipt?.hash || tx.hash,
       });
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setAction({
         loading: false,
@@ -853,7 +870,7 @@ function V3StakerList({ address, onConnect }) {
         error: "",
         hash: receipt?.hash || tx.hash,
       });
-      await refreshAll();
+      await refreshAfterTx();
     } catch (e) {
       setAction({
         loading: false,

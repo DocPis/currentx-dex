@@ -80,6 +80,18 @@ const formatDateTooltip = (ts) => {
   }
 };
 
+const LIVE_TVL_MIN_RATIO = 0.55;
+const LIVE_TVL_MAX_RATIO = 1.9;
+
+const isLiveTvlPointPlausible = (liveTvl, lastHistoryTvl) => {
+  const live = Number(liveTvl);
+  if (!Number.isFinite(live)) return false;
+  const baseline = Number(lastHistoryTvl);
+  if (!Number.isFinite(baseline) || baseline <= 0) return true;
+  const ratio = live / baseline;
+  return ratio >= LIVE_TVL_MIN_RATIO && ratio <= LIVE_TVL_MAX_RATIO;
+};
+
 function LineGlowChart({
   data,
   height = 220,
@@ -373,8 +385,11 @@ export default function Dashboard() {
 
   const tvlSeriesWithToday = useMemo(() => {
     if (!tvlSeries.length) return [];
+    const lastHistorical = tvlSeries[tvlSeries.length - 1]?.value;
     const livePoint =
-      liveTvl !== undefined && Number.isFinite(latestTvlDate)
+      liveTvl !== undefined &&
+      Number.isFinite(latestTvlDate) &&
+      isLiveTvlPointPlausible(liveTvl, lastHistorical)
         ? {
             label: "Today",
             fullLabel: formatDateTooltip(latestTvlDate),

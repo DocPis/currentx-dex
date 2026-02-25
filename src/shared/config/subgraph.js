@@ -1695,6 +1695,38 @@ const applyWhitelistedTvlHistory = (history = [], whitelistHistory = []) => {
   });
 };
 
+const TVL_NEIGHBOR_STABILITY_RATIO = 1.35;
+const TVL_ISOLATED_DROP_RATIO = 0.72;
+
+const smoothIsolatedTvlDropsInHistory = (history = []) => {
+  if (!Array.isArray(history) || history.length < 3) return history;
+
+  const asc = history
+    .slice()
+    .sort((a, b) => Number(a?.date || 0) - Number(b?.date || 0))
+    .map((entry) => ({ ...entry }));
+
+  for (let i = 1; i < asc.length - 1; i += 1) {
+    const prev = Number(asc[i - 1]?.tvlUsd);
+    const cur = Number(asc[i]?.tvlUsd);
+    const next = Number(asc[i + 1]?.tvlUsd);
+    if (!Number.isFinite(prev) || !Number.isFinite(cur) || !Number.isFinite(next)) continue;
+    if (prev <= 0 || cur <= 0 || next <= 0) continue;
+
+    const lowNeighbor = Math.min(prev, next);
+    const highNeighbor = Math.max(prev, next);
+    if (lowNeighbor <= 0) continue;
+
+    const neighborsStable = highNeighbor / lowNeighbor <= TVL_NEIGHBOR_STABILITY_RATIO;
+    const isolatedDrop = cur / lowNeighbor <= TVL_ISOLATED_DROP_RATIO;
+    if (!neighborsStable || !isolatedDrop) continue;
+
+    asc[i].tvlUsd = (prev + next) / 2;
+  }
+
+  return asc.sort((a, b) => Number(b?.date || 0) - Number(a?.date || 0));
+};
+
 export async function fetchProtocolHistoryCombined(days = 7) {
   const [v2, v3, whitelistTvlHistory] = await Promise.all([
     fetchProtocolHistory(days),
@@ -1702,7 +1734,8 @@ export async function fetchProtocolHistoryCombined(days = 7) {
     fetchWhitelistedTvlHistoryCombined(days).catch(() => []),
   ]);
   const mergedHistory = mergeProtocolHistory(v2, v3);
-  return applyWhitelistedTvlHistory(mergedHistory, whitelistTvlHistory);
+  const whitelistedHistory = applyWhitelistedTvlHistory(mergedHistory, whitelistTvlHistory);
+  return smoothIsolatedTvlDropsInHistory(whitelistedHistory);
 }
 
 // Fetch latest on-chain activity (swaps, mints, burns) sorted by timestamp desc
