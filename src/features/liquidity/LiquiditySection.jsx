@@ -86,8 +86,6 @@ const V3_MIN_HANDLE_GAP_PCT = 15;
 const V3_TVL_HISTORY_DAYS = 14;
 const getV3RangeDays = (timeframe) => {
   switch (timeframe) {
-    case "1D":
-      return 1;
     case "1W":
       return 10;
     case "1M":
@@ -2884,7 +2882,7 @@ export default function LiquiditySection({
 
   const zoomV3Range = useCallback(
     (direction) => {
-      const order = ["1D", "1W", "1M", "1Y", "All"];
+      const order = ["1W", "1M", "1Y", "All"];
       const idx = order.indexOf(v3RangeTimeframe);
       if (idx === -1) return;
       const nextIdx =
@@ -8755,7 +8753,6 @@ export default function LiquiditySection({
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         {[
-                          { label: "1D", value: "1D" },
                           { label: "1W", value: "1W" },
                           { label: "1M", value: "1M" },
                           { label: "1Y", value: "1Y" },
