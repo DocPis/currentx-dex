@@ -1265,10 +1265,10 @@ export default function LiquiditySection({
     async () => {
       const tasks = [];
       if (typeof onBalancesRefresh === "function") {
-        tasks.push(onBalancesRefresh(address, { silent: true }));
+        tasks.push(onBalancesRefresh(address, { silent: true, postTx: true }));
       }
       if (typeof hookBalancesRefresh === "function") {
-        tasks.push(hookBalancesRefresh(address, { silent: true }));
+        tasks.push(hookBalancesRefresh(address, { silent: true, postTx: true }));
       }
       if (!tasks.length) return;
       try {

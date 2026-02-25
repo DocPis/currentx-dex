@@ -14,6 +14,8 @@ import { multicall, hasMulticall } from "../services/multicall";
 
 import { getActiveNetworkConfig } from "../config/networks";
 
+const POST_TX_REFRESH_DELAYS_MS = [1200, 3600];
+
 export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const activeNetworkId = (getActiveNetworkConfig()?.id || "mainnet").toLowerCase();
   const BALANCE_POLL_INTERVAL_MS = 20000;
@@ -33,10 +35,12 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
   const [balances, setBalances] = useState(() => makeZeroBalances());
   const [loading, setLoading] = useState(false);
   const isRefreshing = useRef(false);
-  const pendingAddress = useRef(null);
+  const pendingRequest = useRef(null);
   const decimalsCache = useRef({});
   const hasLoadedRef = useRef(false);
   const lastAutoRefreshRef = useRef(0);
+  const postTxTimerIds = useRef([]);
+  const activeAddressRef = useRef((address || "").toLowerCase());
 
   const balancesEqual = useCallback(
     (a, b) => {
@@ -52,16 +56,30 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
     [BALANCE_EPSILON]
   );
 
+  const clearPostTxTimers = useCallback(() => {
+    if (!postTxTimerIds.current.length) return;
+    postTxTimerIds.current.forEach((id) => clearTimeout(id));
+    postTxTimerIds.current = [];
+  }, []);
+
   const refresh = useCallback(
     async (walletAddress = address, opts = {}) => {
       if (!walletAddress) return;
+      const requestOpts = opts || {};
       if (isRefreshing.current) {
-        pendingAddress.current = walletAddress;
+        pendingRequest.current = { address: walletAddress, opts: requestOpts };
         return;
       }
 
+      const isPostTxRefresh = Boolean(requestOpts?.postTx);
+      if (isPostTxRefresh) {
+        // Allow immediate block-triggered retry after tx-bound refreshes.
+        lastAutoRefreshRef.current = 0;
+        clearPostTxTimers();
+      }
+
       isRefreshing.current = true;
-      const silent = Boolean(opts?.silent);
+      const silent = Boolean(requestOpts?.silent);
       const shouldShowLoading = !silent && !hasLoadedRef.current;
       try {
         if (shouldShowLoading) setLoading(true);
@@ -295,15 +313,37 @@ export function useBalances(address, chainId, tokenRegistry = TOKENS) {
       } finally {
         if (shouldShowLoading) setLoading(false);
         isRefreshing.current = false;
-        if (pendingAddress.current) {
-          const nextAddress = pendingAddress.current;
-          pendingAddress.current = null;
-          refresh(nextAddress, opts);
+        if (isPostTxRefresh) {
+          const targetLower = (walletAddress || "").toLowerCase();
+          POST_TX_REFRESH_DELAYS_MS.forEach((delayMs) => {
+            const timerId = setTimeout(() => {
+              // Drop follow-up retries if user switched/disconnected wallet.
+              if (activeAddressRef.current !== targetLower) return;
+              refresh(walletAddress, { silent: true });
+            }, delayMs);
+            postTxTimerIds.current.push(timerId);
+          });
+        }
+        if (pendingRequest.current?.address) {
+          const nextRequest = pendingRequest.current;
+          pendingRequest.current = null;
+          refresh(nextRequest.address, nextRequest.opts || {});
         }
       }
     },
-    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys, balancesEqual]
+    [address, chainId, tokenRegistry, makeZeroBalances, tokenKeys, balancesEqual, clearPostTxTimers]
   );
+
+  useEffect(() => {
+    activeAddressRef.current = (address || "").toLowerCase();
+  }, [address]);
+
+  useEffect(() => {
+    pendingRequest.current = null;
+    clearPostTxTimers();
+  }, [address, chainId, clearPostTxTimers]);
+
+  useEffect(() => () => clearPostTxTimers(), [clearPostTxTimers]);
 
   useEffect(() => {
     if (address) {

@@ -1109,7 +1109,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const refreshBalances = useCallback(async () => {
     if (typeof onBalancesRefresh === "function") {
       try {
-        await onBalancesRefresh(address, { silent: true });
+        await onBalancesRefresh(address, { silent: true, postTx: true });
       } catch {
         // ignore refresh errors
       }
