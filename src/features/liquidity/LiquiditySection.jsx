@@ -1164,8 +1164,9 @@ export default function LiquiditySection({
   const [v3ActionUseEth1, setV3ActionUseEth1] = useState(false);
   const [selectedPositionId, setSelectedPositionId] = useState(null);
   const [liquidityView, setLiquidityView] = useState(() => {
-    if (showV3 && !showV2) return "v3";
-    return "v2";
+    if (showV3) return "v3";
+    if (showV2) return "v2";
+    return "v3";
   });
   const [nftMetaById, setNftMetaById] = useState({});
   const [nftMetaRefreshTick] = useState(0);
@@ -1350,7 +1351,7 @@ export default function LiquiditySection({
     }
     if (showV2 && showV3) {
       if (liquidityView !== "v2" && liquidityView !== "v3") {
-        setLiquidityView("v2");
+        setLiquidityView("v3");
       }
     }
   }, [showV2, showV3, liquidityView]);
@@ -7615,6 +7616,20 @@ export default function LiquiditySection({
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-2">
             <div className="flex items-center gap-5 text-sm">
+              {showV3 && (
+                <button
+                  type="button"
+                  onClick={() => setLiquidityView("v3")}
+                  className={`inline-flex border-b pb-2 text-sm font-medium transition-colors ${
+                    isV3View
+                      ? "border-slate-300/70 text-slate-100"
+                      : "border-transparent text-slate-400 hover:text-slate-200"
+                  }`}
+                  aria-pressed={isV3View}
+                >
+                  V3 Positions
+                </button>
+              )}
               {showV2 && (
                 <button
                   type="button"
@@ -7634,20 +7649,6 @@ export default function LiquiditySection({
                   aria-pressed={isV2View}
                 >
                   V2 Liquidity
-                </button>
-              )}
-              {showV3 && (
-                <button
-                  type="button"
-                  onClick={() => setLiquidityView("v3")}
-                  className={`inline-flex border-b pb-2 text-sm font-medium transition-colors ${
-                    isV3View
-                      ? "border-slate-300/70 text-slate-100"
-                      : "border-transparent text-slate-400 hover:text-slate-200"
-                  }`}
-                  aria-pressed={isV3View}
-                >
-                  V3 Positions
                 </button>
               )}
             </div>
