@@ -4155,6 +4155,175 @@ export async function fetchV3PoolHourStats(poolId, hours = 24) {
   return null;
 }
 
+// Fetch raw hourly history for a single V3 pool (newest-first from subgraph, returned asc by time).
+export async function fetchV3PoolHourHistory(poolId, hours = 36) {
+  if (SUBGRAPH_V3_MISSING_KEY) return [];
+  const id = (poolId || "").toLowerCase();
+  if (!id) return [];
+  const count = Math.max(2, Math.min(Number(hours) || 36, 240));
+
+  const candidates = ["pool", "poolAddress"];
+  const orderVariants = ["periodStartUnix", "hourStartUnix", "date"];
+  const selectVariants = [
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+      token0Price
+      token1Price
+      open
+      high
+      low
+      close
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      token0Price
+      token1Price
+      open
+      high
+      low
+      close
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+      feesUSD
+    `,
+    `
+      volumeUSD
+      tvlUSD
+      totalValueLockedUSD
+    `,
+    `
+      volumeUSD
+      totalValueLockedUSD
+    `,
+  ];
+
+  const readDate = (row, orderBy) => {
+    if (orderBy === "periodStartUnix") return Number(row?.periodStartUnix || 0) * 1000;
+    if (orderBy === "hourStartUnix") return Number(row?.hourStartUnix || 0) * 1000;
+    return Number(row?.date || 0) * 1000;
+  };
+
+  const toOptionalPositive = (value) => {
+    if (value === null || value === undefined) return null;
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  };
+
+  const mapRows = (rows, orderBy) =>
+    rows
+      .map((row) => {
+        const tvl =
+          row?.tvlUSD !== undefined && row?.tvlUSD !== null
+            ? row.tvlUSD
+            : row?.totalValueLockedUSD;
+        const open = toOptionalPositive(row?.open);
+        const high = toOptionalPositive(row?.high);
+        const low = toOptionalPositive(row?.low);
+        const close = toOptionalPositive(row?.close);
+        let token0Price = toOptionalPositive(row?.token0Price);
+        let token1Price = toOptionalPositive(row?.token1Price);
+        if (!token0Price) {
+          token0Price = close ?? open ?? high ?? low ?? null;
+        }
+        if (!token1Price && token0Price) {
+          token1Price = 1 / token0Price;
+        }
+        return {
+          date: readDate(row, orderBy),
+          tvlUsd: toNumberSafe(tvl),
+          volumeUsd: toNumberSafe(row?.volumeUSD),
+          feesUsd: row?.feesUSD !== undefined ? toNumberSafe(row?.feesUSD) : null,
+          token0Price,
+          token1Price,
+        };
+      })
+      .filter((row) => Number.isFinite(row?.date) && row.date > 0)
+      .sort((a, b) => a.date - b.date);
+
+  const isOrderByMissing = (message = "") =>
+    message.includes("PoolHourData_orderBy") ||
+    message.includes("PoolHourData_orderBy!") ||
+    message.includes("poolHourData_orderBy") ||
+    message.includes("poolHourDatas_orderBy") ||
+    message.includes("is not a valid PoolHourData_orderBy");
+
+  const tryQuery = async (field, orderBy, select) => {
+    const query = `
+      query V3PoolHourHistory {
+        poolHourDatas(
+          first: ${count}
+          orderBy: ${orderBy}
+          orderDirection: desc
+          where: { ${field}: "${id}" }
+        ) {
+          ${orderBy}
+          ${select}
+        }
+      }
+    `;
+    const res = await postSubgraphV3(query);
+    const rows = res?.poolHourDatas || [];
+    if (!rows.length) return [];
+    return mapRows(rows, orderBy);
+  };
+
+  const fieldOrder =
+    v3PoolsHourProfile?.field && candidates.includes(v3PoolsHourProfile.field)
+      ? [v3PoolsHourProfile.field, ...candidates.filter((field) => field !== v3PoolsHourProfile.field)]
+      : candidates;
+  const orderByOrder =
+    v3PoolsHourProfile?.orderBy && orderVariants.includes(v3PoolsHourProfile.orderBy)
+      ? [
+          v3PoolsHourProfile.orderBy,
+          ...orderVariants.filter((orderBy) => orderBy !== v3PoolsHourProfile.orderBy),
+        ]
+      : orderVariants;
+  const selectOrder =
+    v3PoolsHourProfile?.select && selectVariants.includes(v3PoolsHourProfile.select)
+      ? [
+          v3PoolsHourProfile.select,
+          ...selectVariants.filter((select) => select !== v3PoolsHourProfile.select),
+        ]
+      : selectVariants;
+
+  for (const select of selectOrder) {
+    for (const orderBy of orderByOrder) {
+      for (const field of fieldOrder) {
+        try {
+          const rows = await tryQuery(field, orderBy, select);
+          if (!rows.length) continue;
+          const nextProfile = { field, orderBy, select, useSince: false };
+          const changed =
+            !v3PoolsHourProfile ||
+            v3PoolsHourProfile.field !== nextProfile.field ||
+            v3PoolsHourProfile.orderBy !== nextProfile.orderBy ||
+            v3PoolsHourProfile.select !== nextProfile.select ||
+            v3PoolsHourProfile.useSince !== nextProfile.useSince;
+          v3PoolsHourProfile = nextProfile;
+          if (changed) persistSubgraphSchemaProfile();
+          return rows;
+        } catch (err) {
+          const message = err?.message || "";
+          if (isSchemaFieldMissing(message) || isOrderByMissing(message)) {
+            continue;
+          }
+          throw err;
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
 export async function fetchV3TokenPairHistory(token0Id, token1Id, days = 14) {
   if (SUBGRAPH_V3_MISSING_KEY) return [];
   const id0 = (token0Id || "").toLowerCase();

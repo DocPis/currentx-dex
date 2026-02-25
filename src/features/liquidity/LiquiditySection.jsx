@@ -39,6 +39,7 @@ import {
   fetchTokenPrices,
   fetchV3TokenTvls,
   fetchV3PoolHistory,
+  fetchV3PoolHourHistory,
   fetchV3PoolHourStats,
   fetchV3PoolSnapshot,
 } from "../../shared/config/subgraph";
@@ -86,7 +87,7 @@ const V3_TVL_HISTORY_DAYS = 14;
 const getV3RangeDays = (timeframe) => {
   switch (timeframe) {
     case "1D":
-      return 2;
+      return 1;
     case "1W":
       return 10;
     case "1M":
@@ -645,6 +646,43 @@ const formatShortDate = (value) => {
       month: "short",
       day: "2-digit",
     });
+  } catch {
+    return "--";
+  }
+};
+const formatShortDateTime = (value) => {
+  try {
+    const date = new Date(value);
+    const day = date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "2-digit",
+    });
+    const time = date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    return `${day} ${time}`;
+  } catch {
+    return "--";
+  }
+};
+const formatHourTick = (value) => {
+  try {
+    const date = new Date(value);
+    const now = new Date();
+    const isSameDay = date.toDateString() === now.toDateString();
+    const time = date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    if (isSameDay) return time;
+    const day = date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "2-digit",
+    });
+    return `${day} ${time}`;
   } catch {
     return "--";
   }
@@ -2552,12 +2590,19 @@ export default function LiquiditySection({
     if (v3PriceChart) return [];
     if (!v3ReferencePrice || !Number.isFinite(v3ReferencePrice)) return [];
     const now = Date.now();
+    if (v3RangeTimeframe === "1D") {
+      const hour = 60 * 60 * 1000;
+      return Array.from({ length: 8 }, (_, idx) => ({
+        date: now - (7 - idx) * 3 * hour,
+        value: v3ReferencePrice,
+      }));
+    }
     const day = 24 * 60 * 60 * 1000;
     return Array.from({ length: 6 }, (_, idx) => ({
       date: now - (5 - idx) * 7 * day,
       value: v3ReferencePrice,
     }));
-  }, [v3PriceChart, v3ReferencePrice]);
+  }, [v3PriceChart, v3RangeTimeframe, v3ReferencePrice]);
 
   const v3PriceChartDisplay = useMemo(() => {
     if (v3PriceChart) return v3PriceChart;
@@ -2612,12 +2657,15 @@ export default function LiquiditySection({
         const item = series[idx];
         if (!item || !Number.isFinite(item.date)) return null;
         return {
-          label: formatShortDate(item.date),
+          label:
+            v3RangeTimeframe === "1D"
+              ? formatHourTick(item.date)
+              : formatShortDate(item.date),
           pct: ratio * 100,
         };
       })
       .filter(Boolean);
-  }, [v3PriceSeriesSource, v3PriceSeriesFallback]);
+  }, [v3PriceSeriesSource, v3PriceSeriesFallback, v3RangeTimeframe]);
 
   const showV3PriceRangeChart = v3ChartMode === "price-range";
   const showV3TvlChart = v3ChartMode === "tvl";
@@ -2698,8 +2746,10 @@ export default function LiquiditySection({
 
   const v3HoverDateLabel = useMemo(() => {
     if (!v3ChartHover || !Number.isFinite(v3ChartHover.date)) return "";
-    return formatShortDate(v3ChartHover.date);
-  }, [v3ChartHover]);
+    return v3RangeTimeframe === "1D"
+      ? formatShortDateTime(v3ChartHover.date)
+      : formatShortDate(v3ChartHover.date);
+  }, [v3ChartHover, v3RangeTimeframe]);
 
   const renderV3HoverOverlay = useCallback(
     (source) => {
@@ -2707,7 +2757,9 @@ export default function LiquiditySection({
       const isTodayLabel =
         Number.isFinite(v3ChartHover.date) &&
         formatShortDate(v3ChartHover.date) === formatShortDate(Date.now());
-      const hidePriceDetails = Boolean(v3ChartHover.isPrice && isTodayLabel);
+      const hidePriceDetails = Boolean(
+        v3ChartHover.isPrice && isTodayLabel && v3RangeTimeframe !== "1D"
+      );
       const align =
         v3ChartHover.x <= 6 ? "left" : v3ChartHover.x >= 94 ? "right" : "center";
       const translate =
@@ -2745,7 +2797,7 @@ export default function LiquiditySection({
         </div>
       );
     },
-    [v3ChartHover, v3HoverValueLabel, v3HoverDateLabel]
+    [v3ChartHover, v3HoverValueLabel, v3HoverDateLabel, v3RangeTimeframe]
   );
 
   const v3DepositRatio = useMemo(() => {
@@ -2872,7 +2924,7 @@ export default function LiquiditySection({
       const isTodayLabel =
         Number.isFinite(point.date) &&
         formatShortDate(point.date) === formatShortDate(Date.now());
-      if (isTodayLabel) {
+      if (isTodayLabel && v3RangeTimeframe !== "1D") {
         v3HoverIndexRef.current = { source: null, idx: null };
         setV3ChartHover(null);
         return;
@@ -2891,7 +2943,7 @@ export default function LiquiditySection({
       subLabel: options.subLabel,
       isPrice: options.isPrice,
     });
-  }, [setV3ChartHover, v3HoverIndexRef]);
+  }, [setV3ChartHover, v3HoverIndexRef, v3RangeTimeframe]);
 
   const clearV3ChartHover = useCallback(() => {
     v3HoverIndexRef.current = { source: null, idx: null };
@@ -3554,7 +3606,10 @@ export default function LiquiditySection({
       setV3PoolTvlLoading(true);
       setV3PoolTvlError("");
       try {
-        const historyPromise = fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays);
+        const historyPromise =
+          v3RangeTimeframe === "1D"
+            ? fetchV3PoolHourHistory(v3PoolInfo.address, 36)
+            : fetchV3PoolHistory(v3PoolInfo.address, v3RangeDays);
         const [snapshot, hourStats] = await Promise.all([
           fetchV3PoolSnapshot(v3PoolInfo.address),
           fetchV3PoolHourStats(v3PoolInfo.address, 24).catch(() => null),
@@ -3599,6 +3654,7 @@ export default function LiquiditySection({
     v3PoolInfo.address,
     v3PoolInfo.token0,
     v3PoolInfo.token1,
+    v3RangeTimeframe,
     v3RangeDays,
     v3RefreshTick,
   ]);

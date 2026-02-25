@@ -3640,6 +3640,78 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       if (!amountWei) {
         throw new Error("Invalid amount format. Use dot for decimals.");
       }
+      const assertNativeBudget = async ({
+        valueWei = 0n,
+        gasEstimateFn = null,
+        gasLimitOverride = null,
+        fallbackGasLimit = 0n,
+      } = {}) => {
+        let gasLimit =
+          typeof gasLimitOverride === "bigint"
+            ? gasLimitOverride
+            : gasLimitOverride
+              ? BigInt(gasLimitOverride)
+              : 0n;
+        if ((!gasLimit || gasLimit <= 0n) && typeof gasEstimateFn === "function") {
+          try {
+            const estimated = await gasEstimateFn();
+            const estimatedBig = typeof estimated === "bigint" ? estimated : BigInt(estimated || 0);
+            if (estimatedBig > 0n) {
+              gasLimit = (estimatedBig * 120n) / 100n; // +20% buffer
+            }
+          } catch {
+            gasLimit = 0n;
+          }
+        }
+        if ((!gasLimit || gasLimit <= 0n) && fallbackGasLimit) {
+          gasLimit = typeof fallbackGasLimit === "bigint" ? fallbackGasLimit : BigInt(fallbackGasLimit);
+        }
+
+        const [latestBalance, pendingBalance] = await Promise.all([
+          provider.getBalance(user).catch(() => null),
+          provider.getBalance(user, "pending").catch(() => null),
+        ]);
+        if (latestBalance === null && pendingBalance === null) {
+          return; // cannot verify balance, let wallet enforce
+        }
+        const spendableBalance =
+          latestBalance !== null && pendingBalance !== null
+            ? latestBalance < pendingBalance
+              ? latestBalance
+              : pendingBalance
+            : latestBalance ?? pendingBalance ?? 0n;
+
+        const nativeValue = typeof valueWei === "bigint" ? valueWei : BigInt(valueWei || 0);
+        let requiredTotal = nativeValue;
+        if (gasLimit > 0n) {
+          try {
+            const feeData = await provider.getFeeData();
+            const maxFee = feeData?.maxFeePerGas;
+            const gasPrice = feeData?.gasPrice;
+            const priority = feeData?.maxPriorityFeePerGas;
+            const effectiveGasPrice =
+              typeof maxFee === "bigint" && maxFee > 0n
+                ? maxFee
+                : typeof gasPrice === "bigint" && gasPrice > 0n
+                  ? gasPrice
+                  : typeof priority === "bigint" && priority > 0n
+                    ? priority * 2n
+                    : 0n;
+            if (effectiveGasPrice > 0n) {
+              const gasCost = (gasLimit * effectiveGasPrice * 120n) / 100n; // +20% fee buffer
+              requiredTotal += gasCost;
+            }
+          } catch {
+            // keep value-only check when fee data is unavailable
+          }
+        }
+
+        if (spendableBalance < requiredTotal) {
+          throw new Error(
+            "Not enough ETH to cover swap amount + network fee. Reduce amount or clear pending transactions and retry."
+          );
+        }
+      };
 
       if (
         sellToken !== "ETH" &&
@@ -4052,6 +4124,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           } catch {
             wrapOpts.gasLimit = fallbackGas; // covers strict RPCs
           }
+          await assertNativeBudget({
+            valueWei: amountWei,
+            gasLimitOverride: wrapOpts.gasLimit,
+            fallbackGasLimit: fallbackGas,
+          });
           tx = await weth.deposit(wrapOpts);
         } else {
           const unwrapOpts = {};
@@ -4061,6 +4138,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           } catch {
             unwrapOpts.gasLimit = fallbackGas; // symmetric fallback for unwraps
           }
+          await assertNativeBudget({
+            valueWei: 0n,
+            gasLimitOverride: unwrapOpts.gasLimit,
+            fallbackGasLimit: fallbackGas,
+          });
           tx = await weth.withdraw(amountWei, unwrapOpts);
         }
         const receipt = await tx.wait();
@@ -4183,6 +4265,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           walletFlowSwapStarted = true;
           setWalletFlowStepStatus("swap", "active");
         }
+        await assertNativeBudget({
+          valueWei: isEthIn ? amountWei : 0n,
+          gasEstimateFn: () => universal.execute.estimateGas(commandBytes, inputs, deadline, callOpts),
+          fallbackGasLimit: isEthIn ? 700000n : 500000n,
+        });
         const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
         pendingTxHashRef.current = tx.hash;
@@ -4309,6 +4396,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           walletFlowSwapStarted = true;
           setWalletFlowStepStatus("swap", "active");
         }
+        await assertNativeBudget({
+          valueWei: isEthIn ? amountWei : 0n,
+          gasEstimateFn: () => universal.execute.estimateGas(commandBytes, inputs, deadline, callOpts),
+          fallbackGasLimit: isEthIn ? 500000n : 350000n,
+        });
         const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
         pendingTxHashRef.current = tx.hash;
@@ -4449,6 +4541,11 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         walletFlowSwapStarted = true;
         setWalletFlowStepStatus("swap", "active");
       }
+      await assertNativeBudget({
+        valueWei: sellToken === "ETH" ? amountWei : 0n,
+        gasEstimateFn: () => universal.execute.estimateGas(commandBytes, inputs, deadline, callOpts),
+        fallbackGasLimit: sellToken === "ETH" ? 500000n : 350000n,
+      });
       const tx = await universal.execute(commandBytes, inputs, deadline, callOpts);
 
       pendingTxHashRef.current = tx.hash;
