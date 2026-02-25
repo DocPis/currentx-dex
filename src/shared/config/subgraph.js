@@ -1696,7 +1696,8 @@ const applyWhitelistedTvlHistory = (history = [], whitelistHistory = []) => {
 };
 
 const TVL_NEIGHBOR_STABILITY_RATIO = 1.35;
-const TVL_ISOLATED_DROP_RATIO = 0.72;
+// Slightly relaxed to catch recurring one-day whitelist TVL holes.
+const TVL_ISOLATED_DROP_RATIO = 0.75;
 
 const smoothIsolatedTvlDropsInHistory = (history = []) => {
   if (!Array.isArray(history) || history.length < 3) return history;

@@ -80,18 +80,6 @@ const formatDateTooltip = (ts) => {
   }
 };
 
-const LIVE_TVL_MIN_RATIO = 0.55;
-const LIVE_TVL_MAX_RATIO = 1.9;
-
-const isLiveTvlPointPlausible = (liveTvl, lastHistoryTvl) => {
-  const live = Number(liveTvl);
-  if (!Number.isFinite(live)) return false;
-  const baseline = Number(lastHistoryTvl);
-  if (!Number.isFinite(baseline) || baseline <= 0) return true;
-  const ratio = live / baseline;
-  return ratio >= LIVE_TVL_MIN_RATIO && ratio <= LIVE_TVL_MAX_RATIO;
-};
-
 function LineGlowChart({
   data,
   height = 220,
@@ -287,45 +275,22 @@ export default function Dashboard() {
   const topPairs = data.topPairs;
   const tvlStartDate = data.tvlStartDate;
   const volumeStartDate = data.volumeStartDate;
-  const tvlSeries = useMemo(() => {
-    const dayMs = 86400000;
-    const filtered = tvlHistory
-      .filter((d) => d.date >= tvlStartDate)
-      .slice()
-      .sort((a, b) => a.date - b.date);
-    if (!filtered.length) return [];
-    const firstNonZero = filtered.find(
-      (d) => Number.isFinite(Number(d.tvlUsd)) && Number(d.tvlUsd) > 0
-    );
-    let lastKnown =
-      firstNonZero && Number.isFinite(Number(firstNonZero.tvlUsd))
-        ? Number(firstNonZero.tvlUsd)
-        : null;
-    const byDay = new Map(
-      filtered.map((d) => [
-        Math.floor(d.date / dayMs) * dayMs,
-        Number.isFinite(Number(d.tvlUsd)) ? Number(d.tvlUsd) : null,
-      ])
-    );
-    const startDay = Math.floor(tvlStartDate / dayMs) * dayMs;
-    const lastDate = filtered[filtered.length - 1]?.date ?? tvlStartDate;
-    const endDay = Math.floor(lastDate / dayMs) * dayMs;
-    const filled = [];
-    for (let day = startDay; day <= endDay; day += dayMs) {
-      const raw = byDay.get(day);
-      if (raw !== null && raw > 0) {
-        lastKnown = raw;
-      }
-      const value = lastKnown !== null ? lastKnown : 0;
-      filled.push({
-        label: formatDateLabel(day),
-        fullLabel: formatDateTooltip(day),
-        value,
-        rawDate: day,
-      });
-    }
-    return filled;
+  const tvlHistoryFiltered = useMemo(() => {
+    if (!tvlStartDate) return tvlHistory;
+    return tvlHistory.filter((d) => d.date >= tvlStartDate);
   }, [tvlHistory, tvlStartDate]);
+
+  const tvlSeries = useMemo(() => {
+    return tvlHistoryFiltered
+      .slice()
+      .reverse()
+      .map((d) => ({
+        label: formatDateLabel(d.date),
+        fullLabel: formatDateTooltip(d.date),
+        value: Number.isFinite(Number(d.tvlUsd)) ? Number(d.tvlUsd) : 0,
+        rawDate: d.date,
+      }));
+  }, [tvlHistoryFiltered]);
 
   const volumeHistoryFiltered = useMemo(() => {
     if (!volumeStartDate) return volumeHistory;
@@ -379,27 +344,7 @@ export default function Dashboard() {
   const dailyFeesRaw = latestDay?.feesUsd;
   const dailyFees =
     Number.isFinite(dailyFeesRaw) ? dailyFeesRaw : latestDay ? 0 : null;
-  const liveTvl = stats?.totalLiquidityUsd;
-  const latestTvlDate = tvlHistory?.[0]?.date ?? null;
   const latestVolumeDate = volumeHistory?.[0]?.date ?? null;
-
-  const tvlSeriesWithToday = useMemo(() => {
-    if (!tvlSeries.length) return [];
-    const lastHistorical = tvlSeries[tvlSeries.length - 1]?.value;
-    const livePoint =
-      liveTvl !== undefined &&
-      Number.isFinite(latestTvlDate) &&
-      isLiveTvlPointPlausible(liveTvl, lastHistorical)
-        ? {
-            label: "Today",
-            fullLabel: formatDateTooltip(latestTvlDate),
-            value: liveTvl,
-            rawDate: latestTvlDate,
-            isLive: true,
-          }
-        : null;
-    return livePoint ? [...tvlSeries, livePoint] : tvlSeries;
-  }, [tvlSeries, liveTvl, latestTvlDate]);
 
   const volumeSeriesWithToday = useMemo(() => {
     if (!volumeSeries.length) return [];
@@ -447,7 +392,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <LineGlowChart
-                data={tvlSeriesWithToday}
+                data={tvlSeries}
                 color="#557f90"
                 label="tvl"
                 centerMax
