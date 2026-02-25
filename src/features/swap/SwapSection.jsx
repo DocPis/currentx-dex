@@ -38,7 +38,7 @@ import { getUserPointsQueryKey } from "../../shared/hooks/usePoints";
 import { applyTokenAliases } from "../../shared/config/tokens";
 import { findActualOutput } from "./swapReceiptUtils";
 
-const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB", "CROWN"];
+const BASE_TOKEN_OPTIONS = ["ETH", "WETH", "USDT0", "CUSD", "USDm", "CRX", "MEGA", "BTCB"];
 const MAX_ROUTE_CANDIDATES = 12;
 const MAX_UINT256 = (1n << 256n) - 1n;
 const MAX_UINT160 = (1n << 160n) - 1n;
@@ -422,6 +422,32 @@ const tryFetchReceipt = async (hash, provider) => {
   }
   return null;
 };
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+const errorMessageLower = (err) => {
+  const raw =
+    err?.message ||
+    err?.shortMessage ||
+    err?.error?.message ||
+    err?.info?.error?.message ||
+    "";
+  return String(raw).toLowerCase();
+};
+const isAlreadyKnownError = (err) => {
+  const lower = errorMessageLower(err);
+  return lower.includes("already known") || lower.includes("known transaction");
+};
+const isNonceConflictError = (err) => {
+  const lower = errorMessageLower(err);
+  return (
+    lower.includes("nonce too low") ||
+    lower.includes("nonce has already been used") ||
+    lower.includes("nonce expired") ||
+    isAlreadyKnownError(err)
+  );
+};
 
 const computeOutcomeGrade = (expected, actual, minReceived) => {
   if (!Number.isFinite(actual) || !Number.isFinite(expected)) {
@@ -447,8 +473,8 @@ const requireDecimals = (symbol, meta) => {
 };
 
 const friendlySwapError = (e) => {
-  const raw = e?.message || "";
-  const lower = raw.toLowerCase();
+  const raw = e?.message || e?.shortMessage || "";
+  const lower = errorMessageLower(e);
   const rpcCode =
     e?.code || e?.error?.code || (typeof e?.data?.code !== "undefined" ? e.data.code : null);
   if (rpcCode === 4001 || rpcCode === "ACTION_REJECTED") {
@@ -472,7 +498,10 @@ const friendlySwapError = (e) => {
   ) {
     return "Gas fee too low. Increase max fee/priority or try again with the suggested gas.";
   }
-  if (lower.includes("nonce too low") || lower.includes("already known")) {
+  if (isAlreadyKnownError(e)) {
+    return "Transaction already submitted. Waiting for confirmation in wallet/explorer.";
+  }
+  if (lower.includes("nonce too low") || lower.includes("nonce has already been used")) {
     return "You have a pending transaction with this nonce. Speed up/cancel it in wallet, then retry.";
   }
   if (
@@ -684,6 +713,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
   const lastFullQuoteAtRef = useRef(0);
   const lastRouteMetaRef = useRef(null);
   const lastRouteKeyRef = useRef("");
+  const swapRunLockRef = useRef(false);
 
   const addCustomTokenByAddress = useCallback(
     async (rawAddress, { clearSearch = false } = {}) => {
@@ -3538,9 +3568,12 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
     if (allowanceDebounceRef.current) clearTimeout(allowanceDebounceRef.current);
     if (routeRefreshTimerRef.current) clearTimeout(routeRefreshTimerRef.current);
     pendingTxHashRef.current = null;
+    swapRunLockRef.current = false;
   }, []);
 
   const handleSwap = async () => {
+    if (swapRunLockRef.current) return;
+    swapRunLockRef.current = true;
     let provider;
     let walletFlowSwapStarted = false;
     let walletFlowOpenForAction = walletFlow.open;
@@ -3620,6 +3653,40 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
         const token = new Contract(sellAddress, ERC20_ABI, signer);
         const permit2 = new Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
         const now = BigInt(Math.floor(Date.now() / 1000));
+        const readPermit2Allowance = async (spender, minAmount = 0n) => {
+          try {
+            const res = await permit2.allowance(user, sellAddress, spender);
+            const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
+            const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
+            const allowance =
+              typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw || 0);
+            const expiration =
+              typeof expirationRaw === "bigint" ? expirationRaw : BigInt(expirationRaw || 0);
+            const nowTs = BigInt(Math.floor(Date.now() / 1000));
+            const expired = !expiration || expiration < nowTs;
+            return {
+              allowance,
+              expiration,
+              approved: !expired && allowance >= minAmount,
+            };
+          } catch {
+            return { allowance: 0n, expiration: 0n, approved: false };
+          }
+        };
+        const waitForPermit2Allowance = async (
+          spender,
+          minAmount,
+          timeoutMs = 16000,
+          pollMs = 1200
+        ) => {
+          const deadline = Date.now() + timeoutMs;
+          while (Date.now() <= deadline) {
+            const state = await readPermit2Allowance(spender, minAmount);
+            if (state.approved) return state;
+            await sleep(pollMs);
+          }
+          return null;
+        };
 
         const cachedErc20 = getCachedApproval("erc20", sellAddress, PERMIT2_ADDRESS);
         let hasErc20Allowance = Boolean(cachedErc20 && cachedErc20.amount >= amountWei);
@@ -3648,22 +3715,18 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
           hasPermit2Allowance = !expired && cachedPermit2.amount >= amountWei;
         }
         if (!hasPermit2Allowance) {
-          const res = await permit2.allowance(user, sellAddress, UNIV3_UNIVERSAL_ROUTER_ADDRESS);
-          const allowanceRaw = res?.amount ?? res?.[0] ?? 0n;
-          const expirationRaw = res?.expiration ?? res?.[1] ?? 0n;
-          const allowance =
-            typeof allowanceRaw === "bigint" ? allowanceRaw : BigInt(allowanceRaw || 0);
-          const expiration =
-            typeof expirationRaw === "bigint" ? expirationRaw : BigInt(expirationRaw || 0);
-          const expired = !expiration || expiration < now;
-          if (!expired && allowance >= amountWei) {
+          const permit2State = await readPermit2Allowance(
+            UNIV3_UNIVERSAL_ROUTER_ADDRESS,
+            amountWei
+          );
+          if (permit2State.approved) {
             setCachedApproval({
               symbol: sellToken,
               address: sellAddress,
-              desiredAllowance: allowance,
+              desiredAllowance: permit2State.allowance,
               spender: UNIV3_UNIVERSAL_ROUTER_ADDRESS,
               kind: "permit2",
-              expiration,
+              expiration: permit2State.expiration,
             });
             hasPermit2Allowance = true;
           }
@@ -3756,6 +3819,39 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
               activateNextPendingWalletFlowStep(["erc20", "permit2"]);
             } catch (e) {
               const txHash = extractTxHash(e);
+              if (target.kind === "permit2" && isNonceConflictError(e)) {
+                const spender = target.spender || UNIV3_UNIVERSAL_ROUTER_ADDRESS;
+                const pendingMessage = isAlreadyKnownError(e)
+                  ? "Permit2 approval already submitted. Waiting for confirmation..."
+                  : "Permit2 approval has a pending nonce. Waiting for confirmation...";
+                setSwapStatus({
+                  variant: "pending",
+                  hash: txHash || undefined,
+                  message: pendingMessage,
+                });
+                const observed = await waitForPermit2Allowance(spender, amountWei);
+                if (observed?.approved) {
+                  setCachedApproval({
+                    symbol: target.symbol || sellToken,
+                    address: target.address,
+                    desiredAllowance: observed.allowance,
+                    spender,
+                    kind: "permit2",
+                    expiration: observed.expiration,
+                  });
+                  setWalletFlowStepStatus(stepId, "done");
+                  activeWalletFlowStepId = null;
+                  activateNextPendingWalletFlowStep(["erc20", "permit2"]);
+                  continue;
+                }
+                setSwapStatus({
+                  variant: "pending",
+                  hash: txHash || undefined,
+                  message:
+                    "Permit2 approval is still pending in wallet. Confirm/speed up/cancel it, then retry Swap.",
+                });
+                return;
+              }
               if (txHash) {
                 const receipt = await tryFetchReceipt(txHash, provider);
                 const status = receipt?.status;
@@ -4482,6 +4578,7 @@ export default function SwapSection({ balances, address, chainId, onBalancesRefr
       setSwapLoading(false);
       pendingExecutionRef.current = null;
       pendingTxHashRef.current = null;
+      swapRunLockRef.current = false;
     }
   };
 
