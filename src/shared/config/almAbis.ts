@@ -1,3 +1,23 @@
+const STRATEGY_TUPLE_COMPONENTS = [
+  { name: "poolClass", type: "uint8" },
+  { name: "widthBps", type: "uint16" },
+  { name: "recenterBps", type: "uint16" },
+  { name: "minRebalanceInterval", type: "uint16" },
+  { name: "maxSwapSlippageBps", type: "uint16" },
+  { name: "mintSlippageBps", type: "uint16" },
+  { name: "allowSwap", type: "bool" },
+  { name: "route", type: "uint8" },
+  { name: "minCardinality", type: "uint16" },
+  { name: "_pad", type: "uint32" },
+  { name: "allowedFeeBitmap", type: "uint256" },
+  { name: "oracleParams", type: "bytes" },
+  { name: "wethHopFee", type: "uint24" },
+  { name: "targetRatioBps0", type: "uint16" },
+  { name: "minCompoundValueToken1", type: "uint256" },
+  { name: "ratioDeadbandBps", type: "uint16" },
+  { name: "minSwapValueToken1", type: "uint256" },
+] as const;
+
 export const ALM_ABI = [
   {
     type: "function",
@@ -9,6 +29,13 @@ export const ALM_ABI = [
   {
     type: "function",
     name: "treasury",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
+    name: "registry",
     stateMutability: "view",
     inputs: [],
     outputs: [{ name: "", type: "address" }],
@@ -61,6 +88,13 @@ export const ALM_ABI = [
   {
     type: "function",
     name: "withdraw",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "positionId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "compoundWeighted",
     stateMutability: "nonpayable",
     inputs: [{ name: "positionId", type: "uint256" }],
     outputs: [],
@@ -160,6 +194,17 @@ export const ALM_ABI = [
   },
   {
     type: "event",
+    name: "SwapToTarget",
+    anonymous: false,
+    inputs: [
+      { name: "positionId", type: "uint256", indexed: true },
+      { name: "zeroForOne", type: "bool", indexed: false },
+      { name: "amountIn", type: "uint256", indexed: false },
+      { name: "amountOut", type: "uint256", indexed: false },
+    ],
+  },
+  {
+    type: "event",
     name: "DustUpdated",
     anonymous: false,
     inputs: [
@@ -229,27 +274,17 @@ export const STRATEGY_REGISTRY_ABI = [
     name: "getStrategy",
     stateMutability: "view",
     inputs: [{ name: "id", type: "uint256" }],
-    outputs: [
-      {
-        components: [
-          { name: "poolClass", type: "uint8" },
-          { name: "widthBps", type: "uint16" },
-          { name: "recenterBps", type: "uint16" },
-          { name: "minRebalanceInterval", type: "uint16" },
-          { name: "maxSwapSlippageBps", type: "uint16" },
-          { name: "mintSlippageBps", type: "uint16" },
-          { name: "allowSwap", type: "bool" },
-          { name: "route", type: "uint8" },
-          { name: "minCardinality", type: "uint16" },
-          { name: "_pad", type: "uint32" },
-          { name: "allowedFeeBitmap", type: "uint256" },
-          { name: "oracleParams", type: "bytes" },
-          { name: "wethHopFee", type: "uint24" },
-        ],
-        name: "",
-        type: "tuple",
-      },
+    outputs: [{ name: "", type: "tuple", components: [...STRATEGY_TUPLE_COMPONENTS] }],
+  },
+  {
+    type: "function",
+    name: "setStrategy",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "s", type: "tuple", components: [...STRATEGY_TUPLE_COMPONENTS] },
     ],
+    outputs: [{ name: "newId", type: "uint256" }],
   },
   {
     type: "function",
@@ -277,6 +312,16 @@ export const STRATEGY_REGISTRY_ABI = [
     stateMutability: "view",
     inputs: [{ name: "token", type: "address" }],
     outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "classify",
+    stateMutability: "view",
+    inputs: [
+      { name: "token0", type: "address" },
+      { name: "token1", type: "address" },
+    ],
+    outputs: [{ name: "", type: "uint8" }],
   },
 ] as const;
 

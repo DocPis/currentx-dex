@@ -4,6 +4,7 @@ import {
   Contract,
   Interface,
   JsonRpcProvider,
+  parseUnits,
   formatUnits,
   getAddress,
   id,
@@ -59,13 +60,16 @@ interface StrategyConfig {
   maxSwapSlippageBps: number;
   mintSlippageBps: number;
   allowSwap: boolean;
-  feeTierBitmap: number;
+  feeTierBitmap: bigint;
   allowedFeeTiers: number[];
   route: "DIRECT_ONLY" | "DIRECT_OR_WETH";
   minCardinality: number;
   oracleParamsHex: string;
   wethHopFee: number;
-  rawFields: number[];
+  targetRatioBps0: number;
+  minCompoundValueToken1: bigint;
+  ratioDeadbandBps: number;
+  minSwapValueToken1: bigint;
   recommendedLabel: string;
 }
 
@@ -108,6 +112,8 @@ interface AlmPositionRow {
   active: boolean;
   dust0: bigint;
   dust1: bigint;
+  sqrtPriceX96: bigint | null;
+  dustValueToken1: bigint;
 }
 
 interface ActivityItem {
@@ -117,13 +123,22 @@ interface ActivityItem {
   txHash: string;
   eventType: string;
   positionId: string;
-  reason: string;
+  details: string;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const FEE_TIERS = [100, 500, 3000, 10000];
 const MAX_USER_POSITIONS_SCAN = 64;
 const MAX_ACTIVITY_ITEMS = 80;
+const Q192 = 1n << 192n;
+const EVENT_TYPES_TO_RENDER = new Set([
+  "Deposited",
+  "Rotated",
+  "Withdrawn",
+  "DustUpdated",
+  "RebalanceSkipped",
+  "SwapToTarget",
+]);
 const abiCoder = AbiCoder.defaultAbiCoder();
 const almEventsInterface = new Interface(ALM_ABI as any);
 
@@ -179,6 +194,35 @@ const formatDuration = (seconds: number) => {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+};
+
+const formatTokenAmount = (amount: bigint, decimals: number, maxFrac = 6) => {
+  try {
+    const value = formatUnits(amount, decimals);
+    const num = Number(value);
+    if (!Number.isFinite(num)) return value;
+    if (num === 0) return "0";
+    if (num >= 1) return num.toFixed(Math.min(maxFrac, 6)).replace(/\.?0+$/u, "");
+    return num.toFixed(Math.min(maxFrac + 2, 8)).replace(/\.?0+$/u, "");
+  } catch {
+    return amount.toString();
+  }
+};
+
+const parseTokenUnitsSafe = (value: string, decimals: number): bigint | null => {
+  const normalized = String(value || "").trim().replace(",", ".");
+  if (!normalized) return null;
+  try {
+    return BigInt(parseUnits(normalized, decimals));
+  } catch {
+    return null;
+  }
+};
+
+const computeValue0In1FromSqrtPriceX96 = (amount0: bigint, sqrtPriceX96: bigint | null) => {
+  if (!sqrtPriceX96 || sqrtPriceX96 <= 0n || amount0 <= 0n) return 0n;
+  const priceX192 = sqrtPriceX96 * sqrtPriceX96;
+  return (amount0 * priceX192) / Q192;
 };
 
 const parseChainId = (value: string | null | undefined) => {
@@ -258,6 +302,10 @@ const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConf
   const oracleParamsRaw = strategyRaw?.oracleParams ?? strategyRaw?.[11] ?? "0x";
   const oracleParamsHex = bytesToHex(oracleParamsRaw);
   const wethHopFee = Number(strategyRaw?.wethHopFee ?? strategyRaw?.[12] ?? 0);
+  const targetRatioBps0 = Number(strategyRaw?.targetRatioBps0 ?? strategyRaw?.[13] ?? 0);
+  const minCompoundValueToken1 = BigInt(strategyRaw?.minCompoundValueToken1 ?? strategyRaw?.[14] ?? 0n);
+  const ratioDeadbandBps = Number(strategyRaw?.ratioDeadbandBps ?? strategyRaw?.[15] ?? 0);
+  const minSwapValueToken1 = BigInt(strategyRaw?.minSwapValueToken1 ?? strategyRaw?.[16] ?? 0n);
 
   const looksEmpty =
     poolClass === 0 &&
@@ -270,6 +318,10 @@ const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConf
     routeRaw === 0 &&
     minCardinality === 0 &&
     allowedFeeBitmap === 0n &&
+    targetRatioBps0 === 0 &&
+    minCompoundValueToken1 === 0n &&
+    ratioDeadbandBps === 0 &&
+    minSwapValueToken1 === 0n &&
     (oracleParamsHex === "0x" || oracleParamsHex === "");
 
   if (looksEmpty) return null;
@@ -287,25 +339,16 @@ const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConf
     maxSwapSlippageBps,
     mintSlippageBps,
     allowSwap,
-    feeTierBitmap: Number(allowedFeeBitmap & 0xffffffffn),
+    feeTierBitmap: allowedFeeBitmap,
     allowedFeeTiers,
     route: routeRaw === 0 ? "DIRECT_ONLY" : "DIRECT_OR_WETH",
     minCardinality,
     oracleParamsHex: oracleParamsHex || "0x",
     wethHopFee,
-    rawFields: [
-      poolClass,
-      widthBps,
-      recenterBps,
-      minRebalanceInterval,
-      maxSwapSlippageBps,
-      mintSlippageBps,
-      allowSwap ? 1 : 0,
-      routeRaw,
-      minCardinality,
-      Number(allowedFeeBitmap & 0xffffffffn),
-      wethHopFee,
-    ],
+    targetRatioBps0: Math.max(0, Math.min(10_000, targetRatioBps0 || 0)),
+    minCompoundValueToken1,
+    ratioDeadbandBps,
+    minSwapValueToken1,
     recommendedLabel: `±${formatPercentFromBps(widthBps, 1)} range, rebalance at ±${formatPercentFromBps(
       recenterBps,
       1
@@ -339,6 +382,8 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [globalLoading, setGlobalLoading] = useState(false);
   const [keeper, setKeeper] = useState("");
   const [treasury, setTreasury] = useState("");
+  const [registryAddress, setRegistryAddress] = useState(ALM_ADDRESSES.STRATEGY_REGISTRY);
+  const [registryOwner, setRegistryOwner] = useState("");
   const [emergency, setEmergency] = useState(false);
   const [emergencyDelay, setEmergencyDelay] = useState(0);
 
@@ -347,7 +392,9 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [nftItems, setNftItems] = useState<NftLookupItem[]>([]);
   const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
   const [selectedStrategyId, setSelectedStrategyId] = useState<number | null>(null);
+  const [selectedToken1Stable, setSelectedToken1Stable] = useState<boolean | null>(null);
   const [feeAllowedOnChain, setFeeAllowedOnChain] = useState<boolean | null>(null);
+  const [savingStrategy, setSavingStrategy] = useState(false);
 
   const [approveStatus, setApproveStatus] = useState<StatusState>("idle");
   const [approveTxHash, setApproveTxHash] = useState("");
@@ -357,6 +404,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [positions, setPositions] = useState<AlmPositionRow[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(false);
   const [withdrawingPositionId, setWithdrawingPositionId] = useState("");
+  const [compoundingPositionId, setCompoundingPositionId] = useState("");
 
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
@@ -393,6 +441,14 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     () => (selectedStrategyId === null ? null : strategyById.get(selectedStrategyId) || null),
     [selectedStrategyId, strategyById]
   );
+  const isKeeperWallet = useMemo(() => {
+    if (!address || !keeper) return false;
+    return normalizeAddress(address).toLowerCase() === normalizeAddress(keeper).toLowerCase();
+  }, [address, keeper]);
+  const isRegistryOwnerWallet = useMemo(() => {
+    if (!address || !registryOwner) return false;
+    return normalizeAddress(address).toLowerCase() === normalizeAddress(registryOwner).toLowerCase();
+  }, [address, registryOwner]);
 
   const knownTokensByAddress = useMemo(() => {
     const map = new Map<string, TokenMeta>();
@@ -480,7 +536,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     async (poolAddress: string) => {
       const normalized = normalizeAddress(poolAddress);
       if (!normalized || isZeroAddress(normalized)) {
-        return { currentTick: null, observationCardinality: null };
+        return { currentTick: null, observationCardinality: null, sqrtPriceX96: null };
       }
       try {
         const pool = new Contract(normalized, POOL_SLOT0_ABI as any, readProvider);
@@ -488,9 +544,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return {
           currentTick: Number(slot0.tick),
           observationCardinality: Number(slot0.observationCardinality),
+          sqrtPriceX96: BigInt(slot0.sqrtPriceX96 || 0n),
         };
       } catch {
-        return { currentTick: null, observationCardinality: null };
+        return { currentTick: null, observationCardinality: null, sqrtPriceX96: null };
       }
     },
     [readProvider]
@@ -554,8 +611,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const loadStrategies = useCallback(async () => {
     setStrategiesLoading(true);
     try {
-      const registry = new Contract(ALM_ADDRESSES.STRATEGY_REGISTRY, STRATEGY_REGISTRY_ABI as any, readProvider);
-      const countRaw = await registry.strategiesCount();
+      const registryAddr = normalizeAddress(registryAddress || ALM_ADDRESSES.STRATEGY_REGISTRY);
+      const registry = new Contract(registryAddr, STRATEGY_REGISTRY_ABI as any, readProvider);
+      const [countRaw, ownerRaw] = await Promise.all([
+        registry.strategiesCount(),
+        registry.owner().catch(() => ZERO_ADDRESS),
+      ]);
+      setRegistryOwner(normalizeAddress(String(ownerRaw || ZERO_ADDRESS)));
       const count = Number(countRaw || 0n);
       const ids = Array.from({ length: count }, (_, index) => index + 1);
 
@@ -578,22 +640,27 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     } finally {
       setStrategiesLoading(false);
     }
-  }, [readProvider, showToast]);
+  }, [readProvider, registryAddress, showToast]);
 
   const loadGlobalInfo = useCallback(async () => {
     setGlobalLoading(true);
     try {
       const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, readProvider);
-      const [keeperRaw, treasuryRaw, emergencyRaw, delayRaw] = await Promise.all([
+      const [keeperRaw, treasuryRaw, emergencyRaw, delayRaw, registryRaw] = await Promise.all([
         alm.keeper(),
         alm.treasury(),
         alm.emergency(),
         alm.EMERGENCY_DELAY(),
+        alm.registry().catch(() => ALM_ADDRESSES.STRATEGY_REGISTRY),
       ]);
       setKeeper(normalizeAddress(String(keeperRaw || "")));
       setTreasury(normalizeAddress(String(treasuryRaw || "")));
       setEmergency(Boolean(emergencyRaw));
       setEmergencyDelay(Number(delayRaw || 0n));
+      const nextRegistry = normalizeAddress(String(registryRaw || ALM_ADDRESSES.STRATEGY_REGISTRY));
+      if (nextRegistry && !isZeroAddress(nextRegistry)) {
+        setRegistryAddress(nextRegistry);
+      }
     } catch (error: any) {
       showToast("error", error?.message || "Unable to load ALM metadata.");
     } finally {
@@ -647,6 +714,9 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
             resolveTokenMeta(token1),
             loadPoolTick(pool),
           ]);
+          const dust0 = BigInt(dust0Raw || 0n);
+          const dust1 = BigInt(dust1Raw || 0n);
+          const dustValueToken1 = computeValue0In1FromSqrtPriceX96(dust0, poolTick.sqrtPriceX96) + dust1;
 
           let centerTick: number | null = null;
           if (currentTokenId !== "0") {
@@ -676,8 +746,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
             centerTick,
             lastRebalanceAt,
             active,
-            dust0: BigInt(dust0Raw || 0n),
-            dust1: BigInt(dust1Raw || 0n),
+            dust0,
+            dust1,
+            sqrtPriceX96: poolTick.sqrtPriceX96,
+            dustValueToken1,
           } as AlmPositionRow;
         })
       );
@@ -697,6 +769,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     const showLoading = mode !== "poll";
     if (showLoading) setActivityLoading(true);
     try {
+      const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, readProvider);
       const latestBlock = await readProvider.getBlockNumber();
       const fromBlock = ALM_EVENT_FROM_BLOCK > 0 ? ALM_EVENT_FROM_BLOCK : 0;
       const logs = await readProvider.getLogs({
@@ -710,12 +783,19 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           try {
             const parsed = almEventsInterface.parseLog({ topics: log.topics, data: log.data });
             const eventType = parsed?.name || "Unknown";
+            if (!EVENT_TYPES_TO_RENDER.has(eventType)) return null;
             const positionIdRaw = parsed?.args?.positionId ?? parsed?.args?.[0] ?? 0n;
             const positionId = BigInt(positionIdRaw || 0n).toString();
             const reasonValue =
               eventType === "RebalanceSkipped"
                 ? decodeRebalanceReason(String(parsed?.args?.reason || parsed?.args?.[1] || "0x"))
                 : "";
+            const zeroForOne =
+              eventType === "SwapToTarget" ? Boolean(parsed?.args?.zeroForOne ?? parsed?.args?.[1]) : undefined;
+            const amountIn =
+              eventType === "SwapToTarget" ? BigInt(parsed?.args?.amountIn ?? parsed?.args?.[2] ?? 0n) : undefined;
+            const amountOut =
+              eventType === "SwapToTarget" ? BigInt(parsed?.args?.amountOut ?? parsed?.args?.[3] ?? 0n) : undefined;
             return {
               id: `${log.transactionHash}-${log.index}`,
               blockNumber: Number(log.blockNumber),
@@ -723,14 +803,24 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
               txHash: log.transactionHash,
               eventType,
               positionId,
-              reason: reasonValue,
+              details: reasonValue || "",
+              zeroForOne,
+              amountIn,
+              amountOut,
               logIndex: Number(log.index),
             };
           } catch {
             return null;
           }
         })
-        .filter(Boolean) as Array<ActivityItem & { logIndex: number }>;
+        .filter(Boolean) as Array<
+        ActivityItem & {
+          logIndex: number;
+          zeroForOne?: boolean;
+          amountIn?: bigint;
+          amountOut?: bigint;
+        }
+      >;
 
       const uniqueBlocks = Array.from(new Set(parsedLogs.map((entry) => entry.blockNumber)));
       const blockMap = new Map<number, number>();
@@ -757,13 +847,55 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return b.logIndex - a.logIndex;
       });
 
-      setActivity(withTimestamps.slice(0, MAX_ACTIVITY_ITEMS));
+      const topItems = withTimestamps.slice(0, MAX_ACTIVITY_ITEMS);
+      const swapPositionIds = Array.from(
+        new Set(topItems.filter((item) => item.eventType === "SwapToTarget").map((item) => item.positionId))
+      );
+      const positionTokenMap = new Map<string, { token0: TokenMeta; token1: TokenMeta }>();
+      await Promise.all(
+        swapPositionIds.map(async (positionId) => {
+          try {
+            const tuple = await alm.positionsById(BigInt(positionId));
+            const token0 = normalizeAddress(String(tuple?.[3] || ZERO_ADDRESS));
+            const token1 = normalizeAddress(String(tuple?.[4] || ZERO_ADDRESS));
+            const [token0Meta, token1Meta] = await Promise.all([resolveTokenMeta(token0), resolveTokenMeta(token1)]);
+            positionTokenMap.set(positionId, { token0: token0Meta, token1: token1Meta });
+          } catch {
+            // ignore metadata resolution failures for logs
+          }
+        })
+      );
+
+      const enriched = topItems.map((item) => {
+        if (item.eventType !== "SwapToTarget") return item;
+        const tokenPair = positionTokenMap.get(item.positionId);
+        const zeroForOne = Boolean(item.zeroForOne);
+        const amountIn = BigInt(item.amountIn || 0n);
+        const amountOut = BigInt(item.amountOut || 0n);
+        const tokenIn = zeroForOne ? tokenPair?.token0 : tokenPair?.token1;
+        const tokenOut = zeroForOne ? tokenPair?.token1 : tokenPair?.token0;
+        const inSymbol = tokenIn?.symbol || (zeroForOne ? "token0" : "token1");
+        const outSymbol = tokenOut?.symbol || (zeroForOne ? "token1" : "token0");
+        const inDecimals = tokenIn?.decimals ?? 18;
+        const outDecimals = tokenOut?.decimals ?? 18;
+        const direction = zeroForOne ? "token0 -> token1" : "token1 -> token0";
+        const details = `${direction} | ${formatTokenAmount(amountIn, inDecimals)} ${inSymbol} -> ${formatTokenAmount(
+          amountOut,
+          outDecimals
+        )} ${outSymbol}`;
+        return {
+          ...item,
+          details,
+        };
+      });
+
+      setActivity(enriched);
     } catch (error: any) {
       showToast("error", error?.message || "Unable to load ALM activity.");
     } finally {
       if (showLoading) setActivityLoading(false);
     }
-  }, [readProvider, showToast]);
+  }, [readProvider, resolveTokenMeta, showToast]);
 
   useEffect(() => {
     void loadStrategies();
@@ -807,7 +939,11 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
 
     const verifyFee = async () => {
       try {
-        const registry = new Contract(ALM_ADDRESSES.STRATEGY_REGISTRY, STRATEGY_REGISTRY_ABI as any, readProvider);
+        const registry = new Contract(
+          normalizeAddress(registryAddress || ALM_ADDRESSES.STRATEGY_REGISTRY),
+          STRATEGY_REGISTRY_ABI as any,
+          readProvider
+        );
         const allowed = await registry.isFeeAllowed(BigInt(selectedStrategy.id), selectedNft.fee);
         if (!cancelled) setFeeAllowedOnChain(Boolean(allowed));
       } catch {
@@ -819,7 +955,34 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, selectedNft, selectedStrategy]);
+  }, [readProvider, registryAddress, selectedNft, selectedStrategy]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedNft) {
+      setSelectedToken1Stable(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+    const run = async () => {
+      try {
+        const registry = new Contract(
+          normalizeAddress(registryAddress || ALM_ADDRESSES.STRATEGY_REGISTRY),
+          STRATEGY_REGISTRY_ABI as any,
+          readProvider
+        );
+        const isStable = await registry.isStableToken(selectedNft.token1);
+        if (!cancelled) setSelectedToken1Stable(Boolean(isStable));
+      } catch {
+        if (!cancelled) setSelectedToken1Stable(null);
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [readProvider, registryAddress, selectedNft]);
 
   useEffect(() => {
     return () => {
@@ -959,6 +1122,130 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     [address, loadActivityLog, loadUserPositions, onConnect, showToast, wrongChain]
   );
 
+  const handleCompoundWeighted = useCallback(
+    async (positionId: string) => {
+      if (!address) {
+        onConnect?.();
+        return;
+      }
+      if (!isKeeperWallet) {
+        showToast("error", "Only keeper wallet can execute compound.");
+        return;
+      }
+      if (wrongChain) {
+        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before compounding.`);
+        return;
+      }
+      setCompoundingPositionId(positionId);
+      try {
+        const walletProvider = await getProvider();
+        const signer = await walletProvider.getSigner();
+        const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, signer);
+        const tx = await alm.compoundWeighted(BigInt(positionId));
+        await tx.wait();
+        showToast("success", `compoundWeighted executed for position #${positionId}.`);
+        setRefreshNonce((value) => value + 1);
+        await Promise.all([loadUserPositions(), loadActivityLog("manual")]);
+      } catch (error: any) {
+        showToast("error", error?.message || "compoundWeighted transaction failed.");
+      } finally {
+        setCompoundingPositionId("");
+      }
+    },
+    [address, isKeeperWallet, loadActivityLog, loadUserPositions, onConnect, showToast, wrongChain]
+  );
+
+  const handleSaveStrategyParams = useCallback(
+    async (input: {
+      strategyId: number;
+      targetRatioBps0: number;
+      minCompoundInput: string;
+      deadbandBps: number;
+      minSwapInput: string;
+      token1Decimals: number;
+    }) => {
+      if (!address) {
+        onConnect?.();
+        return;
+      }
+      if (!isRegistryOwnerWallet) {
+        showToast("error", "Only registry owner can update strategies.");
+        return;
+      }
+      if (wrongChain) {
+        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before saving strategy.`);
+        return;
+      }
+      const strategy = strategyById.get(input.strategyId);
+      if (!strategy) {
+        showToast("error", "Strategy not found.");
+        return;
+      }
+      if (!Number.isFinite(input.targetRatioBps0) || input.targetRatioBps0 < 0 || input.targetRatioBps0 > 10_000) {
+        showToast("error", "Target ratio must be between 0 and 100%.");
+        return;
+      }
+      if (!Number.isFinite(input.deadbandBps) || input.deadbandBps < 0 || input.deadbandBps > 10_000) {
+        showToast("error", "Deadband must be between 0 and 100%.");
+        return;
+      }
+      const minCompoundValueToken1 = parseTokenUnitsSafe(input.minCompoundInput, input.token1Decimals);
+      const minSwapValueToken1 = parseTokenUnitsSafe(input.minSwapInput, input.token1Decimals);
+      if (minCompoundValueToken1 === null || minSwapValueToken1 === null) {
+        showToast("error", "Invalid numeric values for compound/swap thresholds.");
+        return;
+      }
+      setSavingStrategy(true);
+      try {
+        const walletProvider = await getProvider();
+        const signer = await walletProvider.getSigner();
+        const registry = new Contract(
+          normalizeAddress(registryAddress || ALM_ADDRESSES.STRATEGY_REGISTRY),
+          STRATEGY_REGISTRY_ABI as any,
+          signer
+        );
+        const tuple = {
+          poolClass: strategy.poolClass,
+          widthBps: strategy.widthBps,
+          recenterBps: strategy.recenterBps,
+          minRebalanceInterval: strategy.minRebalanceInterval,
+          maxSwapSlippageBps: strategy.maxSwapSlippageBps,
+          mintSlippageBps: strategy.mintSlippageBps,
+          allowSwap: strategy.allowSwap,
+          route: strategy.route === "DIRECT_ONLY" ? 0 : 1,
+          minCardinality: strategy.minCardinality,
+          _pad: 0,
+          allowedFeeBitmap: strategy.feeTierBitmap,
+          oracleParams: strategy.oracleParamsHex || "0x",
+          wethHopFee: strategy.wethHopFee,
+          targetRatioBps0: input.targetRatioBps0,
+          minCompoundValueToken1,
+          ratioDeadbandBps: input.deadbandBps,
+          minSwapValueToken1,
+        };
+        const tx = await registry.setStrategy(BigInt(input.strategyId), tuple);
+        await tx.wait();
+        showToast("success", `Strategy #${input.strategyId} updated.`);
+        await Promise.all([loadStrategies(), loadUserPositions()]);
+      } catch (error: any) {
+        showToast("error", error?.message || "Failed to update strategy.");
+      } finally {
+        setSavingStrategy(false);
+      }
+    },
+    [
+      address,
+      isRegistryOwnerWallet,
+      loadStrategies,
+      loadUserPositions,
+      onConnect,
+      registryAddress,
+      showToast,
+      strategyById,
+      wrongChain,
+    ]
+  );
+
   const ownerMatches =
     Boolean(address) &&
     Boolean(selectedNft) &&
@@ -988,6 +1275,9 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       : "",
     needsMoreCardinality && selectedNft && selectedStrategy
       ? `Pool observationCardinality (${selectedNft.observationCardinality}) is below strategy minimum (${selectedStrategy.minCardinality}).`
+      : "",
+    selectedStrategy
+      ? `This strategy targets ${(selectedStrategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 by value. Rebalances will swap tokens to maintain this target.`
       : "",
   ].filter(Boolean);
 
@@ -1065,6 +1355,12 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
               strategies={strategies}
               selectedStrategyId={selectedStrategyId}
               onSelectStrategy={setSelectedStrategyId}
+              selectedStrategy={selectedStrategy}
+              selectedToken1={selectedNft}
+              selectedToken1Stable={selectedToken1Stable}
+              canEdit={isRegistryOwnerWallet}
+              saving={savingStrategy}
+              onSave={handleSaveStrategyParams}
             />
 
             <DepositFlow
@@ -1098,6 +1394,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Treasury</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{treasury || "--"}</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Registry</div>
+                  <div className="mt-1 font-mono text-xs text-slate-200">{registryAddress || "--"}</div>
                 </div>
                 <div className="text-xs text-slate-400">
                   Rebalances are executed by the keeper address. If a rebalance is skipped, it is retried later.
@@ -1139,7 +1439,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           positions={positions}
           strategyById={strategyById}
           onWithdraw={handleWithdraw}
+          onCompoundWeighted={handleCompoundWeighted}
           withdrawingPositionId={withdrawingPositionId}
+          compoundingPositionId={compoundingPositionId}
+          isKeeperWallet={isKeeperWallet}
           copiedValue={copiedValue}
           onCopy={copyValue}
         />
@@ -1278,6 +1581,19 @@ interface StrategyListProps {
   strategies: StrategyConfig[];
   selectedStrategyId: number | null;
   onSelectStrategy: (strategyId: number) => void;
+  selectedStrategy: StrategyConfig | null;
+  selectedToken1: NftLookupItem | null;
+  selectedToken1Stable: boolean | null;
+  canEdit: boolean;
+  saving: boolean;
+  onSave: (input: {
+    strategyId: number;
+    targetRatioBps0: number;
+    minCompoundInput: string;
+    deadbandBps: number;
+    minSwapInput: string;
+    token1Decimals: number;
+  }) => void;
 }
 
 export function StrategyList({
@@ -1285,7 +1601,34 @@ export function StrategyList({
   strategies,
   selectedStrategyId,
   onSelectStrategy,
+  selectedStrategy,
+  selectedToken1,
+  selectedToken1Stable,
+  canEdit,
+  saving,
+  onSave,
 }: StrategyListProps) {
+  const token1Symbol = selectedToken1?.token1Symbol || "token1";
+  const token1Decimals = selectedToken1?.token1Decimals || 18;
+  const [targetPct0, setTargetPct0] = useState(50);
+  const [minCompoundInput, setMinCompoundInput] = useState("2");
+  const [deadbandInput, setDeadbandInput] = useState("0.5");
+  const [minSwapInput, setMinSwapInput] = useState("2");
+
+  useEffect(() => {
+    if (!selectedStrategy) return;
+    setTargetPct0(Number((selectedStrategy.targetRatioBps0 / 100).toFixed(2)));
+    setMinCompoundInput(formatTokenAmount(selectedStrategy.minCompoundValueToken1, token1Decimals, 4));
+    setDeadbandInput((selectedStrategy.ratioDeadbandBps / 100).toString());
+    setMinSwapInput(formatTokenAmount(selectedStrategy.minSwapValueToken1, token1Decimals, 4));
+  }, [selectedStrategy, token1Decimals]);
+
+  const renderCompoundThreshold = (strategy: StrategyConfig) => {
+    const valueText = `${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals)} ${token1Symbol}`;
+    if (!selectedToken1Stable) return valueText;
+    return `${valueText} (≈ $${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals, 2)})`;
+  };
+
   return (
     <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
       <div className="flex items-center justify-between">
@@ -1349,6 +1692,15 @@ export function StrategyList({
                 <div>Cooldown: {formatDuration(strategy.minRebalanceInterval)}</div>
                 <div>Swap enabled: {strategy.allowSwap ? "yes" : "no"}</div>
                 <div>
+                  Target: {(strategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 /{" "}
+                  {((10_000 - strategy.targetRatioBps0) / 100).toFixed(2).replace(/\.?0+$/u, "")}% token1
+                </div>
+                <div>Compound threshold: {renderCompoundThreshold(strategy)}</div>
+                <div>Ratio deadband: ±{formatPercentFromBps(strategy.ratioDeadbandBps, 2)}</div>
+                <div>
+                  Min swap value: {formatTokenAmount(strategy.minSwapValueToken1, token1Decimals)} {token1Symbol}
+                </div>
+                <div>
                   Fee tiers: {" "}
                   {strategy.allowedFeeTiers.length
                     ? strategy.allowedFeeTiers.map((tier) => formatFeeTier(tier)).join(" / ")
@@ -1364,6 +1716,83 @@ export function StrategyList({
           );
         })}
       </div>
+
+      {canEdit && selectedStrategy && (
+        <div className="mt-4 rounded-2xl border border-slate-700/70 bg-slate-900/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-display text-sm font-semibold text-slate-100">Admin Strategy Editor</h3>
+            <span className="text-[11px] text-slate-400">Strategy #{selectedStrategy.id}</span>
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-slate-300 sm:col-span-2">
+              Target allocation (by value): {targetPct0.toFixed(2)}% token0 /{" "}
+              {(100 - targetPct0).toFixed(2)}% token1
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={0.1}
+                value={targetPct0}
+                onChange={(event) => setTargetPct0(Number(event.target.value))}
+                className="mt-2 w-full accent-cyan-400"
+              />
+            </label>
+
+            <label className="text-xs text-slate-300">
+              Min compound threshold ({token1Symbol})
+              <input
+                value={minCompoundInput}
+                onChange={(event) => setMinCompoundInput(event.target.value.replace(",", "."))}
+                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+              />
+            </label>
+            <label className="text-xs text-slate-300">
+              Deadband (%)
+              <input
+                value={deadbandInput}
+                onChange={(event) => setDeadbandInput(event.target.value.replace(",", "."))}
+                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+              />
+            </label>
+            <label className="text-xs text-slate-300 sm:col-span-2">
+              Min swap value ({token1Symbol})
+              <input
+                value={minSwapInput}
+                onChange={(event) => setMinSwapInput(event.target.value.replace(",", "."))}
+                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+              />
+            </label>
+          </div>
+          {!selectedToken1 && (
+            <div className="mt-2 text-[11px] text-amber-200">
+              Select an NFT first to use token1 decimals/symbol for threshold parsing.
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={saving || !selectedToken1}
+            onClick={() =>
+              {
+                const parsedDeadbandPct = Number(deadbandInput || "0");
+                const deadbandBps = Number.isFinite(parsedDeadbandPct)
+                  ? Math.round(parsedDeadbandPct * 100)
+                  : Number.NaN;
+                onSave({
+                  strategyId: selectedStrategy.id,
+                  targetRatioBps0: Math.max(0, Math.min(10_000, Math.round(targetPct0 * 100))),
+                  minCompoundInput,
+                  deadbandBps,
+                  minSwapInput,
+                  token1Decimals,
+                });
+              }
+            }
+            className="mt-3 rounded-xl border border-cyan-400/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? "Saving..." : "Save Strategy"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1500,7 +1929,10 @@ interface MyPositionsProps {
   positions: AlmPositionRow[];
   strategyById: Map<number, StrategyConfig>;
   onWithdraw: (positionId: string) => void;
+  onCompoundWeighted: (positionId: string) => void;
   withdrawingPositionId: string;
+  compoundingPositionId: string;
+  isKeeperWallet: boolean;
   copiedValue: string;
   onCopy: (value: string) => void;
 }
@@ -1512,7 +1944,10 @@ export function MyPositions({
   positions,
   strategyById,
   onWithdraw,
+  onCompoundWeighted,
   withdrawingPositionId,
+  compoundingPositionId,
+  isKeeperWallet,
   copiedValue,
   onCopy,
 }: MyPositionsProps) {
@@ -1580,6 +2015,12 @@ export function MyPositions({
             (position.lastRebalanceAt || 0) + (strategy?.minRebalanceInterval || 0) - nowTs
           );
           const estimate = getEstimate(position, strategy);
+          const threshold = strategy?.minCompoundValueToken1 ?? 0n;
+          const isEligibleForCompound = position.dustValueToken1 >= threshold;
+          const thresholdText = `${formatTokenAmount(
+            threshold,
+            position.token1Decimals
+          )} ${position.token1Symbol}`;
 
           return (
             <div
@@ -1642,6 +2083,21 @@ export function MyPositions({
                   Dust1 ({position.token1Symbol}): {formatDust(position.dust1, position.token1Decimals)}
                 </div>
                 <div>Pool tick: {position.currentTick ?? "--"}</div>
+                <div>
+                  Dust total value: {formatTokenAmount(position.dustValueToken1, position.token1Decimals)}{" "}
+                  {position.token1Symbol}
+                </div>
+                <div>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                      isEligibleForCompound
+                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
+                        : "border-amber-400/45 bg-amber-500/12 text-amber-100"
+                    }`}
+                  >
+                    {isEligibleForCompound ? "Compound eligible" : `Compound below threshold (${thresholdText})`}
+                  </span>
+                </div>
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1652,6 +2108,25 @@ export function MyPositions({
                   className="rounded-xl border border-rose-400/45 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {withdrawingPositionId === position.positionId ? "Withdrawing..." : "Withdraw"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCompoundWeighted(position.positionId)}
+                  disabled={
+                    !isKeeperWallet ||
+                    !isEligibleForCompound ||
+                    compoundingPositionId === position.positionId
+                  }
+                  title={
+                    !isKeeperWallet
+                      ? "Only keeper can execute compoundWeighted."
+                      : !isEligibleForCompound
+                      ? `Requires at least ${thresholdText} total dust value in token1 units.`
+                      : ""
+                  }
+                  className="rounded-xl border border-cyan-400/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {compoundingPositionId === position.positionId ? "Compounding..." : "Compound (Keeper)"}
                 </button>
                 <button
                   type="button"
@@ -1683,7 +2158,7 @@ interface ActivityLogProps {
   items: ActivityItem[];
   copiedValue: string;
   onCopy: (value: string) => void;
-  onRefresh: () => void;
+  onRefresh: (mode?: "initial" | "manual" | "poll") => void;
 }
 
 export function ActivityLog({ loading, items, copiedValue, onCopy, onRefresh }: ActivityLogProps) {
@@ -1693,7 +2168,7 @@ export function ActivityLog({ loading, items, copiedValue, onCopy, onRefresh }: 
         <h2 className="font-display text-base font-semibold text-slate-100">Activity / Logs</h2>
         <button
           type="button"
-          onClick={onRefresh}
+          onClick={() => onRefresh("manual")}
           className="inline-flex items-center gap-1 rounded-full border border-slate-700/70 bg-slate-900/70 px-3 py-1 text-xs text-slate-200 hover:border-slate-500"
         >
           <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -1708,7 +2183,7 @@ export function ActivityLog({ loading, items, copiedValue, onCopy, onRefresh }: 
               <th className="px-2 py-2 font-medium uppercase tracking-wide">Time</th>
               <th className="px-2 py-2 font-medium uppercase tracking-wide">Event</th>
               <th className="px-2 py-2 font-medium uppercase tracking-wide">Position</th>
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Reason</th>
+              <th className="px-2 py-2 font-medium uppercase tracking-wide">Details</th>
               <th className="px-2 py-2 font-medium uppercase tracking-wide">Tx</th>
             </tr>
           </thead>
@@ -1761,7 +2236,7 @@ export function ActivityLog({ loading, items, copiedValue, onCopy, onRefresh }: 
                     {copiedValue === item.positionId ? "Copied" : `#${item.positionId}`}
                   </button>
                 </td>
-                <td className="px-2 py-2 text-[11px] text-slate-400">{item.reason || "--"}</td>
+                <td className="px-2 py-2 text-[11px] text-slate-400">{item.details || "--"}</td>
                 <td className="px-2 py-2">
                   <div className="flex items-center gap-1">
                     <a
