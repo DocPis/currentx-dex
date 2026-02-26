@@ -267,7 +267,7 @@ function LineGlowChart({
   );
 }
 
-export default function Dashboard() {
+export default function Dashboard({ onSelectPool }) {
   const { data, isLoading, error } = useDashboardData();
   const stats = data.stats;
   const tvlHistory = data.tvlHistory;
@@ -327,6 +327,19 @@ export default function Dashboard() {
         }),
     [volumeHistoryFiltered]
   );
+
+  const handleTopPoolSelect = (pair) => {
+    if (typeof onSelectPool !== "function" || !pair) return;
+    onSelectPool({
+      id: pair.id,
+      type: pair.type,
+      feeTier: pair.feeTier,
+      token0Id: pair.token0Id,
+      token1Id: pair.token1Id,
+      token0Symbol: pair.token0Symbol,
+      token1Symbol: pair.token1Symbol,
+    });
+  };
 
   const latestDay = volumeHistory?.[0];
   const dayVolume = latestDay?.volumeUsd ?? null;
@@ -490,12 +503,18 @@ export default function Dashboard() {
               const feeLabel =
                 pair.type === "V3" && pair.feeTier ? formatFeePercent(pair.feeTier) : "";
               return (
-                <div
+                <button
                   key={pair.id}
+                  type="button"
+                  onClick={() => handleTopPoolSelect(pair)}
                   className={`group space-y-2 rounded-2xl ${
                     isTopPool
                       ? "border border-slate-700/80 bg-slate-900/62 px-3 py-3.5"
                       : "border border-slate-800/60 bg-slate-900/28 px-2.5 py-2.5 hover:border-slate-700/80 hover:bg-slate-900/45 transition-colors"
+                  } ${
+                    typeof onSelectPool === "function"
+                      ? "w-full text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300/60"
+                      : "w-full text-left"
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -562,7 +581,7 @@ export default function Dashboard() {
                       }}
                     />
                   </div>
-                </div>
+                </button>
               );
             })
           ) : (

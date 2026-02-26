@@ -494,7 +494,7 @@ export default function App() {
             />
           )}
           {tab === "pools" && <PoolsSection onSelectPool={handlePoolSelect} />}
-          {tab === "dashboard" && <Dashboard />}
+          {tab === "dashboard" && <Dashboard onSelectPool={handlePoolSelect} />}
           {tab === "points" && (
             <PointsPage
               address={address}
