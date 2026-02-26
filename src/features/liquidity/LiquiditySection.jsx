@@ -3472,24 +3472,18 @@ export default function LiquiditySection({
         const provider = getReadOnlyProvider(false, true);
         const factory = new Contract(UNIV3_FACTORY_ADDRESS, UNIV3_FACTORY_ABI, provider);
         const fee = Number(feeRaw || 0);
-        const poolAddr = await factory.getPool(
-          sorted0,
-          sorted1,
-          fee
+        const feeCandidates = V3_FEE_OPTIONS
+          .map((opt) => Number(opt.fee))
+          .filter((candidateFee) => Number.isFinite(candidateFee) && candidateFee > 0);
+        const candidatePools = await Promise.all(
+          feeCandidates.map(async (candidateFee) => {
+            const candidateAddr = await factory.getPool(sorted0, sorted1, candidateFee);
+            if (!candidateAddr || candidateAddr === ZERO_ADDRESS) return null;
+            return { fee: candidateFee, address: candidateAddr };
+          })
         );
-        if (!poolAddr || poolAddr === ZERO_ADDRESS) {
-          if (!v3FeeTierLockedRef.current) {
-            const fallbackFees = V3_FEE_OPTIONS.map((opt) => opt.fee).filter(
-              (optFee) => optFee !== fee
-            );
-            for (const candidate of fallbackFees) {
-              const candidateAddr = await factory.getPool(sorted0, sorted1, candidate);
-              if (candidateAddr && candidateAddr !== ZERO_ADDRESS) {
-                if (!cancelled) setV3FeeTier(candidate);
-                return;
-              }
-            }
-          }
+        const availablePools = candidatePools.filter(Boolean);
+        if (!availablePools.length) {
           if (!cancelled) {
             setV3PoolInfo({
               address: "",
@@ -3503,6 +3497,56 @@ export default function LiquiditySection({
           }
           return;
         }
+        const selectedPool = availablePools.find((entry) => entry.fee === fee) || null;
+        let resolvedPool = selectedPool;
+
+        if (!v3FeeTierLockedRef.current) {
+          if (availablePools.length > 1) {
+            const poolsWithTvl = await Promise.all(
+              availablePools.map(async (entry) => {
+                try {
+                  const snapshot = await fetchV3PoolSnapshot(entry.address);
+                  const tvlUsd = Number(snapshot?.tvlUsd || 0);
+                  return {
+                    ...entry,
+                    tvlUsd: Number.isFinite(tvlUsd) && tvlUsd > 0 ? tvlUsd : 0,
+                  };
+                } catch {
+                  return { ...entry, tvlUsd: 0 };
+                }
+              })
+            );
+            poolsWithTvl.sort((a, b) => {
+              if (b.tvlUsd !== a.tvlUsd) return b.tvlUsd - a.tvlUsd;
+              if (a.fee === fee && b.fee !== fee) return -1;
+              if (b.fee === fee && a.fee !== fee) return 1;
+              return a.fee - b.fee;
+            });
+            resolvedPool = poolsWithTvl[0] || selectedPool || availablePools[0];
+          } else {
+            resolvedPool = availablePools[0];
+          }
+          if (resolvedPool && resolvedPool.fee !== fee) {
+            if (!cancelled) setV3FeeTier(resolvedPool.fee);
+            return;
+          }
+        }
+
+        if (!resolvedPool || !resolvedPool.address) {
+          if (!cancelled) {
+            setV3PoolInfo({
+              address: "",
+              token0: "",
+              token1: "",
+              tick: null,
+              sqrtPriceX96: null,
+              spacing: null,
+            });
+            setV3PoolError("Pool not deployed yet for this pair/tier.");
+          }
+          return;
+        }
+        const poolAddr = resolvedPool.address;
         const pool = new Contract(poolAddr, UNIV3_POOL_ABI, provider);
         const [slot0, token0, token1, spacing] = await Promise.all([
           pool.slot0(),

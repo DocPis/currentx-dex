@@ -2869,23 +2869,33 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
       ? row.reserveUSD
       : row?.totalValueLockedUSD;
 
-  const parseRows = (rows) => {
+  const readOrderTimestampSeconds = (row, orderBy) => {
+    const raw = Number(row?.[orderBy]);
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  };
+
+  const parseRows = (rows, orderBy) => {
     if (!rows?.length) return null;
-    const volumeUsd = rows.reduce(
+    const scopedRows = rows.filter((row) => {
+      const ts = readOrderTimestampSeconds(row, orderBy);
+      return ts === null ? true : ts >= since;
+    });
+    if (!scopedRows.length) return null;
+    const volumeUsd = scopedRows.reduce(
       (sum, row) => sum + toNumberSafe(readVolume(row)),
       0
     );
-    const hasFees = rows.some(
+    const hasFees = scopedRows.some(
       (row) => row?.feesUSD !== undefined && row?.feesUSD !== null
     );
     const feesUsd = hasFees
-      ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
+      ? scopedRows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
       : null;
-    const tvlUsd = toNumberSafe(readTvl(rows[0]));
-    const latestTvlNum = Number(readTvl(rows[0]));
-    const oldestTvlNum = Number(readTvl(rows[rows.length - 1]));
+    const tvlUsd = toNumberSafe(readTvl(scopedRows[0]));
+    const latestTvlNum = Number(readTvl(scopedRows[0]));
+    const oldestTvlNum = Number(readTvl(scopedRows[scopedRows.length - 1]));
     const tvlChange24hUsd =
-      rows.length > 1 &&
+      scopedRows.length > 1 &&
       Number.isFinite(latestTvlNum) &&
       Number.isFinite(oldestTvlNum)
         ? latestTvlNum - oldestTvlNum
@@ -2895,7 +2905,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
       feesUsd,
       tvlUsd,
       tvlChange24hUsd,
-      hours: rows.length,
+      hours: scopedRows.length,
     };
   };
 
@@ -2918,6 +2928,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
             orderDirection: desc
             where: { ${field}: "${id}"${timeField ? `, ${timeField}_gte: ${since}` : ""} }
           ) {
+            ${orderBy}
             ${select}
           }
         `
@@ -2929,7 +2940,7 @@ export async function fetchV2PoolsHourData(ids = [], hours = 24) {
     const res = await postSubgraph(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      const parsed = parseRows(rows);
+      const parsed = parseRows(rows, orderBy);
       if (!parsed) return;
       out[id] = parsed;
     });
@@ -3110,23 +3121,33 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
       ? row.tvlUSD
       : row?.totalValueLockedUSD;
 
-  const parseRows = (rows) => {
+  const readOrderTimestampSeconds = (row, orderBy) => {
+    const raw = Number(row?.[orderBy]);
+    return Number.isFinite(raw) && raw > 0 ? raw : null;
+  };
+
+  const parseRows = (rows, orderBy) => {
     if (!rows?.length) return null;
-    const volumeUsd = rows.reduce(
+    const scopedRows = rows.filter((row) => {
+      const ts = readOrderTimestampSeconds(row, orderBy);
+      return ts === null ? true : ts >= since;
+    });
+    if (!scopedRows.length) return null;
+    const volumeUsd = scopedRows.reduce(
       (sum, row) => sum + toNumberSafe(row?.volumeUSD),
       0
     );
-    const hasFees = rows.some(
+    const hasFees = scopedRows.some(
       (row) => row?.feesUSD !== undefined && row?.feesUSD !== null
     );
     const feesUsd = hasFees
-      ? rows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
+      ? scopedRows.reduce((sum, row) => sum + toNumberSafe(row?.feesUSD), 0)
       : null;
-    const tvlUsd = toNumberSafe(readTvl(rows[0]));
-    const latestTvlNum = Number(readTvl(rows[0]));
-    const oldestTvlNum = Number(readTvl(rows[rows.length - 1]));
+    const tvlUsd = toNumberSafe(readTvl(scopedRows[0]));
+    const latestTvlNum = Number(readTvl(scopedRows[0]));
+    const oldestTvlNum = Number(readTvl(scopedRows[scopedRows.length - 1]));
     const tvlChange24hUsd =
-      rows.length > 1 &&
+      scopedRows.length > 1 &&
       Number.isFinite(latestTvlNum) &&
       Number.isFinite(oldestTvlNum)
         ? latestTvlNum - oldestTvlNum
@@ -3136,7 +3157,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
       feesUsd,
       tvlUsd,
       tvlChange24hUsd,
-      hours: rows.length,
+      hours: scopedRows.length,
     };
   };
 
@@ -3159,6 +3180,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
             orderDirection: desc
             where: { ${field}: "${id}"${timeField ? `, ${timeField}_gte: ${since}` : ""} }
           ) {
+            ${orderBy}
             ${select}
           }
         `
@@ -3170,7 +3192,7 @@ export async function fetchV3PoolsHourData(ids = [], hours = 24) {
     const res = await postSubgraphV3(query);
     chunk.forEach((id, idx) => {
       const rows = res?.[`p${idx}`] || [];
-      const parsed = parseRows(rows);
+      const parsed = parseRows(rows, orderBy);
       if (!parsed) return;
       out[id] = parsed;
     });
@@ -4035,6 +4057,7 @@ export async function fetchV3PoolHourStats(poolId, hours = 24) {
   const id = (poolId || "").toLowerCase();
   if (!id) return null;
   const count = Math.max(1, Math.min(Number(hours) || 24, 1000));
+  const since = Math.floor(Date.now() / 1000) - count * 3600;
 
   const candidates = ["pool", "poolAddress"];
   const variants = [
@@ -4080,63 +4103,92 @@ export async function fetchV3PoolHourStats(poolId, hours = 24) {
       volumeUSD
     `,
   ];
+  const isFilterUnsupported = (message = "") =>
+    message.includes("Unknown argument") ||
+    message.includes("is not defined on") ||
+    message.includes("has no field") ||
+    message.includes("Cannot query field");
+  const buildStatsFromRows = (rows, variant) => {
+    if (!rows?.length) return null;
+    const mapped = rows
+      .map((row) => {
+        const tvl =
+          row?.tvlUSD !== undefined && row?.tvlUSD !== null
+            ? row.tvlUSD
+            : row?.totalValueLockedUSD;
+        return {
+          date: variant.dateGetter(row),
+          volumeUsd: toNumberSafe(row?.volumeUSD),
+          tvlUsd: toNumberSafe(tvl),
+          feesUsd: row?.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
+        };
+      })
+      .filter((row) => Number.isFinite(row.date) && row.date > 0 && row.date >= since * 1000);
+    if (!mapped.length) return null;
+    const volumeUsd = mapped.reduce((sum, row) => sum + (row.volumeUsd || 0), 0);
+    const hasFees = mapped.some((row) => row.feesUsd !== null && row.feesUsd !== undefined);
+    const feesUsd = hasFees
+      ? mapped.reduce((sum, row) => sum + (row.feesUsd || 0), 0)
+      : null;
+    const latest = mapped.reduce(
+      (acc, row) => (row.date > acc.date ? row : acc),
+      mapped[0]
+    );
+    const tvlUsd =
+      latest && Number.isFinite(latest.tvlUsd) && latest.tvlUsd > 0
+        ? latest.tvlUsd
+        : null;
+    return {
+      volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
+      feesUsd,
+      tvlUsd,
+      hours: mapped.length,
+    };
+  };
 
   for (const variant of variants) {
     for (const field of candidates) {
       for (const select of selectVariants) {
-        const query = `
+        const buildQuery = (useSince) => `
           query V3PoolHourStats {
             poolHourDatas(
               first: ${count}
               orderBy: ${variant.name}
               orderDirection: desc
-              where: { ${field}: "${id}" }
+              where: { ${field}: "${id}"${useSince ? `, ${variant.name}_gte: ${since}` : ""} }
             ) {
               ${variant.name}
               ${select}
             }
           }
         `;
+        let shouldRetryWithoutFilter = false;
         try {
-          const res = await postSubgraphV3(query);
+          const res = await postSubgraphV3(buildQuery(true));
           const rows = res?.poolHourDatas || [];
-          if (!rows.length) continue;
-          const mapped = rows
-            .map((row) => {
-              const tvl =
-                row?.tvlUSD !== undefined && row?.tvlUSD !== null
-                  ? row.tvlUSD
-                  : row?.totalValueLockedUSD;
-              return {
-                date: variant.dateGetter(row),
-                volumeUsd: toNumberSafe(row?.volumeUSD),
-                tvlUsd: toNumberSafe(tvl),
-                feesUsd: row?.feesUSD !== undefined ? toNumberSafe(row.feesUSD) : null,
-              };
-            })
-            .filter((row) => Number.isFinite(row.date) && row.date > 0);
-          if (!mapped.length) continue;
-
-          const volumeUsd = mapped.reduce((sum, row) => sum + (row.volumeUsd || 0), 0);
-          const hasFees = mapped.some((row) => row.feesUsd !== null && row.feesUsd !== undefined);
-          const feesUsd = hasFees
-            ? mapped.reduce((sum, row) => sum + (row.feesUsd || 0), 0)
-            : null;
-          const latest = mapped.reduce(
-            (acc, row) => (row.date > acc.date ? row : acc),
-            mapped[0]
-          );
-          const tvlUsd =
-            latest && Number.isFinite(latest.tvlUsd) && latest.tvlUsd > 0
-              ? latest.tvlUsd
-              : null;
-
-          return {
-            volumeUsd: Number.isFinite(volumeUsd) ? volumeUsd : null,
-            feesUsd,
-            tvlUsd,
-            hours: mapped.length,
-          };
+          const stats = buildStatsFromRows(rows, variant);
+          if (stats) return stats;
+          continue;
+        } catch (err) {
+          const message = err?.message || "";
+          const orderByMissing =
+            message.includes("PoolHourData_orderBy") ||
+            message.includes("PoolHourData_orderBy!") ||
+            message.includes("is not a valid PoolHourData_orderBy");
+          if (isFilterUnsupported(message)) {
+            shouldRetryWithoutFilter = true;
+          } else if (isSchemaFieldMissing(message) || orderByMissing) {
+            continue;
+          } else {
+            throw err;
+          }
+        }
+        if (!shouldRetryWithoutFilter) continue;
+        try {
+          const res = await postSubgraphV3(buildQuery(false));
+          const rows = res?.poolHourDatas || [];
+          const stats = buildStatsFromRows(rows, variant);
+          if (stats) return stats;
         } catch (err) {
           const message = err?.message || "";
           const orderByMissing =
