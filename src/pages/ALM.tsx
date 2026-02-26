@@ -14,6 +14,8 @@ import { Copy, RefreshCw } from "lucide-react";
 import { EXPLORER_BASE_URL } from "../shared/config/addresses";
 import { getProvider } from "../shared/config/web3";
 import { TOKENS } from "../shared/config/tokens";
+import StrategyWizard from "../features/alm/wizard/StrategyWizard";
+import type { WizardSubmitPayload } from "../features/alm/wizard/strategyWizardSchema";
 import {
   ALM_ADDRESSES,
   ALM_CHAIN_ID,
@@ -152,8 +154,15 @@ const KNOWN_REASON_SELECTORS: Record<string, string> = {
   [id("NotEnoughObservations()").slice(0, 10).toLowerCase()]: "Not enough observations",
   [id("PriceManipulationDetected()").slice(0, 10).toLowerCase()]: "Price manipulation detected",
   [id("NotKeeper()").slice(0, 10).toLowerCase()]: "Only keeper can execute",
+  [id("NotOwner()").slice(0, 10).toLowerCase()]: "Only owner can execute",
   [id("NotPositionOwner()").slice(0, 10).toLowerCase()]: "Not position owner",
   [id("PoolNotFound()").slice(0, 10).toLowerCase()]: "Pool not found",
+  [id("SwapPoolNotFound()").slice(0, 10).toLowerCase()]: "Swap pool not found",
+  [id("RouterNotAllowed()").slice(0, 10).toLowerCase()]: "Router not allowed",
+  [id("RouterFactoryMismatch()").slice(0, 10).toLowerCase()]: "Router/factory mismatch",
+  [id("FactoryNotSet()").slice(0, 10).toLowerCase()]: "Factory not set",
+  [id("QuoterNotSet()").slice(0, 10).toLowerCase()]: "Quoter not set",
+  [id("BadMaxSwapInBps()").slice(0, 10).toLowerCase()]: "Invalid maxSwapInBps",
   [id("PositionInactive()").slice(0, 10).toLowerCase()]: "Position inactive",
 };
 
@@ -382,10 +391,17 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [globalLoading, setGlobalLoading] = useState(false);
   const [keeper, setKeeper] = useState("");
   const [treasury, setTreasury] = useState("");
+  const [almOwner, setAlmOwner] = useState("");
+  const [maxSwapInBpsCurrent, setMaxSwapInBpsCurrent] = useState<number | null>(null);
   const [registryAddress, setRegistryAddress] = useState(ALM_ADDRESSES.STRATEGY_REGISTRY);
   const [registryOwner, setRegistryOwner] = useState("");
   const [emergency, setEmergency] = useState(false);
   const [emergencyDelay, setEmergencyDelay] = useState(0);
+  const [strategyRouterDefaults, setStrategyRouterDefaults] = useState<{
+    routerAddress: string;
+    quoterAddress: string;
+    factoryAddress: string;
+  } | null>(null);
 
   const [lookupTokenId, setLookupTokenId] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
@@ -449,6 +465,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     if (!address || !registryOwner) return false;
     return normalizeAddress(address).toLowerCase() === normalizeAddress(registryOwner).toLowerCase();
   }, [address, registryOwner]);
+  const isAlmOwnerWallet = useMemo(() => {
+    if (!address || !almOwner) return false;
+    return normalizeAddress(address).toLowerCase() === normalizeAddress(almOwner).toLowerCase();
+  }, [address, almOwner]);
 
   const knownTokensByAddress = useMemo(() => {
     const map = new Map<string, TokenMeta>();
@@ -646,17 +666,21 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     setGlobalLoading(true);
     try {
       const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, readProvider);
-      const [keeperRaw, treasuryRaw, emergencyRaw, delayRaw, registryRaw] = await Promise.all([
+      const [keeperRaw, treasuryRaw, emergencyRaw, delayRaw, registryRaw, ownerRaw, maxSwapInRaw] = await Promise.all([
         alm.keeper(),
         alm.treasury(),
         alm.emergency(),
         alm.EMERGENCY_DELAY(),
         alm.registry().catch(() => ALM_ADDRESSES.STRATEGY_REGISTRY),
+        alm.owner().catch(() => ZERO_ADDRESS),
+        alm.maxSwapInBps().catch(() => null),
       ]);
       setKeeper(normalizeAddress(String(keeperRaw || "")));
       setTreasury(normalizeAddress(String(treasuryRaw || "")));
       setEmergency(Boolean(emergencyRaw));
       setEmergencyDelay(Number(delayRaw || 0n));
+      setAlmOwner(normalizeAddress(String(ownerRaw || ZERO_ADDRESS)));
+      setMaxSwapInBpsCurrent(maxSwapInRaw === null ? null : Number(maxSwapInRaw || 0n));
       const nextRegistry = normalizeAddress(String(registryRaw || ALM_ADDRESSES.STRATEGY_REGISTRY));
       if (nextRegistry && !isZeroAddress(nextRegistry)) {
         setRegistryAddress(nextRegistry);
@@ -959,6 +983,58 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
 
   useEffect(() => {
     let cancelled = false;
+    if (!selectedStrategy) {
+      setStrategyRouterDefaults(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const run = async () => {
+      try {
+        const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, readProvider);
+        const routerRaw = await alm.strategyRouter(BigInt(selectedStrategy.id)).catch(() => ZERO_ADDRESS);
+        const routerAddress = normalizeAddress(String(routerRaw || ZERO_ADDRESS));
+        if (!routerAddress || isZeroAddress(routerAddress)) {
+          if (!cancelled) {
+            setStrategyRouterDefaults({
+              routerAddress: "",
+              quoterAddress: "",
+              factoryAddress: "",
+            });
+          }
+          return;
+        }
+        const [factoryRaw, quoterRaw] = await Promise.all([
+          alm.factoryByRouter(routerAddress).catch(() => ZERO_ADDRESS),
+          alm.quoterByRouter(routerAddress).catch(() => ZERO_ADDRESS),
+        ]);
+        if (!cancelled) {
+          setStrategyRouterDefaults({
+            routerAddress: normalizeAddress(String(routerAddress)),
+            factoryAddress: normalizeAddress(String(factoryRaw || ZERO_ADDRESS)),
+            quoterAddress: normalizeAddress(String(quoterRaw || ZERO_ADDRESS)),
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setStrategyRouterDefaults({
+            routerAddress: "",
+            quoterAddress: "",
+            factoryAddress: "",
+          });
+        }
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [readProvider, selectedStrategy]);
+
+  useEffect(() => {
+    let cancelled = false;
     if (!selectedNft) {
       setSelectedToken1Stable(null);
       return () => {
@@ -1156,14 +1232,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   );
 
   const handleSaveStrategyParams = useCallback(
-    async (input: {
-      strategyId: number;
-      targetRatioBps0: number;
-      minCompoundInput: string;
-      deadbandBps: number;
-      minSwapInput: string;
-      token1Decimals: number;
-    }) => {
+    async (input: WizardSubmitPayload) => {
       if (!address) {
         onConnect?.();
         return;
@@ -1185,7 +1254,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         showToast("error", "Target ratio must be between 0 and 100%.");
         return;
       }
-      if (!Number.isFinite(input.deadbandBps) || input.deadbandBps < 0 || input.deadbandBps > 10_000) {
+      if (!Number.isFinite(input.ratioDeadbandBps) || input.ratioDeadbandBps < 0 || input.ratioDeadbandBps > 10_000) {
         showToast("error", "Deadband must be between 0 and 100%.");
         return;
       }
@@ -1199,34 +1268,95 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       try {
         const walletProvider = await getProvider();
         const signer = await walletProvider.getSigner();
+        const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI as any, signer);
         const registry = new Contract(
           normalizeAddress(registryAddress || ALM_ADDRESSES.STRATEGY_REGISTRY),
           STRATEGY_REGISTRY_ABI as any,
           signer
         );
+
+        const shouldUpdateMaxSwapIn =
+          Number.isFinite(input.maxSwapInBps) &&
+          Number.isFinite(maxSwapInBpsCurrent || 0) &&
+          maxSwapInBpsCurrent !== null &&
+          Number(input.maxSwapInBps) !== Number(maxSwapInBpsCurrent);
+        if ((shouldUpdateMaxSwapIn || input.useExternalDex) && !isAlmOwnerWallet) {
+          showToast("error", "Cross-DEX / maxSwapIn updates require ALM owner wallet.");
+          return;
+        }
+
+        if (shouldUpdateMaxSwapIn) {
+          const txMaxSwap = await alm.setMaxSwapInBps(Number(input.maxSwapInBps));
+          await txMaxSwap.wait();
+        }
+
+        if (input.useExternalDex) {
+          const router = normalizeAddress(input.routerAddress || "");
+          const factory = normalizeAddress(input.factoryAddress || "");
+          const quoter = normalizeAddress(input.quoterAddress || "");
+          if (isZeroAddress(router) || isZeroAddress(factory) || isZeroAddress(quoter)) {
+            showToast("error", "Cross-DEX requires router, quoter and factory.");
+            return;
+          }
+
+          const [allowedRouterRaw, currentFactoryRaw, currentQuoterRaw, currentStrategyRouterRaw] = await Promise.all([
+            alm.allowedRouters(router).catch(() => false),
+            alm.factoryByRouter(router).catch(() => ZERO_ADDRESS),
+            alm.quoterByRouter(router).catch(() => ZERO_ADDRESS),
+            alm.strategyRouter(BigInt(input.strategyId)).catch(() => ZERO_ADDRESS),
+          ]);
+
+          if (!Boolean(allowedRouterRaw)) {
+            const txAllowRouter = await alm.setAllowedRouter(router, true);
+            await txAllowRouter.wait();
+          }
+          if (normalizeAddress(String(currentFactoryRaw || ZERO_ADDRESS)).toLowerCase() !== factory.toLowerCase()) {
+            const txSetFactory = await alm.setRouterFactory(router, factory);
+            await txSetFactory.wait();
+          }
+          if (normalizeAddress(String(currentQuoterRaw || ZERO_ADDRESS)).toLowerCase() !== quoter.toLowerCase()) {
+            const txSetQuoter = await alm.setRouterQuoter(router, quoter);
+            await txSetQuoter.wait();
+          }
+          if (
+            normalizeAddress(String(currentStrategyRouterRaw || ZERO_ADDRESS)).toLowerCase() !==
+            router.toLowerCase()
+          ) {
+            const txSetStrategyRouter = await alm.setStrategyRouter(BigInt(input.strategyId), router);
+            await txSetStrategyRouter.wait();
+          }
+        }
+
+        const feeIndex = FEE_TIERS.indexOf(Number(input.lpFeeTier));
+        const allowedFeeBitmap =
+          feeIndex >= 0 ? 1n << BigInt(feeIndex) : BigInt(strategy.feeTierBitmap || 0n);
         const tuple = {
           poolClass: strategy.poolClass,
-          widthBps: strategy.widthBps,
-          recenterBps: strategy.recenterBps,
-          minRebalanceInterval: strategy.minRebalanceInterval,
-          maxSwapSlippageBps: strategy.maxSwapSlippageBps,
-          mintSlippageBps: strategy.mintSlippageBps,
-          allowSwap: strategy.allowSwap,
-          route: strategy.route === "DIRECT_ONLY" ? 0 : 1,
-          minCardinality: strategy.minCardinality,
+          widthBps: input.widthBps,
+          recenterBps: input.recenterBps,
+          minRebalanceInterval: input.minRebalanceInterval,
+          maxSwapSlippageBps: input.maxSwapSlippageBps,
+          mintSlippageBps: input.mintSlippageBps,
+          allowSwap: Boolean(input.allowSwap || input.useExternalDex),
+          route: Number.isFinite(input.routeCode)
+            ? input.routeCode
+            : strategy.route === "DIRECT_ONLY"
+            ? 0
+            : 1,
+          minCardinality: input.minCardinality,
           _pad: 0,
-          allowedFeeBitmap: strategy.feeTierBitmap,
-          oracleParams: strategy.oracleParamsHex || "0x",
-          wethHopFee: strategy.wethHopFee,
+          allowedFeeBitmap,
+          oracleParams: input.oracleParamsHex || "0x",
+          wethHopFee: input.wethHopFee,
           targetRatioBps0: input.targetRatioBps0,
           minCompoundValueToken1,
-          ratioDeadbandBps: input.deadbandBps,
+          ratioDeadbandBps: input.ratioDeadbandBps,
           minSwapValueToken1,
         };
         const tx = await registry.setStrategy(BigInt(input.strategyId), tuple);
         await tx.wait();
-        showToast("success", `Strategy #${input.strategyId} updated.`);
-        await Promise.all([loadStrategies(), loadUserPositions()]);
+        showToast("success", `Strategy #${input.strategyId} updated via wizard.`);
+        await Promise.all([loadStrategies(), loadUserPositions(), loadGlobalInfo()]);
       } catch (error: any) {
         showToast("error", error?.message || "Failed to update strategy.");
       } finally {
@@ -1237,11 +1367,14 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       address,
       isRegistryOwnerWallet,
       loadStrategies,
+      loadGlobalInfo,
       loadUserPositions,
       onConnect,
       registryAddress,
       showToast,
       strategyById,
+      maxSwapInBpsCurrent,
+      isAlmOwnerWallet,
       wrongChain,
     ]
   );
@@ -1358,9 +1491,22 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
               selectedStrategy={selectedStrategy}
               selectedToken1={selectedNft}
               selectedToken1Stable={selectedToken1Stable}
-              canEdit={isRegistryOwnerWallet}
+              canEdit={false}
               saving={savingStrategy}
               onSave={handleSaveStrategyParams}
+            />
+
+            <StrategyWizard
+              readProvider={readProvider}
+              selectedStrategy={selectedStrategy}
+              selectedNft={selectedNft}
+              selectedToken1Stable={selectedToken1Stable}
+              crossDexDefaults={strategyRouterDefaults}
+              canEditRegistry={isRegistryOwnerWallet}
+              canEditAlm={isAlmOwnerWallet}
+              saving={savingStrategy}
+              maxSwapInBpsCurrent={maxSwapInBpsCurrent}
+              onSubmit={handleSaveStrategyParams}
             />
 
             <DepositFlow
@@ -1398,6 +1544,22 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Registry</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{registryAddress || "--"}</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Oracle</div>
+                  <div className="mt-1 font-mono text-xs text-slate-200">{ALM_ADDRESSES.ORACLE || "--"}</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">ALM Owner</div>
+                  <div className="mt-1 font-mono text-xs text-slate-200">{almOwner || "--"}</div>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">maxSwapInBps</div>
+                  <div className="mt-1 text-slate-200">
+                    {Number.isFinite(maxSwapInBpsCurrent || 0) && maxSwapInBpsCurrent !== null
+                      ? `${(Number(maxSwapInBpsCurrent) / 100).toFixed(2).replace(/\.?0+$/u, "")}%`
+                      : "--"}
+                  </div>
                 </div>
                 <div className="text-xs text-slate-400">
                   Rebalances are executed by the keeper address. If a rebalance is skipped, it is retried later.
@@ -1586,14 +1748,7 @@ interface StrategyListProps {
   selectedToken1Stable: boolean | null;
   canEdit: boolean;
   saving: boolean;
-  onSave: (input: {
-    strategyId: number;
-    targetRatioBps0: number;
-    minCompoundInput: string;
-    deadbandBps: number;
-    minSwapInput: string;
-    token1Decimals: number;
-  }) => void;
+  onSave: (input: any) => void;
 }
 
 export function StrategyList({

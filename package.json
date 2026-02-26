@@ -8,9 +8,10 @@
     "dev:launchpad-api": "node scripts/launchpad-api-dev.mjs",
     "build": "vite build",
     "lint": "eslint .",
+    "lint:english": "node scripts/check-english-strings.mjs",
     "preview": "vite preview",
     "points:rebuild": "node scripts/points-rebuild.mjs",
-    "test": "vitest run",
+    "test": "vitest run && npm run -s lint:english",
     "test:watch": "vitest"
   },
   "dependencies": {
