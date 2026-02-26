@@ -14,6 +14,7 @@ const TAB_ROUTES = {
   swap: "/swap",
   bridge: "/bridge",
   liquidity: "/liquidity",
+  alm: "/alm",
   pools: "/pools",
   farms: "/farms",
   megavault: "/megavault",
@@ -25,6 +26,7 @@ const SECTION_LOADERS = {
   swap: () => import("./features/swap/SwapSection"),
   bridge: () => import("./features/bridge/BridgeSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
+  alm: () => import("./pages/ALM"),
   launchpad: () => import("./features/launchpad/LaunchpadMarketplaceSection"),
   pools: () => import("./features/pools/PoolsSection"),
   farms: () => import("./features/farms/Farms"),
@@ -36,6 +38,7 @@ const PointsPage = React.lazy(SECTION_LOADERS.points);
 const SwapSection = React.lazy(SECTION_LOADERS.swap);
 const BridgeSection = React.lazy(SECTION_LOADERS.bridge);
 const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
+const ALMPage = React.lazy(SECTION_LOADERS.alm);
 const LaunchpadSection = React.lazy(SECTION_LOADERS.launchpad);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
 const Farms = React.lazy(SECTION_LOADERS.farms);
@@ -472,6 +475,13 @@ export default function App() {
               showV3={true}
               poolSelection={poolSelection}
               onBalancesRefresh={refresh}
+            />
+          )}
+          {tab === "alm" && (
+            <ALMPage
+              address={address}
+              chainId={chainId}
+              onConnect={handleConnect}
             />
           )}
           {tab === "launchpad" && (
