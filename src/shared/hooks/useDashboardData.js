@@ -2,6 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   fetchDashboardStatsCombined,
+  fetchProtocolRolling24hCombined,
   fetchProtocolHistoryCombined,
   fetchTopPairsBreakdownCombined,
 } from "../config/subgraph";
@@ -33,10 +34,11 @@ export function useDashboardData() {
     queryKey: ["dashboard", "combined"],
     queryFn: async () => {
       const historyDays = getHistoryDays();
-      const [stats, history, topPairs] = await Promise.all([
+      const [stats, history, topPairs, rolling24h] = await Promise.all([
         fetchDashboardStatsCombined(),
         fetchProtocolHistoryCombined(historyDays),
         fetchTopPairsBreakdownCombined(4),
+        fetchProtocolRolling24hCombined(),
       ]);
       const safeHistory = Array.isArray(history) ? history : [];
       const tvlOriginDate =
@@ -49,6 +51,10 @@ export function useDashboardData() {
         tvlHistory: safeHistory,
         volumeHistory: safeHistory,
         topPairs: Array.isArray(topPairs) ? topPairs : [],
+        rolling24h:
+          rolling24h && typeof rolling24h === "object"
+            ? rolling24h
+            : { volumeUsd: null, feesUsd: null, poolCount: 0 },
         tvlStartDate: tvlOriginDate,
         volumeStartDate: VOLUME_START_DATE,
       };
@@ -65,6 +71,7 @@ export function useDashboardData() {
       tvlHistory: [],
       volumeHistory: [],
       topPairs: [],
+      rolling24h: { volumeUsd: null, feesUsd: null, poolCount: 0 },
       tvlStartDate: TVL_START_DATE,
       volumeStartDate: VOLUME_START_DATE,
     },

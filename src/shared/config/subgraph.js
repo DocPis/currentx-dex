@@ -817,6 +817,96 @@ export async function fetchDashboardStatsCombined() {
   };
 }
 
+export async function fetchProtocolRolling24hCombined() {
+  const [v2Pools, v3Pools] = await Promise.all([
+    fetchWhitelistedPoolsMeta(fetchV2PoolsPage).catch(() => []),
+    fetchWhitelistedPoolsMeta(fetchV3PoolsPage).catch(() => []),
+  ]);
+
+  const v2Ids = Array.from(
+    new Set((v2Pools || []).map((entry) => normalizeAddress(entry?.id)).filter(Boolean))
+  );
+  const v3Ids = Array.from(
+    new Set((v3Pools || []).map((entry) => normalizeAddress(entry?.id)).filter(Boolean))
+  );
+
+  if (!v2Ids.length && !v3Ids.length) {
+    return {
+      volumeUsd: null,
+      feesUsd: null,
+      poolCount: 0,
+    };
+  }
+
+  const [v2Rolling, v3Rolling] = await Promise.all([
+    v2Ids.length ? fetchV2PoolsHourData(v2Ids, 24).catch(() => ({})) : {},
+    v3Ids.length ? fetchV3PoolsHourData(v3Ids, 24).catch(() => ({})) : {},
+  ]);
+
+  let volumeUsd = 0;
+  let feesUsd = 0;
+  let hasVolume = false;
+  let hasFees = false;
+
+  v2Ids.forEach((id) => {
+    const row = v2Rolling?.[id];
+    if (!row) return;
+    const volume = Number(row?.volumeUsd);
+    if (!Number.isFinite(volume) || volume < 0) return;
+    hasVolume = true;
+    volumeUsd += volume;
+
+    const fees = Number(row?.feesUsd);
+    if (Number.isFinite(fees) && fees >= 0) {
+      hasFees = true;
+      feesUsd += fees;
+      return;
+    }
+
+    // V2 default fee tier: 0.30%
+    hasFees = true;
+    feesUsd += volume * 0.003;
+  });
+
+  const v3FeeById = new Map(
+    (v3Pools || []).map((entry) => {
+      const id = normalizeAddress(entry?.id);
+      const feeTier = Number(entry?.feeTier);
+      return [id, Number.isFinite(feeTier) && feeTier > 0 ? feeTier : null];
+    })
+  );
+
+  v3Ids.forEach((id) => {
+    const row = v3Rolling?.[id];
+    if (!row) return;
+    const volume = Number(row?.volumeUsd);
+    if (!Number.isFinite(volume) || volume < 0) return;
+    hasVolume = true;
+    volumeUsd += volume;
+
+    const fees = Number(row?.feesUsd);
+    if (Number.isFinite(fees) && fees >= 0) {
+      hasFees = true;
+      feesUsd += fees;
+      return;
+    }
+
+    const feeTier = Number(v3FeeById.get(id));
+    const feeRate =
+      Number.isFinite(feeTier) && feeTier > 0
+        ? feeTier / 1_000_000
+        : 0.003;
+    hasFees = true;
+    feesUsd += volume * feeRate;
+  });
+
+  return {
+    volumeUsd: hasVolume ? volumeUsd : null,
+    feesUsd: hasFees ? feesUsd : null,
+    poolCount: v2Ids.length + v3Ids.length,
+  };
+}
+
 // Fetch protocol-level daily history (TVL + volume) for the last `days`
 export async function fetchProtocolHistory(days = 7) {
   // Fetch extra days to cover occasional gaps where some dates may be missing
@@ -1416,9 +1506,16 @@ const fetchWhitelistedPoolsMeta = async (fetchPage) => {
       const id = normalizeAddress(row?.id);
       if (!id) return;
       const tvlUsd = toNumberSafe(row?.tvlUsd);
+      const feeTierRaw = Number(row?.feeTier);
+      const feeTier =
+        Number.isFinite(feeTierRaw) && feeTierRaw > 0 ? feeTierRaw : null;
       const existing = poolsById.get(id);
       if (!existing || tvlUsd > existing.tvlUsd) {
-        poolsById.set(id, { id, tvlUsd });
+        poolsById.set(id, { id, tvlUsd, feeTier });
+        return;
+      }
+      if (!existing?.feeTier && feeTier) {
+        poolsById.set(id, { ...existing, feeTier });
       }
     });
     if (rows.length < SUBGRAPH_POOL_PAGE_SIZE) break;

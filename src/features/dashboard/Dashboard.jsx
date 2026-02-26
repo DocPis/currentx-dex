@@ -273,6 +273,7 @@ export default function Dashboard({ onSelectPool }) {
   const tvlHistory = data.tvlHistory;
   const volumeHistory = data.volumeHistory;
   const topPairs = data.topPairs;
+  const rolling24h = data.rolling24h || null;
   const tvlStartDate = data.tvlStartDate;
   const volumeStartDate = data.volumeStartDate;
   const tvlHistoryFiltered = useMemo(() => {
@@ -357,6 +358,14 @@ export default function Dashboard({ onSelectPool }) {
   const dailyFeesRaw = latestDay?.feesUsd;
   const dailyFees =
     Number.isFinite(dailyFeesRaw) ? dailyFeesRaw : latestDay ? 0 : null;
+  const rollingVolume24hUsd =
+    Number.isFinite(Number(rolling24h?.volumeUsd))
+      ? Number(rolling24h.volumeUsd)
+      : dailyVolumeUsd;
+  const rollingFees24hUsd =
+    Number.isFinite(Number(rolling24h?.feesUsd))
+      ? Number(rolling24h.feesUsd)
+      : dailyFees;
   const latestVolumeDate = volumeHistory?.[0]?.date ?? null;
 
   const volumeSeriesWithToday = useMemo(() => {
@@ -419,7 +428,7 @@ export default function Dashboard({ onSelectPool }) {
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500">Protocol volume (24h)</div>
               <div className="mt-2 text-[30px] leading-none font-bold tracking-tight text-slate-100/90">
-                ${formatNumber(dailyVolumeUsd)}
+                ${formatNumber(rollingVolume24hUsd)}
               </div>
             </div>
           </div>
@@ -444,7 +453,7 @@ export default function Dashboard({ onSelectPool }) {
             <div>
               <div className="text-[11px] uppercase tracking-wide text-slate-500">Protocol fees (24h)</div>
               <div className="mt-2 text-[30px] leading-none font-bold tracking-tight text-slate-100/90">
-                ${formatNumber(dailyFees)}
+                ${formatNumber(rollingFees24hUsd)}
               </div>
             </div>
           </div>
