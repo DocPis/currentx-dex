@@ -3221,7 +3221,7 @@ export default function LiquiditySection({
           provider
         );
         const balanceRaw = await manager.balanceOf(address);
-        const count = Math.min(Number(balanceRaw || 0), 50);
+        const count = Math.max(0, Math.trunc(Number(balanceRaw || 0)));
         if (!count) {
           if (!cancelled) setV3Positions([]);
           return;

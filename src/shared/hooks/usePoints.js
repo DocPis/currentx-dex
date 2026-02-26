@@ -111,7 +111,7 @@ const fetchBoostPositions = async (address) => {
   );
 
   const balanceRaw = await manager.balanceOf(address);
-  const count = Math.min(Number(balanceRaw || 0), 50);
+  const count = Math.max(0, Math.trunc(Number(balanceRaw || 0)));
   if (!count) {
     return {
       positions: [],
