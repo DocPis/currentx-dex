@@ -40,12 +40,19 @@ export const acquireKvLock = async (
 export const releaseKvLock = async (kv, key, token) => {
   if (!kv || !key || !token) return false;
   try {
-    const current = await kv.get(key);
-    if (String(current || "") !== String(token)) return false;
-    await kv.del(key);
-    return true;
+    if (typeof kv.eval === "function") {
+      const script = `
+        local current = redis.call("GET", KEYS[1])
+        if not current then return 0 end
+        if current ~= ARGV[1] then return 0 end
+        return redis.call("DEL", KEYS[1])
+      `;
+      const released = Number(await kv.eval(script, [key], [String(token)]));
+      return released > 0;
+    }
+    // Avoid non-atomic compare+delete fallback: prefer TTL expiry over unsafe unlock.
+    return false;
   } catch {
     return false;
   }
 };
-

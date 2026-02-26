@@ -69,6 +69,22 @@
     "vitest": "^4.0.18"
   },
   "overrides": {
-    "axios": "^1.13.5"
+    "axios": "^1.13.5",
+    "bn.js": "^5.2.3",
+    "hono": "^4.11.10",
+    "@ts-morph/common": {
+      "minimatch": "^10.2.4"
+    },
+    "@modelcontextprotocol/sdk": {
+      "ajv": "^8.18.0"
+    },
+    "ajv-formats": {
+      "ajv": "^8.18.0"
+    },
+    "table": {
+      "ajv": "^8.18.0"
+    },
+    "use-sync-external-store": "^1.4.0",
+    "rollup": "^4.59.0"
   }
 }

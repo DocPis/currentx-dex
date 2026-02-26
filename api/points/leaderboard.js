@@ -269,10 +269,10 @@ export default async function handler(req, res) {
     const addresses = filterLeaderboardRows(topEntries, excludedAddresses, 100);
 
     const needsFilteredTotals = excludedAddresses.size > 0;
-    const allEntries =
-      !needsFilteredTotals
-        ? null
-        : await kv.zrange(keys.leaderboard, 0, -1, { withScores: true });
+    let allEntries = null;
+    if (needsFilteredTotals) {
+      allEntries = await kv.zrange(keys.leaderboard, 0, -1, { withScores: true });
+    }
 
     const userRows = addresses.length
       ? await (() => {
@@ -284,8 +284,10 @@ export default async function handler(req, res) {
 
     let summary = parsePointsSummaryRow(await kv.hgetall(keys.summary));
     if (!summary) {
+      const summaryEntries =
+        allEntries || (await kv.zrange(keys.leaderboard, 0, -1, { withScores: true }));
       summary = await buildSummaryFromEntries({
-        entries: allEntries || topEntries,
+        entries: summaryEntries,
         keys,
         seasonId: targetSeason,
         rewardsConfig,
