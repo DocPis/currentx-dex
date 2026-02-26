@@ -310,7 +310,10 @@ export default function PointsPage({ address, onConnect, onNavigate }) {
   })();
   const estimatedRewardIfEndedNowCrx = (() => {
     const rewardSnapshot = Number(userStats?.seasonReward?.rewardSnapshotCrx);
-    if (Number.isFinite(rewardSnapshot) && rewardSnapshot > 0) return rewardSnapshot;
+    const rewardLive = Number(userStats?.seasonReward?.rewardCrx);
+    if (Number.isFinite(rewardSnapshot) && rewardSnapshot >= 0) return rewardSnapshot;
+    if (Number.isFinite(rewardLive) && rewardLive >= 0) return rewardLive;
+    if (leaderboardSummary?.top100Only) return 0;
     if (
       Number.isFinite(userPoints) &&
       userPoints > 0 &&

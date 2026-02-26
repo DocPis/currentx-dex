@@ -7,6 +7,17 @@ import { useWallet } from "./shared/hooks/useWallet";
 import { useBalances } from "./shared/hooks/useBalances";
 import WalletModal from "./features/wallet/WalletModal";
 import Footer from "./shared/ui/Footer";
+import { TOKENS } from "./shared/config/tokens";
+import {
+  fetchTokenPrices,
+  fetchV2PoolsDayData,
+  fetchV2PoolsHourData,
+  fetchV2PoolsPage,
+  fetchV3PoolsDayData,
+  fetchV3PoolsHourData,
+  fetchV3PoolsPage,
+  fetchV3TokenTvls,
+} from "./shared/config/subgraph";
 
 const TAB_ROUTES = {
   dashboard: "/dashboard",
@@ -159,10 +170,6 @@ export default function App() {
 
   const prefetchTokenData = useCallback(async () => {
     try {
-      const [{ TOKENS }, subgraph] = await Promise.all([
-        import("./shared/config/tokens"),
-        import("./shared/config/subgraph"),
-      ]);
       const addresses = Object.values(TOKENS || {})
         .map((t) => t?.address)
         .filter(Boolean);
@@ -171,11 +178,11 @@ export default function App() {
       await Promise.all([
         queryClient.prefetchQuery({
           queryKey: ["token-prices", "registry"],
-          queryFn: () => subgraph.fetchTokenPrices(unique),
+          queryFn: () => fetchTokenPrices(unique),
         }),
         queryClient.prefetchQuery({
           queryKey: ["token-tvls", "registry"],
-          queryFn: () => subgraph.fetchV3TokenTvls(unique),
+          queryFn: () => fetchV3TokenTvls(unique),
         }),
       ]);
     } catch {
@@ -185,11 +192,10 @@ export default function App() {
 
   const prefetchPoolsData = useCallback(async () => {
     try {
-      const subgraph = await import("./shared/config/subgraph");
       const prefetchV3 = queryClient.prefetchInfiniteQuery({
         queryKey: ["pools", "v3"],
         queryFn: ({ pageParam = 0 }) =>
-          subgraph.fetchV3PoolsPage({
+          fetchV3PoolsPage({
             limit: PREFETCH_PAGE_SIZE,
             skip: pageParam,
           }),
@@ -199,7 +205,7 @@ export default function App() {
       const prefetchV2 = queryClient.prefetchInfiniteQuery({
         queryKey: ["pools", "v2"],
         queryFn: ({ pageParam = 0 }) =>
-          subgraph.fetchV2PoolsPage({
+          fetchV2PoolsPage({
             limit: PREFETCH_PAGE_SIZE,
             skip: pageParam,
           }),
@@ -216,10 +222,10 @@ export default function App() {
         await queryClient.prefetchQuery({
           queryKey: ["pools", "v3-roll-24h", v3IdsKey],
           queryFn: async () => {
-            const dayData = await subgraph.fetchV3PoolsDayData(v3Ids);
+            const dayData = await fetchV3PoolsDayData(v3Ids);
             const missingIds = v3Ids.filter((id) => !dayData?.[id]);
             if (!missingIds.length) return dayData || {};
-            const hourData = await subgraph.fetchV3PoolsHourData(missingIds, 24);
+            const hourData = await fetchV3PoolsHourData(missingIds, 24);
             return {
               ...(dayData || {}),
               ...(hourData || {}),
@@ -238,10 +244,10 @@ export default function App() {
           await queryClient.prefetchQuery({
             queryKey: ["pools", "v2-roll-24h", v2IdsKey],
             queryFn: async () => {
-              const dayData = await subgraph.fetchV2PoolsDayData(v2Ids);
+              const dayData = await fetchV2PoolsDayData(v2Ids);
               const missingIds = v2Ids.filter((id) => !dayData?.[id]);
               if (!missingIds.length) return dayData || {};
-              const hourData = await subgraph.fetchV2PoolsHourData(missingIds, 24);
+              const hourData = await fetchV2PoolsHourData(missingIds, 24);
               return {
                 ...(dayData || {}),
                 ...(hourData || {}),

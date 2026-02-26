@@ -68,7 +68,7 @@ export default defineConfig({
     port: 4173,
   },
   build: {
-    chunkSizeWarningLimit: 1024, // raise limit to 1 MB to avoid noisy warnings
+    chunkSizeWarningLimit: 1500, // keep warnings useful while avoiding noise from current large app chunk
     rollupOptions: {
       onwarn(warning, defaultHandler) {
         if (isIgnorablePureAnnotationWarning(warning)) {
