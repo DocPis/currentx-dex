@@ -97,25 +97,35 @@ export default async function handler(req, res) {
   }
 
   const body = parseBody(req);
-  const seasonIdInput = body?.seasonId ?? req.query?.seasonId;
+  const requestedSeasonId = String(
+    body?.seasonId ?? req.query?.seasonId ?? ""
+  ).trim();
   const cursorInput = body?.cursor ?? req.query?.cursor;
   const limitInput = body?.limit ?? req.query?.limit;
   const fastInput = body?.fast ?? req.query?.fast;
   const lpTimeoutInput = body?.lpTimeoutMs ?? req.query?.lpTimeoutMs;
 
   const { seasonId, startBlock, startMs, missing: missingSeasonEnv } = getSeasonConfig();
-  const targetSeason = seasonIdInput || seasonId;
   const { v3Url, v3Key } = getSubgraphConfig();
   if (!v3Url) {
     res.status(503).json({ error: "V3 subgraph not configured" });
     return;
   }
-  if (!targetSeason || missingSeasonEnv?.length) {
+  if (!seasonId || missingSeasonEnv?.length) {
     res.status(503).json({
       error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
     });
     return;
   }
+  if (requestedSeasonId && requestedSeasonId !== seasonId) {
+    res.status(400).json({
+      error: `seasonId mismatch: configured season is '${seasonId}'`,
+      configuredSeasonId: seasonId,
+      requestedSeasonId,
+    });
+    return;
+  }
+  const targetSeason = seasonId;
 
   const keys = getKeys(targetSeason);
   const addr = getAddressConfig();

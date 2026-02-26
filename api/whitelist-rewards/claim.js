@@ -30,6 +30,34 @@ const getIssuedAt = (input) => {
   return Math.floor(num);
 };
 
+const DEFAULT_MAX_FUTURE_SKEW_MS = 60 * 1000;
+const MAX_ALLOWED_FUTURE_SKEW_MS = 10 * 60 * 1000;
+
+const getMaxFutureSkewMs = (ttlMs) => {
+  const ttl = Number(ttlMs);
+  if (!Number.isFinite(ttl) || ttl <= 0) return DEFAULT_MAX_FUTURE_SKEW_MS;
+  const configured = Number(
+    process.env.WHITELIST_CLAIM_MAX_FUTURE_SKEW_MS ??
+      process.env.CLAIM_SIGNATURE_MAX_FUTURE_SKEW_MS
+  );
+  if (!Number.isFinite(configured) || configured < 0) {
+    return Math.min(DEFAULT_MAX_FUTURE_SKEW_MS, Math.floor(ttl));
+  }
+  return Math.min(
+    Math.floor(ttl),
+    Math.floor(MAX_ALLOWED_FUTURE_SKEW_MS),
+    Math.floor(configured)
+  );
+};
+
+const isSignatureExpired = ({ nowMs, issuedAt, ttlMs }) => {
+  const ttl = Number(ttlMs);
+  if (!Number.isFinite(ttl) || ttl <= 0) return true;
+  const maxFutureSkewMs = getMaxFutureSkewMs(ttl);
+  if (issuedAt > nowMs + maxFutureSkewMs) return true;
+  return nowMs - issuedAt > ttl;
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
@@ -66,7 +94,7 @@ export default async function handler(req, res) {
     });
     return;
   }
-  if (Math.abs(nowMs - issuedAt) > config.claimSignatureTtlMs) {
+  if (isSignatureExpired({ nowMs, issuedAt, ttlMs: config.claimSignatureTtlMs })) {
     res.status(400).json({
       error: "Signature expired",
       ttlMs: config.claimSignatureTtlMs,

@@ -286,6 +286,18 @@ export default async function handler(req, res) {
 
   const body = parseBody(req);
   const seasonId = String(body?.seasonId ?? req.query?.seasonId ?? "").trim();
+  const configuredSeasonId = String(
+    process.env.POINTS_SEASON_ID || process.env.VITE_POINTS_SEASON_ID || ""
+  ).trim();
+  if (seasonId && configuredSeasonId && seasonId !== configuredSeasonId) {
+    res.status(400).json({
+      ok: false,
+      error: `seasonId mismatch: configured season is '${configuredSeasonId}'`,
+      configuredSeasonId,
+      requestedSeasonId: seasonId,
+    });
+    return;
+  }
   const includeWhitelist = parseBool(
     body?.includeWhitelist ?? req.query?.includeWhitelist,
     true

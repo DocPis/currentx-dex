@@ -1436,6 +1436,7 @@ export const computeLpData = async ({
     );
 
   let positions = null;
+  let lpAgeSeconds = null;
   if (url) {
     try {
       positions = await fetchPositions({ url, apiKey, owner: wallet });
@@ -1468,6 +1469,10 @@ export const computeLpData = async ({
       "On-chain LP lookup timeout"
     ).catch(() => null);
     const onchainActive = normalizeActive(onchain?.positions || []);
+    const onchainLpAgeSeconds = Number(onchain?.lpAgeSeconds);
+    if (Number.isFinite(onchainLpAgeSeconds) && onchainLpAgeSeconds >= 0) {
+      lpAgeSeconds = Math.floor(onchainLpAgeSeconds);
+    }
     if ((!active.length || missingPoolData) && onchainActive.length) {
       active = onchainActive;
     }
@@ -1632,7 +1637,7 @@ export const computeLpData = async ({
     lpInRangePct: 0,
     hasRangeData: false,
     hasInRange: false,
-    lpAgeSeconds: null,
+    lpAgeSeconds,
     baseMultiplier: highestPoolMultiplier,
   };
 };

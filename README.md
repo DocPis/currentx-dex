@@ -49,5 +49,13 @@ npm run dev -- --host --port 4173
   - `POINTS_INGEST_TOKEN` (or `CRON_SECRET`)
 - Optional repository variable:
   - `POINTS_SEASON_ID`
+
+## Claim signature clock skew (optional)
+- By default, claim signatures allow up to `60s` future clock skew (to tolerate minor client/server drift).
+- Optional env overrides:
+  - `POINTS_REWARD_CLAIM_MAX_FUTURE_SKEW_MS` (points claim endpoint)
+  - `WHITELIST_CLAIM_MAX_FUTURE_SKEW_MS` (whitelist claim endpoint)
+  - `CLAIM_SIGNATURE_MAX_FUTURE_SKEW_MS` (shared fallback for both)
+- Values are clamped to `0..600000` ms and never exceed the signature TTL.
 \nDeploy trigger: 2026-02-10 22:32:54
 \nDeploy trigger: 2026-02-10 22:38:44

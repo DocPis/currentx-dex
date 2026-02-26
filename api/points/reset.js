@@ -155,14 +155,25 @@ export default async function handler(req, res) {
   }
 
   const body = parseBody(req);
+  const requestedSeasonId = String(
+    body?.seasonId ?? req.query?.seasonId ?? ""
+  ).trim();
   const { seasonId, missing: missingSeasonEnv } = getSeasonConfig();
-  const targetSeason = body?.seasonId || req.query?.seasonId || seasonId;
-  if (!targetSeason || missingSeasonEnv?.length) {
+  if (!seasonId || missingSeasonEnv?.length) {
     res.status(503).json({
       error: `Missing required env: ${missingSeasonEnv?.join(", ") || "POINTS_SEASON_ID"}`,
     });
     return;
   }
+  if (requestedSeasonId && requestedSeasonId !== seasonId) {
+    res.status(400).json({
+      error: `seasonId mismatch: configured season is '${seasonId}'`,
+      configuredSeasonId: seasonId,
+      requestedSeasonId,
+    });
+    return;
+  }
+  const targetSeason = seasonId;
   const prefix = `points:${targetSeason}:`;
 
   try {

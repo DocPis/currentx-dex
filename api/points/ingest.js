@@ -599,6 +599,9 @@ export default async function handler(req, res) {
     return;
   }
   const body = parseBody(req);
+  const requestedSeasonId = String(
+    body?.seasonId ?? req.query?.seasonId ?? ""
+  ).trim();
 
   const { seasonId, startMs, startBlock, endMs, missing: missingSeasonEnv } = getSeasonConfig();
   const { v2Url, v2Key, v3Url, v3Key } = getSubgraphConfig();
@@ -617,6 +620,14 @@ export default async function handler(req, res) {
   }
   if (!v2Url && !v3Url) {
     res.status(503).json({ error: "Subgraph URLs not configured" });
+    return;
+  }
+  if (requestedSeasonId && requestedSeasonId !== seasonId) {
+    res.status(400).json({
+      error: `seasonId mismatch: configured season is '${seasonId}'`,
+      configuredSeasonId: seasonId,
+      requestedSeasonId,
+    });
     return;
   }
 
