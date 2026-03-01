@@ -333,7 +333,7 @@ export const validateWizardSync = (values: WizardFormValues) => {
 
   const recenterPct = toNumeric(values.recenterTriggerPct);
   if (!Number.isFinite(recenterPct) || recenterPct <= 0) {
-    addError("alm.recenter.invalid", "Recenter trigger must be > 0.");
+    addError("alm.recenter.invalid", "Tick neighborhood must be > 0.");
   }
 
   const maxSwapSlippagePct = toNumeric(values.maxSwapSlippagePct);

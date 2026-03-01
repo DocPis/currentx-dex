@@ -26,6 +26,7 @@ const TAB_ROUTES = {
   bridge: "/bridge",
   liquidity: "/liquidity",
   alm: "/alm",
+  positions: "/positions",
   pools: "/pools",
   farms: "/farms",
   megavault: "/megavault",
@@ -38,6 +39,7 @@ const SECTION_LOADERS = {
   bridge: () => import("./features/bridge/BridgeSection"),
   liquidity: () => import("./features/liquidity/LiquiditySection"),
   alm: () => import("./pages/ALM"),
+  positions: () => import("./pages/Positions"),
   launchpad: () => import("./features/launchpad/LaunchpadMarketplaceSection"),
   pools: () => import("./features/pools/PoolsSection"),
   farms: () => import("./features/farms/Farms"),
@@ -50,6 +52,7 @@ const SwapSection = React.lazy(SECTION_LOADERS.swap);
 const BridgeSection = React.lazy(SECTION_LOADERS.bridge);
 const LiquiditySection = React.lazy(SECTION_LOADERS.liquidity);
 const ALMPage = React.lazy(SECTION_LOADERS.alm);
+const PositionsPage = React.lazy(SECTION_LOADERS.positions);
 const LaunchpadSection = React.lazy(SECTION_LOADERS.launchpad);
 const PoolsSection = React.lazy(SECTION_LOADERS.pools);
 const Farms = React.lazy(SECTION_LOADERS.farms);
@@ -62,11 +65,15 @@ const normalizePath = (path = "") => {
 
 const isLaunchpadTokenDetailPath = (path = "") =>
   /^\/launchpad\/0x[a-f0-9]{40}(?:\/buy)?$/u.test(normalizePath(path));
+const isPositionsDetailPath = (path = "") => /^\/positions\/\d+$/u.test(normalizePath(path));
 
 const getTabFromPath = (path = "") => {
   const cleaned = normalizePath(path);
   if (cleaned === "/launchpad" || cleaned.startsWith("/launchpad/")) {
     return "launchpad";
+  }
+  if (cleaned === "/positions" || cleaned.startsWith("/positions/")) {
+    return "positions";
   }
   if (cleaned === "/") return "dashboard";
   const match = Object.entries(TAB_ROUTES).find(([, route]) => route === cleaned);
@@ -105,6 +112,10 @@ export default function App() {
     const currentPath = normalizePath(window?.location?.pathname);
     return currentPath.startsWith("/launchpad") ? currentPath : "/launchpad/market";
   });
+  const [positionsPath, setPositionsPath] = useState(() => {
+    const currentPath = normalizePath(window?.location?.pathname);
+    return currentPath.startsWith("/positions") ? currentPath : "/positions";
+  });
   const [showWalletModal, setShowWalletModal] = useState(false);
   const [connectError, setConnectError] = useState("");
   const [poolSelection, setPoolSelection] = useState(null);
@@ -123,6 +134,9 @@ export default function App() {
       if (nextPath.startsWith("/launchpad")) {
         setLaunchpadPath(nextPath);
       }
+      if (nextPath.startsWith("/positions")) {
+        setPositionsPath(nextPath);
+      }
       setTab((prev) => (prev === nextTab ? prev : nextTab));
     };
     window.addEventListener("popstate", handlePop);
@@ -133,17 +147,23 @@ export default function App() {
     const targetPath =
       tab === "launchpad"
         ? launchpadPath || "/launchpad"
+        : tab === "positions"
+        ? positionsPath || "/positions"
         : getPathForTab(tab);
     const currentPath = normalizePath(window?.location?.pathname);
     const preserveLaunchpadDetail =
       tab === "launchpad" &&
       isLaunchpadTokenDetailPath(currentPath) &&
       isLaunchpadTokenDetailPath(launchpadPath || "");
-    if (currentPath !== targetPath && !preserveLaunchpadDetail) {
+    const preservePositionsDetail =
+      tab === "positions" &&
+      isPositionsDetailPath(currentPath) &&
+      isPositionsDetailPath(positionsPath || "");
+    if (currentPath !== targetPath && !preserveLaunchpadDetail && !preservePositionsDetail) {
       const suffix = `${window?.location?.search || ""}${window?.location?.hash || ""}`;
       window.history.pushState({}, "", `${targetPath}${suffix}`);
     }
-  }, [launchpadPath, tab]);
+  }, [launchpadPath, positionsPath, tab]);
   useEffect(() => {
     if (!connectError) return undefined;
     const id = setTimeout(() => setConnectError(""), 4000);
@@ -301,7 +321,7 @@ export default function App() {
     const handle = idle(() => {
       Object.keys(SECTION_LOADERS).forEach((key) => {
         // Launchpad is intentionally "hidden" (URL-only). Don't preload it in the background.
-        if (key === "launchpad") return;
+        if (key === "launchpad" || key === "positions") return;
         if (key !== tab) preloadSection(key);
       });
       ["swap", "liquidity", "pools"].forEach((key) => {
@@ -361,6 +381,14 @@ export default function App() {
     prefetchTabData("launchpad");
     setTab("launchpad");
   }, [prefetchTabData]);
+
+  const navigatePositions = useCallback((nextPath) => {
+    const cleaned = normalizePath(nextPath);
+    const target = cleaned.startsWith("/positions") ? cleaned : "/positions";
+    setPositionsPath(target);
+    preloadSection("positions");
+    setTab("positions");
+  }, []);
 
   const handleTabClick = (nextTab) => {
     if (!TAB_ROUTES[nextTab]) return;
@@ -488,6 +516,14 @@ export default function App() {
               address={address}
               chainId={chainId}
               onConnect={handleConnect}
+            />
+          )}
+          {tab === "positions" && (
+            <PositionsPage
+              address={address}
+              onConnect={handleConnect}
+              routePath={positionsPath}
+              onNavigate={navigatePositions}
             />
           )}
           {tab === "launchpad" && (

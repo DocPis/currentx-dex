@@ -1,8 +1,8 @@
 const STRATEGY_TUPLE_COMPONENTS = [
   { name: "poolClass", type: "uint8" },
   { name: "widthBps", type: "uint16" },
-  { name: "recenterBps", type: "uint16" },
   { name: "minRebalanceInterval", type: "uint16" },
+  { name: "tickNeighborhoodBps", type: "uint16" },
   { name: "maxSwapSlippageBps", type: "uint16" },
   { name: "mintSlippageBps", type: "uint16" },
   { name: "allowSwap", type: "bool" },
@@ -290,6 +290,7 @@ export const ALM_ABI = [
       { name: "zeroForOne", type: "bool", indexed: false },
       { name: "amountIn", type: "uint256", indexed: false },
       { name: "amountOut", type: "uint256", indexed: false },
+      { name: "targetRatio1X96", type: "uint256", indexed: false },
     ],
   },
   {
@@ -415,6 +416,23 @@ export const STRATEGY_REGISTRY_ABI = [
 ] as const;
 
 export const NFPM_ABI = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "tokenOfOwnerByIndex",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "index", type: "uint256" },
+    ],
+    outputs: [{ name: "", type: "uint256" }],
+  },
   {
     type: "function",
     name: "factory",

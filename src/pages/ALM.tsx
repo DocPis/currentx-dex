@@ -146,7 +146,10 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const FEE_TIERS = [100, 500, 3000, 10000];
 const MAX_USER_POSITIONS_SCAN = 64;
 const MAX_ACTIVITY_ITEMS = 80;
+const MAX_WALLET_NFTS = 20;
+const WALLET_NFT_LOG_LOOKBACK_BLOCKS = 250_000;
 const Q192 = 1n << 192n;
+const ERC721_TRANSFER_TOPIC = id("Transfer(address,address,uint256)");
 const EVENT_TYPES_TO_RENDER = new Set([
   "Deposited",
   "Rotated",
@@ -190,6 +193,11 @@ const normalizeAddress = (value: string) => {
 
 const isZeroAddress = (value: string) =>
   normalizeAddress(value).toLowerCase() === ZERO_ADDRESS.toLowerCase();
+
+const addressToTopic = (value: string) => {
+  const normalized = normalizeAddress(value).toLowerCase().replace(/^0x/u, "");
+  return `0x${normalized.padStart(64, "0")}`;
+};
 
 const shortenAddress = (value: string, start = 6, end = 4) => {
   if (!value) return "--";
@@ -388,8 +396,10 @@ function InfoHint({ title }: { title: string }) {
 const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConfig | null => {
   const poolClass = Number(strategyRaw?.poolClass ?? strategyRaw?.[0] ?? 0);
   const widthBps = Number(strategyRaw?.widthBps ?? strategyRaw?.[1] ?? 0);
-  const recenterBps = Number(strategyRaw?.recenterBps ?? strategyRaw?.[2] ?? 0);
-  const minRebalanceInterval = Number(strategyRaw?.minRebalanceInterval ?? strategyRaw?.[3] ?? 0);
+  const minRebalanceInterval = Number(strategyRaw?.minRebalanceInterval ?? strategyRaw?.[2] ?? strategyRaw?.[3] ?? 0);
+  const recenterBps = Number(
+    strategyRaw?.tickNeighborhoodBps ?? strategyRaw?.recenterBps ?? strategyRaw?.[3] ?? strategyRaw?.[2] ?? 0
+  );
   const maxSwapSlippageBps = Number(strategyRaw?.maxSwapSlippageBps ?? strategyRaw?.[4] ?? 0);
   const mintSlippageBps = Number(strategyRaw?.mintSlippageBps ?? strategyRaw?.[5] ?? 0);
   const allowSwap = Boolean(strategyRaw?.allowSwap ?? strategyRaw?.[6] ?? false);
@@ -446,7 +456,7 @@ const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConf
     minCompoundValueToken1,
     ratioDeadbandBps,
     minSwapValueToken1,
-    recommendedLabel: `+/-${formatPercentFromBps(widthBps, 1)} range, rebalance at +/-${formatPercentFromBps(
+    recommendedLabel: `+/-${formatPercentFromBps(widthBps, 1)} range, neighborhood +/-${formatPercentFromBps(
       recenterBps,
       1
     )}, fee ${formatFeeTier(primaryFeeTier)}`,
@@ -491,7 +501,6 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     factoryAddress: string;
   } | null>(null);
 
-  const [lookupTokenId, setLookupTokenId] = useState("");
   const [lookupLoading, setLookupLoading] = useState(false);
   const [nftItems, setNftItems] = useState<NftLookupItem[]>([]);
   const [selectedTokenId, setSelectedTokenId] = useState<string | null>(null);
@@ -1192,47 +1201,175 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     setLastDepositSummary(null);
   }, [selectedStrategyId, selectedTokenId]);
 
-  const handleLookup = useCallback(async () => {
-    const raw = lookupTokenId.trim();
-    if (!raw || !/^\d+$/u.test(raw)) {
-      showToast("error", "Invalid tokenId: enter a whole number.");
+  const loadOwnedNftIds = useCallback(
+    async (userAddress: string) => {
+      const nfpm = new Contract(ALM_ADDRESSES.NFPM, NFPM_ABI as any, readProvider);
+      const user = normalizeAddress(userAddress);
+      const ids = new Set<string>();
+      let hasEnumerableAccess = false;
+
+      try {
+        const balanceRaw = await nfpm.balanceOf(user);
+        const balance = Number(balanceRaw || 0n);
+        const cap = Math.min(Math.max(0, balance), MAX_WALLET_NFTS);
+        hasEnumerableAccess = true;
+        for (let index = 0; index < cap; index += 1) {
+          const tokenIdRaw = await nfpm.tokenOfOwnerByIndex(user, BigInt(index));
+          const tokenId = BigInt(tokenIdRaw || 0n).toString();
+          if (tokenId !== "0") ids.add(tokenId);
+        }
+      } catch {
+        hasEnumerableAccess = false;
+      }
+
+      if (!hasEnumerableAccess) {
+        try {
+          const latestBlock = await readProvider.getBlockNumber();
+          const fromBlock = Math.max(0, latestBlock - WALLET_NFT_LOG_LOOKBACK_BLOCKS);
+          const userTopic = addressToTopic(user);
+
+          const [received, sent] = await Promise.all([
+            readProvider.getLogs({
+              address: ALM_ADDRESSES.NFPM,
+              fromBlock,
+              toBlock: latestBlock,
+              topics: [ERC721_TRANSFER_TOPIC, null, userTopic],
+            }),
+            readProvider.getLogs({
+              address: ALM_ADDRESSES.NFPM,
+              fromBlock,
+              toBlock: latestBlock,
+              topics: [ERC721_TRANSFER_TOPIC, userTopic, null],
+            }),
+          ]);
+
+          const ordered = [
+            ...received.map((log) => ({ ...log, direction: "in" as const })),
+            ...sent.map((log) => ({ ...log, direction: "out" as const })),
+          ].sort((a, b) => {
+            if (a.blockNumber !== b.blockNumber) return Number(a.blockNumber) - Number(b.blockNumber);
+            return Number(a.index || 0) - Number(b.index || 0);
+          });
+
+          const owned = new Set<string>();
+          ordered.forEach((log) => {
+            const tokenTopic = log.topics?.[3];
+            if (!tokenTopic) return;
+            let tokenId = "";
+            try {
+              tokenId = BigInt(tokenTopic).toString();
+            } catch {
+              tokenId = "";
+            }
+            if (!tokenId || tokenId === "0") return;
+            if (log.direction === "in") {
+              owned.add(tokenId);
+            } else {
+              owned.delete(tokenId);
+            }
+          });
+          owned.forEach((tokenId) => ids.add(tokenId));
+        } catch {
+          // ignore fallback ownership scan failures
+        }
+      }
+
+      return Array.from(ids)
+        .sort((a, b) => (BigInt(a) < BigInt(b) ? 1 : -1))
+        .slice(0, MAX_WALLET_NFTS);
+    },
+    [readProvider]
+  );
+
+  const loadWalletNfts = useCallback(
+    async (mode: "initial" | "manual" | "poll" = "manual") => {
+      if (!address) {
+        setNftItems([]);
+        setSelectedTokenId(null);
+        return;
+      }
+      const showLoading = mode !== "poll";
+      if (showLoading) setLookupLoading(true);
+      const user = normalizeAddress(address);
+      try {
+        const ownedIds = await loadOwnedNftIds(user);
+        if (!ownedIds.length) {
+          setNftItems([]);
+          setSelectedTokenId(null);
+          setApproveStatus("idle");
+          setDepositStatus("idle");
+          if (mode !== "poll") {
+            showToast("info", "No active LP NFTs found in this wallet.");
+          }
+          return;
+        }
+
+        const rows = await Promise.all(
+          ownedIds.map(async (tokenId) => {
+            const cached = nftLookupCacheRef.current.get(tokenId);
+            if (cached && mode === "poll") return cached;
+            try {
+              const fresh = await fetchNftPosition(tokenId);
+              nftLookupCacheRef.current.set(fresh.tokenId, fresh);
+              return fresh;
+            } catch {
+              return cached || null;
+            }
+          })
+        );
+
+        const ownedRows = rows
+          .filter(Boolean)
+          .filter((row) => {
+            const item = row as NftLookupItem;
+            return (
+              normalizeAddress(item.owner).toLowerCase() === user.toLowerCase() && BigInt(item.liquidity || 0n) > 0n
+            );
+          }) as NftLookupItem[];
+
+        const sorted = ownedRows.sort((a, b) => (BigInt(a.tokenId) < BigInt(b.tokenId) ? 1 : -1));
+        setNftItems(sorted);
+        const nextSelected =
+          selectedTokenId && sorted.some((entry) => entry.tokenId === selectedTokenId)
+            ? selectedTokenId
+            : sorted[0]?.tokenId || null;
+        if (nextSelected !== selectedTokenId) {
+          setApproveStatus("idle");
+          setDepositStatus("idle");
+          setLastDepositSummary(null);
+        }
+        setSelectedTokenId(nextSelected);
+
+        if (!sorted.length && mode !== "poll") {
+          showToast("info", "Wallet NFTs found, but none has active liquidity right now.");
+        }
+      } catch (error: any) {
+        if (mode !== "poll") {
+          showToast(
+            "error",
+            getReadableErrorMessage(error, "Unable to load wallet NFTs. Please retry in a few seconds.")
+          );
+        }
+      } finally {
+        if (showLoading) setLookupLoading(false);
+      }
+    },
+    [address, fetchNftPosition, loadOwnedNftIds, selectedTokenId, showToast]
+  );
+
+  useEffect(() => {
+    if (!address) {
+      setNftItems([]);
+      setSelectedTokenId(null);
       return;
     }
-    const cached = nftLookupCacheRef.current.get(raw);
-    if (cached) {
-      setNftItems((prev) => {
-        const next = [cached, ...prev.filter((entry) => entry.tokenId !== cached.tokenId)];
-        return next.slice(0, 15);
-      });
-      setSelectedTokenId(cached.tokenId);
-      setApproveStatus("idle");
-      setDepositStatus("idle");
-      setLastDepositSummary(null);
-      showToast("info", `NFT #${cached.tokenId} already loaded. Using local cache.`);
-      return;
-    }
-    setLookupLoading(true);
-    try {
-      const row = await fetchNftPosition(raw);
-      nftLookupCacheRef.current.set(row.tokenId, row);
-      setNftItems((prev) => {
-        const next = [row, ...prev.filter((entry) => entry.tokenId !== row.tokenId)];
-        return next.slice(0, 15);
-      });
-      setSelectedTokenId(row.tokenId);
-      setApproveStatus("idle");
-      setDepositStatus("idle");
-      setLastDepositSummary(null);
-      showToast("success", `NFT #${row.tokenId} loaded successfully.`);
-    } catch (error: any) {
-      showToast(
-        "error",
-        getReadableErrorMessage(error, "Unable to fetch NFT position. Check tokenId and try again.")
-      );
-    } finally {
-      setLookupLoading(false);
-    }
-  }, [fetchNftPosition, lookupTokenId, showToast]);
+    void loadWalletNfts("initial");
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void loadWalletNfts("poll");
+    }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [address, loadWalletNfts, refreshNonce]);
 
   const refreshSelectedNft = useCallback(async () => {
     if (!selectedTokenId) return;
@@ -1307,7 +1444,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       });
       showToast("success", `Deposit completed for NFT #${selectedNft.tokenId}.`);
       setRefreshNonce((value) => value + 1);
-      await Promise.all([refreshSelectedNft(), loadUserPositions(), loadActivityLog()]);
+      await Promise.all([refreshSelectedNft(), loadWalletNfts("manual"), loadUserPositions(), loadActivityLog()]);
     } catch (error: any) {
       setDepositStatus("error");
       showToast(
@@ -1318,6 +1455,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   }, [
     address,
     loadActivityLog,
+    loadWalletNfts,
     loadUserPositions,
     onConnect,
     refreshSelectedNft,
@@ -1346,7 +1484,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         await tx.wait();
         showToast("success", `Position #${positionId} withdrawn successfully.`);
         setRefreshNonce((value) => value + 1);
-        await Promise.all([loadUserPositions(), loadActivityLog()]);
+        await Promise.all([loadWalletNfts("manual"), loadUserPositions(), loadActivityLog()]);
       } catch (error: any) {
         showToast(
           "error",
@@ -1356,7 +1494,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         setWithdrawingPositionId("");
       }
     },
-    [address, loadActivityLog, loadUserPositions, onConnect, showToast, wrongChain]
+    [address, loadActivityLog, loadUserPositions, loadWalletNfts, onConnect, showToast, wrongChain]
   );
 
   const handleCompoundWeighted = useCallback(
@@ -1497,8 +1635,8 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         const tuple = {
           poolClass: strategy.poolClass,
           widthBps: input.widthBps,
-          recenterBps: input.recenterBps,
           minRebalanceInterval: input.minRebalanceInterval,
+          tickNeighborhoodBps: input.recenterBps,
           maxSwapSlippageBps: input.maxSwapSlippageBps,
           mintSlippageBps: input.mintSlippageBps,
           allowSwap: Boolean(input.allowSwap || input.useExternalDex),
@@ -1593,13 +1731,6 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         .replace(/\.?0+$/u, "")}% token1. Rebalances keep this ratio over time.`
     : "";
 
-  const lookupTokenIdTrimmed = lookupTokenId.trim();
-  const lookupError = useMemo(() => {
-    if (!lookupTokenIdTrimmed) return "Enter a numeric tokenId.";
-    if (!/^\d+$/u.test(lookupTokenIdTrimmed)) return "Invalid tokenId: use whole numbers only.";
-    return "";
-  }, [lookupTokenIdTrimmed]);
-  const canLookup = !lookupError && !lookupLoading;
   const isNftApproved = Boolean(selectedNft?.approvedToAlm) || approveStatus === "success";
   const canOpenStep2 = Boolean(selectedNft);
   const canOpenStep3 = Boolean(selectedNft && selectedStrategy);
@@ -1638,7 +1769,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     {
       id: "deposit" as const,
       label: "Guided Deposit",
-      description: "NFT lookup, strategy, and deposit",
+      description: "Wallet NFT selection, strategy, and deposit",
       status:
         depositStatus === "success"
           ? ("success" as const)
@@ -1835,15 +1966,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                 <NftPositionLookup
                   address={address}
                   onConnect={onConnect}
-                  lookupTokenId={lookupTokenId}
-                  onLookupTokenIdChange={setLookupTokenId}
-                  onLookup={handleLookup}
                   lookupLoading={lookupLoading}
                   items={nftItems}
                   selectedTokenId={selectedTokenId}
                   onSelectTokenId={setSelectedTokenId}
-                  lookupError={lookupError}
-                  canLookup={canLookup}
+                  onRefresh={() => {
+                    void loadWalletNfts("manual");
+                  }}
                   copiedValue={copiedValue}
                   onCopy={copyValue}
                 />
@@ -2072,15 +2201,11 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
 interface NftPositionLookupProps {
   address?: string | null;
   onConnect?: () => void;
-  lookupTokenId: string;
-  onLookupTokenIdChange: (value: string) => void;
-  onLookup: () => void;
   lookupLoading: boolean;
   items: NftLookupItem[];
   selectedTokenId: string | null;
   onSelectTokenId: (value: string) => void;
-  lookupError: string;
-  canLookup: boolean;
+  onRefresh: () => void;
   copiedValue: string;
   onCopy: (value: string) => void;
 }
@@ -2088,22 +2213,23 @@ interface NftPositionLookupProps {
 export function NftPositionLookup({
   address,
   onConnect,
-  lookupTokenId,
-  onLookupTokenIdChange,
-  onLookup,
   lookupLoading,
   items,
   selectedTokenId,
   onSelectTokenId,
-  lookupError,
-  canLookup,
+  onRefresh,
   copiedValue,
   onCopy,
 }: NftPositionLookupProps) {
+  const selectedItem = useMemo(
+    () => items.find((entry) => entry.tokenId === selectedTokenId) || items[0] || null,
+    [items, selectedTokenId]
+  );
+
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-display text-base font-semibold text-slate-100">1. Find LP NFT</h2>
+        <h2 className="font-display text-base font-semibold text-slate-100">1. Select LP NFT</h2>
         {!address && (
           <button
             type="button"
@@ -2116,31 +2242,28 @@ export function NftPositionLookup({
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
-        Enter your Uniswap V3 NFT tokenId to fetch position data on-chain.
+        We automatically load active LP NFTs from your connected wallet.
       </p>
 
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <input
-          value={lookupTokenId}
-          inputMode="numeric"
-          onChange={(event) => onLookupTokenIdChange(event.target.value)}
-          placeholder="Example: 101"
-          className={`w-full rounded-2xl border bg-slate-900/60 px-4 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 ${
-            lookupError ? "border-rose-500/70 focus:border-rose-400/70" : "border-slate-700/80 focus:border-sky-400/70"
-          }`}
-        />
+      <div className="mt-3 flex items-center gap-2">
         <button
           type="button"
-          onClick={onLookup}
-          disabled={!canLookup}
-          className="inline-flex items-center justify-center rounded-2xl border border-sky-300/55 bg-sky-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={onRefresh}
+          disabled={!address || lookupLoading}
+          className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-300/55 bg-sky-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {lookupLoading ? "Loading..." : "Find NFT"}
+          <RefreshCw className={`h-4 w-4 ${lookupLoading ? "animate-spin" : ""}`} />
+          {lookupLoading ? "Loading NFTs..." : "Refresh wallet NFTs"}
         </button>
       </div>
-      {lookupError && <div className="mt-2 text-xs text-rose-200">{lookupError}</div>}
 
       <div className="mt-4 space-y-2">
+        {!address && (
+          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 text-sm text-slate-400">
+            Connect your wallet to view available NFTs.
+          </div>
+        )}
+
         {lookupLoading && items.length === 0 && (
           <>
             <div className="h-24 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/45" />
@@ -2148,109 +2271,121 @@ export function NftPositionLookup({
           </>
         )}
 
-        {!lookupLoading && items.length === 0 && (
+        {!lookupLoading && address && items.length === 0 && (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 text-sm text-slate-400">
-            No NFT loaded yet.
+            No active LP NFTs found for this wallet.
           </div>
         )}
 
-        {items.map((item) => {
-          const selected = selectedTokenId === item.tokenId;
-          return (
-            <button
-              key={item.tokenId}
-              type="button"
-              onClick={() => onSelectTokenId(item.tokenId)}
-              className={`w-full rounded-2xl border p-3 text-left transition ${
-                selected
-                  ? "border-sky-400/70 bg-sky-500/10 shadow-[0_0_0_1px_rgba(56,189,248,0.2)]"
-                  : "border-slate-800/80 bg-slate-900/45 hover:border-slate-600/80"
-              }`}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-display text-sm font-semibold text-slate-100">Token #{item.tokenId}</div>
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5">
-                    {item.token0Symbol} / {item.token1Symbol}
-                  </span>
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5">
-                    Fee {formatFeeTier(item.fee)}
-                  </span>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 ${
-                      item.currentTick !== null &&
-                      item.currentTick >= item.tickLower &&
-                      item.currentTick <= item.tickUpper
-                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
-                        : "border-amber-400/45 bg-amber-500/12 text-amber-100"
-                    }`}
-                    title={
-                      item.currentTick === null
-                        ? "Current pool tick is unavailable."
-                        : `Current tick ${item.currentTick}, range ${item.tickLower} to ${item.tickUpper}.`
-                    }
-                  >
-                    {item.currentTick === null
-                      ? "Tick unavailable"
-                      : item.currentTick >= item.tickLower && item.currentTick <= item.tickUpper
-                      ? "In range"
-                      : "Out of range"}
-                  </span>
-                  {!item.approvedToAlm && (
-                    <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-0.5 text-amber-100">
-                      Not approved
+        {address && items.length > 0 && (
+          <>
+            <div className="rounded-2xl border border-slate-800/80 bg-slate-900/45 p-3">
+              <label htmlFor="alm-wallet-nft-select" className="block text-xs font-medium text-slate-300">
+                Wallet NFT
+              </label>
+              <select
+                id="alm-wallet-nft-select"
+                value={selectedItem?.tokenId || ""}
+                onChange={(event) => onSelectTokenId(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-slate-700/80 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-400/70"
+              >
+                {items.map((item) => (
+                  <option key={item.tokenId} value={item.tokenId}>
+                    {`#${item.tokenId} | ${item.token0Symbol}/${item.token1Symbol} | fee ${formatFeeTier(item.fee)}`}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedItem && (
+              <div className="rounded-2xl border border-sky-400/30 bg-sky-500/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-display text-sm font-semibold text-slate-100">Token #{selectedItem.tokenId}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                    <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5">
+                      {selectedItem.token0Symbol} / {selectedItem.token1Symbol}
                     </span>
-                  )}
+                    <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5">
+                      Fee {formatFeeTier(selectedItem.fee)}
+                    </span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 ${
+                        selectedItem.currentTick !== null &&
+                        selectedItem.currentTick >= selectedItem.tickLower &&
+                        selectedItem.currentTick <= selectedItem.tickUpper
+                          ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
+                          : "border-amber-400/45 bg-amber-500/12 text-amber-100"
+                      }`}
+                      title={
+                        selectedItem.currentTick === null
+                          ? "Current pool tick is unavailable."
+                          : `Current tick ${selectedItem.currentTick}, range ${selectedItem.tickLower} to ${selectedItem.tickUpper}.`
+                      }
+                    >
+                      {selectedItem.currentTick === null
+                        ? "Tick unavailable"
+                        : selectedItem.currentTick >= selectedItem.tickLower &&
+                          selectedItem.currentTick <= selectedItem.tickUpper
+                        ? "In range"
+                        : "Out of range"}
+                    </span>
+                    <span
+                      className={`rounded-full border px-2 py-0.5 ${
+                        selectedItem.approvedToAlm
+                          ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
+                          : "border-amber-400/35 bg-amber-500/10 text-amber-100"
+                      }`}
+                    >
+                      {selectedItem.approvedToAlm ? "Approved" : "Not approved"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                  <div className="inline-flex items-center gap-1">
+                    Owner: {shortenAddress(selectedItem.owner, 8, 6)}
+                    <button
+                      type="button"
+                      onClick={() => onCopy(selectedItem.owner)}
+                      className="inline-flex items-center rounded-md border border-slate-700/70 bg-slate-900/70 p-1 text-slate-300 hover:border-slate-500"
+                      aria-label="Copy owner address"
+                    >
+                      <Copy className="h-3 w-3" />
+                    </button>
+                    {copiedValue === selectedItem.owner && <span className="text-emerald-200">Copied</span>}
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Liquidity: {formatBigInt(selectedItem.liquidity)} units
+                    <InfoHint title="Uniswap V3 liquidity uses protocol units, not direct token amounts." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Tick range: {selectedItem.tickLower} to {selectedItem.tickUpper}
+                    <InfoHint title="Ticks define the active price range where liquidity earns fees." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Current market tick: {selectedItem.currentTick ?? "--"}
+                    <InfoHint title="When current tick stays inside range, your NFT is active for fee earning." />
+                  </div>
+                  <div>Observation cardinality: {selectedItem.observationCardinality ?? "--"}</div>
+                  <div className="inline-flex items-center gap-1">
+                    Dust balances: available after deposit
+                    <InfoHint title="Dust is tracked per ALM position after your NFT is deposited and managed." />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <a
+                      href={`${EXPLORER_BASE_URL}/token/${ALM_ADDRESSES.NFPM}?a=${selectedItem.tokenId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
+                    >
+                      View NFT <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
                 </div>
               </div>
-              <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                <div className="inline-flex items-center gap-1">
-                  Owner: {shortenAddress(item.owner, 8, 6)}
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onCopy(item.owner);
-                    }}
-                    className="inline-flex items-center rounded-md border border-slate-700/70 bg-slate-900/70 p-1 text-slate-300 hover:border-slate-500"
-                    aria-label="Copy owner address"
-                  >
-                    <Copy className="h-3 w-3" />
-                  </button>
-                  {copiedValue === item.owner && <span className="text-emerald-200">Copied</span>}
-                </div>
-                <div className="inline-flex items-center gap-1">
-                  Liquidity: {formatBigInt(item.liquidity)} units
-                  <InfoHint title="Uniswap V3 liquidity uses protocol units, not direct token amounts." />
-                </div>
-                <div className="inline-flex items-center gap-1">
-                  Tick range: {item.tickLower} to {item.tickUpper}
-                  <InfoHint title="Ticks define the active price range where liquidity earns fees." />
-                </div>
-                <div className="inline-flex items-center gap-1">
-                  Current market tick: {item.currentTick ?? "--"}
-                  <InfoHint title="When current tick stays inside range, your NFT is active for fee earning." />
-                </div>
-                <div>Observation cardinality: {item.observationCardinality ?? "--"}</div>
-                <div className="inline-flex items-center gap-1">
-                  Dust balances: available after deposit
-                  <InfoHint title="Dust is tracked per ALM position after your NFT is deposited and managed." />
-                </div>
-                <div className="flex items-center gap-2">
-                  <a
-                    href={`${EXPLORER_BASE_URL}/token/${ALM_ADDRESSES.NFPM}?a=${item.tokenId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(event) => event.stopPropagation()}
-                    className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
-                  >
-                    View NFT <ExternalLink className="h-3 w-3" />
-                  </a>
-                </div>
-              </div>
-            </button>
-          );
-        })}
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -2353,8 +2488,8 @@ export function StrategyList({
                     <InfoHint title="Total width of active liquidity around center price." />
                   </div>
                   <div className="inline-flex items-center gap-1">
-                    Recenter trigger: +/-{formatPercentFromBps(strategy.recenterBps, 2)}
-                    <InfoHint title="Price deviation threshold that triggers rebalance." />
+                    Tick neighborhood: +/-{formatPercentFromBps(strategy.recenterBps, 2)}
+                    <InfoHint title="Inner no-rebalance zone around the current NFT tick range." />
                   </div>
                   <div className="inline-flex items-center gap-1">
                     Cooldown: {formatDuration(strategy.minRebalanceInterval)}

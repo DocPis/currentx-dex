@@ -422,7 +422,10 @@ export default function StrategyWizard({
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <FieldLabel title="Recenter trigger (%)" hint="Threshold to mark position as 'needs rebalance'." />
+              <FieldLabel
+                title="Tick neighborhood (%)"
+                hint="Inner no-rebalance zone inside the current liquidity range."
+              />
               <input
                 value={values.recenterTriggerPct}
                 onChange={(event) => updateValues("recenterTriggerPct", event.target.value.replace(",", "."))}
