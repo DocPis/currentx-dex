@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AbiCoder,
   Contract,
@@ -10,7 +10,7 @@ import {
   id,
   toUtf8String,
 } from "ethers";
-import { Copy, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, CircleHelp, Loader2, RefreshCw } from "lucide-react";
 import { EXPLORER_BASE_URL } from "../shared/config/addresses";
 import { getProvider } from "../shared/config/web3";
 import { TOKENS } from "../shared/config/tokens";
@@ -33,6 +33,8 @@ import {
 
 type StatusState = "idle" | "pending" | "success" | "error";
 type ToastTone = "success" | "error" | "info";
+type DepositWizardStep = 1 | 2 | 3;
+type MainView = "deposit" | "positions" | "logs" | "advanced";
 
 interface ALMPageProps {
   address?: string | null;
@@ -128,6 +130,9 @@ interface ActivityItem {
   details: string;
 }
 
+const LazyMyPositions = lazy(() => import("../features/alm/components/AlmPositionsPanel"));
+const LazyActivityLog = lazy(() => import("../features/alm/components/AlmActivityPanel"));
+
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const FEE_TIERS = [100, 500, 3000, 10000];
 const MAX_USER_POSITIONS_SCAN = 64;
@@ -145,17 +150,17 @@ const abiCoder = AbiCoder.defaultAbiCoder();
 const almEventsInterface = new Interface(ALM_ABI as any);
 
 const KNOWN_REASON_SELECTORS: Record<string, string> = {
-  [id("BadPoolClass()").slice(0, 10).toLowerCase()]: "Bad pool class",
-  [id("CardinalityTooLow()").slice(0, 10).toLowerCase()]: "Cardinality too low",
-  [id("Cooldown()").slice(0, 10).toLowerCase()]: "Cooldown",
-  [id("EmergencyEnabled()").slice(0, 10).toLowerCase()]: "Emergency enabled",
+  [id("BadPoolClass()").slice(0, 10).toLowerCase()]: "Invalid pool class",
+  [id("CardinalityTooLow()").slice(0, 10).toLowerCase()]: "Observation cardinality too low",
+  [id("Cooldown()").slice(0, 10).toLowerCase()]: "Cooldown not finished",
+  [id("EmergencyEnabled()").slice(0, 10).toLowerCase()]: "Emergency mode enabled",
   [id("FeeDisabled()").slice(0, 10).toLowerCase()]: "Fee disabled",
   [id("FeeNotAllowed()").slice(0, 10).toLowerCase()]: "Fee tier not allowed",
   [id("NotEnoughObservations()").slice(0, 10).toLowerCase()]: "Not enough observations",
   [id("PriceManipulationDetected()").slice(0, 10).toLowerCase()]: "Price manipulation detected",
   [id("NotKeeper()").slice(0, 10).toLowerCase()]: "Only keeper can execute",
   [id("NotOwner()").slice(0, 10).toLowerCase()]: "Only owner can execute",
-  [id("NotPositionOwner()").slice(0, 10).toLowerCase()]: "Not position owner",
+  [id("NotPositionOwner()").slice(0, 10).toLowerCase()]: "Wallet does not own this position",
   [id("PoolNotFound()").slice(0, 10).toLowerCase()]: "Pool not found",
   [id("SwapPoolNotFound()").slice(0, 10).toLowerCase()]: "Swap pool not found",
   [id("RouterNotAllowed()").slice(0, 10).toLowerCase()]: "Router not allowed",
@@ -273,7 +278,7 @@ const decodeUtf8Reason = (reasonHex: string) => {
 
 const decodeRebalanceReason = (rawReason: string) => {
   const reasonHex = String(rawReason || "0x").toLowerCase();
-  if (reasonHex === "0x") return "No reason provided";
+  if (reasonHex === "0x") return "No details available";
   if (reasonHex.length === 10 && KNOWN_REASON_SELECTORS[reasonHex]) {
     return KNOWN_REASON_SELECTORS[reasonHex];
   }
@@ -296,6 +301,55 @@ const decodeRebalanceReason = (rawReason: string) => {
   if (utf8Reason) return utf8Reason;
   return reasonHex;
 };
+
+const getReadableErrorMessage = (error: any, fallback: string) => {
+  const detail = String(error?.shortMessage || error?.reason || error?.message || "").trim();
+  if (!detail) return fallback;
+  if (/user rejected|rejected the request|denied transaction|ACTION_REJECTED/iu.test(detail)) {
+    return "Action cancelled in wallet.";
+  }
+  return `${fallback} Details: ${detail}`;
+};
+
+const getStatusVisual = (status: StatusState) => {
+  if (status === "success") {
+    return {
+      label: "Done",
+      icon: CheckCircle2,
+      className: "border-emerald-400/45 bg-emerald-500/10 text-emerald-100",
+    };
+  }
+  if (status === "pending") {
+    return {
+      label: "Pending",
+      icon: Loader2,
+      className: "border-sky-400/45 bg-sky-500/10 text-sky-100",
+    };
+  }
+  if (status === "error") {
+    return {
+      label: "Error",
+      icon: AlertTriangle,
+      className: "border-rose-400/45 bg-rose-500/10 text-rose-100",
+    };
+  }
+  return {
+    label: "Idle",
+    icon: Circle,
+    className: "border-slate-700/70 bg-slate-900/60 text-slate-200",
+  };
+};
+
+function InfoHint({ title }: { title: string }) {
+  return (
+    <span className="group relative inline-flex items-center">
+      <CircleHelp className="h-3.5 w-3.5 text-slate-400" />
+      <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-56 -translate-x-1/2 rounded-lg border border-slate-700 bg-slate-950 px-2 py-1.5 text-[11px] text-slate-200 group-hover:block">
+        {title}
+      </span>
+    </span>
+  );
+}
 
 const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConfig | null => {
   const poolClass = Number(strategyRaw?.poolClass ?? strategyRaw?.[0] ?? 0);
@@ -358,7 +412,7 @@ const parseStrategyStruct = (strategyId: number, strategyRaw: any): StrategyConf
     minCompoundValueToken1,
     ratioDeadbandBps,
     minSwapValueToken1,
-    recommendedLabel: `±${formatPercentFromBps(widthBps, 1)} range, rebalance at ±${formatPercentFromBps(
+    recommendedLabel: `+/-${formatPercentFromBps(widthBps, 1)} range, rebalance at +/-${formatPercentFromBps(
       recenterBps,
       1
     )}, fee ${formatFeeTier(primaryFeeTier)}`,
@@ -425,9 +479,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [refreshNonce, setRefreshNonce] = useState(0);
+  const [activeView, setActiveView] = useState<MainView>("deposit");
+  const [depositWizardStep, setDepositWizardStep] = useState<DepositWizardStep>(1);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
 
   const toastTimerRef = useRef<number | null>(null);
   const tokenMetaCacheRef = useRef<Map<string, TokenMeta>>(new Map());
+  const nftLookupCacheRef = useRef<Map<string, NftLookupItem>>(new Map());
   const copiedTimeoutRef = useRef<number | null>(null);
   const [copiedValue, setCopiedValue] = useState("");
 
@@ -510,7 +568,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           copiedTimeoutRef.current = null;
         }, 1200);
       } catch {
-        showToast("error", "Unable to copy value.");
+        showToast("error", "Unable to copy value to clipboard.");
       }
     },
     [showToast]
@@ -656,7 +714,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return sorted.length ? sorted[0].id : null;
       });
     } catch (error: any) {
-      showToast("error", error?.message || "Unable to load strategies.");
+      showToast(
+        "error",
+        getReadableErrorMessage(
+          error,
+          "Unable to load strategies. Check your connection and try again."
+        )
+      );
     } finally {
       setStrategiesLoading(false);
     }
@@ -686,7 +750,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         setRegistryAddress(nextRegistry);
       }
     } catch (error: any) {
-      showToast("error", error?.message || "Unable to load ALM metadata.");
+      showToast(
+        "error",
+        getReadableErrorMessage(
+          error,
+          "Unable to load ALM metadata. Check network settings and try again."
+        )
+      );
     } finally {
       setGlobalLoading(false);
     }
@@ -782,7 +852,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       filtered.sort((a, b) => (BigInt(a.positionId) < BigInt(b.positionId) ? 1 : -1));
       setPositions(filtered);
     } catch (error: any) {
-      showToast("error", error?.message || "Unable to load your ALM positions.");
+      showToast(
+        "error",
+        getReadableErrorMessage(error, "Unable to load your ALM positions right now.")
+      );
       setPositions([]);
     } finally {
       setPositionsLoading(false);
@@ -915,7 +988,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
 
       setActivity(enriched);
     } catch (error: any) {
-      showToast("error", error?.message || "Unable to load ALM activity.");
+      showToast(
+        "error",
+        getReadableErrorMessage(error, "Unable to load activity log. Please retry in a few seconds.")
+      );
     } finally {
       if (showLoading) setActivityLoading(false);
     }
@@ -1070,12 +1146,25 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const handleLookup = useCallback(async () => {
     const raw = lookupTokenId.trim();
     if (!raw || !/^\d+$/u.test(raw)) {
-      showToast("error", "TokenId must be a valid integer.");
+      showToast("error", "Invalid tokenId: enter a whole number.");
+      return;
+    }
+    const cached = nftLookupCacheRef.current.get(raw);
+    if (cached) {
+      setNftItems((prev) => {
+        const next = [cached, ...prev.filter((entry) => entry.tokenId !== cached.tokenId)];
+        return next.slice(0, 15);
+      });
+      setSelectedTokenId(cached.tokenId);
+      setApproveStatus("idle");
+      setDepositStatus("idle");
+      showToast("info", `NFT #${cached.tokenId} already loaded. Using local cache.`);
       return;
     }
     setLookupLoading(true);
     try {
       const row = await fetchNftPosition(raw);
+      nftLookupCacheRef.current.set(row.tokenId, row);
       setNftItems((prev) => {
         const next = [row, ...prev.filter((entry) => entry.tokenId !== row.tokenId)];
         return next.slice(0, 15);
@@ -1083,9 +1172,12 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       setSelectedTokenId(row.tokenId);
       setApproveStatus("idle");
       setDepositStatus("idle");
-      showToast("success", `Loaded NFT #${row.tokenId}.`);
+      showToast("success", `NFT #${row.tokenId} loaded successfully.`);
     } catch (error: any) {
-      showToast("error", error?.message || "Unable to fetch NFT position.");
+      showToast(
+        "error",
+        getReadableErrorMessage(error, "Unable to fetch NFT position. Check tokenId and try again.")
+      );
     } finally {
       setLookupLoading(false);
     }
@@ -1095,6 +1187,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     if (!selectedTokenId) return;
     try {
       const fresh = await fetchNftPosition(selectedTokenId);
+      nftLookupCacheRef.current.set(fresh.tokenId, fresh);
       setNftItems((prev) => prev.map((item) => (item.tokenId === fresh.tokenId ? fresh : item)));
     } catch {
       // ignore refresh failures
@@ -1108,7 +1201,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       return;
     }
     if (wrongChain) {
-      showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before approving.`);
+      showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before approval.`);
       return;
     }
     setApproveStatus("pending");
@@ -1126,7 +1219,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       setRefreshNonce((value) => value + 1);
     } catch (error: any) {
       setApproveStatus("error");
-      showToast("error", error?.message || "Approve transaction failed.");
+      showToast(
+        "error",
+        getReadableErrorMessage(error, "Approval transaction failed. Check wallet and try again.")
+      );
     }
   }, [address, onConnect, refreshSelectedNft, selectedNft, showToast, wrongChain]);
 
@@ -1137,7 +1233,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       return;
     }
     if (wrongChain) {
-      showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before depositing.`);
+      showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before deposit.`);
       return;
     }
     setDepositStatus("pending");
@@ -1155,7 +1251,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       await Promise.all([refreshSelectedNft(), loadUserPositions(), loadActivityLog()]);
     } catch (error: any) {
       setDepositStatus("error");
-      showToast("error", error?.message || "Deposit transaction failed.");
+      showToast(
+        "error",
+        getReadableErrorMessage(error, "Deposit failed. Check approval and strategy conditions.")
+      );
     }
   }, [
     address,
@@ -1176,7 +1275,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return;
       }
       if (wrongChain) {
-        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before withdrawing.`);
+        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before withdraw.`);
         return;
       }
       setWithdrawingPositionId(positionId);
@@ -1190,7 +1289,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         setRefreshNonce((value) => value + 1);
         await Promise.all([loadUserPositions(), loadActivityLog()]);
       } catch (error: any) {
-        showToast("error", error?.message || "Withdraw transaction failed.");
+        showToast(
+          "error",
+          getReadableErrorMessage(error, "Withdraw failed. Check gas balance and try again.")
+        );
       } finally {
         setWithdrawingPositionId("");
       }
@@ -1209,7 +1311,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return;
       }
       if (wrongChain) {
-        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before compounding.`);
+        showToast("error", `Switch wallet to chain ${ALM_CHAIN_ID} before compound.`);
         return;
       }
       setCompoundingPositionId(positionId);
@@ -1223,7 +1325,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         setRefreshNonce((value) => value + 1);
         await Promise.all([loadUserPositions(), loadActivityLog("manual")]);
       } catch (error: any) {
-        showToast("error", error?.message || "compoundWeighted transaction failed.");
+        showToast(
+          "error",
+          getReadableErrorMessage(error, "compoundWeighted failed. Retry or verify keeper requirements.")
+        );
       } finally {
         setCompoundingPositionId("");
       }
@@ -1251,11 +1356,11 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         return;
       }
       if (!Number.isFinite(input.targetRatioBps0) || input.targetRatioBps0 < 0 || input.targetRatioBps0 > 10_000) {
-        showToast("error", "Target ratio must be between 0 and 100%.");
+        showToast("error", "Target ratio must be between 0% and 100%.");
         return;
       }
       if (!Number.isFinite(input.ratioDeadbandBps) || input.ratioDeadbandBps < 0 || input.ratioDeadbandBps > 10_000) {
-        showToast("error", "Deadband must be between 0 and 100%.");
+        showToast("error", "Deadband must be between 0% and 100%.");
         return;
       }
       const minCompoundValueToken1 = parseTokenUnitsSafe(input.minCompoundInput, input.token1Decimals);
@@ -1281,7 +1386,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           maxSwapInBpsCurrent !== null &&
           Number(input.maxSwapInBps) !== Number(maxSwapInBpsCurrent);
         if ((shouldUpdateMaxSwapIn || input.useExternalDex) && !isAlmOwnerWallet) {
-          showToast("error", "Cross-DEX / maxSwapIn updates require ALM owner wallet.");
+          showToast("error", "Cross-DEX or maxSwapIn updates require ALM owner wallet.");
           return;
         }
 
@@ -1295,7 +1400,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           const factory = normalizeAddress(input.factoryAddress || "");
           const quoter = normalizeAddress(input.quoterAddress || "");
           if (isZeroAddress(router) || isZeroAddress(factory) || isZeroAddress(quoter)) {
-            showToast("error", "Cross-DEX requires router, quoter and factory.");
+            showToast("error", "Cross-DEX requires router, quoter, and factory.");
             return;
           }
 
@@ -1358,7 +1463,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         showToast("success", `Strategy #${input.strategyId} updated via wizard.`);
         await Promise.all([loadStrategies(), loadUserPositions(), loadGlobalInfo()]);
       } catch (error: any) {
-        showToast("error", error?.message || "Failed to update strategy.");
+        showToast(
+          "error",
+          getReadableErrorMessage(error, "Strategy update failed. Verify parameters and try again.")
+        );
       } finally {
         setSavingStrategy(false);
       }
@@ -1401,18 +1509,35 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     );
 
   const depositWarnings = [
-    !ownerMatches && selectedNft ? "Selected NFT is not owned by your connected wallet." : "",
+    !ownerMatches && selectedNft ? "Selected NFT is not owned by the connected wallet." : "",
     !hasLiquidity && selectedNft ? "Selected NFT has zero liquidity and cannot be deposited." : "",
     !feeAllowed && selectedNft && selectedStrategy
-      ? `Strategy #${selectedStrategy.id} does not allow fee tier ${formatFeeTier(selectedNft.fee)}.`
+      ? `Strategy #${selectedStrategy.id} does not support fee tier ${formatFeeTier(selectedNft.fee)}.`
       : "",
     needsMoreCardinality && selectedNft && selectedStrategy
-      ? `Pool observationCardinality (${selectedNft.observationCardinality}) is below strategy minimum (${selectedStrategy.minCardinality}).`
-      : "",
-    selectedStrategy
-      ? `This strategy targets ${(selectedStrategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 by value. Rebalances will swap tokens to maintain this target.`
+      ? `Pool observationCardinality (${selectedNft.observationCardinality}) is below required minimum (${selectedStrategy.minCardinality}).`
       : "",
   ].filter(Boolean);
+
+  const strategyHint = selectedStrategy
+    ? `Target allocazione: ${(selectedStrategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 / ${(
+        (10_000 - selectedStrategy.targetRatioBps0) /
+        100
+      )
+        .toFixed(2)
+        .replace(/\.?0+$/u, "")}% token1.`
+    : "";
+
+  const lookupTokenIdTrimmed = lookupTokenId.trim();
+  const lookupError = useMemo(() => {
+    if (!lookupTokenIdTrimmed) return "Enter a numeric tokenId.";
+    if (!/^\d+$/u.test(lookupTokenIdTrimmed)) return "Invalid tokenId: use whole numbers only.";
+    return "";
+  }, [lookupTokenIdTrimmed]);
+  const canLookup = !lookupError && !lookupLoading;
+  const isNftApproved = Boolean(selectedNft?.approvedToAlm) || approveStatus === "success";
+  const canOpenStep2 = Boolean(selectedNft);
+  const canOpenStep3 = Boolean(selectedNft && selectedStrategy);
 
   const canApprove = Boolean(selectedNft && ownerMatches && hasLiquidity && !wrongChain);
   const canDeposit =
@@ -1422,7 +1547,93 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     Boolean(hasLiquidity) &&
     Boolean(feeAllowed) &&
     !wrongChain &&
-    Boolean(selectedNft?.approvedToAlm);
+    Boolean(isNftApproved);
+
+  useEffect(() => {
+    if (!selectedNft) {
+      setDepositWizardStep(1);
+      return;
+    }
+    if (selectedNft && depositWizardStep === 1) {
+      setDepositWizardStep(2);
+    }
+  }, [depositWizardStep, selectedNft]);
+
+  useEffect(() => {
+    if (!selectedNft || !selectedStrategy) {
+      setDepositWizardStep((current) => (current === 3 ? 2 : current));
+      return;
+    }
+    if (depositWizardStep < 3) {
+      setDepositWizardStep(3);
+    }
+  }, [depositWizardStep, selectedNft, selectedStrategy]);
+
+  const mainViews = [
+    {
+      id: "deposit" as const,
+      label: "Guided Deposit",
+      description: "NFT lookup, strategy, and deposit",
+      status:
+        depositStatus === "success"
+          ? ("success" as const)
+          : approveStatus === "pending" || depositStatus === "pending"
+          ? ("pending" as const)
+          : ("idle" as const),
+    },
+    {
+      id: "positions" as const,
+      label: "My Positions",
+      description: `${positions.length} positions`,
+      status: positionsLoading ? ("pending" as const) : positions.length ? ("success" as const) : ("idle" as const),
+    },
+    {
+      id: "logs" as const,
+      label: "Activity Logs",
+      description: `${activity.length} events`,
+      status: activityLoading ? ("pending" as const) : activity.length ? ("success" as const) : ("idle" as const),
+    },
+    {
+      id: "advanced" as const,
+      label: "Advanced Settings",
+      description: "Admin, keeper, and safety",
+      status: globalLoading ? ("pending" as const) : showAdvancedSettings ? ("success" as const) : ("idle" as const),
+    },
+  ];
+
+  const depositSteps: Array<{
+    step: DepositWizardStep;
+    title: string;
+    ready: boolean;
+    active: boolean;
+    disabled: boolean;
+  }> = [
+    {
+      step: 1,
+      title: "1. Select NFT",
+      ready: Boolean(selectedNft),
+      active: depositWizardStep === 1,
+      disabled: false,
+    },
+    {
+      step: 2,
+      title: "2. Choose strategy",
+      ready: Boolean(selectedStrategy),
+      active: depositWizardStep === 2,
+      disabled: !canOpenStep2,
+    },
+    {
+      step: 3,
+      title: "3. Approve and deposit",
+      ready: depositStatus === "success",
+      active: depositWizardStep === 3,
+      disabled: !canOpenStep3,
+    },
+  ];
+
+  const canGoPrevStep = depositWizardStep > 1;
+  const canGoNextStep =
+    (depositWizardStep === 1 && canOpenStep2) || (depositWizardStep === 2 && canOpenStep3) || depositWizardStep === 3;
 
   return (
     <section className="px-4 py-6 sm:px-6">
@@ -1430,7 +1641,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
         {toast && (
           <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2">
             <div
-              className={`rounded-2xl border px-4 py-3 text-sm shadow-2xl backdrop-blur ${
+              className={`inline-flex items-center gap-2 rounded-2xl border px-4 py-3 text-sm shadow-xl backdrop-blur ${
                 toast.tone === "success"
                   ? "border-emerald-500/40 bg-emerald-950/75 text-emerald-100"
                   : toast.tone === "error"
@@ -1438,28 +1649,30 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                   : "border-sky-500/40 bg-slate-950/80 text-slate-100"
               }`}
             >
+              {toast.tone === "success" && <CheckCircle2 className="h-4 w-4" />}
+              {toast.tone === "error" && <AlertTriangle className="h-4 w-4" />}
+              {toast.tone === "info" && <Loader2 className="h-4 w-4" />}
               {toast.text}
             </div>
           </div>
         )}
 
-        <header className="rounded-3xl border border-slate-800/80 bg-slate-950/55 p-5 shadow-[0_26px_60px_-45px_rgba(2,6,23,0.95)]">
+        <header className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-sky-100">
-                ALM
+              <div className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-200">
+                CurrentX ALM
               </div>
               <h1 className="mt-2 font-display text-2xl font-semibold text-slate-100 sm:text-3xl">
-                Automated Liquidity Manager
+                Liquidity NFT Manager
               </h1>
               <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Deposit your CurrentX V3 LP NFT into the ALM contract and assign a predefined strategy.
-                Rebalances are keeper-executed, with explicit cooldown and skip-reason visibility.
+                Use the guided flow: select NFT, choose a strategy, then approve and deposit with fewer clicks.
               </p>
             </div>
             <div className="flex flex-col items-end gap-2 text-xs text-slate-400">
-              <div>Chain ID: {ALM_CHAIN_ID}</div>
-              <div>RPC: {ALM_RPC_URL}</div>
+              <div>Chain: {ALM_CHAIN_ID}</div>
+              <div className="max-w-[280px] truncate text-right">RPC: {ALM_RPC_URL}</div>
               {wrongChain && (
                 <div className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-100">
                   Wallet on wrong chain
@@ -1469,70 +1682,229 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
           </div>
         </header>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
-          <div className="space-y-4">
-            <NftPositionLookup
-              address={address}
-              onConnect={onConnect}
-              lookupTokenId={lookupTokenId}
-              onLookupTokenIdChange={setLookupTokenId}
-              onLookup={handleLookup}
-              lookupLoading={lookupLoading}
-              items={nftItems}
-              selectedTokenId={selectedTokenId}
-              onSelectTokenId={setSelectedTokenId}
-            />
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {mainViews.map((view) => {
+            const visual = getStatusVisual(view.status);
+            const Icon = visual.icon;
+            return (
+              <button
+                key={view.id}
+                type="button"
+                onClick={() => setActiveView(view.id)}
+                className={`rounded-2xl border p-3 text-left transition ${
+                  activeView === view.id
+                    ? "border-sky-400/70 bg-sky-500/10"
+                    : "border-slate-800 bg-slate-950/50 hover:border-slate-600"
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-display text-sm font-semibold text-slate-100">{view.label}</div>
+                  <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${visual.className}`}>
+                    <Icon className={`h-3.5 w-3.5 ${view.status === "pending" ? "animate-spin" : ""}`} />
+                    {visual.label}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-slate-400">{view.description}</div>
+              </button>
+            );
+          })}
+        </div>
 
-            <StrategyList
-              loading={strategiesLoading}
-              strategies={strategies}
-              selectedStrategyId={selectedStrategyId}
-              onSelectStrategy={setSelectedStrategyId}
-              selectedStrategy={selectedStrategy}
-              selectedToken1={selectedNft}
-              selectedToken1Stable={selectedToken1Stable}
-              canEdit={false}
-              saving={savingStrategy}
-              onSave={handleSaveStrategyParams}
-            />
+        {activeView === "deposit" && (
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="font-display text-base font-semibold text-slate-100">Deposit wizard</h2>
+                  <div className="text-xs text-slate-400">Show only the active step</div>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  {depositSteps.map((step) => (
+                    <button
+                      key={step.step}
+                      type="button"
+                      disabled={step.disabled}
+                      onClick={() => setDepositWizardStep(step.step)}
+                      className={`rounded-xl border px-3 py-2 text-left text-xs transition ${
+                        step.active
+                          ? "border-sky-400/70 bg-sky-500/10 text-sky-100"
+                          : step.ready
+                          ? "border-emerald-400/45 bg-emerald-500/10 text-emerald-100"
+                          : "border-slate-700 bg-slate-900/50 text-slate-300"
+                      } disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {step.ready ? (
+                          <CheckCircle2 className="h-4 w-4" />
+                        ) : step.active ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Circle className="h-4 w-4" />
+                        )}
+                        {step.title}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setDepositWizardStep((current) => Math.max(1, current - 1) as DepositWizardStep)}
+                    disabled={!canGoPrevStep}
+                    className="rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDepositWizardStep((current) => Math.min(3, current + 1) as DepositWizardStep)}
+                    disabled={!canGoNextStep || depositWizardStep === 3}
+                    className="rounded-xl border border-sky-400/45 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
 
-            <StrategyWizard
-              readProvider={readProvider}
-              selectedStrategy={selectedStrategy}
-              selectedNft={selectedNft}
-              selectedToken1Stable={selectedToken1Stable}
-              crossDexDefaults={strategyRouterDefaults}
-              canEditRegistry={isRegistryOwnerWallet}
-              canEditAlm={isAlmOwnerWallet}
-              saving={savingStrategy}
-              maxSwapInBpsCurrent={maxSwapInBpsCurrent}
-              onSubmit={handleSaveStrategyParams}
-            />
+              {depositWizardStep === 1 && (
+                <NftPositionLookup
+                  address={address}
+                  onConnect={onConnect}
+                  lookupTokenId={lookupTokenId}
+                  onLookupTokenIdChange={setLookupTokenId}
+                  onLookup={handleLookup}
+                  lookupLoading={lookupLoading}
+                  items={nftItems}
+                  selectedTokenId={selectedTokenId}
+                  onSelectTokenId={setSelectedTokenId}
+                  lookupError={lookupError}
+                  canLookup={canLookup}
+                />
+              )}
 
-            <DepositFlow
-              selectedNft={selectedNft}
-              selectedStrategy={selectedStrategy}
-              canApprove={canApprove}
-              canDeposit={canDeposit}
-              warnings={depositWarnings}
-              approveStatus={approveStatus}
-              approveTxHash={approveTxHash}
-              depositStatus={depositStatus}
-              depositTxHash={depositTxHash}
-              onApprove={handleApprove}
-              onDeposit={handleDeposit}
-              onConnect={onConnect}
-              address={address}
-            />
+              {depositWizardStep === 2 && (
+                <StrategyList
+                  loading={strategiesLoading}
+                  strategies={strategies}
+                  selectedStrategyId={selectedStrategyId}
+                  onSelectStrategy={setSelectedStrategyId}
+                  selectedToken1={selectedNft}
+                  selectedToken1Stable={selectedToken1Stable}
+                />
+              )}
+
+              {depositWizardStep === 3 && (
+                <DepositFlow
+                  selectedNft={selectedNft}
+                  selectedStrategy={selectedStrategy}
+                  canApprove={canApprove}
+                  canDeposit={canDeposit}
+                  warnings={depositWarnings}
+                  strategyHint={strategyHint}
+                  approveStatus={approveStatus}
+                  approveTxHash={approveTxHash}
+                  depositStatus={depositStatus}
+                  depositTxHash={depositTxHash}
+                  onApprove={handleApprove}
+                  onDeposit={handleDeposit}
+                  onConnect={onConnect}
+                  address={address}
+                />
+              )}
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-base font-semibold text-slate-100">Quick status</h2>
+                  {globalLoading && <RefreshCw className="h-4 w-4 animate-spin text-slate-400" />}
+                </div>
+                <div className="mt-3 space-y-2 text-sm text-slate-300">
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                    Selected NFT: <span className="text-slate-100">{selectedNft ? `#${selectedNft.tokenId}` : "--"}</span>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                    Strategy: <span className="text-slate-100">{selectedStrategy ? `#${selectedStrategy.id}` : "--"}</span>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                    NFT approval:{" "}
+                    <span className={isNftApproved ? "text-emerald-200" : "text-amber-200"}>
+                      {isNftApproved ? "Ready" : "Pending"}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                    Keeper: <span className="font-mono text-xs text-slate-200">{keeper || "--"}</span>
+                  </div>
+                  <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                    Emergency mode:{" "}
+                    <span className={emergency ? "text-rose-200" : "text-emerald-200"}>
+                      {emergency ? "Enabled" : "Disabled"}
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveView("advanced")}
+                  className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-semibold text-slate-200 hover:border-slate-500"
+                >
+                  Open advanced settings
+                </button>
+              </div>
+            </div>
           </div>
+        )}
 
+        {activeView === "positions" && (
+          <Suspense
+            fallback={
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-5 text-sm text-slate-300">
+                Loading positions module...
+              </div>
+            }
+          >
+            <LazyMyPositions
+              address={address}
+              onConnect={onConnect}
+              loading={positionsLoading}
+              positions={positions}
+              strategyById={strategyById}
+              onWithdraw={handleWithdraw}
+              onCompoundWeighted={handleCompoundWeighted}
+              withdrawingPositionId={withdrawingPositionId}
+              compoundingPositionId={compoundingPositionId}
+              isKeeperWallet={isKeeperWallet}
+              copiedValue={copiedValue}
+              onCopy={copyValue}
+            />
+          </Suspense>
+        )}
+
+        {activeView === "logs" && (
+          <Suspense
+            fallback={
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-5 text-sm text-slate-300">
+                Loading logs module...
+              </div>
+            }
+          >
+            <LazyActivityLog
+              loading={activityLoading}
+              items={activity}
+              copiedValue={copiedValue}
+              onCopy={copyValue}
+              onRefresh={loadActivityLog}
+            />
+          </Suspense>
+        )}
+
+        {activeView === "advanced" && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-display text-base font-semibold text-slate-100">Keeper Info</h2>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-display text-base font-semibold text-slate-100">Protocol data</h2>
                 {globalLoading && <RefreshCw className="h-4 w-4 animate-spin text-slate-400" />}
               </div>
-              <div className="mt-3 space-y-2 text-sm text-slate-300">
+              <div className="mt-3 grid gap-2 text-sm text-slate-300 sm:grid-cols-2">
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Keeper</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{keeper || "--"}</div>
@@ -1546,10 +1918,6 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                   <div className="mt-1 font-mono text-xs text-slate-200">{registryAddress || "--"}</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Oracle</div>
-                  <div className="mt-1 font-mono text-xs text-slate-200">{ALM_ADDRESSES.ORACLE || "--"}</div>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">ALM Owner</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{almOwner || "--"}</div>
                 </div>
@@ -1561,61 +1929,53 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                       : "--"}
                   </div>
                 </div>
-                <div className="text-xs text-slate-400">
-                  Rebalances are executed by the keeper address. If a rebalance is skipped, it is retried later.
+                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Emergency</div>
+                  <div className="mt-1 text-slate-200">{emergency ? "Enabled" : "Disabled"}</div>
+                  <div className="text-xs text-slate-400">Delay: {formatDuration(emergencyDelay)}</div>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
-              <h2 className="font-display text-base font-semibold text-slate-100">Emergency / Safety</h2>
-              <div className="mt-3 grid gap-2 text-sm text-slate-300">
-                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Emergency Status</div>
-                  <div
-                    className={`mt-1 inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
-                      emergency
-                        ? "border-rose-400/45 bg-rose-500/12 text-rose-100"
-                        : "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
-                    }`}
-                  >
-                    {emergency ? "Enabled" : "Inactive"}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
-                  <div className="text-[11px] uppercase tracking-wide text-slate-500">Emergency Delay</div>
-                  <div className="mt-1 text-slate-200">{formatDuration(emergencyDelay)}</div>
-                </div>
-                <div className="text-xs text-slate-400">
-                  Emergency mode can restrict keeper operations and enable protective actions after the protocol delay.
-                </div>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-display text-base font-semibold text-slate-100">Advanced settings</h2>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedSettings((current) => !current)}
+                  className="rounded-full border border-amber-400/45 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-100"
+                >
+                  {showAdvancedSettings ? "Hide" : "Show"} advanced settings
+                </button>
               </div>
+              <p className="mt-2 text-xs text-slate-400">
+                This section is intended for admin wallets (strategy registry owner / ALM owner).
+              </p>
+
+              {showAdvancedSettings && (
+                <div className="mt-4 space-y-4">
+                  {!(isRegistryOwnerWallet || isAlmOwnerWallet) && (
+                    <div className="rounded-xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+                      Current wallet is not admin: you can review settings but cannot save changes.
+                    </div>
+                  )}
+                  <StrategyWizard
+                    readProvider={readProvider}
+                    selectedStrategy={selectedStrategy}
+                    selectedNft={selectedNft}
+                    selectedToken1Stable={selectedToken1Stable}
+                    crossDexDefaults={strategyRouterDefaults}
+                    canEditRegistry={isRegistryOwnerWallet}
+                    canEditAlm={isAlmOwnerWallet}
+                    saving={savingStrategy}
+                    maxSwapInBpsCurrent={maxSwapInBpsCurrent}
+                    onSubmit={handleSaveStrategyParams}
+                  />
+                </div>
+              )}
             </div>
           </div>
-        </div>
-
-        <MyPositions
-          address={address}
-          onConnect={onConnect}
-          loading={positionsLoading}
-          positions={positions}
-          strategyById={strategyById}
-          onWithdraw={handleWithdraw}
-          onCompoundWeighted={handleCompoundWeighted}
-          withdrawingPositionId={withdrawingPositionId}
-          compoundingPositionId={compoundingPositionId}
-          isKeeperWallet={isKeeperWallet}
-          copiedValue={copiedValue}
-          onCopy={copyValue}
-        />
-
-        <ActivityLog
-          loading={activityLoading}
-          items={activity}
-          copiedValue={copiedValue}
-          onCopy={copyValue}
-          onRefresh={loadActivityLog}
-        />
+        )}
       </div>
     </section>
   );
@@ -1630,6 +1990,8 @@ interface NftPositionLookupProps {
   items: NftLookupItem[];
   selectedTokenId: string | null;
   onSelectTokenId: (value: string) => void;
+  lookupError: string;
+  canLookup: boolean;
 }
 
 export function NftPositionLookup({
@@ -1642,42 +2004,48 @@ export function NftPositionLookup({
   items,
   selectedTokenId,
   onSelectTokenId,
+  lookupError,
+  canLookup,
 }: NftPositionLookupProps) {
   return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-display text-base font-semibold text-slate-100">My V3 LP NFTs</h2>
+        <h2 className="font-display text-base font-semibold text-slate-100">1. Find LP NFT</h2>
         {!address && (
           <button
             type="button"
             onClick={onConnect}
-            className="rounded-full border border-sky-400/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 hover:border-sky-300"
+            className="rounded-full border border-sky-400/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 hover:border-sky-300/70"
           >
-            Connect Wallet
+            Connect wallet
           </button>
         )}
       </div>
 
       <p className="mt-2 text-xs text-slate-400">
-        Primary flow: paste tokenId and fetch on-chain from NonfungiblePositionManager.
+        Enter your Uniswap V3 NFT tokenId to fetch position data on-chain.
       </p>
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row">
         <input
           value={lookupTokenId}
-          onChange={(event) => onLookupTokenIdChange(event.target.value.replace(/[^\d]/gu, ""))}
-          placeholder="Paste tokenId (e.g. 101)"
-          className="w-full rounded-2xl border border-slate-700/80 bg-slate-900/60 px-4 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-sky-400/70"
+          inputMode="numeric"
+          onChange={(event) => onLookupTokenIdChange(event.target.value)}
+          placeholder="Example: 101"
+          className={`w-full rounded-2xl border bg-slate-900/60 px-4 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 ${
+            lookupError ? "border-rose-500/70 focus:border-rose-400/70" : "border-slate-700/80 focus:border-sky-400/70"
+          }`}
         />
         <button
           type="button"
           onClick={onLookup}
-          disabled={lookupLoading}
-          className="inline-flex items-center justify-center rounded-2xl border border-sky-300/55 bg-gradient-to-r from-sky-500/90 via-cyan-400/90 to-emerald-400/85 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={!canLookup}
+          className="inline-flex items-center justify-center rounded-2xl border border-sky-300/55 bg-sky-500 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {lookupLoading ? "Loading..." : "Fetch NFT"}
+          {lookupLoading ? "Loading..." : "Find NFT"}
         </button>
       </div>
+      {lookupError && <div className="mt-2 text-xs text-rose-200">{lookupError}</div>}
 
       <div className="mt-4 space-y-2">
         {lookupLoading && items.length === 0 && (
@@ -1743,12 +2111,8 @@ interface StrategyListProps {
   strategies: StrategyConfig[];
   selectedStrategyId: number | null;
   onSelectStrategy: (strategyId: number) => void;
-  selectedStrategy: StrategyConfig | null;
   selectedToken1: NftLookupItem | null;
   selectedToken1Stable: boolean | null;
-  canEdit: boolean;
-  saving: boolean;
-  onSave: (input: any) => void;
 }
 
 export function StrategyList({
@@ -1756,43 +2120,25 @@ export function StrategyList({
   strategies,
   selectedStrategyId,
   onSelectStrategy,
-  selectedStrategy,
   selectedToken1,
   selectedToken1Stable,
-  canEdit,
-  saving,
-  onSave,
 }: StrategyListProps) {
   const token1Symbol = selectedToken1?.token1Symbol || "token1";
   const token1Decimals = selectedToken1?.token1Decimals || 18;
-  const [targetPct0, setTargetPct0] = useState(50);
-  const [minCompoundInput, setMinCompoundInput] = useState("2");
-  const [deadbandInput, setDeadbandInput] = useState("0.5");
-  const [minSwapInput, setMinSwapInput] = useState("2");
-
-  useEffect(() => {
-    if (!selectedStrategy) return;
-    setTargetPct0(Number((selectedStrategy.targetRatioBps0 / 100).toFixed(2)));
-    setMinCompoundInput(formatTokenAmount(selectedStrategy.minCompoundValueToken1, token1Decimals, 4));
-    setDeadbandInput((selectedStrategy.ratioDeadbandBps / 100).toString());
-    setMinSwapInput(formatTokenAmount(selectedStrategy.minSwapValueToken1, token1Decimals, 4));
-  }, [selectedStrategy, token1Decimals]);
 
   const renderCompoundThreshold = (strategy: StrategyConfig) => {
     const valueText = `${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals)} ${token1Symbol}`;
     if (!selectedToken1Stable) return valueText;
-    return `${valueText} (≈ $${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals, 2)})`;
+    return `${valueText} (approx. $${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals, 2)})`;
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-base font-semibold text-slate-100">Strategies</h2>
+        <h2 className="font-display text-base font-semibold text-slate-100">2. Choose Strategy</h2>
         <div className="text-xs text-slate-500">{strategies.length} loaded</div>
       </div>
-      <p className="mt-2 text-xs text-slate-400">
-        Strategies are read on-chain from StrategyRegistry and rendered with risk-relevant parameters.
-      </p>
+      <p className="mt-2 text-xs text-slate-400">Strategies are loaded on-chain from the StrategyRegistry.</p>
 
       <div className="mt-3 space-y-2">
         {loading && strategies.length === 0 && (
@@ -1804,7 +2150,7 @@ export function StrategyList({
 
         {!loading && strategies.length === 0 && (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 text-sm text-slate-400">
-            No strategy returned by registry.
+            No strategies returned by the registry.
           </div>
         )}
 
@@ -1842,8 +2188,11 @@ export function StrategyList({
               <div className="mt-2 text-xs text-slate-300">{strategy.recommendedLabel}</div>
 
               <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                <div>Range width: ±{formatPercentFromBps(strategy.widthBps, 2)}</div>
-                <div>Recenter trigger: ±{formatPercentFromBps(strategy.recenterBps, 2)}</div>
+                <div>Range width: +/-{formatPercentFromBps(strategy.widthBps, 2)}</div>
+                <div className="inline-flex items-center gap-1">
+                  Recenter trigger: +/-{formatPercentFromBps(strategy.recenterBps, 2)}
+                  <InfoHint title="recenterBps controls how far price can move away from center before rebalance." />
+                </div>
                 <div>Cooldown: {formatDuration(strategy.minRebalanceInterval)}</div>
                 <div>Swap enabled: {strategy.allowSwap ? "yes" : "no"}</div>
                 <div>
@@ -1851,18 +2200,18 @@ export function StrategyList({
                   {((10_000 - strategy.targetRatioBps0) / 100).toFixed(2).replace(/\.?0+$/u, "")}% token1
                 </div>
                 <div>Compound threshold: {renderCompoundThreshold(strategy)}</div>
-                <div>Ratio deadband: ±{formatPercentFromBps(strategy.ratioDeadbandBps, 2)}</div>
+                <div>Ratio deadband: +/-{formatPercentFromBps(strategy.ratioDeadbandBps, 2)}</div>
                 <div>
                   Min swap value: {formatTokenAmount(strategy.minSwapValueToken1, token1Decimals)} {token1Symbol}
                 </div>
                 <div>
-                  Fee tiers: {" "}
+                  Fee tiers:{" "}
                   {strategy.allowedFeeTiers.length
                     ? strategy.allowedFeeTiers.map((tier) => formatFeeTier(tier)).join(" / ")
                     : "none"}
                 </div>
-                <div>Swap slippage: ±{formatPercentFromBps(strategy.maxSwapSlippageBps, 2)}</div>
-                <div>Mint slippage: ±{formatPercentFromBps(strategy.mintSlippageBps, 2)}</div>
+                <div>Swap slippage: +/-{formatPercentFromBps(strategy.maxSwapSlippageBps, 2)}</div>
+                <div>Mint slippage: +/-{formatPercentFromBps(strategy.mintSlippageBps, 2)}</div>
                 <div>minCardinality: {strategy.minCardinality || "--"}</div>
                 <div>WETH hop fee: {strategy.wethHopFee ? formatFeeTier(strategy.wethHopFee) : "--"}</div>
                 <div>Oracle params: {strategy.oracleParamsHex !== "0x" ? "present" : "empty"}</div>
@@ -1871,92 +2220,15 @@ export function StrategyList({
           );
         })}
       </div>
-
-      {canEdit && selectedStrategy && (
-        <div className="mt-4 rounded-2xl border border-slate-700/70 bg-slate-900/50 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="font-display text-sm font-semibold text-slate-100">Admin Strategy Editor</h3>
-            <span className="text-[11px] text-slate-400">Strategy #{selectedStrategy.id}</span>
-          </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="text-xs text-slate-300 sm:col-span-2">
-              Target allocation (by value): {targetPct0.toFixed(2)}% token0 /{" "}
-              {(100 - targetPct0).toFixed(2)}% token1
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={0.1}
-                value={targetPct0}
-                onChange={(event) => setTargetPct0(Number(event.target.value))}
-                className="mt-2 w-full accent-cyan-400"
-              />
-            </label>
-
-            <label className="text-xs text-slate-300">
-              Min compound threshold ({token1Symbol})
-              <input
-                value={minCompoundInput}
-                onChange={(event) => setMinCompoundInput(event.target.value.replace(",", "."))}
-                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
-              />
-            </label>
-            <label className="text-xs text-slate-300">
-              Deadband (%)
-              <input
-                value={deadbandInput}
-                onChange={(event) => setDeadbandInput(event.target.value.replace(",", "."))}
-                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
-              />
-            </label>
-            <label className="text-xs text-slate-300 sm:col-span-2">
-              Min swap value ({token1Symbol})
-              <input
-                value={minSwapInput}
-                onChange={(event) => setMinSwapInput(event.target.value.replace(",", "."))}
-                className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
-              />
-            </label>
-          </div>
-          {!selectedToken1 && (
-            <div className="mt-2 text-[11px] text-amber-200">
-              Select an NFT first to use token1 decimals/symbol for threshold parsing.
-            </div>
-          )}
-          <button
-            type="button"
-            disabled={saving || !selectedToken1}
-            onClick={() =>
-              {
-                const parsedDeadbandPct = Number(deadbandInput || "0");
-                const deadbandBps = Number.isFinite(parsedDeadbandPct)
-                  ? Math.round(parsedDeadbandPct * 100)
-                  : Number.NaN;
-                onSave({
-                  strategyId: selectedStrategy.id,
-                  targetRatioBps0: Math.max(0, Math.min(10_000, Math.round(targetPct0 * 100))),
-                  minCompoundInput,
-                  deadbandBps,
-                  minSwapInput,
-                  token1Decimals,
-                });
-              }
-            }
-            className="mt-3 rounded-xl border border-cyan-400/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving ? "Saving..." : "Save Strategy"}
-          </button>
-        </div>
-      )}
     </div>
   );
-}
-interface DepositFlowProps {
+}interface DepositFlowProps {
   selectedNft: NftLookupItem | null;
   selectedStrategy: StrategyConfig | null;
   canApprove: boolean;
   canDeposit: boolean;
   warnings: string[];
+  strategyHint: string;
   approveStatus: StatusState;
   approveTxHash: string;
   depositStatus: StatusState;
@@ -1973,6 +2245,7 @@ export function DepositFlow({
   canApprove,
   canDeposit,
   warnings,
+  strategyHint,
   approveStatus,
   approveTxHash,
   depositStatus,
@@ -1982,17 +2255,16 @@ export function DepositFlow({
   onConnect,
   address,
 }: DepositFlowProps) {
-  const stepClass = (status: StatusState) => {
-    if (status === "success") return "border-emerald-400/45 bg-emerald-500/10 text-emerald-100";
-    if (status === "pending") return "border-sky-400/45 bg-sky-500/10 text-sky-100";
-    if (status === "error") return "border-rose-400/45 bg-rose-500/10 text-rose-100";
-    return "border-slate-700/70 bg-slate-900/60 text-slate-200";
-  };
+  const approveVisual = getStatusVisual(approveStatus);
+  const depositVisual = getStatusVisual(depositStatus);
+  const ApproveIcon = approveVisual.icon;
+  const DepositIcon = depositVisual.icon;
+  const nftApproved = Boolean(selectedNft?.approvedToAlm) || approveStatus === "success";
 
   return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
+    <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="font-display text-base font-semibold text-slate-100">Deposit Flow</h2>
+        <h2 className="font-display text-base font-semibold text-slate-100">3. Approve and Deposit</h2>
         {!address && (
           <button
             type="button"
@@ -2010,6 +2282,10 @@ export function DepositFlow({
           {selectedStrategy ? `#${selectedStrategy.id}` : "--"}
         </div>
 
+        {strategyHint && (
+          <div className="rounded-2xl border border-sky-400/35 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">{strategyHint}</div>
+        )}
+
         {warnings.map((warning, index) => (
           <div
             key={`${warning}-${index}`}
@@ -2021,18 +2297,21 @@ export function DepositFlow({
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div className={`rounded-2xl border px-3 py-3 ${stepClass(approveStatus)}`}>
-          <div className="text-[11px] uppercase tracking-wide">1) Approve NFT</div>
+        <div className={`rounded-2xl border px-3 py-3 ${approveVisual.className}`}>
+          <div className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide">
+            <ApproveIcon className={`h-3.5 w-3.5 ${approveStatus === "pending" ? "animate-spin" : ""}`} />
+            NFT approval
+          </div>
           <button
             type="button"
             onClick={onApprove}
-            disabled={!canApprove || approveStatus === "pending"}
+            disabled={!canApprove || approveStatus === "pending" || nftApproved}
             className="mt-2 w-full rounded-xl border border-current/30 bg-black/15 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
           >
             {approveStatus === "pending"
-              ? "Approving..."
-              : approveStatus === "success"
-              ? "Approved"
+              ? "Approval in progress..."
+              : nftApproved
+              ? "NFT already approved"
               : "Approve NFT"}
           </button>
           {approveTxHash && (
@@ -2042,13 +2321,16 @@ export function DepositFlow({
               rel="noreferrer"
               className="mt-2 inline-block text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
             >
-              View tx
+              View transaction
             </a>
           )}
         </div>
 
-        <div className={`rounded-2xl border px-3 py-3 ${stepClass(depositStatus)}`}>
-          <div className="text-[11px] uppercase tracking-wide">2) Deposit</div>
+        <div className={`rounded-2xl border px-3 py-3 ${depositVisual.className}`}>
+          <div className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide">
+            <DepositIcon className={`h-3.5 w-3.5 ${depositStatus === "pending" ? "animate-spin" : ""}`} />
+            Deposit
+          </div>
           <button
             type="button"
             onClick={onDeposit}
@@ -2056,10 +2338,12 @@ export function DepositFlow({
             className="mt-2 w-full rounded-xl border border-current/30 bg-black/15 px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
           >
             {depositStatus === "pending"
-              ? "Depositing..."
+              ? "Deposit in progress..."
               : depositStatus === "success"
-              ? "Deposited"
-              : "Deposit to ALM"}
+              ? "Deposit completed"
+              : nftApproved
+              ? "Deposit now"
+              : "Approve NFT first"}
           </button>
           {depositTxHash && (
             <a
@@ -2068,7 +2352,7 @@ export function DepositFlow({
               rel="noreferrer"
               className="mt-2 inline-block text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
             >
-              View tx
+              View transaction
             </a>
           )}
         </div>
@@ -2076,348 +2360,3 @@ export function DepositFlow({
     </div>
   );
 }
-
-interface MyPositionsProps {
-  address?: string | null;
-  onConnect?: () => void;
-  loading: boolean;
-  positions: AlmPositionRow[];
-  strategyById: Map<number, StrategyConfig>;
-  onWithdraw: (positionId: string) => void;
-  onCompoundWeighted: (positionId: string) => void;
-  withdrawingPositionId: string;
-  compoundingPositionId: string;
-  isKeeperWallet: boolean;
-  copiedValue: string;
-  onCopy: (value: string) => void;
-}
-
-export function MyPositions({
-  address,
-  onConnect,
-  loading,
-  positions,
-  strategyById,
-  onWithdraw,
-  onCompoundWeighted,
-  withdrawingPositionId,
-  compoundingPositionId,
-  isKeeperWallet,
-  copiedValue,
-  onCopy,
-}: MyPositionsProps) {
-  const [nowTs, setNowTs] = useState(() => Math.floor(Date.now() / 1000));
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNowTs(Math.floor(Date.now() / 1000));
-    }, 1000);
-    return () => window.clearInterval(interval);
-  }, []);
-
-  const getEstimate = (position: AlmPositionRow, strategy: StrategyConfig | null) => {
-    if (!strategy || position.currentTick === null || position.centerTick === null) {
-      return {
-        label: "Next rebalance when price deviates by strategy threshold",
-        status: "unknown",
-      };
-    }
-    const tickDelta = Math.abs(position.currentTick - position.centerTick);
-    const deltaPct = (Math.pow(1.0001, tickDelta) - 1) * 100;
-    const triggerPct = strategy.recenterBps / 100;
-    const needs = deltaPct >= triggerPct;
-    return {
-      label: `${needs ? "Needs rebalance" : "In range"} (${deltaPct.toFixed(3)}% vs ${triggerPct.toFixed(
-        3
-      )}% trigger)`,
-      status: needs ? "needs" : "in-range",
-    };
-  };
-
-  return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="font-display text-base font-semibold text-slate-100">My ALM Positions</h2>
-        {!address && (
-          <button
-            type="button"
-            onClick={onConnect}
-            className="rounded-full border border-sky-400/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 hover:border-sky-300"
-          >
-            Connect Wallet
-          </button>
-        )}
-      </div>
-
-      <div className="mt-3 space-y-2">
-        {loading && positions.length === 0 && (
-          <>
-            <div className="h-28 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/45" />
-            <div className="h-28 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/45" />
-          </>
-        )}
-
-        {!loading && positions.length === 0 && (
-          <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 text-sm text-slate-400">
-            No ALM positions found for this wallet.
-          </div>
-        )}
-
-        {positions.map((position) => {
-          const strategy = strategyById.get(position.strategyId) || null;
-          const cooldownSeconds = Math.max(
-            0,
-            (position.lastRebalanceAt || 0) + (strategy?.minRebalanceInterval || 0) - nowTs
-          );
-          const estimate = getEstimate(position, strategy);
-          const threshold = strategy?.minCompoundValueToken1 ?? 0n;
-          const isEligibleForCompound = position.dustValueToken1 >= threshold;
-          const thresholdText = `${formatTokenAmount(
-            threshold,
-            position.token1Decimals
-          )} ${position.token1Symbol}`;
-
-          return (
-            <div
-              key={position.positionId}
-              className="rounded-2xl border border-slate-800/80 bg-slate-900/45 px-3 py-3"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-display text-sm font-semibold text-slate-100">
-                  Position #{position.positionId}
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 ${
-                      position.active
-                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
-                        : "border-slate-500/45 bg-slate-800/70 text-slate-200"
-                    }`}
-                  >
-                    {position.active ? "Active" : "Inactive"}
-                  </span>
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5 text-slate-200">
-                    Strategy #{position.strategyId}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
-                <div>Owner: {shortenAddress(position.owner, 8, 6)}</div>
-                <div>Pair: {position.token0Symbol} / {position.token1Symbol}</div>
-                <div>Fee: {formatFeeTier(position.fee)}</div>
-                <div>Tick spacing: {position.tickSpacing || "--"}</div>
-                <div>Current NFT: #{position.currentTokenId}</div>
-                <div>Last rebalance: {formatDateTime(position.lastRebalanceAt)}</div>
-                <div>Cooldown remaining: {formatDuration(cooldownSeconds)}</div>
-                <div>Pool: {shortenAddress(position.pool, 8, 6)}</div>
-                <div>
-                  Token0: {position.token0Symbol} ({shortenAddress(position.token0, 8, 6)})
-                </div>
-                <div>
-                  Token1: {position.token1Symbol} ({shortenAddress(position.token1, 8, 6)})
-                </div>
-                <div>
-                  Status:{" "}
-                  <span
-                    className={
-                      estimate.status === "needs"
-                        ? "text-amber-200"
-                        : estimate.status === "in-range"
-                        ? "text-emerald-200"
-                        : "text-slate-300"
-                    }
-                  >
-                    {estimate.label}
-                  </span>
-                </div>
-                <div>
-                  Dust0 ({position.token0Symbol}): {formatDust(position.dust0, position.token0Decimals)}
-                </div>
-                <div>
-                  Dust1 ({position.token1Symbol}): {formatDust(position.dust1, position.token1Decimals)}
-                </div>
-                <div>Pool tick: {position.currentTick ?? "--"}</div>
-                <div>
-                  Dust total value: {formatTokenAmount(position.dustValueToken1, position.token1Decimals)}{" "}
-                  {position.token1Symbol}
-                </div>
-                <div>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[11px] ${
-                      isEligibleForCompound
-                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
-                        : "border-amber-400/45 bg-amber-500/12 text-amber-100"
-                    }`}
-                  >
-                    {isEligibleForCompound ? "Compound eligible" : `Compound below threshold (${thresholdText})`}
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => onWithdraw(position.positionId)}
-                  disabled={withdrawingPositionId === position.positionId}
-                  className="rounded-xl border border-rose-400/45 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {withdrawingPositionId === position.positionId ? "Withdrawing..." : "Withdraw"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCompoundWeighted(position.positionId)}
-                  disabled={
-                    !isKeeperWallet ||
-                    !isEligibleForCompound ||
-                    compoundingPositionId === position.positionId
-                  }
-                  title={
-                    !isKeeperWallet
-                      ? "Only keeper can execute compoundWeighted."
-                      : !isEligibleForCompound
-                      ? `Requires at least ${thresholdText} total dust value in token1 units.`
-                      : ""
-                  }
-                  className="rounded-xl border border-cyan-400/45 bg-cyan-500/10 px-3 py-1.5 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {compoundingPositionId === position.positionId ? "Compounding..." : "Compound (Keeper)"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCopy(position.positionId)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                  {copiedValue === position.positionId ? "Copied" : "Copy positionId"}
-                </button>
-                <a
-                  href={`${EXPLORER_BASE_URL}/address/${position.pool}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-xl border border-slate-700/70 bg-slate-900/70 px-3 py-1.5 text-xs text-slate-200"
-                >
-                  View pool
-                </a>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-interface ActivityLogProps {
-  loading: boolean;
-  items: ActivityItem[];
-  copiedValue: string;
-  onCopy: (value: string) => void;
-  onRefresh: (mode?: "initial" | "manual" | "poll") => void;
-}
-
-export function ActivityLog({ loading, items, copiedValue, onCopy, onRefresh }: ActivityLogProps) {
-  return (
-    <div className="rounded-2xl border border-slate-800/80 bg-slate-950/55 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="font-display text-base font-semibold text-slate-100">Activity / Logs</h2>
-        <button
-          type="button"
-          onClick={() => onRefresh("manual")}
-          className="inline-flex items-center gap-1 rounded-full border border-slate-700/70 bg-slate-900/70 px-3 py-1 text-xs text-slate-200 hover:border-slate-500"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
-      </div>
-
-      <div className="mt-3 overflow-x-auto">
-        <table className="min-w-full text-left text-xs">
-          <thead>
-            <tr className="border-b border-slate-800 text-slate-500">
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Time</th>
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Event</th>
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Position</th>
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Details</th>
-              <th className="px-2 py-2 font-medium uppercase tracking-wide">Tx</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading && items.length === 0 && (
-              <>
-                <tr className="border-b border-slate-900">
-                  <td className="px-2 py-3"><div className="h-4 w-28 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-24 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-20 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-32 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-24 animate-pulse rounded bg-slate-800/90" /></td>
-                </tr>
-                <tr>
-                  <td className="px-2 py-3"><div className="h-4 w-28 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-24 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-20 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-32 animate-pulse rounded bg-slate-800/90" /></td>
-                  <td className="px-2 py-3"><div className="h-4 w-24 animate-pulse rounded bg-slate-800/90" /></td>
-                </tr>
-              </>
-            )}
-
-            {!loading && items.length === 0 && (
-              <tr>
-                <td colSpan={5} className="px-2 py-4 text-center text-sm text-slate-400">
-                  No activity yet.
-                </td>
-              </tr>
-            )}
-
-            {items.map((item) => (
-              <tr key={item.id} className="border-b border-slate-900/70 text-slate-300">
-                <td className="px-2 py-2">
-                  <div>{formatDateTime(item.timestamp)}</div>
-                  <div className="text-[11px] text-slate-500">Block {item.blockNumber}</div>
-                </td>
-                <td className="px-2 py-2">
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/70 px-2 py-0.5 text-[11px]">
-                    {item.eventType}
-                  </span>
-                </td>
-                <td className="px-2 py-2">
-                  <button
-                    type="button"
-                    onClick={() => onCopy(item.positionId)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-slate-700/70 bg-slate-900/70 px-2 py-0.5 text-[11px] hover:border-slate-500"
-                  >
-                    <Copy className="h-3 w-3" />
-                    {copiedValue === item.positionId ? "Copied" : `#${item.positionId}`}
-                  </button>
-                </td>
-                <td className="px-2 py-2 text-[11px] text-slate-400">{item.details || "--"}</td>
-                <td className="px-2 py-2">
-                  <div className="flex items-center gap-1">
-                    <a
-                      href={`${EXPLORER_BASE_URL}/tx/${item.txHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-mono text-[11px] text-sky-200 underline decoration-dotted underline-offset-2"
-                    >
-                      {shortenAddress(item.txHash, 10, 8)}
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => onCopy(item.txHash)}
-                      className="inline-flex items-center rounded-md border border-slate-700/70 bg-slate-900/70 p-1 text-slate-300 hover:border-slate-500"
-                      aria-label="Copy tx hash"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
