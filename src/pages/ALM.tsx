@@ -10,7 +10,16 @@ import {
   id,
   toUtf8String,
 } from "ethers";
-import { AlertTriangle, CheckCircle2, Circle, CircleHelp, Loader2, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Circle,
+  CircleHelp,
+  Copy,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+} from "lucide-react";
 import { EXPLORER_BASE_URL } from "../shared/config/addresses";
 import { getProvider } from "../shared/config/web3";
 import { TOKENS } from "../shared/config/tokens";
@@ -198,6 +207,21 @@ const formatDateTime = (timestampSec: number | null) => {
   return new Date(timestampSec * 1000).toLocaleString();
 };
 
+const formatRelativeTimeFromNow = (timestampSec: number | null) => {
+  if (!timestampSec || !Number.isFinite(timestampSec)) return "--";
+  const now = Math.floor(Date.now() / 1000);
+  const delta = now - timestampSec;
+  if (!Number.isFinite(delta)) return "--";
+  if (delta <= 0) return "just now";
+  if (delta < 60) return `${delta}s ago`;
+  const minutes = Math.floor(delta / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+};
+
 const formatDuration = (seconds: number) => {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0s";
   const d = Math.floor(seconds / 86_400);
@@ -208,6 +232,16 @@ const formatDuration = (seconds: number) => {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+};
+
+const formatBigInt = (value: bigint) => {
+  try {
+    return new Intl.NumberFormat("en-US", {
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return value.toString();
+  }
 };
 
 const formatTokenAmount = (amount: bigint, decimals: number, maxFrac = 6) => {
@@ -470,6 +504,14 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   const [approveTxHash, setApproveTxHash] = useState("");
   const [depositStatus, setDepositStatus] = useState<StatusState>("idle");
   const [depositTxHash, setDepositTxHash] = useState("");
+  const [lastDepositSummary, setLastDepositSummary] = useState<{
+    tokenId: string;
+    strategyId: number;
+    tokenPair: string;
+    feeTier: string;
+    liquidityUnits: string;
+    timestampSec: number;
+  } | null>(null);
 
   const [positions, setPositions] = useState<AlmPositionRow[]>([]);
   const [positionsLoading, setPositionsLoading] = useState(false);
@@ -1001,6 +1043,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     void loadStrategies();
     void loadGlobalInfo();
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void loadStrategies();
       void loadGlobalInfo();
     }, 45_000);
@@ -1010,8 +1053,9 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
   useEffect(() => {
     void loadActivityLog("initial");
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void loadActivityLog("poll");
-    }, 20_000);
+    }, 30_000);
     return () => window.clearInterval(interval);
   }, [loadActivityLog, refreshNonce]);
 
@@ -1022,8 +1066,9 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     }
     void loadUserPositions();
     const interval = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void loadUserPositions();
-    }, 20_000);
+    }, 30_000);
     return () => window.clearInterval(interval);
   }, [address, loadUserPositions, refreshNonce]);
 
@@ -1143,6 +1188,10 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     };
   }, []);
 
+  useEffect(() => {
+    setLastDepositSummary(null);
+  }, [selectedStrategyId, selectedTokenId]);
+
   const handleLookup = useCallback(async () => {
     const raw = lookupTokenId.trim();
     if (!raw || !/^\d+$/u.test(raw)) {
@@ -1158,6 +1207,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       setSelectedTokenId(cached.tokenId);
       setApproveStatus("idle");
       setDepositStatus("idle");
+      setLastDepositSummary(null);
       showToast("info", `NFT #${cached.tokenId} already loaded. Using local cache.`);
       return;
     }
@@ -1172,6 +1222,7 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       setSelectedTokenId(row.tokenId);
       setApproveStatus("idle");
       setDepositStatus("idle");
+      setLastDepositSummary(null);
       showToast("success", `NFT #${row.tokenId} loaded successfully.`);
     } catch (error: any) {
       showToast(
@@ -1246,6 +1297,14 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
       setDepositTxHash(tx.hash);
       await tx.wait();
       setDepositStatus("success");
+      setLastDepositSummary({
+        tokenId: selectedNft.tokenId,
+        strategyId: selectedStrategyId,
+        tokenPair: `${selectedNft.token0Symbol}/${selectedNft.token1Symbol}`,
+        feeTier: formatFeeTier(selectedNft.fee),
+        liquidityUnits: formatBigInt(selectedNft.liquidity),
+        timestampSec: Math.floor(Date.now() / 1000),
+      });
       showToast("success", `Deposit completed for NFT #${selectedNft.tokenId}.`);
       setRefreshNonce((value) => value + 1);
       await Promise.all([refreshSelectedNft(), loadUserPositions(), loadActivityLog()]);
@@ -1509,23 +1568,29 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
     );
 
   const depositWarnings = [
-    !ownerMatches && selectedNft ? "Selected NFT is not owned by the connected wallet." : "",
-    !hasLiquidity && selectedNft ? "Selected NFT has zero liquidity and cannot be deposited." : "",
+    !ownerMatches && selectedNft
+      ? "Selected NFT is not owned by this wallet. Connect the owning wallet or select another NFT."
+      : "",
+    !hasLiquidity && selectedNft
+      ? "Selected NFT has zero liquidity. Add liquidity first, then retry deposit."
+      : "",
     !feeAllowed && selectedNft && selectedStrategy
-      ? `Strategy #${selectedStrategy.id} does not support fee tier ${formatFeeTier(selectedNft.fee)}.`
+      ? `Fee tier mismatch: strategy #${selectedStrategy.id} does not support ${formatFeeTier(
+          selectedNft.fee
+        )}. Choose a compatible strategy for this NFT fee tier.`
       : "",
     needsMoreCardinality && selectedNft && selectedStrategy
-      ? `Pool observationCardinality (${selectedNft.observationCardinality}) is below required minimum (${selectedStrategy.minCardinality}).`
+      ? `Pool observation cardinality is ${selectedNft.observationCardinality}, below required minimum ${selectedStrategy.minCardinality}. Wait for more observations or choose another strategy.`
       : "",
   ].filter(Boolean);
 
   const strategyHint = selectedStrategy
-    ? `Target allocazione: ${(selectedStrategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 / ${(
+    ? `Target allocation: ${(selectedStrategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 / ${(
         (10_000 - selectedStrategy.targetRatioBps0) /
         100
       )
         .toFixed(2)
-        .replace(/\.?0+$/u, "")}% token1.`
+        .replace(/\.?0+$/u, "")}% token1. Rebalances keep this ratio over time.`
     : "";
 
   const lookupTokenIdTrimmed = lookupTokenId.trim();
@@ -1779,6 +1844,8 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                   onSelectTokenId={setSelectedTokenId}
                   lookupError={lookupError}
                   canLookup={canLookup}
+                  copiedValue={copiedValue}
+                  onCopy={copyValue}
                 />
               )}
 
@@ -1801,6 +1868,8 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                   canDeposit={canDeposit}
                   warnings={depositWarnings}
                   strategyHint={strategyHint}
+                  registryAddress={registryAddress}
+                  lastDepositSummary={lastDepositSummary}
                   approveStatus={approveStatus}
                   approveTxHash={approveTxHash}
                   depositStatus={depositStatus}
@@ -1908,18 +1977,22 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Keeper</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{keeper || "--"}</div>
+                  <div className="mt-1 text-xs text-slate-400">Automation wallet that executes rebalances and compound operations.</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Treasury</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{treasury || "--"}</div>
+                  <div className="mt-1 text-xs text-slate-400">Protocol fee receiver and accounting destination.</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Registry</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{registryAddress || "--"}</div>
+                  <div className="mt-1 text-xs text-slate-400">On-chain contract containing strategy definitions.</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">ALM Owner</div>
                   <div className="mt-1 font-mono text-xs text-slate-200">{almOwner || "--"}</div>
+                  <div className="mt-1 text-xs text-slate-400">Administrative wallet for protocol-level parameters.</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">maxSwapInBps</div>
@@ -1928,11 +2001,13 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                       ? `${(Number(maxSwapInBpsCurrent) / 100).toFixed(2).replace(/\.?0+$/u, "")}%`
                       : "--"}
                   </div>
+                  <div className="mt-1 text-xs text-slate-400">Caps swap size per rebalance to limit execution risk.</div>
                 </div>
                 <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
                   <div className="text-[11px] uppercase tracking-wide text-slate-500">Emergency</div>
                   <div className="mt-1 text-slate-200">{emergency ? "Enabled" : "Disabled"}</div>
                   <div className="text-xs text-slate-400">Delay: {formatDuration(emergencyDelay)}</div>
+                  <div className="mt-1 text-xs text-slate-400">Safety mode that can restrict keeper actions after delay.</div>
                 </div>
               </div>
             </div>
@@ -1959,6 +2034,20 @@ export default function ALM({ address, chainId, onConnect }: ALMPageProps) {
                       Current wallet is not admin: you can review settings but cannot save changes.
                     </div>
                   )}
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                      <div className="font-semibold text-slate-100">Swap settings</div>
+                      <div className="mt-1 text-slate-400">Typical: slippage 0.30% to 1.00%, maxSwapIn 10% to 25%.</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                      <div className="font-semibold text-slate-100">Risk management</div>
+                      <div className="mt-1 text-slate-400">Typical: cooldown 30m to 4h, deadband 0.10% to 0.50%.</div>
+                    </div>
+                    <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                      <div className="font-semibold text-slate-100">Liquidity routing</div>
+                      <div className="mt-1 text-slate-400">Use external router/factory/quoter only when ALM owner approves.</div>
+                    </div>
+                  </div>
                   <StrategyWizard
                     readProvider={readProvider}
                     selectedStrategy={selectedStrategy}
@@ -1992,6 +2081,8 @@ interface NftPositionLookupProps {
   onSelectTokenId: (value: string) => void;
   lookupError: string;
   canLookup: boolean;
+  copiedValue: string;
+  onCopy: (value: string) => void;
 }
 
 export function NftPositionLookup({
@@ -2006,6 +2097,8 @@ export function NftPositionLookup({
   onSelectTokenId,
   lookupError,
   canLookup,
+  copiedValue,
+  onCopy,
 }: NftPositionLookupProps) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
@@ -2083,6 +2176,26 @@ export function NftPositionLookup({
                   <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5">
                     Fee {formatFeeTier(item.fee)}
                   </span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 ${
+                      item.currentTick !== null &&
+                      item.currentTick >= item.tickLower &&
+                      item.currentTick <= item.tickUpper
+                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
+                        : "border-amber-400/45 bg-amber-500/12 text-amber-100"
+                    }`}
+                    title={
+                      item.currentTick === null
+                        ? "Current pool tick is unavailable."
+                        : `Current tick ${item.currentTick}, range ${item.tickLower} to ${item.tickUpper}.`
+                    }
+                  >
+                    {item.currentTick === null
+                      ? "Tick unavailable"
+                      : item.currentTick >= item.tickLower && item.currentTick <= item.tickUpper
+                      ? "In range"
+                      : "Out of range"}
+                  </span>
                   {!item.approvedToAlm && (
                     <span className="rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-0.5 text-amber-100">
                       Not approved
@@ -2091,12 +2204,49 @@ export function NftPositionLookup({
                 </div>
               </div>
               <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                <div>Owner: {item.owner}</div>
-                <div>Liquidity: {item.liquidity.toString()}</div>
-                <div>
-                  Ticks: {item.tickLower} / {item.tickUpper}
+                <div className="inline-flex items-center gap-1">
+                  Owner: {shortenAddress(item.owner, 8, 6)}
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCopy(item.owner);
+                    }}
+                    className="inline-flex items-center rounded-md border border-slate-700/70 bg-slate-900/70 p-1 text-slate-300 hover:border-slate-500"
+                    aria-label="Copy owner address"
+                  >
+                    <Copy className="h-3 w-3" />
+                  </button>
+                  {copiedValue === item.owner && <span className="text-emerald-200">Copied</span>}
                 </div>
-                <div>Current tick: {item.currentTick ?? "--"}</div>
+                <div className="inline-flex items-center gap-1">
+                  Liquidity: {formatBigInt(item.liquidity)} units
+                  <InfoHint title="Uniswap V3 liquidity uses protocol units, not direct token amounts." />
+                </div>
+                <div className="inline-flex items-center gap-1">
+                  Tick range: {item.tickLower} to {item.tickUpper}
+                  <InfoHint title="Ticks define the active price range where liquidity earns fees." />
+                </div>
+                <div className="inline-flex items-center gap-1">
+                  Current market tick: {item.currentTick ?? "--"}
+                  <InfoHint title="When current tick stays inside range, your NFT is active for fee earning." />
+                </div>
+                <div>Observation cardinality: {item.observationCardinality ?? "--"}</div>
+                <div className="inline-flex items-center gap-1">
+                  Dust balances: available after deposit
+                  <InfoHint title="Dust is tracked per ALM position after your NFT is deposited and managed." />
+                </div>
+                <div className="flex items-center gap-2">
+                  <a
+                    href={`${EXPLORER_BASE_URL}/token/${ALM_ADDRESSES.NFPM}?a=${item.tokenId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => event.stopPropagation()}
+                    className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
+                  >
+                    View NFT <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
               </div>
             </button>
           );
@@ -2125,6 +2275,7 @@ export function StrategyList({
 }: StrategyListProps) {
   const token1Symbol = selectedToken1?.token1Symbol || "token1";
   const token1Decimals = selectedToken1?.token1Decimals || 18;
+  const recommendedStrategyId = useMemo(() => (strategies.length ? strategies[0].id : null), [strategies]);
 
   const renderCompoundThreshold = (strategy: StrategyConfig) => {
     const valueText = `${formatTokenAmount(strategy.minCompoundValueToken1, token1Decimals)} ${token1Symbol}`;
@@ -2138,7 +2289,9 @@ export function StrategyList({
         <h2 className="font-display text-base font-semibold text-slate-100">2. Choose Strategy</h2>
         <div className="text-xs text-slate-500">{strategies.length} loaded</div>
       </div>
-      <p className="mt-2 text-xs text-slate-400">Strategies are loaded on-chain from the StrategyRegistry.</p>
+      <p className="mt-2 text-xs text-slate-400">
+        Compare essential parameters first, then open advanced details only when needed.
+      </p>
 
       <div className="mt-3 space-y-2">
         {loading && strategies.length === 0 && (
@@ -2156,79 +2309,134 @@ export function StrategyList({
 
         {strategies.map((strategy) => {
           const selected = selectedStrategyId === strategy.id;
+          const isRecommended = recommendedStrategyId === strategy.id;
           return (
-            <button
+            <article
               key={strategy.id}
-              type="button"
-              onClick={() => onSelectStrategy(strategy.id)}
               className={`w-full rounded-2xl border p-3 text-left transition ${
                 selected
                   ? "border-cyan-300/70 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.22)]"
                   : "border-slate-800/80 bg-slate-900/45 hover:border-slate-600/80"
               }`}
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-display text-sm font-semibold text-slate-100">Strategy #{strategy.id}</div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span
-                    className={`rounded-full border px-2 py-0.5 ${
-                      strategy.type === "STABLE"
-                        ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
-                        : "border-sky-400/45 bg-sky-500/12 text-sky-100"
-                    }`}
-                  >
-                    {strategy.type}
-                  </span>
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5 text-slate-200">
-                    {strategy.route}
-                  </span>
+              <button type="button" onClick={() => onSelectStrategy(strategy.id)} className="w-full text-left">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="inline-flex items-center gap-2">
+                    <div className="font-display text-sm font-semibold text-slate-100">Strategy #{strategy.id}</div>
+                    {isRecommended && (
+                      <span className="rounded-full border border-emerald-400/45 bg-emerald-500/12 px-2 py-0.5 text-[11px] font-semibold text-emerald-100">
+                        Recommended
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span
+                      className={`rounded-full border px-2 py-0.5 ${
+                        strategy.type === "STABLE"
+                          ? "border-emerald-400/45 bg-emerald-500/12 text-emerald-100"
+                          : "border-sky-400/45 bg-sky-500/12 text-sky-100"
+                      }`}
+                    >
+                      {strategy.type}
+                    </span>
+                    <span className="rounded-full border border-slate-700/70 bg-slate-900/60 px-2 py-0.5 text-slate-200">
+                      {strategy.route === "DIRECT_ONLY" ? "Direct route" : "Direct or WETH route"}
+                    </span>
+                  </div>
                 </div>
-              </div>
 
-              <div className="mt-2 text-xs text-slate-300">{strategy.recommendedLabel}</div>
+                <div className="mt-2 text-xs text-slate-300">{strategy.recommendedLabel}</div>
 
-              <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
-                <div>Range width: +/-{formatPercentFromBps(strategy.widthBps, 2)}</div>
-                <div className="inline-flex items-center gap-1">
-                  Recenter trigger: +/-{formatPercentFromBps(strategy.recenterBps, 2)}
-                  <InfoHint title="recenterBps controls how far price can move away from center before rebalance." />
+                <div className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="inline-flex items-center gap-1">
+                    Range width: +/-{formatPercentFromBps(strategy.widthBps, 2)}
+                    <InfoHint title="Total width of active liquidity around center price." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Recenter trigger: +/-{formatPercentFromBps(strategy.recenterBps, 2)}
+                    <InfoHint title="Price deviation threshold that triggers rebalance." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Cooldown: {formatDuration(strategy.minRebalanceInterval)}
+                    <InfoHint title="Minimum waiting time between two keeper rebalances." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Target ratio: {formatPercentFromBps(strategy.targetRatioBps0, 2)} token0
+                    <InfoHint title="Target portfolio value split used during rebalances." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Compound threshold: {renderCompoundThreshold(strategy)}
+                    <InfoHint title="Minimum accumulated dust before compound can execute." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Min swap value: {formatTokenAmount(strategy.minSwapValueToken1, token1Decimals)} {token1Symbol}
+                    <InfoHint title="Minimum amount required before swap logic is allowed." />
+                  </div>
                 </div>
-                <div>Cooldown: {formatDuration(strategy.minRebalanceInterval)}</div>
-                <div>Swap enabled: {strategy.allowSwap ? "yes" : "no"}</div>
-                <div>
-                  Target: {(strategy.targetRatioBps0 / 100).toFixed(2).replace(/\.?0+$/u, "")}% token0 /{" "}
-                  {((10_000 - strategy.targetRatioBps0) / 100).toFixed(2).replace(/\.?0+$/u, "")}% token1
+              </button>
+
+              <details className="mt-3 rounded-xl border border-slate-800/70 bg-slate-950/45 px-3 py-2">
+                <summary className="cursor-pointer text-xs font-semibold text-slate-200">Advanced details</summary>
+                <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+                  <div className="inline-flex items-center gap-1">
+                    Swap enabled: {strategy.allowSwap ? "Yes" : "No"}
+                    <InfoHint title="If disabled, strategy avoids swap-based rebalancing actions." />
+                  </div>
+                  <div>
+                    Fee tiers:{" "}
+                    {strategy.allowedFeeTiers.length
+                      ? strategy.allowedFeeTiers.map((tier) => formatFeeTier(tier)).join(" / ")
+                      : "none"}
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Swap slippage: +/-{formatPercentFromBps(strategy.maxSwapSlippageBps, 2)}
+                    <InfoHint title="Maximum tolerated price impact for swaps." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Mint slippage: +/-{formatPercentFromBps(strategy.mintSlippageBps, 2)}
+                    <InfoHint title="Maximum tolerated price impact when minting LP." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Ratio deadband: +/-{formatPercentFromBps(strategy.ratioDeadbandBps, 2)}
+                    <InfoHint title="No-swap zone around target ratio to avoid noisy trades." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Observation cardinality minimum: {strategy.minCardinality || "--"}
+                    <InfoHint title="Minimum oracle observations required for safer rebalance checks." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    WETH hop fee: {strategy.wethHopFee ? formatFeeTier(strategy.wethHopFee) : "--"}
+                    <InfoHint title="Fee tier used for optional WETH intermediate swap route." />
+                  </div>
+                  <div className="inline-flex items-center gap-1">
+                    Oracle params: {strategy.oracleParamsHex !== "0x" ? "Configured" : "Empty"}
+                    <InfoHint title="Raw oracle bytes used by on-chain oracle validation logic." />
+                  </div>
                 </div>
-                <div>Compound threshold: {renderCompoundThreshold(strategy)}</div>
-                <div>Ratio deadband: +/-{formatPercentFromBps(strategy.ratioDeadbandBps, 2)}</div>
-                <div>
-                  Min swap value: {formatTokenAmount(strategy.minSwapValueToken1, token1Decimals)} {token1Symbol}
-                </div>
-                <div>
-                  Fee tiers:{" "}
-                  {strategy.allowedFeeTiers.length
-                    ? strategy.allowedFeeTiers.map((tier) => formatFeeTier(tier)).join(" / ")
-                    : "none"}
-                </div>
-                <div>Swap slippage: +/-{formatPercentFromBps(strategy.maxSwapSlippageBps, 2)}</div>
-                <div>Mint slippage: +/-{formatPercentFromBps(strategy.mintSlippageBps, 2)}</div>
-                <div>minCardinality: {strategy.minCardinality || "--"}</div>
-                <div>WETH hop fee: {strategy.wethHopFee ? formatFeeTier(strategy.wethHopFee) : "--"}</div>
-                <div>Oracle params: {strategy.oracleParamsHex !== "0x" ? "present" : "empty"}</div>
-              </div>
-            </button>
+              </details>
+            </article>
           );
         })}
       </div>
     </div>
   );
-}interface DepositFlowProps {
+}
+interface DepositFlowProps {
   selectedNft: NftLookupItem | null;
   selectedStrategy: StrategyConfig | null;
   canApprove: boolean;
   canDeposit: boolean;
   warnings: string[];
   strategyHint: string;
+  registryAddress: string;
+  lastDepositSummary: {
+    tokenId: string;
+    strategyId: number;
+    tokenPair: string;
+    feeTier: string;
+    liquidityUnits: string;
+    timestampSec: number;
+  } | null;
   approveStatus: StatusState;
   approveTxHash: string;
   depositStatus: StatusState;
@@ -2246,6 +2454,8 @@ export function DepositFlow({
   canDeposit,
   warnings,
   strategyHint,
+  registryAddress,
+  lastDepositSummary,
   approveStatus,
   approveTxHash,
   depositStatus,
@@ -2260,6 +2470,12 @@ export function DepositFlow({
   const ApproveIcon = approveVisual.icon;
   const DepositIcon = depositVisual.icon;
   const nftApproved = Boolean(selectedNft?.approvedToAlm) || approveStatus === "success";
+  const targetRatioText = selectedStrategy
+    ? `${formatPercentFromBps(selectedStrategy.targetRatioBps0, 2)} token0 / ${formatPercentFromBps(
+        10_000 - selectedStrategy.targetRatioBps0,
+        2
+      )} token1`
+    : "--";
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
@@ -2276,16 +2492,55 @@ export function DepositFlow({
         )}
       </div>
 
-      <div className="mt-3 space-y-2">
-        <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
-          Selected NFT: {selectedNft ? `#${selectedNft.tokenId}` : "--"} | Strategy:{" "}
-          {selectedStrategy ? `#${selectedStrategy.id}` : "--"}
+      <div className="mt-3 rounded-2xl border border-slate-800/70 bg-slate-900/45 px-3 py-3 text-xs text-slate-300">
+        <div className="grid gap-2 sm:grid-cols-2">
+          <div>
+            Selected NFT: <span className="text-slate-100">{selectedNft ? `#${selectedNft.tokenId}` : "--"}</span>
+          </div>
+          <div>
+            Strategy: <span className="text-slate-100">{selectedStrategy ? `#${selectedStrategy.id}` : "--"}</span>
+          </div>
+          <div>
+            Pair: <span className="text-slate-100">{selectedNft ? `${selectedNft.token0Symbol}/${selectedNft.token1Symbol}` : "--"}</span>
+          </div>
+          <div>
+            Fee tier: <span className="text-slate-100">{selectedNft ? formatFeeTier(selectedNft.fee) : "--"}</span>
+          </div>
+          <div className="sm:col-span-2">
+            Target ratio: <span className="text-slate-100">{targetRatioText}</span>
+          </div>
         </div>
+        <div className="mt-2 flex flex-wrap gap-3">
+          {selectedNft && (
+            <a
+              href={`${EXPLORER_BASE_URL}/token/${ALM_ADDRESSES.NFPM}?a=${selectedNft.tokenId}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
+            >
+              View NFT on explorer <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          {selectedStrategy && (
+            <a
+              href={`${EXPLORER_BASE_URL}/address/${registryAddress}`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
+            >
+              View strategy registry <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      </div>
 
-        {strategyHint && (
-          <div className="rounded-2xl border border-sky-400/35 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">{strategyHint}</div>
-        )}
+      {strategyHint && (
+        <div className="mt-2 rounded-2xl border border-sky-400/35 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+          {strategyHint}
+        </div>
+      )}
 
+      <div className="mt-2 space-y-2">
         {warnings.map((warning, index) => (
           <div
             key={`${warning}-${index}`}
@@ -2302,6 +2557,9 @@ export function DepositFlow({
             <ApproveIcon className={`h-3.5 w-3.5 ${approveStatus === "pending" ? "animate-spin" : ""}`} />
             NFT approval
           </div>
+          <div className="mt-1 text-xs">
+            {nftApproved ? "NFT approved. You can proceed to deposit." : "Approval required before deposit."}
+          </div>
           <button
             type="button"
             onClick={onApprove}
@@ -2311,7 +2569,7 @@ export function DepositFlow({
             {approveStatus === "pending"
               ? "Approval in progress..."
               : nftApproved
-              ? "NFT already approved"
+              ? "NFT approved"
               : "Approve NFT"}
           </button>
           {approveTxHash && (
@@ -2319,9 +2577,9 @@ export function DepositFlow({
               href={`${EXPLORER_BASE_URL}/tx/${approveTxHash}`}
               target="_blank"
               rel="noreferrer"
-              className="mt-2 inline-block text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
+              className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
             >
-              View transaction
+              View approval transaction <ExternalLink className="h-3 w-3" />
             </a>
           )}
         </div>
@@ -2330,6 +2588,11 @@ export function DepositFlow({
           <div className="inline-flex items-center gap-2 text-[11px] uppercase tracking-wide">
             <DepositIcon className={`h-3.5 w-3.5 ${depositStatus === "pending" ? "animate-spin" : ""}`} />
             Deposit
+          </div>
+          <div className="mt-1 text-xs">
+            {canDeposit
+              ? "All checks passed. Deposit is ready."
+              : "Deposit is locked until ownership, liquidity, and strategy checks pass."}
           </div>
           <button
             type="button"
@@ -2350,13 +2613,29 @@ export function DepositFlow({
               href={`${EXPLORER_BASE_URL}/tx/${depositTxHash}`}
               target="_blank"
               rel="noreferrer"
-              className="mt-2 inline-block text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
+              className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-200 underline decoration-dotted underline-offset-2"
             >
-              View transaction
+              View deposit transaction <ExternalLink className="h-3 w-3" />
             </a>
           )}
         </div>
       </div>
+
+      {depositStatus === "success" && lastDepositSummary && (
+        <div className="mt-3 rounded-2xl border border-emerald-400/35 bg-emerald-500/10 px-3 py-3 text-xs text-emerald-100">
+          <div className="font-semibold">Deposit complete</div>
+          <div className="mt-1 grid gap-1 sm:grid-cols-2">
+            <div>NFT: #{lastDepositSummary.tokenId}</div>
+            <div>Strategy: #{lastDepositSummary.strategyId}</div>
+            <div>Pair: {lastDepositSummary.tokenPair}</div>
+            <div>Fee tier: {lastDepositSummary.feeTier}</div>
+            <div>Liquidity units: {lastDepositSummary.liquidityUnits}</div>
+            <div title={formatDateTime(lastDepositSummary.timestampSec)}>
+              Completed: {formatRelativeTimeFromNow(lastDepositSummary.timestampSec)}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

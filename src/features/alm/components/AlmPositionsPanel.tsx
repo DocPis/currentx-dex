@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { CircleHelp, Copy } from "lucide-react";
 import { formatUnits } from "ethers";
 import { EXPLORER_BASE_URL } from "../../../shared/config/addresses";
@@ -47,6 +47,8 @@ interface AlmPositionsPanelProps {
   onCopy: (value: string) => void;
 }
 
+type PositionFilter = "all" | "active" | "inactive";
+
 const shortenAddress = (value: string, start = 6, end = 4) => {
   if (!value) return "--";
   if (value.length <= start + end) return value;
@@ -56,6 +58,20 @@ const shortenAddress = (value: string, start = 6, end = 4) => {
 const formatDateTime = (timestampSec: number | null) => {
   if (!timestampSec || !Number.isFinite(timestampSec)) return "--";
   return new Date(timestampSec * 1000).toLocaleString();
+};
+
+const formatRelativeTime = (timestampSec: number | null) => {
+  if (!timestampSec || !Number.isFinite(timestampSec)) return "--";
+  const now = Math.floor(Date.now() / 1000);
+  const delta = now - timestampSec;
+  if (delta <= 0) return "just now";
+  if (delta < 60) return `${delta}s ago`;
+  const minutes = Math.floor(delta / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 };
 
 const formatDuration = (seconds: number) => {
@@ -85,11 +101,6 @@ const formatTokenAmount = (amount: bigint, decimals: number, maxFrac = 6) => {
   }
 };
 
-const formatDust = (amount: bigint, decimals: number) => {
-  const value = formatTokenAmount(amount, decimals, 6);
-  return value;
-};
-
 export default function AlmPositionsPanel({
   address,
   onConnect,
@@ -105,6 +116,7 @@ export default function AlmPositionsPanel({
   onCopy,
 }: AlmPositionsPanelProps) {
   const [nowTs, setNowTs] = useState(() => Math.floor(Date.now() / 1000));
+  const [filter, setFilter] = useState<PositionFilter>("all");
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -112,6 +124,12 @@ export default function AlmPositionsPanel({
     }, 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  const filteredPositions = useMemo(() => {
+    if (filter === "active") return positions.filter((position) => position.active);
+    if (filter === "inactive") return positions.filter((position) => !position.active);
+    return positions;
+  }, [filter, positions]);
 
   const getEstimate = (position: AlmPositionRow, strategy: StrategyConfig | null) => {
     if (!strategy || position.currentTick === null || position.centerTick === null) {
@@ -134,34 +152,50 @@ export default function AlmPositionsPanel({
 
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-display text-base font-semibold text-slate-100">My ALM Positions</h2>
-        {!address && (
-          <button
-            type="button"
-            onClick={onConnect}
-            className="rounded-full border border-sky-400/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 hover:border-sky-300"
-          >
-            Connect Wallet
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-slate-700/70 bg-slate-900/70 p-1 text-xs">
+            {(["all", "active", "inactive"] as PositionFilter[]).map((status) => (
+              <button
+                key={status}
+                type="button"
+                onClick={() => setFilter(status)}
+                className={`rounded-lg px-2 py-1 capitalize ${
+                  filter === status ? "bg-sky-500/15 text-sky-100" : "text-slate-300"
+                }`}
+              >
+                {status}
+              </button>
+            ))}
+          </div>
+          {!address && (
+            <button
+              type="button"
+              onClick={onConnect}
+              className="rounded-full border border-sky-400/50 bg-sky-500/10 px-3 py-1 text-xs font-semibold text-sky-100 hover:border-sky-300"
+            >
+              Connect Wallet
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-3 space-y-2">
-        {loading && positions.length === 0 && (
+        {loading && filteredPositions.length === 0 && (
           <>
             <div className="h-28 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/45" />
             <div className="h-28 animate-pulse rounded-2xl border border-slate-800 bg-slate-900/45" />
           </>
         )}
 
-        {!loading && positions.length === 0 && (
+        {!loading && filteredPositions.length === 0 && (
           <div className="rounded-2xl border border-slate-800/70 bg-slate-900/45 px-4 py-4 text-sm text-slate-400">
-            No ALM positions found for this wallet.
+            No ALM positions found for this filter.
           </div>
         )}
 
-        {positions.map((position) => {
+        {filteredPositions.map((position) => {
           const strategy = strategyById.get(position.strategyId) || null;
           const cooldownSeconds = Math.max(
             0,
@@ -200,54 +234,19 @@ export default function AlmPositionsPanel({
                 </div>
               </div>
 
-              <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2">
+              <div className="mt-2 grid gap-2 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
                 <div>Pair: {position.token0Symbol} / {position.token1Symbol}</div>
                 <div>Fee: {formatFeeTier(position.fee)}</div>
                 <div>Current NFT: #{position.currentTokenId}</div>
+                <div title={formatDateTime(position.lastRebalanceAt)}>
+                  Last rebalance: {formatRelativeTime(position.lastRebalanceAt)}
+                </div>
                 <div>Cooldown remaining: {formatDuration(cooldownSeconds)}</div>
-              </div>
-
-              <details className="mt-2 rounded-xl border border-slate-800 bg-slate-950/45 px-3 py-2 md:hidden">
-                <summary className="cursor-pointer text-xs font-semibold text-slate-200">Show details</summary>
-                <div className="mt-2 grid gap-2 text-xs text-slate-400">
-                  <div>Owner: {shortenAddress(position.owner, 8, 6)}</div>
-                  <div>Pool: {shortenAddress(position.pool, 8, 6)}</div>
-                  <div>Last rebalance: {formatDateTime(position.lastRebalanceAt)}</div>
-                  <div>
-                    Status:{" "}
-                    <span
-                      className={
-                        estimate.status === "needs"
-                          ? "text-amber-200"
-                          : estimate.status === "in-range"
-                          ? "text-emerald-200"
-                          : "text-slate-300"
-                      }
-                    >
-                      {estimate.label}
-                    </span>
-                  </div>
-                  <div className="inline-flex items-center gap-1">
-                    Dust0 ({position.token0Symbol}): {formatDust(position.dust0, position.token0Decimals)}
-                    <span title="Dust0 is leftover token0 held by ALM for this position.">
-                      <CircleHelp className="h-3.5 w-3.5 text-slate-400" />
-                    </span>
-                  </div>
-                  <div>Dust1 ({position.token1Symbol}): {formatDust(position.dust1, position.token1Decimals)}</div>
-                  <div>Pool tick: {position.currentTick ?? "--"}</div>
-                </div>
-              </details>
-
-              <div className="mt-2 hidden gap-2 text-xs text-slate-400 md:grid md:grid-cols-2 lg:grid-cols-3">
-                <div>Owner: {shortenAddress(position.owner, 8, 6)}</div>
-                <div>Tick spacing: {position.tickSpacing || "--"}</div>
-                <div>Last rebalance: {formatDateTime(position.lastRebalanceAt)}</div>
-                <div>Pool: {shortenAddress(position.pool, 8, 6)}</div>
-                <div>
-                  Token0: {position.token0Symbol} ({shortenAddress(position.token0, 8, 6)})
-                </div>
-                <div>
-                  Token1: {position.token1Symbol} ({shortenAddress(position.token1, 8, 6)})
+                <div className="inline-flex items-center gap-1">
+                  Tick spacing: {position.tickSpacing || "--"}
+                  <span title="Tick spacing defines the granularity of allowed LP ticks for this pool.">
+                    <CircleHelp className="h-3.5 w-3.5 text-slate-400" />
+                  </span>
                 </div>
                 <div>
                   Status:{" "}
@@ -263,17 +262,20 @@ export default function AlmPositionsPanel({
                     {estimate.label}
                   </span>
                 </div>
+                <div>
+                  Dust0: {formatTokenAmount(position.dust0, position.token0Decimals)} {position.token0Symbol}
+                </div>
+                <div>
+                  Dust1: {formatTokenAmount(position.dust1, position.token1Decimals)} {position.token1Symbol}
+                </div>
                 <div className="inline-flex items-center gap-1">
-                  Dust0 ({position.token0Symbol}): {formatDust(position.dust0, position.token0Decimals)}
-                  <span title="Dust0 is leftover token0 held by ALM for this position.">
+                  Dust total (token1 eq): {formatTokenAmount(position.dustValueToken1, position.token1Decimals)} {position.token1Symbol}
+                  <span title="Dust total converted to token1 units for easier threshold comparison.">
                     <CircleHelp className="h-3.5 w-3.5 text-slate-400" />
                   </span>
                 </div>
-                <div>Dust1 ({position.token1Symbol}): {formatDust(position.dust1, position.token1Decimals)}</div>
-                <div>
-                  Dust total value: {formatTokenAmount(position.dustValueToken1, position.token1Decimals)}{" "}
-                  {position.token1Symbol}
-                </div>
+                <div>Owner: {shortenAddress(position.owner, 8, 6)}</div>
+                <div>Pool: {shortenAddress(position.pool, 8, 6)}</div>
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-2">

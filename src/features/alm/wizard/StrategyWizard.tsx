@@ -278,6 +278,15 @@ export default function StrategyWizard({
         <StepBadge index={3} current={step} title="Cross-DEX & Oracle" onClick={() => setStep(3)} />
       </div>
 
+      {values.mode === "advanced" && (
+        <div className="mt-3 rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-xs text-slate-300">
+          Advanced mode guide:
+          <span className="ml-1 text-slate-400">
+            use Step 2 for risk controls, Step 3 for swap routing and oracle safety, and keep changes incremental.
+          </span>
+        </div>
+      )}
+
       {step === 1 && (
         <div className="mt-4 space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
@@ -357,6 +366,7 @@ export default function StrategyWizard({
               <input
                 value={values.rangeUpPct}
                 onChange={(event) => updateValues("rangeUpPct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 1.00"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -365,6 +375,7 @@ export default function StrategyWizard({
               <input
                 value={values.rangeDownPct}
                 onChange={(event) => updateValues("rangeDownPct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 1.00"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -373,6 +384,7 @@ export default function StrategyWizard({
               <input
                 value={values.targetPct0}
                 onChange={(event) => updateValues("targetPct0", event.target.value.replace(",", "."))}
+                placeholder="e.g. 50.00"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -389,7 +401,7 @@ export default function StrategyWizard({
         <div className="mt-4 space-y-3">
           <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 p-3">
             <FieldLabel
-              title="minRebalanceInterval (sec)"
+              title="Cooldown (seconds)"
               hint="Minimum time between two keeper rebalances."
             />
             <input
@@ -414,6 +426,7 @@ export default function StrategyWizard({
               <input
                 value={values.recenterTriggerPct}
                 onChange={(event) => updateValues("recenterTriggerPct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 0.50"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -422,22 +435,25 @@ export default function StrategyWizard({
               <input
                 value={values.ratioDeadbandPct}
                 onChange={(event) => updateValues("ratioDeadbandPct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 0.25"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
             <div>
-              <FieldLabel title="maxSwapSlippage (%)" hint="Maximum allowed slippage for swaps." />
+              <FieldLabel title="Swap slippage (%)" hint="Maximum allowed slippage for swaps." />
               <input
                 value={values.maxSwapSlippagePct}
                 onChange={(event) => updateValues("maxSwapSlippagePct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 0.50"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
             <div>
-              <FieldLabel title="mintSlippage (%)" hint="Maximum allowed slippage when minting LP." />
+              <FieldLabel title="Mint slippage (%)" hint="Maximum allowed slippage when minting LP." />
               <input
                 value={values.mintSlippagePct}
                 onChange={(event) => updateValues("mintSlippagePct", event.target.value.replace(",", "."))}
+                placeholder="e.g. 0.50"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
@@ -476,6 +492,9 @@ export default function StrategyWizard({
 
       {step === 3 && (
         <div className="mt-4 space-y-3">
+          <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 px-3 py-2 text-xs text-slate-400">
+            Step 3 groups advanced controls into liquidity routing, oracle protection, and swap thresholds.
+          </div>
           <div className="rounded-xl border border-slate-800/70 bg-slate-900/45 p-3">
             <div className="flex items-center justify-between gap-2">
               <FieldLabel
@@ -501,6 +520,7 @@ export default function StrategyWizard({
                   value={values.routerAddress}
                   onChange={(event) => updateValues("routerAddress", event.target.value.trim())}
                   disabled={!values.useExternalDex}
+                  placeholder="0x..."
                   className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 disabled:opacity-60"
                 />
               </div>
@@ -510,6 +530,7 @@ export default function StrategyWizard({
                   value={values.quoterAddress}
                   onChange={(event) => updateValues("quoterAddress", event.target.value.trim())}
                   disabled={!values.useExternalDex}
+                  placeholder="0x..."
                   className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 disabled:opacity-60"
                 />
               </div>
@@ -519,6 +540,7 @@ export default function StrategyWizard({
                   value={values.factoryAddress}
                   onChange={(event) => updateValues("factoryAddress", event.target.value.trim())}
                   disabled={!values.useExternalDex}
+                  placeholder="0x..."
                   className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-xs text-slate-100 disabled:opacity-60"
                 />
               </div>
@@ -580,6 +602,7 @@ export default function StrategyWizard({
                   updateValues("oracleParamsHex", event.target.value.trim());
                 }}
                 disabled={!values.oracleEnabled}
+                placeholder="0x..."
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 font-mono text-xs text-slate-100 disabled:opacity-60"
               />
             </div>
@@ -594,6 +617,7 @@ export default function StrategyWizard({
               <input
                 value={values.minCompoundInput}
                 onChange={(event) => updateValues("minCompoundInput", event.target.value.replace(",", "."))}
+                placeholder="e.g. 2.00"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
               {selectedToken1Stable ? (
@@ -610,6 +634,7 @@ export default function StrategyWizard({
               <input
                 value={values.minSwapInput}
                 onChange={(event) => updateValues("minSwapInput", event.target.value.replace(",", "."))}
+                placeholder="e.g. 2.00"
                 className="mt-1 w-full rounded-xl border border-slate-700/80 bg-slate-900/70 px-3 py-2 text-sm text-slate-100"
               />
             </div>
