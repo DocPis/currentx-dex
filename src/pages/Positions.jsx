@@ -3,10 +3,19 @@ import { Contract, JsonRpcProvider, formatUnits, getAddress } from "ethers";
 import { AlertTriangle, CheckCircle2, ExternalLink, Loader2, Search } from "lucide-react";
 import { EXPLORER_BASE_URL } from "../shared/config/addresses";
 import { ALM_ADDRESSES, ALM_CHAIN_ID, ALM_RPC_URL } from "../shared/config/almConfig";
-import { ALM_ABI, ERC20_METADATA_ABI, NFPM_ABI, POOL_SLOT0_ABI } from "../shared/config/almAbis";
+import { ERC20_METADATA_ABI, NFPM_ABI, POOL_SLOT0_ABI, V3_FACTORY_MIN_ABI } from "../shared/config/almAbis";
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-const MAX_USER_POSITIONS_SCAN = 64;
+const MAX_USER_NFT_SCAN = 60;
+const POOL_META_ABI = [
+  {
+    type: "function",
+    name: "tickSpacing",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "int24" }],
+  },
+];
 
 const normalizeAddress = (value) => {
   try {
@@ -17,6 +26,13 @@ const normalizeAddress = (value) => {
 };
 
 const isZeroAddress = (value) => normalizeAddress(value).toLowerCase() === ZERO_ADDRESS.toLowerCase();
+
+const shortenAddress = (value, start = 6, end = 4) => {
+  const raw = String(value || "");
+  if (!raw) return "--";
+  if (raw.length <= start + end) return raw;
+  return `${raw.slice(0, start)}...${raw.slice(-end)}`;
+};
 
 const normalizePath = (path = "") => {
   const cleaned = String(path || "").toLowerCase().replace(/\/+$/u, "");
@@ -38,12 +54,6 @@ const formatPercent = (value) => {
   return `${value.toFixed(2).replace(/\.?0+$/u, "")}%`;
 };
 
-const tickToPrice = (tick) => {
-  if (!Number.isFinite(tick)) return null;
-  const value = Math.exp(Number(tick) * Math.log(1.0001));
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
-
 const parseTokenAmount = (raw, decimals) => {
   try {
     const asNum = Number(formatUnits(BigInt(raw || 0n), Number(decimals || 18)));
@@ -54,10 +64,71 @@ const parseTokenAmount = (raw, decimals) => {
 };
 
 const stableHints = ["USDC", "USDT", "DAI", "USD", "USDE", "FDUSD", "TUSD", "USDM", "WUSD", "STCUSD"];
-
 const isStableLike = (symbol) => {
   const text = String(symbol || "").toUpperCase();
   return stableHints.some((hint) => text.includes(hint));
+};
+
+const tickToPrice = (tick, token0Decimals, token1Decimals) => {
+  if (!Number.isFinite(tick)) return null;
+  const rawRatio = Math.exp(Number(tick) * Math.log(1.0001));
+  const decimalsAdjust = Math.pow(10, Number(token0Decimals || 18) - Number(token1Decimals || 18));
+  const humanRatio = rawRatio * decimalsAdjust;
+  return Number.isFinite(humanRatio) && humanRatio > 0 ? humanRatio : null;
+};
+
+const estimatePositionTokenAmounts = ({
+  liquidityRaw,
+  tickLower,
+  tickUpper,
+  currentTick,
+  token0Decimals,
+  token1Decimals,
+}) => {
+  const liquidity = Number(liquidityRaw || 0n);
+  if (!Number.isFinite(liquidity) || liquidity <= 0) {
+    return { amount0: 0, amount1: 0 };
+  }
+  if (!Number.isFinite(tickLower) || !Number.isFinite(tickUpper) || tickLower >= tickUpper) {
+    return { amount0: 0, amount1: 0 };
+  }
+
+  const sqrtLower = Math.exp((Number(tickLower) * Math.log(1.0001)) / 2);
+  const sqrtUpper = Math.exp((Number(tickUpper) * Math.log(1.0001)) / 2);
+  const sqrtCurrent = Number.isFinite(currentTick)
+    ? Math.exp((Number(currentTick) * Math.log(1.0001)) / 2)
+    : sqrtLower;
+
+  if (
+    !Number.isFinite(sqrtLower) ||
+    !Number.isFinite(sqrtUpper) ||
+    !Number.isFinite(sqrtCurrent) ||
+    sqrtLower <= 0 ||
+    sqrtUpper <= 0
+  ) {
+    return { amount0: 0, amount1: 0 };
+  }
+
+  let amount0Raw = 0;
+  let amount1Raw = 0;
+
+  if (sqrtCurrent <= sqrtLower) {
+    amount0Raw = (liquidity * (sqrtUpper - sqrtLower)) / (sqrtLower * sqrtUpper);
+    amount1Raw = 0;
+  } else if (sqrtCurrent < sqrtUpper) {
+    amount0Raw = (liquidity * (sqrtUpper - sqrtCurrent)) / (sqrtCurrent * sqrtUpper);
+    amount1Raw = liquidity * (sqrtCurrent - sqrtLower);
+  } else {
+    amount0Raw = 0;
+    amount1Raw = liquidity * (sqrtUpper - sqrtLower);
+  }
+
+  const amount0 = Math.max(0, amount0Raw) / Math.pow(10, Number(token0Decimals || 18));
+  const amount1 = Math.max(0, amount1Raw) / Math.pow(10, Number(token1Decimals || 18));
+  return {
+    amount0: Number.isFinite(amount0) ? amount0 : 0,
+    amount1: Number.isFinite(amount1) ? amount1 : 0,
+  };
 };
 
 const buildSeries = (seedRaw, currentPrice) => {
@@ -175,11 +246,9 @@ function PriceChart({ series, minPrice, maxPrice, marketPrice }) {
     </div>
   );
 }
-
 const initialDetail = {
-  positionId: "",
+  tokenId: "",
   owner: "",
-  strategyId: 0,
   pool: "",
   token0: "",
   token1: "",
@@ -188,21 +257,19 @@ const initialDetail = {
   token0Decimals: 18,
   token1Decimals: 18,
   fee: 0,
-  tickSpacing: 0,
-  currentTokenId: "0",
-  active: false,
   tickLower: null,
   tickUpper: null,
+  tickSpacing: null,
   currentTick: null,
   minPrice: null,
   maxPrice: null,
   marketPrice: null,
   inRange: null,
   liquidity: 0n,
-  dust0Raw: 0n,
-  dust1Raw: 0n,
-  fees0Raw: 0n,
-  fees1Raw: 0n,
+  principal0: 0,
+  principal1: 0,
+  fees0: 0,
+  fees1: 0,
   positionValueToken1: 0,
   feesValueToken1: 0,
   token0ValuePct: 0,
@@ -268,28 +335,26 @@ export default function Positions({ address, onConnect, routePath = "/positions"
     [readProvider]
   );
 
-  const loadPositionIds = useCallback(async () => {
+  const loadOwnedTokenIds = useCallback(async () => {
     if (!address) {
       setPositionIds([]);
       return;
     }
     setPositionIdsLoading(true);
     try {
-      const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI, readProvider);
+      const nfpm = new Contract(ALM_ADDRESSES.NFPM, NFPM_ABI, readProvider);
       const user = normalizeAddress(address);
+      const balanceRaw = await nfpm.balanceOf(user);
+      const balance = Number(balanceRaw || 0n);
+      const cap = Math.min(Math.max(0, balance), MAX_USER_NFT_SCAN);
       const ids = [];
-      for (let index = 0; index < MAX_USER_POSITIONS_SCAN; index += 1) {
-        try {
-          const idRaw = await alm.userPositions(user, BigInt(index));
-          const parsed = BigInt(idRaw || 0n).toString();
-          if (parsed === "0" && index > 0) break;
-          if (parsed !== "0") ids.push(parsed);
-        } catch {
-          break;
-        }
+      for (let index = 0; index < cap; index += 1) {
+        const tokenIdRaw = await nfpm.tokenOfOwnerByIndex(user, BigInt(index));
+        const tokenId = BigInt(tokenIdRaw || 0n).toString();
+        if (tokenId !== "0") ids.push(tokenId);
       }
-      const unique = Array.from(new Set(ids)).sort((a, b) => (BigInt(a) < BigInt(b) ? 1 : -1));
-      setPositionIds(unique);
+      ids.sort((a, b) => (BigInt(a) < BigInt(b) ? 1 : -1));
+      setPositionIds(ids);
     } catch {
       setPositionIds([]);
     } finally {
@@ -298,12 +363,12 @@ export default function Positions({ address, onConnect, routePath = "/positions"
   }, [address, readProvider]);
 
   useEffect(() => {
-    void loadPositionIds();
-  }, [loadPositionIds]);
+    void loadOwnedTokenIds();
+  }, [loadOwnedTokenIds]);
 
   const loadPositionDetail = useCallback(
-    async (positionId) => {
-      if (!positionId) {
+    async (tokenId) => {
+      if (!tokenId) {
         setDetail(initialDetail);
         setDetailError("");
         return;
@@ -311,93 +376,79 @@ export default function Positions({ address, onConnect, routePath = "/positions"
       setDetailLoading(true);
       setDetailError("");
       try {
-        const alm = new Contract(ALM_ADDRESSES.ALM, ALM_ABI, readProvider);
         const nfpm = new Contract(ALM_ADDRESSES.NFPM, NFPM_ABI, readProvider);
+        const tokenIdBig = BigInt(tokenId);
 
-        const tuple = await alm.positionsById(BigInt(positionId));
-        const owner = normalizeAddress(String(tuple?.[0] || ZERO_ADDRESS));
+        const [ownerRaw, positionRaw, factoryRaw] = await Promise.all([
+          nfpm.ownerOf(tokenIdBig),
+          nfpm.positions(tokenIdBig),
+          nfpm.factory(),
+        ]);
+        const owner = normalizeAddress(String(ownerRaw || ZERO_ADDRESS));
         if (!owner || isZeroAddress(owner)) {
-          throw new Error("Position not found on ALM contract.");
+          throw new Error("Position NFT not found.");
         }
 
-        const strategyId = Number(tuple?.[1] || 0n);
-        const pool = normalizeAddress(String(tuple?.[2] || ZERO_ADDRESS));
-        const token0 = normalizeAddress(String(tuple?.[3] || ZERO_ADDRESS));
-        const token1 = normalizeAddress(String(tuple?.[4] || ZERO_ADDRESS));
-        const fee = Number(tuple?.[5] || 0n);
-        const tickSpacing = Number(tuple?.[6] || 0n);
-        const currentTokenId = BigInt(tuple?.[7] || 0n).toString();
-        const active = Boolean(tuple?.[9]);
+        const token0 = normalizeAddress(positionRaw?.token0 || ZERO_ADDRESS);
+        const token1 = normalizeAddress(positionRaw?.token1 || ZERO_ADDRESS);
+        const fee = Number(positionRaw?.fee || 0);
+        const tickLower = Number(positionRaw?.tickLower);
+        const tickUpper = Number(positionRaw?.tickUpper);
+        const liquidityRaw = BigInt(positionRaw?.liquidity || 0n);
+        const tokensOwed0Raw = BigInt(positionRaw?.tokensOwed0 || 0n);
+        const tokensOwed1Raw = BigInt(positionRaw?.tokensOwed1 || 0n);
 
-        const [dust0Raw, dust1Raw, token0Meta, token1Meta] = await Promise.all([
-          alm.dust0(BigInt(positionId)).catch(() => 0n),
-          alm.dust1(BigInt(positionId)).catch(() => 0n),
-          resolveTokenMeta(token0),
-          resolveTokenMeta(token1),
+        const [token0Meta, token1Meta] = await Promise.all([resolveTokenMeta(token0), resolveTokenMeta(token1)]);
+
+        const factory = new Contract(normalizeAddress(factoryRaw), V3_FACTORY_MIN_ABI, readProvider);
+        const pool = normalizeAddress(String(await factory.getPool(token0, token1, fee)));
+        if (!pool || isZeroAddress(pool)) {
+          throw new Error("Uniswap pool not found for this NFT.");
+        }
+
+        const [slot0, tickSpacingRaw] = await Promise.all([
+          new Contract(pool, POOL_SLOT0_ABI, readProvider).slot0(),
+          new Contract(pool, POOL_META_ABI, readProvider).tickSpacing().catch(() => null),
         ]);
 
-        let tickLower = null;
-        let tickUpper = null;
-        let liquidity = 0n;
-        let fees0Raw = 0n;
-        let fees1Raw = 0n;
-        if (currentTokenId !== "0") {
-          try {
-            const nftData = await nfpm.positions(BigInt(currentTokenId));
-            tickLower = Number(nftData?.tickLower);
-            tickUpper = Number(nftData?.tickUpper);
-            liquidity = BigInt(nftData?.liquidity || 0n);
-            fees0Raw = BigInt(nftData?.tokensOwed0 || 0n);
-            fees1Raw = BigInt(nftData?.tokensOwed1 || 0n);
-          } catch {
-            // keep defaults
-          }
-        }
-
-        let currentTick = null;
-        if (pool && !isZeroAddress(pool)) {
-          try {
-            const poolContract = new Contract(pool, POOL_SLOT0_ABI, readProvider);
-            const slot0 = await poolContract.slot0();
-            currentTick = Number(slot0?.tick);
-          } catch {
-            currentTick = null;
-          }
-        }
-
-        const minPrice = Number.isFinite(tickLower) ? tickToPrice(tickLower) : null;
-        const maxPrice = Number.isFinite(tickUpper) ? tickToPrice(tickUpper) : null;
-        const marketPrice = Number.isFinite(currentTick) ? tickToPrice(currentTick) : null;
-
+        const currentTick = Number(slot0?.tick);
+        const tickSpacing = tickSpacingRaw === null ? null : Number(tickSpacingRaw);
+        const minPrice = tickToPrice(tickLower, token0Meta.decimals, token1Meta.decimals);
+        const maxPrice = tickToPrice(tickUpper, token0Meta.decimals, token1Meta.decimals);
+        const marketPrice = tickToPrice(currentTick, token0Meta.decimals, token1Meta.decimals);
         const inRange =
           Number.isFinite(currentTick) && Number.isFinite(tickLower) && Number.isFinite(tickUpper)
             ? currentTick >= tickLower && currentTick <= tickUpper
             : null;
 
-        const dust0Amount = parseTokenAmount(dust0Raw, token0Meta.decimals);
-        const dust1Amount = parseTokenAmount(dust1Raw, token1Meta.decimals);
-        const fees0Amount = parseTokenAmount(fees0Raw, token0Meta.decimals);
-        const fees1Amount = parseTokenAmount(fees1Raw, token1Meta.decimals);
-        const price = Number.isFinite(marketPrice) ? marketPrice : 0;
-        const token0Value = dust0Amount * price;
-        const token1Value = dust1Amount;
-        const fee0Value = fees0Amount * price;
-        const fee1Value = fees1Amount;
+        const { amount0: principal0, amount1: principal1 } = estimatePositionTokenAmounts({
+          liquidityRaw,
+          tickLower,
+          tickUpper,
+          currentTick,
+          token0Decimals: token0Meta.decimals,
+          token1Decimals: token1Meta.decimals,
+        });
+        const fees0 = parseTokenAmount(tokensOwed0Raw, token0Meta.decimals);
+        const fees1 = parseTokenAmount(tokensOwed1Raw, token1Meta.decimals);
+        const safePrice = Number.isFinite(marketPrice) ? marketPrice : 0;
+        const token0Value = principal0 * safePrice;
+        const token1Value = principal1;
+        const fee0Value = fees0 * safePrice;
+        const fee1Value = fees1;
         const positionValueToken1 = token0Value + token1Value;
         const feesValueToken1 = fee0Value + fee1Value;
-        const valueDenominator = positionValueToken1 > 0 ? positionValueToken1 : 1;
+        const positionDenominator = positionValueToken1 > 0 ? positionValueToken1 : 1;
         const feesDenominator = feesValueToken1 > 0 ? feesValueToken1 : 1;
-        const token0ValuePct = (token0Value / valueDenominator) * 100;
-        const token1ValuePct = (token1Value / valueDenominator) * 100;
+        const token0ValuePct = (token0Value / positionDenominator) * 100;
+        const token1ValuePct = (token1Value / positionDenominator) * 100;
         const fee0ValuePct = (fee0Value / feesDenominator) * 100;
         const fee1ValuePct = (fee1Value / feesDenominator) * 100;
-
-        const chartSeries = buildSeries(positionId, marketPrice || minPrice || maxPrice || 1);
+        const chartSeries = buildSeries(tokenId, marketPrice || minPrice || maxPrice || 1);
 
         setDetail({
-          positionId,
+          tokenId,
           owner,
-          strategyId,
           pool,
           token0,
           token1,
@@ -406,21 +457,19 @@ export default function Positions({ address, onConnect, routePath = "/positions"
           token0Decimals: token0Meta.decimals,
           token1Decimals: token1Meta.decimals,
           fee,
-          tickSpacing,
-          currentTokenId,
-          active,
           tickLower,
           tickUpper,
+          tickSpacing,
           currentTick,
           minPrice,
           maxPrice,
           marketPrice,
           inRange,
-          liquidity,
-          dust0Raw: BigInt(dust0Raw || 0n),
-          dust1Raw: BigInt(dust1Raw || 0n),
-          fees0Raw,
-          fees1Raw,
+          liquidity: liquidityRaw,
+          principal0,
+          principal1,
+          fees0,
+          fees1,
           positionValueToken1,
           feesValueToken1,
           token0ValuePct,
@@ -431,7 +480,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
         });
       } catch (error) {
         setDetail(initialDetail);
-        setDetailError(String(error?.message || "Unable to load this position."));
+        setDetailError(String(error?.message || "Unable to load this NFT position."));
       } finally {
         setDetailLoading(false);
       }
@@ -456,7 +505,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
   const positionValueLabel = useMemo(() => {
     const stable = isStableLike(detail.token1Symbol);
     if (stable) return `$${formatNumber(detail.positionValueToken1, 2)}`;
-    return `${formatNumber(detail.positionValueToken1, 4)} ${detail.token1Symbol}`;
+    return `${formatNumber(detail.positionValueToken1, 5)} ${detail.token1Symbol}`;
   }, [detail.positionValueToken1, detail.token1Symbol]);
 
   const feesValueLabel = useMemo(() => {
@@ -472,7 +521,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">Hidden Route</div>
-              <h1 className="mt-1 font-display text-2xl font-semibold text-slate-100">Positions Explorer</h1>
+              <h1 className="mt-1 font-display text-2xl font-semibold text-slate-100">NFT Position Explorer</h1>
               <p className="mt-1 text-sm text-slate-400">
                 Open this page directly with URL path: <span className="font-mono text-slate-300">/positions/:id</span>
               </p>
@@ -495,7 +544,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                 value={positionInput}
                 inputMode="numeric"
                 onChange={(event) => setPositionInput(event.target.value.replace(/[^\d]/gu, ""))}
-                placeholder="Search position ID (example: 235)"
+                placeholder="Search NFT position ID (example: 235)"
                 className="w-full bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500"
               />
             </label>
@@ -510,7 +559,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
 
           {address && (
             <div className="mt-3">
-              <div className="text-xs text-slate-500">Your ALM positions</div>
+              <div className="text-xs text-slate-500">Your LP NFTs</div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {positionIdsLoading && (
                   <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-300">
@@ -520,7 +569,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                 )}
                 {!positionIdsLoading && positionIds.length === 0 && (
                   <span className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-400">
-                    No positions found
+                    No NFT positions found
                   </span>
                 )}
                 {positionIds.map((id) => (
@@ -544,7 +593,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
 
         {!pathInfo.selectedPositionId && (
           <div className="rounded-2xl border border-slate-800 bg-slate-950/55 px-4 py-6 text-sm text-slate-300">
-            Enter a position ID to open a detailed, chart-based view.
+            Enter an NFT position ID to open its detailed view.
           </div>
         )}
 
@@ -567,7 +616,7 @@ export default function Positions({ address, onConnect, routePath = "/positions"
           </div>
         )}
 
-        {!detailLoading && !detailError && detail.positionId && (
+        {!detailLoading && !detailError && detail.tokenId && (
           <>
             <div className="rounded-2xl border border-slate-800 bg-slate-950/55 p-4">
               <button
@@ -603,9 +652,17 @@ export default function Positions({ address, onConnect, routePath = "/positions"
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-400">
-                <span>Position #{detail.positionId}</span>
-                <span>Strategy #{detail.strategyId}</span>
-                <span>{detail.active ? "Active" : "Inactive"}</span>
+                <span>NFT #{detail.tokenId}</span>
+                <span>Owner {shortenAddress(detail.owner, 8, 6)}</span>
+                <span>Tick spacing {detail.tickSpacing ?? "--"}</span>
+                <a
+                  href={`${EXPLORER_BASE_URL}/token/${ALM_ADDRESSES.NFPM}?a=${detail.tokenId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
+                >
+                  NFT <ExternalLink className="h-3 w-3" />
+                </a>
                 <a
                   href={`${EXPLORER_BASE_URL}/address/${detail.pool}`}
                   target="_blank"
@@ -613,14 +670,6 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                   className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
                 >
                   Pool <ExternalLink className="h-3 w-3" />
-                </a>
-                <a
-                  href={`${EXPLORER_BASE_URL}/address/${ALM_ADDRESSES.ALM}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-sky-200 underline decoration-dotted underline-offset-2"
-                >
-                  ALM <ExternalLink className="h-3 w-3" />
                 </a>
               </div>
             </div>
@@ -640,7 +689,6 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                     marketPrice={detail.marketPrice}
                   />
                 </div>
-
                 <div className="mt-4 flex flex-wrap gap-2">
                   {["1D", "1W", "1M", "1Y", "All time"].map((range) => (
                     <button
@@ -697,25 +745,32 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                   <div className="mt-1 text-5xl font-semibold text-slate-100">{positionValueLabel}</div>
 
                   <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full bg-emerald-400" style={{ width: `${Math.max(0, Math.min(100, detail.token0ValuePct))}%` }} />
+                    <div
+                      className="h-full bg-emerald-400"
+                      style={{ width: `${Math.max(0, Math.min(100, detail.token0ValuePct))}%` }}
+                    />
                   </div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-300">
-                    <span>{detail.token0Symbol}: {formatPercent(detail.token0ValuePct)}</span>
-                    <span>{detail.token1Symbol}: {formatPercent(detail.token1ValuePct)}</span>
+                    <span>
+                      {detail.token0Symbol}: {formatPercent(detail.token0ValuePct)}
+                    </span>
+                    <span>
+                      {detail.token1Symbol}: {formatPercent(detail.token1ValuePct)}
+                    </span>
                   </div>
 
                   <div className="mt-4 space-y-2 text-sm text-slate-200">
                     <div className="flex items-center justify-between">
                       <span>
-                        {formatNumber(parseTokenAmount(detail.dust0Raw, detail.token0Decimals), 6)} {detail.token0Symbol}
+                        {formatNumber(detail.principal0, 6)} {detail.token0Symbol}
                       </span>
-                      <span className="text-slate-400">dust0</span>
+                      <span className="text-slate-400">in position</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span>
-                        {formatNumber(parseTokenAmount(detail.dust1Raw, detail.token1Decimals), 6)} {detail.token1Symbol}
+                        {formatNumber(detail.principal1, 6)} {detail.token1Symbol}
                       </span>
-                      <span className="text-slate-400">dust1</span>
+                      <span className="text-slate-400">in position</span>
                     </div>
                   </div>
                 </div>
@@ -725,33 +780,40 @@ export default function Positions({ address, onConnect, routePath = "/positions"
                   <div className="mt-1 text-5xl font-semibold text-slate-100">{feesValueLabel}</div>
 
                   <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
-                    <div className="h-full bg-cyan-400" style={{ width: `${Math.max(0, Math.min(100, detail.fee0ValuePct))}%` }} />
+                    <div
+                      className="h-full bg-cyan-400"
+                      style={{ width: `${Math.max(0, Math.min(100, detail.fee0ValuePct))}%` }}
+                    />
                   </div>
                   <div className="mt-2 flex items-center justify-between text-xs text-slate-300">
-                    <span>{detail.token0Symbol}: {formatPercent(detail.fee0ValuePct)}</span>
-                    <span>{detail.token1Symbol}: {formatPercent(detail.fee1ValuePct)}</span>
+                    <span>
+                      {detail.token0Symbol}: {formatPercent(detail.fee0ValuePct)}
+                    </span>
+                    <span>
+                      {detail.token1Symbol}: {formatPercent(detail.fee1ValuePct)}
+                    </span>
                   </div>
 
                   <div className="mt-4 space-y-2 text-sm text-slate-200">
                     <div className="flex items-center justify-between">
                       <span>
-                        {formatNumber(parseTokenAmount(detail.fees0Raw, detail.token0Decimals), 6)} {detail.token0Symbol}
+                        {formatNumber(detail.fees0, 6)} {detail.token0Symbol}
                       </span>
-                      <span className="text-slate-400">fees0</span>
+                      <span className="text-slate-400">uncollected</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span>
-                        {formatNumber(parseTokenAmount(detail.fees1Raw, detail.token1Decimals), 6)} {detail.token1Symbol}
+                        {formatNumber(detail.fees1, 6)} {detail.token1Symbol}
                       </span>
-                      <span className="text-slate-400">fees1</span>
+                      <span className="text-slate-400">uncollected</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-xs text-slate-400">
                   <div>Owner: {detail.owner || "--"}</div>
-                  <div className="mt-1">Tick spacing: {detail.tickSpacing || "--"}</div>
-                  <div className="mt-1">Current NFT tokenId: {detail.currentTokenId || "--"}</div>
+                  <div className="mt-1">Tick lower/upper: {detail.tickLower ?? "--"} / {detail.tickUpper ?? "--"}</div>
+                  <div className="mt-1">Current tick: {detail.currentTick ?? "--"}</div>
                   <div className="mt-1">Liquidity units: {String(detail.liquidity || 0n)}</div>
                 </div>
               </div>
