@@ -983,10 +983,17 @@ export default function PoolsSection({ onSelectPool }) {
                   ? formatPercentCapped(pool.apr, 2)
                   : "--";
               return (
-                <button
+                <div
                   key={poolKey}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handlePoolSelect(pool)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      handlePoolSelect(pool);
+                    }
+                  }}
                   className="group relative isolate overflow-hidden w-full text-left rounded-2xl border border-slate-800/70 bg-slate-950/40 px-3 sm:px-4 py-3 hover:border-sky-500/70 hover:bg-slate-900/70 hover:shadow-[0_0_0_1px_rgba(56,189,248,0.18),0_12px_30px_-20px_rgba(56,189,248,0.45)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/40 transition"
                   aria-label={`Open ${pool.token0Symbol || "Token0"} / ${pool.token1Symbol || "Token1"} pool`}
                 >
@@ -1097,13 +1104,22 @@ export default function PoolsSection({ onSelectPool }) {
                         <span className="min-w-0 truncate text-base font-semibold" title={aprLabel}>
                           {aprLabel}
                         </span>
-                        <span className="hidden shrink-0 md:inline-flex text-[11px] font-medium text-slate-500 group-hover:text-sky-300 transition">
-                          Open {"\u2192"}
-                        </span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handlePoolSelect(pool);
+                          }}
+                          className="inline-flex items-center rounded-full border border-slate-600 bg-slate-900/70 px-3 py-1 text-[11px] font-medium text-slate-100 hover:border-slate-400"
+                        >
+                          Open
+                        </button>
                       </div>
                     </div>
                   </div>
-                </button>
+                </div>
               );
             })
           ) : (

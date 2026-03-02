@@ -320,8 +320,8 @@ export default function App() {
 
     const handle = idle(() => {
       Object.keys(SECTION_LOADERS).forEach((key) => {
-        // Launchpad is intentionally "hidden" (URL-only). Don't preload it in the background.
-        if (key === "launchpad" || key === "positions") return;
+        // URL-only sections stay hidden from normal navigation and are not preloaded in the background.
+        if (key === "launchpad" || key === "positions" || key === "alm") return;
         if (key !== tab) preloadSection(key);
       });
       ["swap", "liquidity", "pools"].forEach((key) => {

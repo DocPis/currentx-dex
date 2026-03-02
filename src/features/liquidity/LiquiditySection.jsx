@@ -52,6 +52,7 @@ import { multicall, hasMulticall } from "../../shared/services/multicall";
 import { computeV3QuickFillAmount } from "./v3QuickFillUtils";
 
 const EXPLORER_LABEL = `${NETWORK_NAME} Explorer`;
+const AUTOPILOT_UI_ENABLED = false;
 const SYNC_TOPIC =
   "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1";
 const V3_MIN_TICK = -887272;
@@ -1204,6 +1205,7 @@ export default function LiquiditySection({
   const [v3Token0Search, setV3Token0Search] = useState("");
   const [v3Token1Search, setV3Token1Search] = useState("");
   const [selectionDepositPoolId, setSelectionDepositPoolId] = useState(null);
+  const [v2DepositMode, setV2DepositMode] = useState("standard");
   const [v3DraggingHandle, setV3DraggingHandle] = useState(null);
   const [v3RangeInitialized, setV3RangeInitialized] = useState(false);
   const [v3ChartMode, setV3ChartMode] = useState("price-range");
@@ -4978,6 +4980,7 @@ export default function LiquiditySection({
   }, [isV3View, v3PoolInfo.address, v3PoolInfo.token0, v3PoolInfo.token1]);
   const pairBlockingError = Boolean(pairError && !pairMissing);
   const hasLpBalance = lpBalance !== null && lpBalance > MIN_LP_THRESHOLD;
+  const isAutopilotDepositMode = AUTOPILOT_UI_ENABLED && v2DepositMode === "autopilot";
 
   useEffect(() => {
     if (suppressSelectionResetRef.current) {
@@ -4985,6 +4988,7 @@ export default function LiquiditySection({
       return;
     }
     setSelectionDepositPoolId(null);
+    setV2DepositMode("standard");
   }, [tokenSelection?.baseSymbol, tokenSelection?.pairSymbol]);
 
   const fetchLpBalance = useCallback(async () => {
@@ -6237,11 +6241,14 @@ export default function LiquiditySection({
     setPairSelectorOpen(false);
   };
 
-  const handleSelectPoolFromPair = (poolId) => {
+  const handleSelectPoolFromPair = (poolId, mode = "standard") => {
     if (!poolId) return;
+    const nextMode =
+      AUTOPILOT_UI_ENABLED && mode === "autopilot" ? "autopilot" : "standard";
     setSelectedPoolId(poolId);
     setPairSelectorOpen(false);
     setSelectionDepositPoolId(poolId);
+    setV2DepositMode(nextMode);
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
   };
@@ -6258,8 +6265,10 @@ export default function LiquiditySection({
     }
   }, [isV2View, isV3View, hasV3Liquidity]);
 
-  const handleOpenPoolDepositFromRow = (pool) => {
+  const handleOpenPoolDepositFromRow = (pool, mode = "standard") => {
     if (!pool) return;
+    const nextMode =
+      AUTOPILOT_UI_ENABLED && mode === "autopilot" ? "autopilot" : "standard";
     const poolId =
       pool.id ||
       (pool.token0Symbol && pool.token1Symbol
@@ -6279,6 +6288,7 @@ export default function LiquiditySection({
     });
     setSelectedPoolId(poolId);
     setSelectionDepositPoolId(poolId);
+    setV2DepositMode(nextMode);
     setPairSelectorOpen(false);
     const target = document.getElementById("token-selection-deposit");
     if (target) target.scrollIntoView({ behavior: "smooth" });
@@ -6653,6 +6663,10 @@ export default function LiquiditySection({
 
   const handleDeposit = async () => {
     let provider;
+    const depositActionLabel = isAutopilotDepositMode ? "Autopilot deposit" : "Deposit";
+    const depositSuccessLabel = isAutopilotDepositMode
+      ? "Autopilot vault deposit completed"
+      : "Deposited";
     try {
       setActionStatus(null);
       setActionLoading(true);
@@ -6808,7 +6822,7 @@ export default function LiquiditySection({
       setActionStatus({
         variant: "success",
         hash: receipt.hash,
-        message: `Deposited ${getPoolLabel(selectedPool)}`,
+        message: `${depositSuccessLabel} ${getPoolLabel(selectedPool)}`.trim(),
       });
       } else {
         const token0Contract = new Contract(token0Address, ERC20_ABI, signer);
@@ -6844,7 +6858,7 @@ export default function LiquiditySection({
         setActionStatus({
           variant: "success",
           hash: receipt.hash,
-          message: `Deposited ${getPoolLabel(selectedPool)}`,
+          message: `${depositSuccessLabel} ${getPoolLabel(selectedPool)}`.trim(),
         });
       }
 
@@ -6862,7 +6876,9 @@ export default function LiquiditySection({
           setActionStatus({
             variant: "success",
             hash: txHash,
-            message: poolLabel ? `Deposited ${poolLabel}` : "Deposit confirmed",
+            message: poolLabel
+              ? `${depositSuccessLabel} ${poolLabel}`.trim()
+              : `${depositActionLabel} confirmed`,
           });
           setLpRefreshTick((t) => t + 1);
           void refreshBalances();
@@ -6872,14 +6888,14 @@ export default function LiquiditySection({
           setActionStatus({
             variant: "error",
             hash: txHash,
-            message: friendlyActionError(e, "Deposit"),
+            message: friendlyActionError(e, depositActionLabel),
           });
           return;
         }
         setActionStatus({
           variant: "pending",
           hash: txHash,
-          message: "Transaction submitted. Waiting for confirmation.",
+          message: `${depositActionLabel} submitted. Waiting for confirmation.`,
         });
         return;
       }
@@ -6891,7 +6907,7 @@ export default function LiquiditySection({
         variant: "error",
         message: userRejected
           ? "Transaction was rejected in wallet."
-          : friendlyActionError(e, "Deposit"),
+          : friendlyActionError(e, depositActionLabel),
       });
     } finally {
       setActionLoading(false);
@@ -7080,12 +7096,43 @@ export default function LiquiditySection({
               <div>
                 <div className="text-xl font-semibold text-slate-50">New deposit</div>
                 <div className="text-sm text-slate-400">Choose your token and the pair to start providing liquidity.</div>
+                {AUTOPILOT_UI_ENABLED ? (
+                  <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-slate-800 bg-slate-950/70 p-1">
+                    <button
+                      type="button"
+                      onClick={() => setV2DepositMode("standard")}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        !isAutopilotDepositMode
+                          ? "bg-sky-600 text-white shadow-lg shadow-sky-500/25"
+                          : "text-slate-300 hover:text-white"
+                      }`}
+                    >
+                      Standard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setV2DepositMode("autopilot")}
+                      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                        isAutopilotDepositMode
+                          ? "bg-emerald-600 text-white shadow-lg shadow-emerald-500/25"
+                          : "text-slate-300 hover:text-white"
+                      }`}
+                    >
+                      Autopilot
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-3 inline-flex items-center rounded-full border border-slate-700/70 bg-slate-900/60 px-3 py-1 text-xs font-medium text-slate-200">
+                    Standard mode
+                  </div>
+                )}
               </div>
               <button
                 type="button"
                 onClick={() => {
                   setTokenSelection(null);
                   setPairSelectorOpen(false);
+                  setV2DepositMode("standard");
                 }}
                 className="px-3 py-1.5 rounded-full border border-slate-700 bg-slate-900 text-slate-200 text-xs hover:border-slate-500"
               >
@@ -7249,10 +7296,19 @@ export default function LiquiditySection({
                       <button
                         type="button"
                         className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-xs font-semibold shadow-lg shadow-sky-500/30"
-                        onClick={() => handleSelectPoolFromPair(p.id)}
+                        onClick={() => handleSelectPoolFromPair(p.id, "standard")}
                       >
                         New deposit
                       </button>
+                      {AUTOPILOT_UI_ENABLED && (
+                        <button
+                          type="button"
+                          className="px-3 py-1.5 rounded-full border border-emerald-400/30 bg-emerald-600/15 text-emerald-200 text-xs font-semibold shadow-lg shadow-emerald-900/20 hover:border-emerald-300/50 hover:bg-emerald-600/20"
+                          onClick={() => handleSelectPoolFromPair(p.id, "autopilot")}
+                        >
+                          Autopilot
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -7298,6 +7354,21 @@ export default function LiquiditySection({
                             <span className="text-[8px] leading-none">&#9679;</span>
                             <span>{poolStatusLabel}</span>
                           </span>
+                          <span className="text-slate-500">&middot;</span>
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                              isAutopilotDepositMode
+                                ? "border-emerald-400/30 bg-emerald-600/10 text-emerald-200"
+                                : "border-slate-700/60 bg-slate-800/40 text-slate-200"
+                            }`}
+                          >
+                            {isAutopilotDepositMode ? "Autopilot vault mode" : "Standard mode"}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-slate-400">
+                          {isAutopilotDepositMode
+                            ? "Autopilot keeps this pool in managed-vault mode while using the same quick deposit flow."
+                            : "Use standard mode for classic LP deposits in this pool."}
                         </div>
                         <div className="mt-1">
                           <span
@@ -7464,7 +7535,12 @@ export default function LiquiditySection({
                           </div>
                           <div className="rounded-md border border-[#1B2433] bg-[#0f1624] p-3">
                           <div className="text-[11px] font-semibold tracking-[0.1em] uppercase text-slate-200">
-                            Add Liquidity
+                            {isAutopilotDepositMode ? "Autopilot Deposit" : "Add Liquidity"}
+                          </div>
+                          <div className="mt-1 text-[11px] text-slate-400">
+                            {isAutopilotDepositMode
+                              ? "Funds are deposited with the standard flow and tagged for autopilot management."
+                              : "Provide both tokens to mint LP and start earning fees."}
                           </div>
                           <div className="mt-2 space-y-1.5">
                             <div className="grid grid-cols-[auto,1fr] items-center gap-2">
@@ -7541,7 +7617,11 @@ export default function LiquiditySection({
                             onClick={handleDeposit}
                             className="mt-2.5 h-8 rounded-md border border-sky-500/40 bg-sky-600 px-3 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-60"
                           >
-                            {actionLoading ? "Processing..." : "Add Liquidity"}
+                            {actionLoading
+                              ? "Processing..."
+                              : isAutopilotDepositMode
+                              ? "Deposit to Autopilot"
+                              : "Add Liquidity"}
                           </button>
                         </div>
 
@@ -7679,6 +7759,7 @@ export default function LiquiditySection({
                   type="button"
                   onClick={() => {
                     setLiquidityView("v2");
+                    setV2DepositMode("standard");
                     if (tokenSelection) {
                       setTokenSelection(null);
                       setSelectionDepositPoolId(null);
